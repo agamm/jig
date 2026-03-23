@@ -43,7 +43,7 @@ export function jig(
  */
 export async function run(
   definition: JigDefinition,
-  params: Record<string, string>
+  params: Record<string, string> = {}
 ): Promise<void> {
   const paramDefs = definition.options.params ?? {}
   const missing = Object.keys(paramDefs).filter((name) => !params[name])

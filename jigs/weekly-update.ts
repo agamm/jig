@@ -1,10 +1,8 @@
 /**
- * Weekly Client Update
+ * Weekly Client Update — Example
  *
- * Gathers relevant data, writes the email, figures out the recipient,
- * and creates a Gmail draft.
- *
- * Usage: bun run jigs/weekly-update.ts "CompanyName" "repo-name" "Your Name"
+ * Gathers meetings, emails, commits, and writes a weekly update draft.
+ * Copy this file into a grouped jig folder and customize per client.
  */
 import { join } from "path"
 import { jig, run, llm, agent } from "../src/index.js"
@@ -13,6 +11,13 @@ import { workspace } from "../.jig/connections/workspace.js"
 import { github } from "../.jig/connections/github.js"
 
 const template = await Bun.file(join(import.meta.dir, "../templates/weekly-update.md")).text()
+
+// --- Hardcoded for this client/project ---
+const company = "ExampleCorp"
+const repo = "example-repo"
+const name = "Jane Doe"
+const recipients = { to: "client@example.com", cc: "" }
+// -----------------------------------------
 
 const gatherTools = [
   granola.query_granola_meetings,
@@ -30,20 +35,13 @@ const gatherTools = [
 const weeklyUpdate = jig(
   "weekly-update",
   {
-    params: {
-      company: "Company or project name",
-      repo: "GitHub repo name",
-      name: "Your name for the sign-off",
-    },
     tools: [...gatherTools, workspace.gmail_createDraft],
   },
   async (ctx) => {
-    const { company, repo, name } = ctx.params
     const today = new Date().toLocaleDateString("en-US", {
       weekday: "long", year: "numeric", month: "long", day: "numeric",
     })
 
-    // Agent gathers data, writes the email, and identifies the recipient
     const result = await agent<{ email: string; to: string; cc: string; subject: string }>(
       `Write a weekly client update email for "${company}".
 Today is ${today}.
@@ -80,26 +78,20 @@ Also figure out:
 
     console.log(result.email)
 
-    // Create Gmail draft (deterministic — always happens last)
+    // Create Gmail draft
     const draft = await workspace.gmail_createDraft({
-      to: result.to,
+      to: result.to || recipients.to,
       subject: result.subject,
       body: result.email,
-      ...(result.cc && { cc: result.cc }),
+      ...(result.cc || recipients.cc ? { cc: result.cc || recipients.cc } : {}),
     })
 
-    // Print draft link
     const draftData = typeof draft === "object" ? draft as any : {}
     const messageId = draftData?.message?.id ?? draftData?.id ?? ""
     console.log(`\nhttps://mail.google.com/mail/u/0/#drafts/${messageId}`)
   }
 )
 
-const [company, repo, name] = process.argv.slice(2)
-await run(weeklyUpdate, {
-  ...(company && { company }),
-  ...(repo && { repo }),
-  ...(name && { name }),
-})
+await run(weeklyUpdate)
 
 process.exit(0)

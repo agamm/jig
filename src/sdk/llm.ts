@@ -10,7 +10,7 @@ let _client: OpenAI | null = null
 function getClient(): OpenAI {
   if (!_client) {
     const apiKey = process.env.OPENROUTER_API_KEY
-    if (!apiKey) throw new Error("OPENROUTER_API_KEY not set")
+    if (!apiKey) throw new Error("OPENROUTER_API_KEY not set. Get one at https://openrouter.ai/keys and add to .env")
     _client = new OpenAI({ baseURL: "https://openrouter.ai/api/v1", apiKey })
   }
   return _client

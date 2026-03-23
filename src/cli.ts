@@ -87,6 +87,14 @@ async function connect(serverName?: string) {
   process.exit(0)
 }
 
+function checkConnections() {
+  const connectionsDir = join(PROJECT_ROOT, ".jig/connections")
+  if (!existsSync(connectionsDir) || !existsSync(join(connectionsDir, "index.ts"))) {
+    console.error(`No connections found. Run "jig connect <server>" first.`)
+    process.exit(1)
+  }
+}
+
 function exec(path: string) {
   return Bun.spawn(["bun", "run", path], {
     cwd: PROJECT_ROOT, stdin: "inherit", stdout: "inherit", stderr: "inherit", env: process.env,
@@ -107,6 +115,7 @@ async function runJig(name?: string, entity?: string) {
   }
 
   if (!jigs.has(name)) { console.error(`Jig not found: ${name}`); process.exit(1) }
+  checkConnections()
   const entities = jigs.get(name)!
 
   // Single-instance

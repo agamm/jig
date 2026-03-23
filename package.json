@@ -1,0 +1,27 @@
+{
+  "name": "jig",
+  "version": "0.1.0",
+  "description": "AI workflow automation — deterministic execution with LLM hatches",
+  "module": "src/index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun run jigs/weekly-update.ts",
+    "jig": "bun run src/cli.ts",
+    "typegen": "bun run src/mcp/typegen.ts"
+  },
+  "bin": {
+    "jig": "src/cli.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "open": "^11.0.0",
+    "openai": "^6.32.0"
+  }
+}

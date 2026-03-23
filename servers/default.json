@@ -1,0 +1,20 @@
+{
+  "workspace": {
+    "type": "repo",
+    "repo": "https://github.com/gemini-cli-extensions/workspace",
+    "entry": "workspace-server/dist/index.js",
+    "build": "npm install && npm run build",
+    "description": "Gmail, Calendar, Drive, Docs, Sheets, Chat"
+  },
+  "granola": {
+    "type": "remote",
+    "url": "https://mcp.granola.ai/mcp",
+    "description": "Meeting notes and transcripts"
+  },
+  "github": {
+    "type": "remote",
+    "url": "https://api.githubcopilot.com/mcp/",
+    "auth": "gh auth token",
+    "description": "Repos, issues, PRs, commits"
+  }
+}

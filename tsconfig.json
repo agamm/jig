@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "outDir": "./dist",
+    "rootDir": ".",
+    "types": ["bun-types"],
+    "paths": {
+      "jig": ["./src/index.ts"],
+      "jig/*": ["./src/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "jigs/**/*.ts", ".jig/types/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

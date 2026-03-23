@@ -1,0 +1,5 @@
+node_modules/
+.jig/
+.env
+jig.db
+.a5c/

@@ -322,6 +322,7 @@ let the agent extract it in the same pass rather than adding another LLM call.
 
 Not rules — just patterns worth considering when writing jigs.
 
+- **Prefer shorter agent prompts.** The agent is smart — state what you want and what constraints matter, not step-by-step instructions. A concise prompt that names data sources and rules usually outperforms a verbose one.
 - **Recurring jigs should diff against their last run.** Without context from the previous output, the agent treats every piece of gathered data as novel and repeats itself.
 - **Deduplicate across data sources.** The same event often shows up in meetings, emails, and calendar. Prompt the agent to merge, not echo.
 - **How much context is too much?** A broad time window can blow up the context and dilute relevance. Consider a two-pass approach: broad search → relevance filter → detailed read.
@@ -330,10 +331,10 @@ Not rules — just patterns worth considering when writing jigs.
 
 ## Reference: Weekly Update Jig
 
-See `jigs/weekly-update.ts` for a complete example demonstrating:
+See `jigs/weekly-update/` for a grouped jig example demonstrating:
 
 - Agent gathering + email writing in one pass (fuzzy data + content)
 - LLM recipient extraction from gathered context (structured judgment)
 - Deterministic Gmail draft creation (action, always last)
 - Tool separation (gather tools to agent, action tools called directly)
-- Interactive params with fallback
+- Per-client variants with self-contained knowledge

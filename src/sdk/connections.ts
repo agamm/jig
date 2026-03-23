@@ -1,5 +1,6 @@
 import { getServerConfig } from "../mcp/config.js"
 import { connectServer, discoverTools, callTool } from "../mcp/client.js"
+import { isDryRun, isReadTool } from "./dryrun.js"
 import type { JigTool } from "./jig.js"
 
 // Cache: serverName → connected tool functions
@@ -50,6 +51,11 @@ export function createLazyServer(
 
   for (const toolName of toolNames) {
     const fn = async (params: any) => {
+      if (isDryRun() && !isReadTool(toolName)) {
+        console.log(`\n[dry-run] ${serverName}.${toolName}`)
+        console.log(JSON.stringify(params, null, 2))
+        return { _dryRun: true, tool: toolName, params }
+      }
       const tools = await connectOnce(serverName)
       const tool = tools[toolName]
       if (!tool) {

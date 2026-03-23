@@ -15,15 +15,23 @@ import { join } from "path"
 const PROJECT_ROOT = join(import.meta.dir, "..")
 const SCHEMAS_DIR = join(PROJECT_ROOT, ".jig/schemas")
 
-const [command, ...args] = process.argv.slice(2)
+const rawArgs = process.argv.slice(2)
+const dryRun = rawArgs.includes("--dry-run")
+const args = rawArgs.filter((a) => a !== "--dry-run")
+const [command, ...rest] = args
+
+if (dryRun) {
+  const { setDryRun } = await import("./sdk/dryrun.js")
+  setDryRun(true)
+}
 
 switch (command) {
   case "connect":
-    await connect(args[0])
+    await connect(rest[0])
     break
 
   case "run":
-    await runJig(args[0], args[1])
+    await runJig(rest[0], rest[1])
     break
 
   default:

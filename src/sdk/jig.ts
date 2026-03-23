@@ -1,6 +1,5 @@
 import { createInterface } from "node:readline/promises"
 import { Context } from "./context.js"
-import { spinner } from "./spinner.js"
 
 /**
  * A typed MCP tool function. Generated at runtime by createConnection(),
@@ -35,11 +34,7 @@ export function jig(
 }
 
 /**
- * Run a jig with the given params. If any required params are missing:
- * - Interactive (TTY): prompts for them
- * - Non-interactive (cron, pipe): fails with an error
- *
- * Shows a loading animation in interactive mode.
+ * Run a jig. Prompts for missing params in interactive mode.
  */
 export async function run(
   definition: JigDefinition,

@@ -5,6 +5,7 @@
   "module": "src/index.ts",
   "type": "module",
   "private": true,
+  "keywords": ["ai-agent", "autonomous-agent", "mcp", "workflow-automation", "llm", "deterministic-execution"],
   "scripts": {
     "dev": "bun run jigs/weekly-update.ts",
     "jig": "bun run src/cli.ts",

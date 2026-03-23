@@ -8,6 +8,7 @@
  *   jig run <name> [args]    — run a jig
  */
 import { loadServerConfigs } from "./mcp/config.js"
+import { discoverJigs } from "./discover.js"
 import { existsSync } from "fs"
 import { join } from "path"
 
@@ -22,7 +23,7 @@ switch (command) {
     break
 
   case "run":
-    await runJig(args[0], args.slice(1))
+    await runJig(args[0], args[1])
     break
 
   default:
@@ -78,30 +79,50 @@ async function connect(serverName?: string) {
   process.exit(0)
 }
 
-async function runJig(name?: string, args: string[] = []) {
+function exec(path: string) {
+  return Bun.spawn(["bun", "run", path], {
+    cwd: PROJECT_ROOT, stdin: "inherit", stdout: "inherit", stderr: "inherit", env: process.env,
+  })
+}
+
+async function runJig(name?: string, entity?: string) {
+  const jigsDir = join(PROJECT_ROOT, "jigs")
+  const jigs = discoverJigs(jigsDir)
+
   if (!name) {
-    const glob = new Bun.Glob("*.ts")
-    const jigsDir = join(PROJECT_ROOT, "jigs")
     console.log(`Available jigs:\n`)
-    for await (const file of glob.scan(jigsDir)) {
-      console.log(`  ${file.replace(".ts", "")}`)
+    for (const [jig, entities] of jigs) {
+      console.log(entities.length ? `  ${jig}  [${entities.join(", ")}]` : `  ${jig}`)
     }
-    console.log(`\nRun "jig run <name> [args]" to execute.`)
+    console.log(`\nRun "jig run <name>" or "jig run <name> <entity>"`)
     return
   }
 
-  const jigPath = join(PROJECT_ROOT, "jigs", `${name}.ts`)
-  if (!existsSync(jigPath)) {
-    console.error(`Jig not found: ${name}`)
-    process.exit(1)
+  if (!jigs.has(name)) { console.error(`Jig not found: ${name}`); process.exit(1) }
+  const entities = jigs.get(name)!
+
+  // Single-instance
+  if (entities.length === 0) {
+    process.exit(await exec(join(jigsDir, `${name}.ts`)).exited)
   }
 
-  const proc = Bun.spawn(["bun", "run", jigPath, ...args], {
-    cwd: PROJECT_ROOT,
-    stdin: "inherit",
-    stdout: "inherit",
-    stderr: "inherit",
-    env: process.env,
-  })
-  process.exit(await proc.exited)
+  // Grouped — no entity specified
+  if (!entity) {
+    console.log(`${name} entities: ${entities.join(", ")}`)
+    console.log(`\nRun "jig run ${name} <entity>" or "jig run ${name} all"`)
+    return
+  }
+
+  // Grouped — run all
+  if (entity === "all") {
+    for (const e of entities) {
+      console.log(`\n--- ${name}/${e} ---`)
+      await exec(join(jigsDir, name, `${e}.ts`)).exited
+    }
+    process.exit(0)
+  }
+
+  // Grouped — run one
+  if (!entities.includes(entity)) { console.error(`Entity not found: ${name}/${entity}`); process.exit(1) }
+  process.exit(await exec(join(jigsDir, name, `${entity}.ts`)).exited)
 }

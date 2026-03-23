@@ -8,13 +8,15 @@
   "scripts": {
     "dev": "bun run jigs/weekly-update.ts",
     "jig": "bun run src/cli.ts",
-    "typegen": "bun run src/mcp/typegen.ts"
+    "typegen": "bun run src/mcp/typegen.ts",
+    "test": "bun test"
   },
   "bin": {
     "jig": "src/cli.ts"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "vitest": "^4.1.1"
   },
   "peerDependencies": {
     "typescript": "^5"

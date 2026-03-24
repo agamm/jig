@@ -19,6 +19,6 @@
       "jig/*": ["./src/*"]
     }
   },
-  "include": ["src/**/*.ts", "jigs/**/*.ts", ".jig/types/**/*.ts"],
+  "include": ["src/**/*.ts", "jigs/**/*.ts", ".jig/types/**/*.ts", ".jig/connections/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }

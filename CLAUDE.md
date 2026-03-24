@@ -54,6 +54,10 @@
 - **No personal or client info in code** — never commit real company names, contact details, repo names, or email addresses. Use generic placeholders ("CompanyName", "repo-name", "Your Name").
 - Examples in comments/docs should use fictional names only.
 
+## Code Style
+- **Programmatic over subprocess** — use library APIs (e.g. TypeScript compiler API, Bun APIs) instead of spawning CLI tools. Keeps things faster, more portable, and dashboard-ready.
+- **Abstract all I/O** — business logic must never call `console.log`, `process.exit`, or read `process.stdin` directly. Pass I/O through callback interfaces (like `JigIO`) so the same logic works from CLI and dashboard. The CLI file is thin glue that wires IO; the modules are reusable.
+
 ## Core Principles
 - **Simplicity First**: Make every change as simple as possible. Impact minimal code.
 - **No Laziness**: Find root causes. No temporary fixes. Senior developer standards.

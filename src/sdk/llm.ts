@@ -1,3 +1,4 @@
+import { join } from "path"
 import OpenAI from "openai"
 import type { JigTool } from "./jig.js"
 import { spinner } from "./spinner.js"
@@ -25,9 +26,10 @@ function getClient(): OpenAI {
 export async function llm<T = string>(
   prompt: string,
   data: Record<string, any>,
-  options?: { schema?: Record<string, string>; model?: string }
+  options?: { schema?: Record<string, string>; model?: string; maxTokens?: number }
 ): Promise<T> {
   const model = options?.model ?? DEFAULT_MODEL
+  const maxTokens = options?.maxTokens ?? 4096
   const userContent = `${prompt}\n\nData:\n${JSON.stringify(data, null, 2)}`
 
   if (options?.schema) {
@@ -38,7 +40,7 @@ export async function llm<T = string>(
 
     const response = await getClient().chat.completions.create({
       model,
-      max_tokens: 4096,
+      max_tokens: maxTokens,
       messages: [{ role: "user", content: userContent }],
       response_format: {
         type: "json_schema",
@@ -62,7 +64,7 @@ export async function llm<T = string>(
 
   const response = await getClient().chat.completions.create({
     model,
-    max_tokens: 4096,
+    max_tokens: maxTokens,
     messages: [{ role: "user", content: userContent }],
   })
 
@@ -84,7 +86,7 @@ export async function llm<T = string>(
 export async function agent<T = string>(
   prompt: string,
   tools: JigTool<any, any>[],
-  options?: { schema?: Record<string, string>; model?: string }
+  options?: { schema?: Record<string, string>; model?: string; maxTokens?: number }
 ): Promise<T> {
   const model = options?.model ?? DEFAULT_MODEL
   spinner.show("agent")
@@ -99,9 +101,10 @@ export async function agent<T = string>(
 async function runAgent<T>(
   prompt: string,
   tools: JigTool<any, any>[],
-  options?: { schema?: Record<string, string>; model?: string }
+  options?: { schema?: Record<string, string>; model?: string; maxTokens?: number }
 ): Promise<T> {
   const model = options?.model ?? DEFAULT_MODEL
+  const maxTokens = options?.maxTokens ?? 4096
 
   // Build tool mapping and OpenAI tool definitions
   const toolMap = new Map<string, JigTool<any, any>>()
@@ -130,7 +133,7 @@ async function runAgent<T>(
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const response = await getClient().chat.completions.create({
       model,
-      max_tokens: 4096,
+      max_tokens: maxTokens,
       messages,
       tools: toolDefs,
     })
@@ -143,7 +146,7 @@ async function runAgent<T>(
     // If no tool calls, we're done — optionally structure the final response
     if (!message.tool_calls?.length) {
       if (options?.schema) {
-        return await structureResponse(messages, options.schema, model)
+        return await structureResponse(messages, options.schema, model, maxTokens)
       }
       return (message.content ?? "") as T
     }
@@ -193,7 +196,8 @@ async function runAgent<T>(
 async function structureResponse<T>(
   messages: OpenAI.ChatCompletionMessageParam[],
   schema: Record<string, string>,
-  model: string
+  model: string,
+  maxTokens: number = 4096
 ): Promise<T> {
   const properties: Record<string, any> = {}
   for (const [key, type] of Object.entries(schema)) {
@@ -202,7 +206,7 @@ async function structureResponse<T>(
 
   const response = await getClient().chat.completions.create({
     model,
-    max_tokens: 4096,
+    max_tokens: maxTokens,
     messages: [
       ...messages,
       {
@@ -238,7 +242,6 @@ async function loadToolSchema(
   toolName: string
 ): Promise<{ description?: string; inputSchema?: any } | null> {
   try {
-    const { join } = await import("path")
     const schemasPath = join(import.meta.dir, "../../.jig/schemas", `${serverName}.json`)
     const tools = await Bun.file(schemasPath).json()
     return tools.find((t: any) => t.name === toolName) ?? null

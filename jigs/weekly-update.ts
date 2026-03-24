@@ -5,7 +5,7 @@
  * Copy this file into a grouped jig folder and customize per client.
  */
 import { join } from "path"
-import { jig, run, llm, agent } from "../src/index.js"
+import { jig, agent } from "../src/index.js"
 import { granola } from "../.jig/connections/granola.js"
 import { workspace } from "../.jig/connections/workspace.js"
 import { github } from "../.jig/connections/github.js"
@@ -76,7 +76,7 @@ Also figure out:
       { schema: { email: "string", to: "string", cc: "string", subject: "string" } }
     )
 
-    console.log(result.email)
+    ctx.log(result.email)
 
     // Create Gmail draft
     const draft = await workspace.gmail_createDraft({
@@ -88,10 +88,8 @@ Also figure out:
 
     const draftData = typeof draft === "object" ? draft as any : {}
     const messageId = draftData?.message?.id ?? draftData?.id ?? ""
-    console.log(`\nhttps://mail.google.com/mail/u/0/#drafts/${messageId}`)
+    ctx.log(`\nhttps://mail.google.com/mail/u/0/#drafts/${messageId}`)
   }
 )
 
-await run(weeklyUpdate)
-
-process.exit(0)
+export default weeklyUpdate

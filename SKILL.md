@@ -23,7 +23,7 @@ The goal: minimize what the LLM does at runtime. If you can hardcode it, hardcod
 Define a jig. The `tools` array is the permission boundary — nothing outside it can be called.
 
 ```typescript
-import { jig, run, llm, agent } from "../src/index.js"
+import { jig, llm, agent } from "../src/index.js"
 import { granola } from "../.jig/connections/granola.js"
 import { workspace } from "../.jig/connections/workspace.js"
 
@@ -37,16 +37,19 @@ const myJig = jig("my-jig", {
   const { company, recipient } = ctx.params
   // ...
 })
+
+export default myJig
 ```
 
-### `run(definition, params)`
+### `run(definition, params)` — called by the CLI, not by jig files
 
-Execute a jig. Missing params prompt interactively in TTY, fail in cron/pipe.
+Jig files just `export default myJig`. The CLI imports and calls `run()`.
 
 ```typescript
-await run(myJig, { company: "Acme" })
-// → prompts for `recipient` if running in terminal
-// → throws with clear error if running from cron
+// In jig files: just export
+export default myJig
+
+// The CLI handles execution, param prompting, dry-run, etc.
 ```
 
 ### `llm(prompt, data, options?)`
@@ -79,6 +82,16 @@ const data = await agent(
 This is the "bigger hatch" — use it when the task requires judgment about
 *how* to gather or process data. The agent might search, read results, search
 again with a refined query, etc.
+
+### `ctx.log(...args)`
+
+Write output. Never use `console.log()` in jig handlers — always `ctx.log()`.
+Output is captured by the runtime for dry-run, dashboard display, and testing.
+
+```typescript
+ctx.log(result.email)
+ctx.log(`Draft: https://mail.google.com/mail/u/0/#drafts/${id}`)
+```
 
 ### `ctx.parallel(...promises)`
 
@@ -151,7 +164,7 @@ async (ctx) => {
 
   // 3. Code acts (always happens, no LLM decision)
   const draft = await workspace.gmail_createDraft({ subject: "...", body: email })
-  console.log(`Draft: ${draft.id}`)
+  ctx.log(`Draft: ${draft.id}`)
 }
 ```
 

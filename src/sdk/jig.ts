@@ -1,4 +1,3 @@
-import { createInterface } from "node:readline/promises"
 import { Context } from "./context.js"
 
 /**
@@ -34,34 +33,18 @@ export function jig(
 }
 
 /**
- * Run a jig. Prompts for missing params in interactive mode.
+ * Run a jig with the given params. Pure execution — no I/O.
+ * Param prompting is the caller's responsibility (CLI uses io.ask, dashboard uses a form).
+ * Returns the context so callers can access captured output.
  */
 export async function run(
   definition: JigDefinition,
-  params: Record<string, string> = {}
-): Promise<void> {
-  const paramDefs = definition.options.params ?? {}
-  const missing = Object.keys(paramDefs).filter((name) => !params[name])
-
-  if (missing.length > 0) {
-    if (!process.stdin.isTTY) {
-      const list = missing.map((n) => `  ${n} — ${paramDefs[n]}`).join("\n")
-      throw new Error(`Missing required params:\n${list}`)
-    }
-
-    const rl = createInterface({ input: process.stdin, output: process.stdout })
-    for (const name of missing) {
-      const answer = await rl.question(`${name} (${paramDefs[name]}): `)
-      if (!answer.trim()) {
-        rl.close()
-        throw new Error(`Required param "${name}" cannot be empty`)
-      }
-      params[name] = answer.trim()
-    }
-    rl.close()
-  }
-
+  params: Record<string, string> = {},
+  options?: { silent?: boolean }
+): Promise<Context> {
   const toolNames = (definition.options.tools ?? []).map((t) => t._toolName)
   const ctx = new Context(params, toolNames)
+  if (options?.silent) ctx.setSink(() => {})
   await definition.handler(ctx)
+  return ctx
 }

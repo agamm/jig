@@ -69,8 +69,8 @@ Focus on outcomes and progress, not technical details. Skip implementation speci
 Skip sections with no data.
 
 Also figure out:
-- The single primary recipient (to) — exactly one email address. Pick the main client contact from meeting participants, email threads, or calendar attendees.
-- CC — check the last weekly update email thread for CC'd people. Only include people who were previously CC'd, not every meeting attendee. Never put more than one address in "to".
+- The single primary recipient (to) — exactly one email address. Pick the main client contact from meeting participants, email threads, or calendar attendees. Always prefer business/work email addresses (company domains) over personal ones (gmail.com, yahoo.com, etc.).
+- CC — check the last weekly update email thread for CC'd people. Only include people who were previously CC'd, not every meeting attendee. Never put more than one address in "to". Same rule: prefer business emails.
 - A good subject line.`,
       gatherTools,
       { schema: { email: "string", to: "string", cc: "string", subject: "string" } }

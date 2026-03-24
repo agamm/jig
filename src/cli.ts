@@ -283,12 +283,17 @@ async function connect(serverName: string | undefined, io: JigIO) {
   }
 
   const { getServerConfig } = await import("./mcp/config.js")
-  const { connectServer, discoverTools } = await import("./mcp/client.js")
+  const { connectServer, discoverTools, ensureAnnotations } = await import("./mcp/client.js")
 
   io.emit({ type: "connecting", server: serverName })
   const config = await getServerConfig(serverName)
   const connection = await connectServer(serverName, config)
   const tools = await discoverTools(connection)
+
+  // LLM classifies read/write annotations — only during jig connect, not runtime
+  await ensureAnnotations(tools)
+  // Re-save schemas with enriched annotations
+  await Bun.write(join(SCHEMAS_DIR, `${serverName}.json`), JSON.stringify(tools, null, 2))
 
   io.emit({ type: "tools-discovered", server: serverName, count: tools.length, tools: tools.map(t => t.name) })
 

@@ -168,6 +168,44 @@ export async function discoverTools(connection: McpConnection): Promise<Tool[]> 
 }
 
 /**
+ * Ensures every tool has readOnlyHint and destructiveHint annotations.
+ * Uses LLM to infer missing ones and verify existing ones.
+ * Called once during `jig connect`, not on subsequent runtime connections.
+ */
+export async function ensureAnnotations(tools: Tool[]): Promise<void> {
+  const { llm } = await import("../sdk/llm.js")
+
+  const toolList = tools.map(t => {
+    const ann = (t as any).annotations
+    const existing = ann?.readOnlyHint !== undefined ? ` [readOnlyHint=${ann.readOnlyHint}]` : ""
+    return `${t.name}:${existing} ${t.description ?? ""}`
+  }).join("\n")
+
+  const result = await llm<{ readOnly: string[]; destructive: string[] }>(
+    `For each tool, determine:
+1. "readOnly": tools that ONLY retrieve/view data (no side effects)
+2. "destructive": tools that delete, overwrite, or permanently alter data
+
+Some tools already have [readOnlyHint=true/false] — verify those are correct and include/exclude them accordingly.
+Everything not in "readOnly" or "destructive" is a normal mutate tool (create, send, update).
+
+Tools:
+${toolList}`,
+    {},
+    { schema: { readOnly: "array", destructive: "array" } as any }
+  )
+
+  const readOnlySet = new Set(result.readOnly ?? [])
+  const destructiveSet = new Set(result.destructive ?? [])
+
+  for (const t of tools) {
+    if (!(t as any).annotations) (t as any).annotations = {}
+    ;(t as any).annotations.readOnlyHint = readOnlySet.has(t.name)
+    ;(t as any).annotations.destructiveHint = destructiveSet.has(t.name)
+  }
+}
+
+/**
  * Call a tool on a connected MCP server.
  */
 export async function callTool(

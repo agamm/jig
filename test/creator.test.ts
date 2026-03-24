@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest"
 import { stripCodeFences, extractImportedServers } from "../src/creator.js"
-import { isReadTool } from "../src/sdk/dryrun.js"
 import { Context } from "../src/sdk/context.js"
 import { jig, run } from "../src/sdk/jig.js"
 
@@ -52,18 +51,6 @@ import { github } from "../.jig/connections/github.js"`
     expect(extractImportedServers(
       `import { jig, run } from "../src/index.js"`
     )).toEqual([])
-  })
-})
-
-describe("isReadTool — download verb", () => {
-  it("classifies download tools as read", () => {
-    expect(isReadTool("drive_downloadFile")).toBe(true)
-    expect(isReadTool("gmail_downloadAttachment")).toBe(true)
-    expect(isReadTool("slides_downloadImages")).toBe(true)
-  })
-
-  it("mutation verbs still override download", () => {
-    expect(isReadTool("delete_downloadedFile")).toBe(false)
   })
 })
 

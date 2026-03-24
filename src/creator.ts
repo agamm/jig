@@ -8,8 +8,6 @@ import { join, relative, resolve } from "path"
 import { existsSync, readFileSync } from "fs"
 import ts from "typescript"
 import { llm, agent } from "./sdk/llm.js"
-import { createLazyServer } from "./sdk/connections.js"
-import { isReadTool } from "./sdk/dryrun.js"
 import { discoverJigs } from "./discover.js"
 import { loadServerConfigs } from "./mcp/config.js"
 import type { JigTool } from "./sdk/jig.js"
@@ -103,7 +101,7 @@ export async function createJig(description: string, io: JigIO): Promise<CreateR
   const context = await assembleContext(plan.servers, relevantTools)
 
   // 6. Probe — scoped to relevant tools only
-  const readTools = loadReadOnlyTools(plan.servers, relevantTools)
+  const readTools = await loadReadOnlyTools(plan.servers, relevantTools)
   io.emit({ type: "probe-start", tools: readTools.map(t => `${t._serverName}.${t._toolName}`) })
   const probeResults = await probe(description, readTools, context.toolCatalog)
   io.emit({ type: "probe-done", summary: probeResults })
@@ -182,7 +180,7 @@ export async function editJig(
   // Probe only for new servers, scoped to relevant tools
   let probeResults = ""
   if (newServers.length > 0) {
-    const readTools = loadReadOnlyTools(newServers, relevantTools)
+    const readTools = await loadReadOnlyTools(newServers, relevantTools)
     io.emit({ type: "probe-start", tools: readTools.map(t => `${t._serverName}.${t._toolName}`) })
     probeResults = await probe(instruction, readTools, context.toolCatalog)
     io.emit({ type: "probe-done", summary: probeResults })
@@ -345,24 +343,27 @@ export class CreatorError extends Error {
 // loadReadOnlyTools
 // ---------------------------------------------------------------------------
 
-function loadReadOnlyTools(servers: string[], relevantTools?: string[]): JigTool<any, any>[] {
+const CONNECTIONS_DIR = join(PROJECT_ROOT, ".jig/connections")
+
+async function loadReadOnlyTools(servers: string[], relevantTools?: string[]): Promise<JigTool<any, any>[]> {
   const tools: JigTool<any, any>[] = []
   const toolSet = relevantTools?.length ? new Set(relevantTools) : null
 
   for (const serverName of servers) {
+    // Import the generated connection module — it has the tool functions with metadata
+    const modPath = join(CONNECTIONS_DIR, `${serverName}.ts`)
+    if (!existsSync(modPath)) continue
+    const mod = await import(modPath)
+
+    // Filter to read-only + relevant tools using schema annotations
     const schemaPath = join(SCHEMAS_DIR, `${serverName}.json`)
     if (!existsSync(schemaPath)) continue
-
     const schemas: any[] = JSON.parse(readFileSync(schemaPath, "utf-8"))
-    const readToolNames = schemas
-      .filter(t => isReadTool(t.name))
-      .filter(t => !toolSet || toolSet.has(t.name))
-      .map(t => t.name)
-    if (readToolNames.length === 0) continue
 
-    const server = createLazyServer(serverName, readToolNames)
-    for (const name of readToolNames) {
-      tools.push(server[name])
+    for (const t of schemas) {
+      if (!t.annotations?.readOnlyHint) continue
+      if (toolSet && !toolSet.has(t.name)) continue
+      if (mod[t.name]) tools.push(mod[t.name])
     }
   }
 

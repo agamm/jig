@@ -80,15 +80,16 @@ interface CreatorContext {
 // ---------------------------------------------------------------------------
 
 export async function createJig(description: string, io: JigIO): Promise<CreateResult> {
-  // 1. Plan: identify servers, tool prefixes, and filename in one LLM call
+  // 1. Plan: identify servers + filename
   const serverConfigs = await loadServerConfigs()
   const plan = await planJig(description, serverConfigs)
 
-  // 2. Emit plan so user sees what the creator understood
-  io.emit({ type: "plan", servers: plan.servers, relevantTools: plan.relevantTools, name: plan.name })
-
-  // 3. Check connections
+  // 2. Check connections
   checkConnections(plan.servers, plan.unknownServers, serverConfigs, io)
+
+  // 3. Select relevant tools (dedicated LLM call with full descriptions)
+  const relevantTools = await selectTools(description, plan.servers)
+  io.emit({ type: "plan", servers: plan.servers, relevantTools, name: plan.name })
 
   // 4. Check filename
   const name = plan.name
@@ -99,10 +100,10 @@ export async function createJig(description: string, io: JigIO): Promise<CreateR
   }
 
   // 5. Assemble context
-  const context = await assembleContext(plan.servers, plan.relevantTools)
+  const context = await assembleContext(plan.servers, relevantTools)
 
   // 6. Probe — scoped to relevant tools only
-  const readTools = loadReadOnlyTools(plan.servers, plan.relevantTools)
+  const readTools = loadReadOnlyTools(plan.servers, relevantTools)
   io.emit({ type: "probe-start", tools: readTools.map(t => `${t._serverName}.${t._toolName}`) })
   const probeResults = await probe(description, readTools, context.toolCatalog)
   io.emit({ type: "probe-done", summary: probeResults })
@@ -175,12 +176,13 @@ export async function editJig(
   }
 
   const allServers = [...new Set([...importedServers, ...plan.servers])]
-  const context = await assembleContext(allServers, plan.relevantTools)
+  const relevantTools = newServers.length > 0 ? await selectTools(instruction, allServers) : []
+  const context = await assembleContext(allServers, relevantTools)
 
   // Probe only for new servers, scoped to relevant tools
   let probeResults = ""
   if (newServers.length > 0) {
-    const readTools = loadReadOnlyTools(newServers, plan.relevantTools)
+    const readTools = loadReadOnlyTools(newServers, relevantTools)
     io.emit({ type: "probe-start", tools: readTools.map(t => `${t._serverName}.${t._toolName}`) })
     probeResults = await probe(instruction, readTools, context.toolCatalog)
     io.emit({ type: "probe-done", summary: probeResults })
@@ -205,13 +207,12 @@ export async function editJig(
 }
 
 // ---------------------------------------------------------------------------
-// planJig — single LLM call: servers, relevant tools, filename
+// planJig — identifies servers + filename
 // ---------------------------------------------------------------------------
 
 interface JigPlan {
   servers: string[]
   unknownServers: string[]
-  relevantTools: string[]
   name: string
 }
 
@@ -235,21 +236,7 @@ async function planJig(
     .filter(Boolean)
     .join("\n")
 
-  // Build tool list per server from schemas
-  const toolsByServer = entries
-    .map(([name]) => {
-      const schemaPath = join(SCHEMAS_DIR, `${name}.json`)
-      if (!existsSync(schemaPath)) return ""
-      const schemas: any[] = JSON.parse(readFileSync(schemaPath, "utf-8"))
-      const toolList = schemas.map(t => `${t.name}: ${t.description?.split("\n")[0] ?? ""}`)
-      return `  "${name}":\n    ${toolList.join("\n    ")}`
-    })
-    .filter(Boolean)
-    .join("\n")
-
-  const result = await llm<{
-    servers: string[]; unknownServers: string[]; relevantTools: string[]; name: string
-  }>(
+  const result = await llm<{ servers: string[]; unknownServers: string[]; name: string }>(
     `Plan a workflow automation.
 
 ## Available servers (use ONLY these key names)
@@ -257,36 +244,60 @@ ${serverList}
 
 ${keywordHints}
 
-## Tools by server
-${toolsByServer}
-
 ## Task
 For this workflow: "${description}"
 
 1. "servers": which server keys does this need?
 2. "unknownServers": services mentioned that don't match any server above
-3. "relevantTools": which specific tool names from the lists above would this workflow use? Only include tools it actually needs.
-4. "name": a short kebab-case filename, 2-3 words, descriptive`,
+3. "name": a short kebab-case filename, 2-3 words, descriptive`,
     {},
-    { schema: { servers: "array", unknownServers: "array", relevantTools: "array", name: "string" } as any }
+    { schema: { servers: "array", unknownServers: "array", name: "string" } as any }
   )
 
   const validServers = (result.servers || []).filter(s => s in serverConfigs)
   const invalidServers = (result.servers || []).filter(s => !(s in serverConfigs))
 
-  const safeName = (result.name || "new-jig")
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    || "new-jig"
-
   return {
     servers: validServers,
     unknownServers: [...(result.unknownServers || []), ...invalidServers],
-    relevantTools: result.relevantTools || [],
-    name: safeName,
+    name: (result.name || "new-jig")
+      .toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "new-jig",
   }
+}
+
+// ---------------------------------------------------------------------------
+// selectTools — dedicated LLM call to pick relevant tools from full list
+// ---------------------------------------------------------------------------
+
+async function selectTools(description: string, servers: string[]): Promise<string[]> {
+  let toolList = ""
+  for (const serverName of servers) {
+    const schemaPath = join(SCHEMAS_DIR, `${serverName}.json`)
+    if (!existsSync(schemaPath)) continue
+    const schemas: any[] = JSON.parse(readFileSync(schemaPath, "utf-8"))
+    toolList += `\n## ${serverName}\n`
+    for (const t of schemas) {
+      toolList += `  ${t.name}: ${t.description ?? ""}\n`
+    }
+  }
+
+  const result = await llm<{ tools: string[] }>(
+    `Select which tools a workflow automation would need.
+
+## Available tools
+${toolList}
+
+## Workflow
+${description}
+
+Start by including ALL tools from the relevant servers. Then remove only tools that are clearly irrelevant to this workflow. When in doubt, keep the tool — it's much better to include an extra tool than to miss one the workflow needs.
+
+Return "tools": an array of tool name strings.`,
+    {},
+    { schema: { tools: "array" } as any }
+  )
+
+  return result.tools || []
 }
 
 // ---------------------------------------------------------------------------
@@ -492,13 +503,34 @@ ${description}
   }
 
   prompt += `
-## Rules
+## Rules (in priority order)
+
+### 1. Maximize determinism (most important)
+Follow SKILL.md's determinism hierarchy — prefer direct tool calls > llm() > agent():
+- Direct call when you know the tool + params at write time (e.g. list_meetings({ time_range: "last_week" }))
+- llm() for synthesis, writing, or classification from known data (one call, no tools, deterministic given input)
+- agent() only when the sequence of tool calls requires runtime judgment (e.g. search → read results → search deeper)
+A single agent() wrapping everything is acceptable when the workflow is genuinely fuzzy end-to-end, but default to breaking steps apart.
+
+### 2. Show progress
+Use ctx.log() to show status before each step so the user knows what's happening:
+  ctx.log("Listing meetings...")
+  const meetings = await granola.list_meetings(...)
+  ctx.log("Analyzing insights...")
+  const insights = await llm(...)
+
+### 3. Only add params when the user's description implies configurability
+If the user said "last week", hardcode "last_week" — don't make it a param they'll be prompted for.
+Params are for things the user would genuinely want to change each run.
+
+### 4. Use all relevant tools
+The tools array and probe results show what's available. Use multiple tools to get richer data — don't rely on a single tool when others would improve the result.
+
+### 5. Code format
 - Output ONLY TypeScript code. No explanation, no markdown fences.
 - Import SDK from "${options.importPrefix}/src/index.js" (jig, llm, agent)
 - Import connections from "${options.importPrefix}/.jig/connections/{server}.js"
-- Follow SKILL.md patterns: agent() for fuzzy gathering, llm() for content generation, direct tool calls for actions
-- Use exact param names and types from the type definitions above
-- Separate gather tools (given to agent) from action tools (called directly)
+- Use exact param names and types from the type definitions and schemas above
 - Use ctx.log() for output, NEVER console.log()
 - End the file with: export default myJig (do NOT call run() or process.exit())
 - Do NOT use require() or CommonJS imports
@@ -657,25 +689,26 @@ async function reviewDryRun(
   dryRunOutput: string
 ): Promise<{ issues: string | null }> {
   const result = await llm<{ ok: boolean; issues: string }>(
-    `Review this jig's dry-run output. Does it look correct for the stated goal?
+    `A jig was created for the goal below and dry-run tested. Review whether it works.
 
-## Goal
+## User's Goal
 ${description}
 
-## Jig Code
+## Generated Jig Code
 ${code}
 
-## Dry-Run Output
+## Dry-Run Output (write tools are stubbed with [dry-run])
 ${dryRunOutput}
 
-Check:
-1. Did the jig connect to the right services?
-2. Did it gather relevant data (or show [dry-run] stubs for write operations)?
-3. Are there any runtime errors, missing tools, or unexpected failures?
-4. Does the output structure match what the goal requires?
+Review against the user's goal:
+1. Does the jig address what the user actually asked for? (e.g. if they asked for "insights from meetings", does it actually extract insights, not just list meetings?)
+2. Did it successfully connect and gather relevant data?
+3. Are there runtime errors, missing tools, or failures in the output?
+4. For write actions (drafts, sends, etc.) — are the [dry-run] stubs showing the right intent?
+5. Is the output useful and complete for the stated goal, or is it missing key parts?
 
-If everything looks good, set ok=true and issues="".
-If there are problems, set ok=false and describe the specific issues to fix.`,
+If the jig accomplishes the goal correctly (even if dry-run stubs some writes), set ok=true and issues="".
+If there are real problems with correctness, missing functionality, or errors, set ok=false and describe specific issues to fix in the code.`,
     {},
     { schema: { ok: "boolean", issues: "string" } }
   )

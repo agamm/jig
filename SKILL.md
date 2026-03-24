@@ -150,34 +150,44 @@ Use `agent()` only where you genuinely need fuzzy judgment.
 
 ---
 
-## Pattern: Split Gathering from Action
+## Pattern: Maximize Determinism
 
-The best jigs separate fuzzy intelligence from deterministic execution:
+The best jigs push as much as possible into code. The determinism hierarchy:
+
+1. **Direct tool calls / code** — known params, always the same (most deterministic)
+2. **`llm()`** — one LLM call, no tool access, deterministic given the same input
+3. **`agent()`** — LLM with tools, multiple calls, variable order (least deterministic)
+
+Before using `agent()`, ask: "Do I know the tool name and params at write time?"
+- `list_meetings({ time_range: "last_week" })` → **yes, direct call**
+- `gmail_search({ query: "from:client subject:invoice" })` → **yes, direct call**
+- "extract action items from this text" → **llm() — synthesis from known data**
+- "search for relevant data, read the best results, then search deeper" → **agent() — fuzzy multi-step**
 
 ```typescript
 async (ctx) => {
-  // 1. Agent gathers (fuzzy — needs judgment about what to fetch)
-  const data = await agent("Find relevant meetings and emails", gatherTools)
+  // 1. Direct calls — known params, always the same
+  const data = await someConnection.list_items({ time_range: "last_week" })
 
-  // 2. LLM generates content (deterministic given data)
-  const email = await llm("Write the email", { data }) as string
+  // 2. Agent — only for steps that need judgment about what to fetch next
+  const details = await agent("Dig deeper into the most relevant items", [...tools], { data })
 
-  // 3. Code acts (always happens, no LLM decision)
-  const draft = await workspace.gmail_createDraft({ subject: "...", body: email })
-  ctx.log(`Draft: ${draft.id}`)
+  // 3. LLM — synthesize from gathered data (deterministic given input)
+  const summary = await llm("Summarize key insights", { data, details })
+
+  // 4. Code acts — deterministic side effects
+  await someConnection.create_draft({ body: summary as string })
 }
 ```
 
 ### Why not one big `agent()` call?
 
-If you give the agent gather tools AND action tools (like `gmail_createDraft`),
-you lose control:
+Wrapping everything in `agent()` is the pattern Jig exists to eliminate:
 
-- **Ordering** — the agent might draft before it's done gathering
-- **Side effects** — sending/creating should never be at the LLM's discretion
-- **Debugging** — you can't tell what the agent decided to do
 - **Token cost** — the LLM routes every step, every run
-- **Compilation** — no stable pattern to observe and optimize later
+- **Unreliable** — the agent might skip steps or call them in wrong order
+- **Not compilable** — no stable pattern to observe and optimize later
+- **Debugging** — you can't tell what the agent decided to do
 
 ### Why not all deterministic?
 

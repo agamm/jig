@@ -30,20 +30,58 @@ if (dryRun) {
 // CLI renderer — turns structured events into terminal output
 // ---------------------------------------------------------------------------
 
+// Loading timer — shows elapsed seconds on the current line via \r overwrite
+let loadingTimer: Timer | null = null
+let loadingStart = 0
+let loadingLabel = ""
+
+function startLoading(label: string) {
+  stopLoading()
+  loadingStart = Date.now()
+  loadingLabel = label
+  if (process.stderr.isTTY) {
+    const tick = () => {
+      const secs = ((Date.now() - loadingStart) / 1000).toFixed(0)
+      process.stderr.write(`\r\x1b[2K${label} ${secs}s`)
+    }
+    tick()
+    loadingTimer = setInterval(tick, 1000)
+  } else {
+    console.log(label)
+  }
+}
+
+function stopLoading() {
+  if (loadingTimer) {
+    clearInterval(loadingTimer)
+    loadingTimer = null
+    process.stderr.write(`\r\x1b[2K`)
+  }
+}
+
+function finishLoading(result: string) {
+  const secs = ((Date.now() - loadingStart) / 1000).toFixed(1)
+  stopLoading()
+  console.log(`${result} (${secs}s)`)
+}
+
 function renderEvent(event: JigEvent): void {
   switch (event.type) {
     // Creator events
     case "connections":
+      stopLoading()
       console.log("\nChecking connections...")
       for (const s of event.servers) {
         console.log(`  ${s.name} ${s.connected ? "\u2713" : "\u2717"}  ${s.description}`)
       }
       break
     case "connections-missing":
+      stopLoading()
       console.error("\nThis jig needs services that aren't connected yet. Run:\n")
       for (const s of event.servers) console.error(`  ${s.command}`)
       break
     case "connections-unknown":
+      stopLoading()
       for (const s of event.servers) {
         console.error(`\n"${s.name}" isn't a predefined service. To add it:\n`)
         console.error(`1. Add to servers/default.json:`)
@@ -52,47 +90,60 @@ function renderEvent(event: JigEvent): void {
       }
       break
     case "plan":
+      finishLoading("Planning...")
       console.log(`\nPlan: ${event.name}`)
       console.log(`  Servers: ${event.servers.join(", ")}`)
       console.log(`  Tool scope: ${event.relevantTools.join(", ")}`)
       break
     case "probe-start":
+      // No loading timer — agent() has its own spinner
+      loadingStart = Date.now()
       console.log(`\nProbing ${event.tools.length} tools...`)
       for (const t of event.tools) console.log(`  ${t}`)
       break
-    case "probe-done":
-      // Truncate probe summary to keep CLI output scannable
+    case "probe-done": {
+      const secs = ((Date.now() - loadingStart) / 1000).toFixed(1)
       const lines = event.summary.split("\n")
       const preview = lines.length > 12 ? [...lines.slice(0, 10), `  ... (${lines.length - 10} more lines)`] : lines
-      console.log(`\nProbe results:`)
+      console.log(`\nProbe results (${secs}s):`)
       for (const l of preview) console.log(`  ${l}`)
       break
+    }
     case "generate-start":
-      console.log("\nGenerating jig...")
+      console.log(""); startLoading("Generating jig...")
       break
     case "write":
+      finishLoading("Generating jig...")
       console.log(`Writing ${event.file}...`)
       break
     case "validate":
+      stopLoading()
       console.log(event.ok ? "Validating... ok" : `Validating... errors found\n${event.errors}`)
       break
     case "fix":
-      console.log(`Fixing... attempt ${event.attempt}/${event.max}`)
+      startLoading(`Fixing... attempt ${event.attempt}/${event.max}`)
       break
     case "dry-run-start":
-      console.log("\nDry-running jig...")
+      // No loading timer — the jig's agent() has its own spinner
+      loadingStart = Date.now()
+      console.log("\nDry-running...")
       break
-    case "dry-run-review":
-      console.log(event.ok ? "Dry-run review... ok" : `Dry-run review found issues:\n${event.issues}`)
+    case "dry-run-review": {
+      const secs = ((Date.now() - loadingStart) / 1000).toFixed(1)
+      console.log(event.ok ? `Dry-run review... ok (${secs}s)` : `Dry-run review found issues (${secs}s):\n${event.issues}`)
       break
+    }
     case "created":
+      stopLoading()
       console.log(`\nCreated: ${event.file}`)
       console.log(`Run with: jig run ${event.name}`)
       break
     case "updated":
+      stopLoading()
       console.log(`\nUpdated: ${event.file}`)
       break
     case "error":
+      stopLoading()
       console.error(event.message)
       if (event.details?.suggestion) console.error(`Try: ${event.details.suggestion}`)
       if (event.details?.commands) {
@@ -178,6 +229,7 @@ try {
     case "new": {
       const { createJig } = await import("./creator.js")
       const desc = rest.join(" ") || await io.ask("What should this jig do?")
+      console.log(""); startLoading("Planning...")
       await createJig(desc, io)
       process.exit(0)
       break
@@ -188,6 +240,7 @@ try {
       const [name, entity] = rest
       if (!name) { io.emit({ type: "error", code: "usage", message: "Usage: jig edit <name> [entity]" }); process.exit(1) }
       const instruction = await io.ask("What should change?")
+      console.log(""); startLoading("Planning...")
       await editJig(name, entity ?? undefined, instruction, io)
       process.exit(0)
       break

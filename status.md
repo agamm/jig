@@ -21,45 +21,46 @@
 - [x] Upstream/clone distribution model
 - [x] Better error messages (missing connections, missing API key)
 - [x] Phase B: create Gmail draft from generated email
+- [x] `jig new` / `jig edit` — AI jig authoring (v0.1)
+- [x] Structured `JigEvent` I/O — all CLI output via events, dashboard-ready
+- [x] Jig files are importable modules (`export default`) — no more auto-execute
+- [x] `run()` is pure execution — param prompting via caller (CLI/dashboard)
+- [x] `ctx.log()` replaces `console.log` in jig handlers — captured, testable
+- [x] Programmatic tsc validation via TypeScript compiler API
+- [x] Creator pipeline: plan → select tools → check connections → probe → generate → validate/fix → dry-run + LLM review
+- [x] `download` added to read-tool verbs
 
 ## Roadmap
 
-### v0.1 — `jig new` / `jig edit` (AI jig authoring)
-- [ ] `jig new` — describe what you want, AI generates a jig file using SKILL.md + available tools
-- [ ] `jig edit <name>` — AI modifies an existing jig based on natural language instruction
-- [ ] `jig edit <name> <entity>` — edit a specific grouped jig variant
-- [ ] Feed SKILL.md, available connection types, and existing jig (for edit) as context
-- [ ] Write output directly to `jigs/` (or `jigs/<name>/` for grouped)
-
-### v0.2 — Dashboard + CLI
+### v0.1 — Dashboard + CLI
 - [ ] Dashboard (web UI): jig list, run detail, connections
 - [ ] `jig connections` CLI command
 - [ ] Run telemetry: model used, token count / estimated cost, wall-clock time per run
 
-### v0.3 — Permissions + Approval
+### v0.2 — Permissions + Approval
 - [ ] Standing permissions (always / ask / never) per action
 - [ ] `ctx.human()` approval flow
 - [ ] Approval queue in dashboard
 
-### v0.4 — Storage + Durability
+### v0.3 — Storage + Durability
 - [ ] SQLite via `bun:sqlite` (jig.db)
 - [ ] Run history with step results (append-only)
 - [ ] Durable step memoization (resume on crash)
 - [ ] `ctx.state` persistent key-value store
 - [ ] Dashboard: grouped jig view (entity list with per-entity run status)
 
-### v0.5 — Auto-Update
+### v0.4 — Auto-Update
 - [ ] On `jig start`, if `upstream` remote exists, `git pull upstream main` in background
 - [ ] Skip if no `upstream` remote (this IS the upstream)
 - [ ] Dashboard: show update indicator
 
-### v0.6 — Scheduling + Triggers
+### v0.5 — Scheduling + Triggers
 - [ ] Cron scheduler (persistent, survives restarts)
 - [ ] Event triggers (MCP webhooks)
 - [ ] Webhook server (trigger URLs per jig)
 - [ ] File watcher (hot reload jigs)
 
-### v0.7 — Compilation + Self-Healing
+### v0.6 — Compilation + Self-Healing
 - [ ] **Agent compilation**: observe `agent()` tool call order across runs, compile to static `llm()` + explicit tool calls when pattern stabilizes. Saves tokens, runs faster, fully deterministic.
 - [ ] **Agent fallback**: when a compiled jig step fails, fall back to `agent()` mode to self-heal. If it heals repeatedly, suggest recompiling with the new pattern.
 - [ ] Cost tracking per `llm()` and `agent()` call

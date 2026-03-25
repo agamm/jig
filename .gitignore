@@ -3,3 +3,4 @@ node_modules/
 .env
 jig.db
 .a5c/
+.worktrees/

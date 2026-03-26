@@ -6,12 +6,71 @@
  * Single URL for the user, no CORS.
  */
 import { join } from "path"
+import { createInterface } from "node:readline/promises"
 import { createApiServer } from "./server.js"
 
 const PROJECT_ROOT = join(import.meta.dir, "..")
 const DASHBOARD_DIR = join(PROJECT_ROOT, "dashboard")
 
-/** Try ports starting from `start` until one works. */
+/** Check if a port is free by briefly listening, then closing. */
+async function isPortFree(port: number): Promise<boolean> {
+  try {
+    const server = Bun.serve({ port, fetch: () => new Response("") })
+    server.stop(true)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Find the PID using a port (macOS/Linux). Returns null if not found. */
+async function findPidOnPort(port: number): Promise<number | null> {
+  try {
+    const proc = Bun.spawn(["lsof", "-ti", `TCP:${port}`, "-sTCP:LISTEN"], { stdout: "pipe", stderr: "pipe" })
+    const text = await new Response(proc.stdout).text()
+    await proc.exited
+    const pid = parseInt(text.trim().split("\n")[0])
+    return isNaN(pid) ? null : pid
+  } catch {
+    return null
+  }
+}
+
+/** Ensure a port is available — ask user to kill the occupier if needed. */
+async function ensurePort(port: number): Promise<number> {
+  if (await isPortFree(port)) return port
+
+  const pid = await findPidOnPort(port)
+  if (pid) {
+    console.log(`\n  Port ${port} is in use by PID ${pid}.`)
+    const rl = createInterface({ input: process.stdin, output: process.stdout })
+    const answer = await rl.question(`  Kill it and continue? [Y/n] `)
+    rl.close()
+
+    if (!answer || answer.toLowerCase().startsWith("y")) {
+      process.kill(pid, "SIGTERM")
+      // Wait briefly for the process to release the port
+      for (let i = 0; i < 10; i++) {
+        await new Promise(r => setTimeout(r, 300))
+        if (await isPortFree(port)) return port
+      }
+      console.log(`  Could not free port ${port}, finding another...`)
+    }
+  } else {
+    console.log(`\n  Port ${port} is in use.`)
+  }
+
+  // Fall back to finding a free port
+  for (let p = port + 1; p < port + 20; p++) {
+    if (await isPortFree(p)) {
+      console.log(`  Using port ${p} instead.`)
+      return p
+    }
+  }
+  throw new Error(`No free port found near ${port}`)
+}
+
+/** Try creating the API server, scanning ports if needed. */
 function tryServe(start: number): ReturnType<typeof createApiServer> {
   for (let port = start; port < start + 20; port++) {
     try {
@@ -25,13 +84,16 @@ function tryServe(start: number): ReturnType<typeof createApiServer> {
 
 export async function startServer(options?: { port?: number }) {
   const envPort = parseInt(process.env.PORT ?? "0")
-  const userPort = options?.port ?? (envPort || 3141)
+  const preferredPort = options?.port ?? (envPort || 3141)
 
-  // 1. Start Bun API server on an internal port
+  // 1. Ensure dashboard port is available
+  const userPort = await ensurePort(preferredPort)
+
+  // 2. Start Bun API server on an internal port
   const apiServer = tryServe(4173)
   const apiPort = apiServer.port
 
-  // 2. Start Next.js on user-facing port, with API port for rewrites
+  // 3. Start Next.js on the free user-facing port
   const nextProcess = Bun.spawn(["pnpm", "run", "dev", "--port", String(userPort)], {
     cwd: DASHBOARD_DIR,
     stdout: "inherit",
@@ -42,7 +104,7 @@ export async function startServer(options?: { port?: number }) {
   console.log(`\n  jig dashboard: http://localhost:${userPort}`)
   console.log(`  jig api:       http://localhost:${apiPort} (internal)\n`)
 
-  // 3. Open browser after Next.js is ready
+  // 4. Open browser after Next.js is ready
   setTimeout(async () => {
     try {
       const open = (await import("open")).default
@@ -50,7 +112,7 @@ export async function startServer(options?: { port?: number }) {
     } catch {}
   }, 2000)
 
-  // 4. Clean shutdown
+  // 5. Clean shutdown
   const cleanup = () => {
     nextProcess.kill()
     apiServer.stop(true)

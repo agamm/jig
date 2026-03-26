@@ -59,6 +59,7 @@
 - [ ] Event triggers (MCP webhooks)
 - [ ] Webhook server (trigger URLs per jig)
 - [ ] File watcher (hot reload jigs)
+- [ ] Resilient `jig start` — auto-restart on crash (watchdog process or systemd/launchd integration)
 
 ### v0.6 — Compilation + Self-Healing
 - [ ] **Agent compilation**: observe `agent()` tool call order across runs, compile to static `llm()` + explicit tool calls when pattern stabilizes. Saves tokens, runs faster, fully deterministic.

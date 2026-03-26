@@ -27,6 +27,7 @@ export function DashboardShell({
   const [selectedJig, setSelectedJig] = useState<string | null>(null);
   const [activeApproval, setActiveApproval] = useState<string | null>(null);
   const [reviewMode, setReviewMode] = useState(false);
+  const [isEditingExisting, setIsEditingExisting] = useState(false);
   const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
   const [selectedEntity, setSelectedEntity] = useState<string | null>(null);
   const [jigs, setJigs] = useState<Jig[]>(initialJigs);
@@ -68,11 +69,13 @@ export function DashboardShell({
     setSelectedEntity(null);
     setActiveApproval(null);
     setReviewMode(false);
+    setIsEditingExisting(false);
   }
 
   function handleReviewClick(jigId: string) {
     setSelectedJig(jigId);
     setReviewMode(true);
+    setIsEditingExisting(false); // From chat = new jig draft
     setActiveApproval(null);
     setSelectedEntity(null);
   }
@@ -144,11 +147,11 @@ export function DashboardShell({
         </main>
 
         {selectedJig && currentJig && !activeApproval && !reviewMode && (
-          <JigDetailPane jig={currentJig} selectedEntity={selectedEntity} onClose={() => { setDetailExpanded(false); closeDetail(); }} onEdit={() => { setReviewMode(true); }} expanded={detailExpanded} onToggleExpand={() => setDetailExpanded(!detailExpanded)} />
+          <JigDetailPane jig={currentJig} selectedEntity={selectedEntity} onClose={() => { setDetailExpanded(false); closeDetail(); }} onEdit={() => { setReviewMode(true); setIsEditingExisting(true); }} expanded={detailExpanded} onToggleExpand={() => setDetailExpanded(!detailExpanded)} />
         )}
 
         {selectedJig && currentJig && reviewMode && (
-          <ReviewPane jig={currentJig} onClose={closeDetail} isEditing={jigs.some(j => j.id === selectedJig)} />
+          <ReviewPane jig={currentJig} onClose={closeDetail} isEditing={isEditingExisting} />
         )}
 
         {activeApproval && !selectedJig && (

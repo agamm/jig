@@ -125,7 +125,8 @@ function buildEntityList(jigId: string, entities: string[]) {
 }
 
 function formatRuns(runs: ReturnType<typeof getJigRuns>) {
-  return runs.map((r) => ({
+  // Exclude in-progress runs — those are shown in the live progress panel
+  return runs.filter((r) => r.status !== "running").map((r) => ({
     date: r.started_at,
     duration: r.duration_ms ? `${(r.duration_ms / 1000).toFixed(1)}s` : "—",
     status: (r.status === "fail" ? "fail" : "success") as "success" | "fail",
@@ -154,6 +155,7 @@ function buildJigResponse(id: string, entities: string[], runLimit: number) {
     name: s.name,
     desc: s.description,
     cost: s.cost_hint ?? undefined,
+    connections: s.connections ? JSON.parse(s.connections) : [],
   }))
 
   // Stale detection: compare file hash against cached
@@ -246,7 +248,8 @@ async function handleRunJig(id: string, body: any): Promise<Response> {
         setDryRun(true)
       }
       const { run } = await import("./sdk/jig.js")
-      const mod = await import(jigPath)
+      // Cache-bust to pick up file changes (same pattern as creator.ts dryRunJig)
+      const mod = await import(`${jigPath}?t=${Date.now()}`)
       const def = mod.default
 
       const recorder: RunRecorder = {
@@ -263,6 +266,12 @@ async function handleRunJig(id: string, body: any): Promise<Response> {
       completeRun(runId, "success", Date.now() - startTime)
     } catch (e: any) {
       completeRun(runId, "fail", Date.now() - startTime, e?.message ?? String(e))
+      console.error(`Run ${runId} failed:`, e?.message ?? e)
+    } finally {
+      if (dryRun) {
+        const { setDryRun } = await import("./sdk/dryrun.js")
+        setDryRun(false)
+      }
     }
   })()
 
@@ -304,9 +313,12 @@ async function handleRecompile(id: string, body: any): Promise<Response> {
   const code = readFileSync(filePath, "utf-8")
 
   // TypeScript validation
-  const { validate } = await import("./creator.js")
-  const tsErrors = validate(filePath)
-  if (tsErrors) return json({ ok: false, error: `TypeScript errors:\n${tsErrors}` }, 400)
+  const { validateJigFile } = await import("./validate.js")
+  const validation = await validateJigFile(filePath)
+  if (!validation.ok) {
+    const errors = validation.errors.map(e => `${e.field}: ${e.message}`).join("\n")
+    return json({ ok: false, error: errors }, 400)
+  }
 
   // Re-derive steps
   const { deriveSteps } = await import("./creator.js")

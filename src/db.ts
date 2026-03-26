@@ -46,6 +46,7 @@ export interface JigStepRow {
   name: string
   description: string
   cost_hint: string | null
+  connections: string | null // JSON array of connection names
 }
 
 export interface JigMetaRow {
@@ -95,7 +96,8 @@ CREATE TABLE IF NOT EXISTS jig_steps (
   seq INTEGER NOT NULL,
   name TEXT NOT NULL,
   description TEXT NOT NULL,
-  cost_hint TEXT
+  cost_hint TEXT,
+  connections TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_jig_steps_jig ON jig_steps(jig_id, entity);
 
@@ -252,13 +254,14 @@ export function completeStep(
 export function upsertJigSteps(
   jigId: string,
   entity: string | null,
-  steps: { name: string; description: string; costHint: string | null }[]
+  steps: { name: string; description: string; costHint: string | null; connections?: string[] }[]
 ): void {
   const db = openDb()
   db.prepare(`DELETE FROM jig_steps WHERE jig_id = ? AND entity IS ?`).run(jigId, entity)
-  const stmt = db.prepare(`INSERT INTO jig_steps (jig_id, entity, seq, name, description, cost_hint) VALUES (?, ?, ?, ?, ?, ?)`)
+  const stmt = db.prepare(`INSERT INTO jig_steps (jig_id, entity, seq, name, description, cost_hint, connections) VALUES (?, ?, ?, ?, ?, ?, ?)`)
   for (let i = 0; i < steps.length; i++) {
-    stmt.run(jigId, entity, i + 1, steps[i].name, steps[i].description, steps[i].costHint)
+    const conns = steps[i].connections?.length ? JSON.stringify(steps[i].connections) : null
+    stmt.run(jigId, entity, i + 1, steps[i].name, steps[i].description, steps[i].costHint, conns)
   }
 }
 

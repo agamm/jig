@@ -252,6 +252,39 @@ try {
       break
     }
 
+    case "derive-steps": {
+      const { deriveSteps } = await import("./creator.js")
+      const { openDb, getJigSteps } = await import("./db.js")
+      const { readFileSync } = await import("fs")
+      openDb()
+
+      const jigsDir = join(PROJECT_ROOT, "jigs")
+      const jigs = discoverJigs(jigsDir)
+
+      const target = rest[0]
+      const entries = target ? [[target, jigs.get(target) ?? []]] as const : [...jigs.entries()]
+
+      for (const [name, entities] of entries) {
+        if (entities.length === 0) {
+          const code = readFileSync(join(jigsDir, `${name}.ts`), "utf-8")
+          console.log(`Deriving steps for ${name}...`)
+          await deriveSteps(code, name)
+          const steps = getJigSteps(name, null)
+          for (const s of steps) console.log(`  ${s.seq}. ${s.name}`)
+        } else {
+          for (const entity of entities) {
+            const code = readFileSync(join(jigsDir, name, `${entity}.ts`), "utf-8")
+            console.log(`Deriving steps for ${name}/${entity}...`)
+            await deriveSteps(code, name, entity)
+            const steps = getJigSteps(name, entity)
+            for (const s of steps) console.log(`  ${s.seq}. ${s.name}`)
+          }
+        }
+      }
+      process.exit(0)
+      break
+    }
+
     default:
       console.log(`jig — AI workflow automation\n`)
       console.log(`Commands:`)
@@ -260,6 +293,7 @@ try {
       console.log(`  jig run <name> [args]  Run a jig`)
       console.log(`  jig new [description]  AI generates a new jig`)
       console.log(`  jig edit <name> [ent]  AI modifies an existing jig`)
+      console.log(`  jig derive-steps [name] Derive steps for jigs via LLM`)
       break
   }
 } catch (e) {

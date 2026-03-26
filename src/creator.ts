@@ -7,7 +7,7 @@
 import { join, relative, resolve } from "path"
 import { existsSync, readFileSync } from "fs"
 import ts from "typescript"
-import { llm, agent } from "./sdk/llm.js"
+import { llm, agent, getClient, DEFAULT_MODEL } from "./sdk/llm.js"
 import { discoverJigs } from "./discover.js"
 import { loadServerConfigs } from "./mcp/config.js"
 import type { JigTool } from "./sdk/jig.js"
@@ -784,29 +784,82 @@ export function extractImportedServers(code: string): string[] {
   return [...matches].map(m => m[1])
 }
 
+const STEP_DERIVATION_MODEL = "minimax/minimax-m2.7"
+
 /** Derive human-readable steps from jig code via LLM. Non-blocking — skips on failure. */
 export async function deriveSteps(code: string, jigId: string, entity?: string): Promise<void> {
   try {
     const { openDb, upsertJigSteps, upsertJigMeta } = await import("./db.js")
     openDb()
 
-    const steps = await llm<{ name: string; description: string; costHint?: string }[]>(
-      `Analyze this jig code and extract the sequential steps it performs.
-Return a JSON array of steps, each with: name (short action title), description (tool call or brief explanation), costHint (e.g. "$0.003" for LLM calls, omit for tool calls).
+    const client = getClient()
+    const response = await client.chat.completions.create({
+      model: STEP_DERIVATION_MODEL,
+      max_tokens: 2048,
+      messages: [{ role: "user", content: `Analyze this jig code and extract the sequential steps it performs.
 
-Only include meaningful steps — skip imports, variable declarations, config. Focus on actions: tool calls, LLM calls, human approval, API calls.
+Only include meaningful steps — skip imports, variable declarations, config.
+Focus on actions: tool calls, LLM calls, human approval, API calls.
+Each step should map to one logical action the user would recognize.
 
-Code:
-${code}`,
-      {},
-      { schema: { steps: "[{ name: string, description: string, costHint?: string }]" } }
+Rules for fields:
+- shortTitle: concise plain English, no code
+- description: brief plain English explanation only if it adds value beyond the title. Empty string if title is self-explanatory.
+- connections: which services are used (e.g. "gmail", "granola", "github")
+
+Example — for a jig that searches emails, drafts a reply, and sends it:
+{"steps":[
+  {"shortTitle":"Search inbox","description":"Find unread emails from today","connections":["gmail"]},
+  {"shortTitle":"Draft reply","description":"AI generates a contextual reply","connections":[]},
+  {"shortTitle":"Wait for approval","description":"","connections":[]},
+  {"shortTitle":"Send email","description":"","connections":["gmail"]}
+]}
+
+Now analyze this code:
+${code}` }],
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "jig_steps",
+          strict: true,
+          schema: {
+            type: "object",
+            properties: {
+              steps: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    shortTitle: { type: "string", description: "Concise action title in plain English" },
+                    description: { type: "string", description: "Brief explanation, empty string if title is self-explanatory" },
+                    connections: { type: "array", items: { type: "string" }, description: "Connection names used (e.g. 'gmail', 'granola', 'github')" },
+                  },
+                  required: ["shortTitle", "description", "connections"],
+                  additionalProperties: false,
+                },
+              },
+            },
+            required: ["steps"],
+            additionalProperties: false,
+          },
+        },
+      },
+    })
+
+    const text = response.choices[0]?.message?.content
+    if (!text) throw new Error("LLM returned empty response")
+    // Some models wrap JSON in markdown fences — strip them
+    const jsonStr = text.trim().replace(/^```(?:json)?\s*\n?/m, "").replace(/\n?```\s*$/m, "").trim()
+    const parsed = JSON.parse(jsonStr)
+    const stepArray = (parsed.steps ?? []).filter(
+      (s: any) => s.shortTitle?.trim() && s.description?.trim()
     )
 
-    const stepArray = Array.isArray(steps) ? steps : (steps as any).steps ?? []
-    upsertJigSteps(jigId, entity ?? null, stepArray.map(s => ({
-      name: s.name,
-      description: s.description,
-      costHint: s.costHint ?? null,
+    upsertJigSteps(jigId, entity ?? null, stepArray.map((s: any) => ({
+      name: s.shortTitle.trim(),
+      description: s.description.trim(),
+      costHint: null,
+      connections: Array.isArray(s.connections) ? s.connections : [],
     })))
 
     const hasher = new Bun.CryptoHasher("sha256")

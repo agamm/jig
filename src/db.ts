@@ -39,6 +39,22 @@ export interface StepRow {
   error: string | null
 }
 
+export interface JigStepRow {
+  jig_id: string
+  entity: string | null
+  seq: number
+  name: string
+  description: string
+  cost_hint: string | null
+}
+
+export interface JigMetaRow {
+  jig_id: string
+  entity: string | null
+  code_hash: string
+  steps_derived_at: string
+}
+
 // ---------------------------------------------------------------------------
 // Schema
 // ---------------------------------------------------------------------------
@@ -72,6 +88,24 @@ CREATE TABLE IF NOT EXISTS run_steps (
 CREATE INDEX IF NOT EXISTS idx_runs_jig_id ON runs(jig_id);
 CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
 CREATE INDEX IF NOT EXISTS idx_run_steps_run_id ON run_steps(run_id);
+
+CREATE TABLE IF NOT EXISTS jig_steps (
+  jig_id TEXT NOT NULL,
+  entity TEXT,
+  seq INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL,
+  cost_hint TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_jig_steps_jig ON jig_steps(jig_id, entity);
+
+CREATE TABLE IF NOT EXISTS jig_meta (
+  jig_id TEXT NOT NULL,
+  entity TEXT,
+  code_hash TEXT NOT NULL,
+  steps_derived_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_jig_meta_jig ON jig_meta(jig_id, COALESCE(entity, ''));
 `
 
 // ---------------------------------------------------------------------------
@@ -209,4 +243,48 @@ export function completeStep(
   db.prepare(
     `UPDATE run_steps SET output = ?, status = ?, duration_ms = ?, finished_at = datetime('now'), error = ? WHERE id = ?`
   ).run(output, status, durationMs, error ?? null, stepId)
+}
+
+// ---------------------------------------------------------------------------
+// Jig Steps (LLM-derived step descriptions)
+// ---------------------------------------------------------------------------
+
+export function upsertJigSteps(
+  jigId: string,
+  entity: string | null,
+  steps: { name: string; description: string; costHint: string | null }[]
+): void {
+  const db = openDb()
+  db.prepare(`DELETE FROM jig_steps WHERE jig_id = ? AND entity IS ?`).run(jigId, entity)
+  const stmt = db.prepare(`INSERT INTO jig_steps (jig_id, entity, seq, name, description, cost_hint) VALUES (?, ?, ?, ?, ?, ?)`)
+  for (let i = 0; i < steps.length; i++) {
+    stmt.run(jigId, entity, i + 1, steps[i].name, steps[i].description, steps[i].costHint)
+  }
+}
+
+export function getJigSteps(jigId: string, entity: string | null): JigStepRow[] {
+  const db = openDb()
+  return db.prepare(`SELECT * FROM jig_steps WHERE jig_id = ? AND entity IS ? ORDER BY seq`).all(jigId, entity) as JigStepRow[]
+}
+
+export function upsertJigMeta(jigId: string, entity: string | null, codeHash: string): void {
+  const db = openDb()
+  db.prepare(`DELETE FROM jig_meta WHERE jig_id = ? AND entity IS ?`).run(jigId, entity)
+  db.prepare(`INSERT INTO jig_meta (jig_id, entity, code_hash) VALUES (?, ?, ?)`).run(jigId, entity, codeHash)
+}
+
+export function getJigMeta(jigId: string, entity: string | null): JigMetaRow | null {
+  const db = openDb()
+  return db.prepare(`SELECT * FROM jig_meta WHERE jig_id = ? AND entity IS ?`).get(jigId, entity) as JigMetaRow | null
+}
+
+export function cleanupOrphanedMeta(activeJigIds: Set<string>): void {
+  const db = openDb()
+  const allMeta = db.prepare(`SELECT DISTINCT jig_id FROM jig_meta`).all() as { jig_id: string }[]
+  for (const { jig_id } of allMeta) {
+    if (!activeJigIds.has(jig_id)) {
+      db.prepare(`DELETE FROM jig_meta WHERE jig_id = ?`).run(jig_id)
+      db.prepare(`DELETE FROM jig_steps WHERE jig_id = ?`).run(jig_id)
+    }
+  }
 }

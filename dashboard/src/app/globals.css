@@ -1,8 +1,13 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #0a0a0b;
+  --foreground: #ededed;
+  --surface: #111113;
+  --border: #1f1f23;
+  --text-primary: #ededed;
+  --text-secondary: #888;
+  --text-muted: #555;
 }
 
 @theme inline {
@@ -12,15 +17,68 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* { scrollbar-width: thin; scrollbar-color: #1f1f23 transparent; }
+body { background: var(--background); color: var(--foreground); }
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes slide-out-right {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(12px); }
+}
+
+@keyframes pulse-amber {
+  0%, 100% { box-shadow: 0 0 4px rgba(245,158,11,0.08); }
+  50% { box-shadow: 0 0 12px rgba(245,158,11,0.18); }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.shimmer-btn {
+  background: linear-gradient(90deg, #059669 0%, #34d399 25%, #059669 50%, #34d399 75%, #059669 100%);
+  background-size: 200% 100%;
+  animation: shimmer 3s ease-in-out infinite;
+}
+
+/* Steps/Code flip animation */
+@keyframes flip-in {
+  0% { transform: rotateX(90deg) perspective(400px); opacity: 0; }
+  40% { transform: rotateX(-10deg); }
+  70% { transform: rotateX(5deg); }
+  100% { transform: rotateX(0deg); opacity: 1; }
+}
+.flip-enter { animation: flip-in 0.35s ease-out; transform-origin: top center; }
+
+/* Construction stripes for uncompiled jig review */
+.construction-stripe {
+  background: repeating-linear-gradient(
+    -45deg,
+    transparent,
+    transparent 6px,
+    rgba(245, 158, 11, 0.06) 6px,
+    rgba(245, 158, 11, 0.06) 12px
+  );
+}
+
+/* Drag preview shadow */
+.drag-preview {
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3);
+  transform: scale(1.02);
+  z-index: 50;
 }

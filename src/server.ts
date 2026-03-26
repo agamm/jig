@@ -14,6 +14,8 @@ const PROJECT_ROOT = join(import.meta.dir, "..")
 const JIGS_DIR = join(PROJECT_ROOT, "jigs")
 const SCHEMAS_DIR = join(PROJECT_ROOT, ".jig/schemas")
 
+const editLocks = new Map<string, { editId: string; status: string; message?: string }>()
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -291,6 +293,87 @@ async function handleGetRun(runId: number): Promise<Response> {
   })
 }
 
+async function handleRecompile(id: string, body: any): Promise<Response> {
+  const discovered = discoverJigs(JIGS_DIR)
+  if (!discovered.has(id)) return notFound(`Jig not found: ${id}`)
+
+  const entity = body?.entity as string | undefined
+  const filePath = getJigFilePath(id, entity)
+  if (!filePath) return notFound(`Jig file not found`)
+
+  const code = readFileSync(filePath, "utf-8")
+
+  // TypeScript validation
+  const { validate } = await import("./creator.js")
+  const tsErrors = validate(filePath)
+  if (tsErrors) return json({ ok: false, error: `TypeScript errors:\n${tsErrors}` }, 400)
+
+  // Re-derive steps
+  const { deriveSteps } = await import("./creator.js")
+  await deriveSteps(code, id, entity)
+
+  const steps = getJigSteps(id, entity ?? null)
+  return json({
+    ok: true,
+    steps: steps.map(s => ({ num: s.seq, name: s.name, desc: s.description, cost: s.cost_hint })),
+  })
+}
+
+async function handleEditJig(id: string, body: any): Promise<Response> {
+  const discovered = discoverJigs(JIGS_DIR)
+  if (!discovered.has(id)) return notFound(`Jig not found: ${id}`)
+
+  const instruction = body?.instruction as string
+  if (!instruction) return json({ error: "instruction is required" }, 400)
+
+  const entity = body?.entity as string | undefined
+  const lockKey = entity ? `${id}/${entity}` : id
+
+  if (editLocks.has(lockKey)) return json({ error: "Edit already in progress" }, 409)
+
+  const editId = crypto.randomUUID()
+  editLocks.set(lockKey, { editId, status: "planning" })
+
+  ;(async () => {
+    try {
+      const { editJig } = await import("./creator.js")
+      const io = {
+        ask: async () => instruction,
+        emit: (event: any) => {
+          const lock = editLocks.get(lockKey)
+          if (!lock) return
+          if (event.type === "plan") lock.status = "selecting-tools"
+          else if (event.type === "probe-start") lock.status = "probing"
+          else if (event.type === "generate-start") lock.status = "generating"
+          else if (event.type === "validate") lock.status = "validating"
+          else if (event.type === "dry-run-start") lock.status = "dry-running"
+          else if (event.type === "updated") lock.status = "done"
+          else if (event.type === "error") { lock.status = "error"; lock.message = event.message }
+        },
+      }
+      await editJig(id, entity, instruction, io)
+      const lock = editLocks.get(lockKey)
+      if (lock) lock.status = "done"
+    } catch (e: any) {
+      const lock = editLocks.get(lockKey)
+      if (lock) { lock.status = "error"; lock.message = e?.message ?? String(e) }
+    }
+  })()
+
+  return json({ editId })
+}
+
+async function handleEditStatus(id: string, editId: string): Promise<Response> {
+  for (const [key, lock] of editLocks) {
+    if ((key === id || key.startsWith(id + "/")) && lock.editId === editId) {
+      const result = { status: lock.status, message: lock.message }
+      if (lock.status === "done" || lock.status === "error") editLocks.delete(key)
+      return json(result)
+    }
+  }
+  return json({ status: "done" })
+}
+
 async function handleGetConnections(): Promise<Response> {
   const configs = await loadServerConfigs()
   const connections = await Promise.all(
@@ -327,6 +410,15 @@ function matchRoute(pathname: string): { handler: string; params: Record<string,
   const runDetailMatch = pathname.match(/^\/api\/runs\/(\d+)$/)
   if (runDetailMatch) return { handler: "getRun", params: { id: runDetailMatch[1] } }
 
+  const recompileMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/recompile$/)
+  if (recompileMatch) return { handler: "recompile", params: { id: recompileMatch[1] } }
+
+  const editMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/edit$/)
+  if (editMatch) return { handler: "editJig", params: { id: editMatch[1] } }
+
+  const editStatusMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/edit-status$/)
+  if (editStatusMatch) return { handler: "editStatus", params: { id: editStatusMatch[1] } }
+
   return null
 }
 
@@ -359,6 +451,20 @@ export function createApiServer(port: number) {
             return handleGetRun(parseInt(route.params.id))
           case "connections":
             return handleGetConnections()
+          case "recompile": {
+            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+            const body = await req.json().catch(() => ({}))
+            return handleRecompile(route.params.id, body)
+          }
+          case "editJig": {
+            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+            const body = await req.json().catch(() => ({}))
+            return handleEditJig(route.params.id, body)
+          }
+          case "editStatus": {
+            const editId = url.searchParams.get("editId") ?? ""
+            return handleEditStatus(route.params.id, editId)
+          }
           default:
             return notFound("Unknown handler")
         }

@@ -148,7 +148,7 @@ export function DashboardShell({
         )}
 
         {selectedJig && currentJig && reviewMode && (
-          <ReviewPane jig={currentJig} onClose={closeDetail} />
+          <ReviewPane jig={currentJig} onClose={closeDetail} isEditing={jigs.some(j => j.id === selectedJig)} />
         )}
 
         {activeApproval && !selectedJig && (

@@ -7,13 +7,18 @@ import { HighlightedCode } from "@/components/highlighted-code";
 import { StepList } from "@/components/step-list";
 import { TRIGGER_SUGGESTIONS } from "@/mock/mock-data";
 
-export function ReviewPane({ jig, onClose }: {
+export function ReviewPane({ jig, onClose, isEditing = false }: {
   jig: Jig;
   onClose: () => void;
+  isEditing?: boolean;
 }) {
   const [detailTab, setDetailTab] = useState<"steps" | "code">("steps");
   const [editingTrigger, setEditingTrigger] = useState(false);
   const [triggerValue, setTriggerValue] = useState(jig.settings.trigger);
+  const [editInput, setEditInput] = useState("");
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editStatus, setEditStatus] = useState<string | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
 
   return (
     <aside
@@ -23,7 +28,7 @@ export function ReviewPane({ jig, onClose }: {
       {/* Construction stripe banner */}
       <div className="construction-stripe border-b border-amber-500/20 px-4 py-2 flex items-center gap-2">
         <span className="text-amber-400 text-[11px]">&#9888;</span>
-        <span className="text-[11px] text-amber-400 font-medium">Draft &mdash; not compiled yet</span>
+        <span className="text-[11px] text-amber-400 font-medium">{isEditing ? `Editing — ${jig.name}` : "Draft \u2014 not compiled yet"}</span>
         <span className="text-[10px] text-amber-400/50 ml-auto">Edit steps below, then compile</span>
       </div>
 
@@ -108,10 +113,46 @@ export function ReviewPane({ jig, onClose }: {
               <input
                 type="text"
                 placeholder="Describe a change... e.g. 'add a step to cc my manager'"
+                value={editInput}
+                onChange={(e) => setEditInput(e.target.value)}
                 className="flex-1 rounded-md border border-[#1f1f23] bg-[#0a0a0b] px-3 py-1.5 text-[11px] text-[#ededed] placeholder:text-[#444] outline-none transition-colors duration-150 focus:border-violet-500/30"
               />
-              <button className="shrink-0 rounded-md bg-violet-600 px-2.5 py-1.5 text-[10px] font-medium text-white transition-colors duration-150 hover:bg-violet-500 cursor-pointer">
-                Apply
+              <button
+                onClick={async () => {
+                  if (!editInput.trim()) return;
+                  setEditError(null);
+                  try {
+                    const res = await fetch(`/api/jigs/${encodeURIComponent(jig.id)}/edit`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ instruction: editInput }),
+                    });
+                    if (res.status === 409) { setEditError("Edit already in progress"); return; }
+                    if (!res.ok) { setEditError("Failed to start edit"); return; }
+                    const { editId: id } = await res.json();
+                    setEditId(id);
+                    setEditStatus("planning");
+
+                    // Poll for completion
+                    for (let i = 0; i < 120; i++) {
+                      await new Promise(r => setTimeout(r, 1000));
+                      const poll = await fetch(`/api/jigs/${encodeURIComponent(jig.id)}/edit-status?editId=${id}`);
+                      if (!poll.ok) continue;
+                      const data = await poll.json();
+                      setEditStatus(data.status);
+                      if (data.status === "done") { setEditId(null); window.location.reload(); return; }
+                      if (data.status === "error") { setEditError(data.message ?? "Edit failed"); setEditId(null); return; }
+                    }
+                    setEditError("Timed out");
+                    setEditId(null);
+                  } catch (e: any) {
+                    setEditError(e?.message ?? "Unknown error");
+                  }
+                }}
+                disabled={!!editId || !editInput.trim()}
+                className="shrink-0 rounded-md bg-blue-600 px-3 py-1.5 text-[11px] font-medium text-white transition-all duration-150 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {editId ? "Applying\u2026" : "Apply"}
               </button>
             </div>
             <div className="flex flex-wrap gap-1.5">
@@ -123,16 +164,23 @@ export function ReviewPane({ jig, onClose }: {
             </div>
           </div>
           <div className="flex items-center gap-3 text-[10px] text-[#444]">
-            <span className="flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> Plan</span>
-            <span className="text-[#333]">&rarr;</span>
-            <span className="flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> Select tools</span>
-            <span className="text-[#333]">&rarr;</span>
-            <span className="flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-[#2a2a2e]" /> Probe</span>
-            <span className="text-[#333]">&rarr;</span>
-            <span className="flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-[#2a2a2e]" /> Generate</span>
-            <span className="text-[#333]">&rarr;</span>
-            <span className="flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-[#2a2a2e]" /> Validate</span>
+            {(["planning", "selecting-tools", "probing", "generating", "validating", "dry-running"] as const).map((stage, i) => {
+              const labels: Record<string, string> = { "planning": "Plan", "selecting-tools": "Select tools", "probing": "Probe", "generating": "Generate", "validating": "Validate", "dry-running": "Dry run" };
+              const stages = ["planning", "selecting-tools", "probing", "generating", "validating", "dry-running", "done"];
+              const active = editStatus === stage;
+              const done = editStatus !== null && stages.indexOf(editStatus) > i;
+              return (
+                <span key={stage} className="flex items-center gap-1">
+                  {i > 0 && <span className="text-[#333] mr-1">&rarr;</span>}
+                  <span className={`h-1.5 w-1.5 rounded-full transition-colors ${active ? "bg-blue-400 animate-pulse" : done ? "bg-emerald-400" : "bg-[#333]"}`} />
+                  {labels[stage]}
+                </span>
+              );
+            })}
           </div>
+          {editError && (
+            <p className="text-[10px] text-rose-400 mt-1">{editError}</p>
+          )}
         </div>
 
         {/* Connections */}
@@ -148,12 +196,23 @@ export function ReviewPane({ jig, onClose }: {
           </div>
         </div>
 
-        {/* Compile & Save */}
-        <div className="pt-2">
-          <button className="w-full rounded-md bg-emerald-600 py-2 text-[12px] font-medium text-white transition-all duration-150 hover:bg-emerald-500 active:scale-[0.98] shadow-lg shadow-emerald-600/20 cursor-pointer">
-            Compile &amp; Save
-          </button>
-        </div>
+        {/* Compile & Save / Done */}
+        {isEditing ? (
+          <div className="flex gap-2 pt-2">
+            <button onClick={onClose} className="flex-1 rounded-md bg-emerald-600 py-2 text-[12px] font-medium text-white transition-all duration-150 hover:bg-emerald-500 active:scale-95">Done</button>
+          </div>
+        ) : (
+          <div className="pt-2">
+            <button
+              disabled={!triggerValue}
+              title={!triggerValue ? "Set a trigger first" : ""}
+              className="w-full rounded-md bg-gradient-to-r from-emerald-600 to-emerald-500 py-2 text-[12px] font-semibold text-white shadow-lg shadow-emerald-600/20 transition-all duration-200 hover:shadow-emerald-600/30 hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{ animation: "shimmer 3s infinite" }}
+            >
+              Compile &amp; Save
+            </button>
+          </div>
+        )}
       </div>
     </aside>
   );

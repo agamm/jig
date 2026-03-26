@@ -28,6 +28,7 @@ export interface Jig {
   name: string;
   trigger: string;
   status: "healthy" | "attention" | "failed";
+  stale?: boolean;
   grouped?: boolean;
   entityCount?: number;
   entities?: JigEntity[];

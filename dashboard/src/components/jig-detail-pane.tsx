@@ -10,10 +10,11 @@ import { TRIGGER_SUGGESTIONS } from "@/mock/mock-data";
 const statusDot = (s: string) =>
   s === "healthy" ? "bg-emerald-400" : s === "attention" ? "bg-amber-400" : "bg-rose-400";
 
-export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, onToggleExpand }: {
+export function JigDetailPane({ jig, selectedEntity, onClose, onEdit, expanded = false, onToggleExpand }: {
   jig: Jig;
   selectedEntity: string | null;
   onClose: () => void;
+  onEdit?: () => void;
   expanded?: boolean;
   onToggleExpand?: () => void;
 }) {
@@ -92,7 +93,7 @@ export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, 
           <span className={`shrink-0 h-1.5 w-1.5 rounded-full ${statusDot(jig.status)}`} />
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
-          <button className="rounded-md border border-[#1f1f23] bg-[#111113] px-2.5 py-1 text-[11px] text-[#888] transition-colors duration-150 hover:bg-[#1a1a1d]" title="Edit">&#9998;</button>
+          <button onClick={onEdit} className="rounded-md border border-[#1f1f23] bg-[#111113] px-2.5 py-1 text-[11px] text-[#888] transition-colors duration-150 hover:bg-[#1a1a1d]" title="Edit">&#9998;</button>
           {onToggleExpand && (
             <button
               onClick={onToggleExpand}
@@ -110,6 +111,27 @@ export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, 
           </button>
         </div>
       </div>
+
+      {/* Stale warning */}
+      {jig.stale && (
+        <div className="mx-4 mt-3 flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2" style={{ animation: "fade-up 0.15s ease" }}>
+          <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" />
+          <span className="text-[11px] text-amber-300 flex-1">Code changed outside the dashboard. Steps may be outdated.</span>
+          <button
+            onClick={async () => {
+              await fetch(`/api/jigs/${encodeURIComponent(jig.id)}/recompile`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ entity: selectedEntity ?? undefined }),
+              });
+              window.location.reload();
+            }}
+            className="text-[10px] text-amber-400 hover:text-amber-300 transition-colors font-medium"
+          >
+            Re-compile
+          </button>
+        </div>
+      )}
 
       {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">

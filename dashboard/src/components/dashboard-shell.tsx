@@ -144,7 +144,7 @@ export function DashboardShell({
         </main>
 
         {selectedJig && currentJig && !activeApproval && !reviewMode && (
-          <JigDetailPane jig={currentJig} selectedEntity={selectedEntity} onClose={() => { setDetailExpanded(false); closeDetail(); }} expanded={detailExpanded} onToggleExpand={() => setDetailExpanded(!detailExpanded)} />
+          <JigDetailPane jig={currentJig} selectedEntity={selectedEntity} onClose={() => { setDetailExpanded(false); closeDetail(); }} onEdit={() => { setReviewMode(true); }} expanded={detailExpanded} onToggleExpand={() => setDetailExpanded(!detailExpanded)} />
         )}
 
         {selectedJig && currentJig && reviewMode && (

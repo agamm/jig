@@ -1,4 +1,4 @@
-import { Context } from "./context.js"
+import { Context, type RunRecorder } from "./context.js"
 
 /**
  * A typed MCP tool function. Generated at runtime by createConnection(),
@@ -10,7 +10,15 @@ export type JigTool<TInput = unknown, TOutput = unknown> = {
   (params: TInput): Promise<TOutput>
 }
 
+export type JigTrigger =
+  | { type: "cron"; cron: string }          // e.g. "0 8 * * 1" = every monday 8am
+  | { type: "interval"; minutes: number }    // e.g. 30 = every 30 minutes
+  | { type: "event"; source: string; filter?: string }
+  | { type: "manual" }
+  | { type: "webhook" }
+
 export type JigOptions = {
+  trigger?: JigTrigger
   params?: Record<string, string>
   tools?: JigTool<any, any>[]
 }
@@ -40,11 +48,18 @@ export function jig(
 export async function run(
   definition: JigDefinition,
   params: Record<string, string> = {},
-  options?: { silent?: boolean }
+  options?: { silent?: boolean; recorder?: RunRecorder }
 ): Promise<Context> {
   const toolNames = (definition.options.tools ?? []).map((t) => t._toolName)
   const ctx = new Context(params, toolNames)
   if (options?.silent) ctx.setSink(() => {})
-  await definition.handler(ctx)
+  if (options?.recorder) ctx.setRecorder(options.recorder)
+  try {
+    await definition.handler(ctx)
+    ctx.finalize()
+  } catch (e) {
+    ctx.finalize(e)
+    throw e
+  }
   return ctx
 }

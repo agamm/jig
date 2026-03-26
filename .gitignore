@@ -1,6 +1,6 @@
 node_modules/
 .jig/
 .env
-jig.db
+jig.db*
 .a5c/
 .worktrees/

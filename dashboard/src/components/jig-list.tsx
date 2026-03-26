@@ -101,7 +101,7 @@ export function JigList({ jigs, selectedJigId, expandedGroup, onJigClick, onEnti
                   handleDrop(idx, jigs, onReorder);
                 }}
                 onClick={() => onJigClick(jig)}
-                className={`group relative flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-all duration-150 cursor-default select-none
+                className={`group relative flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-all duration-150 cursor-pointer select-none
                   ${isSelected ? "bg-[#1a1a1d]" : "hover:bg-[#111113]"}
                   ${isDragging ? "opacity-40 shadow-lg" : ""}
                 `}

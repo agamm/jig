@@ -2,7 +2,7 @@
 
 import { ConnectionTag } from "@/components/connection-tag";
 import { StepIO } from "@/components/step-io";
-import { APPROVAL_DATA } from "@/lib/mock-data";
+import { APPROVAL_DATA } from "@/mock/mock-data";
 
 export function ApprovalPane({ approvalId, onClose, onApprove, onReject }: {
   approvalId: string;

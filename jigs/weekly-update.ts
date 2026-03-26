@@ -35,6 +35,7 @@ const gatherTools = [
 const weeklyUpdate = jig(
   "weekly-update",
   {
+    trigger: { type: "cron", cron: "0 8 * * 1" }, // every Monday at 8am
     tools: [...gatherTools, workspace.gmail_createDraft],
   },
   async (ctx) => {

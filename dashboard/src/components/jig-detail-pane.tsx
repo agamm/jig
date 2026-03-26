@@ -1,29 +1,85 @@
 "use client";
 
-import { useState } from "react";
-import type { Jig } from "@/types/jig";
+import { useState, useCallback } from "react";
+import type { Jig, RunEntry } from "@/types/jig";
 import { ConnectionTag } from "@/components/connection-tag";
 import { HighlightedCode } from "@/components/highlighted-code";
 import { StepList } from "@/components/step-list";
-import { TRIGGER_SUGGESTIONS } from "@/lib/mock-data";
+import { TRIGGER_SUGGESTIONS } from "@/mock/mock-data";
 
 const statusDot = (s: string) =>
   s === "healthy" ? "bg-emerald-400" : s === "attention" ? "bg-amber-400" : "bg-rose-400";
 
-export function JigDetailPane({ jig, selectedEntity, onClose }: {
+export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, onToggleExpand }: {
   jig: Jig;
   selectedEntity: string | null;
   onClose: () => void;
+  expanded?: boolean;
+  onToggleExpand?: () => void;
 }) {
   const [detailTab, setDetailTab] = useState<"steps" | "code">("steps");
   const [editingTrigger, setEditingTrigger] = useState(false);
   const [triggerValue, setTriggerValue] = useState(jig.settings.trigger);
   const [expandedRun, setExpandedRun] = useState<number | null>(null);
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const [runningId, setRunningId] = useState<number | null>(null);
+  const [runStatus, setRunStatus] = useState<"idle" | "running" | "success" | "fail">("idle");
+  const [runError, setRunError] = useState<string | null>(null);
+  const [liveSteps, setLiveSteps] = useState<{ label: string; status: string; time: string }[]>([]);
+
+  const startRun = useCallback(async (dryRun: boolean) => {
+    setRunStatus("running");
+    setRunError(null);
+    setLiveSteps([]);
+    try {
+      const res = await fetch(`/api/jigs/${encodeURIComponent(jig.id)}/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          entity: selectedEntity ?? undefined,
+          dryRun,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Request failed" }));
+        setRunStatus("fail");
+        setRunError(err.error ?? `HTTP ${res.status}`);
+        return;
+      }
+      const { runId } = await res.json();
+      setRunningId(runId);
+
+      // Poll for completion
+      const poll = async () => {
+        for (let i = 0; i < 120; i++) { // max 2 min
+          await new Promise((r) => setTimeout(r, 1000));
+          try {
+            const pollRes = await fetch(`/api/runs/${runId}`);
+            if (!pollRes.ok) continue;
+            const run = await pollRes.json();
+            setLiveSteps(run.steps ?? []);
+            if (run.status === "success" || run.status === "fail") {
+              setRunStatus(run.status);
+              if (run.error) setRunError(run.error);
+              setRunningId(null);
+              return;
+            }
+          } catch {}
+        }
+        setRunStatus("fail");
+        setRunError("Timed out waiting for completion");
+        setRunningId(null);
+      };
+      poll();
+    } catch (e: any) {
+      setRunStatus("fail");
+      setRunError(e?.message ?? "Unknown error");
+    }
+  }, [jig.id, selectedEntity]);
 
   return (
     <aside
-      className="flex w-[48%] shrink-0 flex-col border-l border-[#1f1f23] bg-[#0e0e10] overflow-hidden"
+      className={`flex shrink-0 flex-col border-l border-[#1f1f23] bg-[#0e0e10] overflow-hidden transition-all duration-200 ${expanded ? "w-full" : "w-[48%]"}`}
       style={{ animation: "slide-in-right 0.2s ease" }}
     >
       {/* Header */}
@@ -37,6 +93,15 @@ export function JigDetailPane({ jig, selectedEntity, onClose }: {
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           <button className="rounded-md border border-[#1f1f23] bg-[#111113] px-2.5 py-1 text-[11px] text-[#888] transition-colors duration-150 hover:bg-[#1a1a1d]" title="Edit">&#9998;</button>
+          {onToggleExpand && (
+            <button
+              onClick={onToggleExpand}
+              className="rounded-md border border-[#1f1f23] bg-[#111113] px-2 py-1 text-[11px] text-[#555] transition-colors duration-150 hover:text-[#888] hover:bg-[#1a1a1d]"
+              title={expanded ? "Collapse" : "Expand"}
+            >
+              {expanded ? "\u21E5" : "\u21E4"}
+            </button>
+          )}
           <button
             onClick={onClose}
             className="rounded-md border border-[#1f1f23] bg-[#111113] px-2 py-1 text-[11px] text-[#555] transition-colors duration-150 hover:text-[#888] hover:bg-[#1a1a1d]"
@@ -96,17 +161,76 @@ export function JigDetailPane({ jig, selectedEntity, onClose }: {
                 onClick={() => { setEditingTrigger(true); setTriggerValue(jig.settings.trigger); }}
                 className="group inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-left"
               >
-                <span className="text-[12px] font-mono text-[#ccc] decoration-dotted underline-offset-4 group-hover:underline group-hover:decoration-[#555]">{jig.settings.trigger}</span>
+                <span className="text-[12px] font-mono text-[#ccc] decoration-dotted underline-offset-4 group-hover:underline group-hover:decoration-[#555]">{jig.settings.trigger || "No trigger"}</span>
                 <span className="text-[10px] text-[#333] opacity-0 group-hover:opacity-100 transition-opacity duration-150">&#9998;</span>
               </button>
               <span className="flex-1" />
-              <button className="shrink-0 rounded-md bg-emerald-600 px-2 py-1 text-[10px] font-medium text-white transition-all duration-150 hover:bg-emerald-500 active:scale-95 cursor-pointer">&#9654; Run</button>
-              <button className="shrink-0 rounded-md border border-emerald-600/30 bg-emerald-600/10 px-2 py-1 text-[10px] font-medium text-emerald-400 transition-all duration-150 hover:bg-emerald-600/20 active:scale-95 cursor-pointer" title="Read-only — no writes">
+              <button
+                onClick={() => startRun(false)}
+                disabled={runStatus === "running"}
+                className="shrink-0 rounded-md bg-emerald-600 px-2 py-1 text-[10px] font-medium text-white transition-all duration-150 hover:bg-emerald-500 active:scale-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {runStatus === "running" ? "Running\u2026" : "\u25B6 Run"}
+              </button>
+              <button
+                onClick={() => startRun(true)}
+                disabled={runStatus === "running"}
+                className="shrink-0 rounded-md border border-emerald-600/30 bg-emerald-600/10 px-2 py-1 text-[10px] font-medium text-emerald-400 transition-all duration-150 hover:bg-emerald-600/20 active:scale-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Read-only — no writes"
+              >
                 Dry Run
               </button>
             </div>
           )}
         </div>
+
+        {/* Live run progress */}
+        {runStatus !== "idle" && (
+          <div className="rounded-lg border border-[#1f1f23] bg-[#111113] p-3 space-y-2" style={{ animation: "fade-up 0.15s ease" }}>
+            <div className="flex items-center gap-2">
+              {runStatus === "running" && (
+                <span className="h-2 w-2 rounded-full bg-blue-400 animate-pulse" />
+              )}
+              {runStatus === "success" && (
+                <span className="h-2 w-2 rounded-full bg-emerald-400" />
+              )}
+              {runStatus === "fail" && (
+                <span className="h-2 w-2 rounded-full bg-rose-400" />
+              )}
+              <span className="text-[11px] font-medium text-[#ededed]">
+                {runStatus === "running" ? "Running…" : runStatus === "success" ? "Completed" : "Failed"}
+              </span>
+              {runStatus !== "running" && (
+                <button
+                  onClick={() => { setRunStatus("idle"); setLiveSteps([]); setRunError(null); }}
+                  className="ml-auto text-[10px] text-[#555] hover:text-[#888] transition-colors"
+                >
+                  Dismiss
+                </button>
+              )}
+            </div>
+            {liveSteps.length > 0 && (
+              <div className="space-y-1">
+                {liveSteps.map((s, i) => (
+                  <div key={i} className="flex items-center gap-2 text-[10px]">
+                    {s.status === "running" ? (
+                      <span className="h-1.5 w-1.5 rounded-full bg-blue-400 animate-pulse shrink-0" />
+                    ) : s.status === "success" || s.status === "healed" ? (
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shrink-0" />
+                    ) : (
+                      <span className="h-1.5 w-1.5 rounded-full bg-rose-400 shrink-0" />
+                    )}
+                    <span className="text-[#888] flex-1 truncate">{s.label}</span>
+                    <span className="text-[#444] font-mono shrink-0">{s.time}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {runError && (
+              <p className="text-[10px] text-rose-400 mt-1">{runError}</p>
+            )}
+          </div>
+        )}
 
         {/* Runs */}
         <div>

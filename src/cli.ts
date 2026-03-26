@@ -246,9 +246,16 @@ try {
       break
     }
 
+    case "start": {
+      const { startServer } = await import("./start.js")
+      await startServer()
+      break
+    }
+
     default:
       console.log(`jig — AI workflow automation\n`)
       console.log(`Commands:`)
+      console.log(`  jig start              Start dashboard + API server`)
       console.log(`  jig connect [server]   List servers or connect one`)
       console.log(`  jig run <name> [args]  Run a jig`)
       console.log(`  jig new [description]  AI generates a new jig`)

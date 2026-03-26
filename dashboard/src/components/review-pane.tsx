@@ -5,7 +5,7 @@ import type { Jig } from "@/types/jig";
 import { ConnectionTag } from "@/components/connection-tag";
 import { HighlightedCode } from "@/components/highlighted-code";
 import { StepList } from "@/components/step-list";
-import { TRIGGER_SUGGESTIONS } from "@/lib/mock-data";
+import { TRIGGER_SUGGESTIONS } from "@/mock/mock-data";
 
 export function ReviewPane({ jig, onClose }: {
   jig: Jig;

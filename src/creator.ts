@@ -121,7 +121,17 @@ export async function createJig(description: string, io: JigIO): Promise<CreateR
   code = await dryRunAndReview(description, code, context, name, undefined, io)
   // Final write ensures file matches returned code even if dryRunAndReview
   // found no issues (validateAndFix already wrote, but code may differ after dry-run fix)
+
+  // Ensure trigger is present (default to manual if LLM omitted it)
+  if (!/trigger\s*:/.test(code)) {
+    code = code.replace(
+      /jig\(\s*["'][^"']+["']\s*,\s*\{/,
+      (match) => `${match}\n    trigger: { type: "manual" },`
+    )
+  }
+
   await Bun.write(targetPath, code)
+  await deriveSteps(code, plan.name, undefined)
 
   io.emit({ type: "created", name, file: relFile })
   return { path: targetPath, name, code }
@@ -196,7 +206,17 @@ export async function editJig(
   await Bun.write(targetPath, code)
   code = await validateAndFix(targetPath, code, context, io)
   code = await dryRunAndReview(instruction, code, context, name, entity, io)
+
+  // Ensure trigger is present (default to manual if LLM omitted it)
+  if (!/trigger\s*:/.test(code)) {
+    code = code.replace(
+      /jig\(\s*["'][^"']+["']\s*,\s*\{/,
+      (match) => `${match}\n    trigger: { type: "manual" },`
+    )
+  }
+
   await Bun.write(targetPath, code)
+  await deriveSteps(code, name, entity)
 
   const displayName = entity ? `${name} ${entity}` : name
   const relFile = relative(PROJECT_ROOT, targetPath)
@@ -762,4 +782,38 @@ export function stripCodeFences(code: string): string {
 export function extractImportedServers(code: string): string[] {
   const matches = code.matchAll(/from\s+["'].*\.jig\/connections\/(\w+)\.js["']/g)
   return [...matches].map(m => m[1])
+}
+
+/** Derive human-readable steps from jig code via LLM. Non-blocking — skips on failure. */
+export async function deriveSteps(code: string, jigId: string, entity?: string): Promise<void> {
+  try {
+    const { openDb, upsertJigSteps, upsertJigMeta } = await import("./db.js")
+    openDb()
+
+    const steps = await llm<{ name: string; description: string; costHint?: string }[]>(
+      `Analyze this jig code and extract the sequential steps it performs.
+Return a JSON array of steps, each with: name (short action title), description (tool call or brief explanation), costHint (e.g. "$0.003" for LLM calls, omit for tool calls).
+
+Only include meaningful steps — skip imports, variable declarations, config. Focus on actions: tool calls, LLM calls, human approval, API calls.
+
+Code:
+${code}`,
+      {},
+      { schema: { steps: "[{ name: string, description: string, costHint?: string }]" } }
+    )
+
+    const stepArray = Array.isArray(steps) ? steps : (steps as any).steps ?? []
+    upsertJigSteps(jigId, entity ?? null, stepArray.map(s => ({
+      name: s.name,
+      description: s.description,
+      costHint: s.costHint ?? null,
+    })))
+
+    const hasher = new Bun.CryptoHasher("sha256")
+    hasher.update(code)
+    upsertJigMeta(jigId, entity ?? null, hasher.digest("hex"))
+  } catch (e) {
+    // Step derivation is enhancement, not blocking — log and continue
+    console.error("Warning: Failed to derive steps:", (e as Error)?.message ?? e)
+  }
 }

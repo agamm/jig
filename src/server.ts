@@ -6,7 +6,7 @@
 import { join } from "path"
 import { existsSync, readFileSync } from "fs"
 import { discoverJigs } from "./discover.js"
-import { openDb, insertRun, completeRun, insertStep, completeStep, getJigRuns, getRun, getLastRun } from "./db.js"
+import { openDb, insertRun, completeRun, insertStep, completeStep, getJigRuns, getRun, getLastRun, getJigSteps, getJigMeta, cleanupOrphanedMeta } from "./db.js"
 import { loadServerConfigs } from "./mcp/config.js"
 import type { RunRecorder } from "./sdk/context.js"
 
@@ -64,6 +64,12 @@ function cronToText(cron: string): string {
   if (hour !== "*" && min !== "*") return `Daily ${time}`
   if (min.startsWith("*/")) return `Every ${min.slice(2)}m`
   return cron
+}
+
+function fileHash(content: string): string {
+  const hasher = new Bun.CryptoHasher("sha256")
+  hasher.update(content)
+  return hasher.digest("hex")
 }
 
 function json(data: unknown, status = 200): Response {
@@ -137,6 +143,22 @@ function buildJigResponse(id: string, entities: string[], runLimit: number) {
   const grouped = entities.length > 0
   const filePath = getJigFilePath(id, grouped ? entities[0] : undefined)
   const code = filePath ? readFileSync(filePath, "utf-8") : ""
+
+  // Steps from SQLite (derived by creator pipeline)
+  const entity = grouped ? entities[0] : null
+  const cachedSteps = getJigSteps(id, entity)
+  const steps = cachedSteps.map(s => ({
+    num: s.seq,
+    name: s.name,
+    desc: s.description,
+    cost: s.cost_hint ?? undefined,
+  }))
+
+  // Stale detection: compare file hash against cached
+  const meta = getJigMeta(id, entity)
+  const currentHash = code ? fileHash(code) : null
+  const stale = !meta || (currentHash !== null && meta.code_hash !== currentHash)
+
   const runs = getJigRuns(id, undefined, runLimit)
 
   // Sparkline from last 7 runs' durations (normalized).
@@ -152,11 +174,12 @@ function buildJigResponse(id: string, entities: string[], runLimit: number) {
     name: prettifyId(id),
     trigger,
     status: deriveStatus(id),
+    stale,
     grouped,
     entityCount: grouped ? entities.length : undefined,
     entities: grouped ? buildEntityList(id, entities) : undefined,
     sparkline,
-    steps: [],
+    steps,
     code: grouped ? "" : code,
     runs: formatRuns(runs),
     settings: {
@@ -175,6 +198,7 @@ function buildJigResponse(id: string, entities: string[], runLimit: number) {
 
 async function handleGetJigs(): Promise<Response> {
   const discovered = discoverJigs(JIGS_DIR)
+  cleanupOrphanedMeta(new Set(discovered.keys()))
   const jigs = [...discovered.entries()].map(([id, entities]) =>
     buildJigResponse(id, entities, 10)
   )

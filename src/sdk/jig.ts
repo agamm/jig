@@ -18,7 +18,7 @@ export type JigTrigger =
   | { type: "webhook" }
 
 export type JigOptions = {
-  trigger?: JigTrigger
+  trigger: JigTrigger
   params?: Record<string, string>
   tools?: JigTool<any, any>[]
 }

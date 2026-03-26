@@ -16,19 +16,20 @@ describe("validateDefinitionObject", () => {
     expect(result.definition).toBeDefined()
   })
 
-  it("accepts a jig without trigger (optional)", () => {
+  it("rejects a jig without trigger", () => {
     const result = validateDefinitionObject({
-      name: "manual-jig",
+      name: "no-trigger",
       options: { tools: [] },
       handler: async () => {},
     })
-    expect(result.ok).toBe(true)
+    expect(result.ok).toBe(false)
+    expect(result.errors[0].field).toBe("trigger")
   })
 
-  it("accepts manual trigger", () => {
+  it("accepts manual trigger (the default)", () => {
     const result = validateDefinitionObject({
       name: "manual-jig",
-      options: { trigger: { type: "manual" } },
+      options: { trigger: { type: "manual" }, tools: [] },
       handler: async () => {},
     })
     expect(result.ok).toBe(true)
@@ -102,7 +103,7 @@ describe("validateDefinitionObject", () => {
   it("rejects missing handler", () => {
     const result = validateDefinitionObject({
       name: "no-handler",
-      options: {},
+      options: { trigger: { type: "manual" } },
     })
     expect(result.ok).toBe(false)
     expect(result.errors[0].field).toBe("handler")

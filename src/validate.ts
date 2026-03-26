@@ -33,7 +33,9 @@ const CRON_REGEX = /^(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)\s+(\
 
 function validateTrigger(trigger: unknown): ValidationError[] {
   const errors: ValidationError[] = []
-  if (trigger === undefined) return [] // trigger is optional
+  if (trigger === undefined) {
+    return [{ field: "trigger", message: 'Trigger is required. Use { type: "manual" } for manually-triggered jigs.' }]
+  }
 
   if (typeof trigger !== "object" || trigger === null || !("type" in trigger)) {
     errors.push({ field: "trigger", message: "Trigger must be an object with a 'type' field" })

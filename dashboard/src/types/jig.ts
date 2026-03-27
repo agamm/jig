@@ -28,12 +28,14 @@ export interface Jig {
   name: string;
   trigger: string;
   status: "healthy" | "attention" | "failed";
+  running?: boolean;
   stale?: boolean;
   grouped?: boolean;
   entityCount?: number;
   entities?: JigEntity[];
   sparkline: number[];
   steps: { num: number; name: string; desc: string; cost?: string; connections?: string[]; tools?: string[]; agentGroup?: string }[];
+  params?: Record<string, string>;
   code: string;
   runs: RunEntry[];
   settings: { trigger: string; connections: string[]; permissions: string[] };

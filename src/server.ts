@@ -8,7 +8,6 @@ import { existsSync, readFileSync } from "fs"
 import { discoverJigs } from "./discover.js"
 import { openDb, insertRun, completeRun, insertStep, completeStep, getJigRuns, getRun, getLastRun, getJigSteps, getJigMeta, cleanupOrphanedMeta } from "./db.js"
 import { loadServerConfigs } from "./mcp/config.js"
-import type { RunRecorder } from "./sdk/context.js"
 import { formatDuration } from "./utils.js"
 
 const PROJECT_ROOT = join(import.meta.dir, "..")
@@ -20,6 +19,9 @@ const editLocks = new Map<string, { editId: string; status: string; message?: st
 const runProgress = new Map<number, { completedTools: string[]; activeTools: string[] }>()
 /** Only one run at a time (spinner + dryRun are global singletons). */
 let activeRunId: number | null = null
+let activeRunAbort: { abort(): void } | null = null
+let activeRunJigId: string | null = null
+let activeRunDryRun = false
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -27,6 +29,16 @@ let activeRunId: number | null = null
 
 function prettifyId(id: string): string {
   return id.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
+/** Extract params from jig source code: params: { company: "Client name" } */
+function extractParams(code: string): Record<string, string> {
+  const m = code.match(/params\s*:\s*\{([^}]+)\}/)
+  if (!m) return {}
+  const params: Record<string, string> = {}
+  const entries = m[1].matchAll(/(\w+)\s*:\s*["']([^"']*)["']/g)
+  for (const e of entries) params[e[1]] = e[2]
+  return params
 }
 
 function extractConnections(code: string): string[] {
@@ -192,6 +204,7 @@ function buildJigResponse(id: string, entities: string[], runLimit: number) {
     name: prettifyId(id),
     trigger,
     status: deriveStatus(id),
+    running: activeRunJigId === id && !activeRunDryRun,
     stale,
     grouped,
     entityCount: grouped ? entities.length : undefined,
@@ -200,6 +213,7 @@ function buildJigResponse(id: string, entities: string[], runLimit: number) {
     steps,
     code: grouped ? "" : code,
     runs: formatRuns(runs),
+    params: extractParams(code),
     settings: {
       trigger,
       connections: extractConnections(code),
@@ -252,88 +266,105 @@ async function handleRunJig(id: string, body: any): Promise<Response> {
   // Only one run at a time — spinner and dryRun are global singletons.
   if (activeRunId !== null) return json({ error: "A run is already in progress" }, 409)
 
-  const runId = insertRun(id, entity, Object.keys(params).length > 0 ? params : undefined)
+  // Only persist real runs — dry runs are ephemeral
+  const runId = dryRun ? -1 : insertRun(id, entity, Object.keys(params).length > 0 ? params : undefined)
   activeRunId = runId
-
-  // Track step IDs by seq so the recorder can complete them directly
-  const stepIds = new Map<number, number>()
+  activeRunAbort = new AbortController()
+  activeRunJigId = id
+  activeRunDryRun = dryRun
 
   const startTime = Date.now()
+  const workerPath = join(PROJECT_ROOT, "src/run-worker.ts")
+  const workerArgs = [workerPath, jigPath]
+  if (dryRun) workerArgs.push("--dry-run")
+  if (Object.keys(params).length > 0) workerArgs.push("--params", JSON.stringify(params))
+
+  const proc = Bun.spawn(["bun", "run", ...workerArgs], {
+    cwd: PROJECT_ROOT,
+    stdout: "pipe",
+    stderr: "inherit",
+    env: { ...process.env },
+  })
+  activeRunAbort = { abort: () => proc.kill(9) }
+
+  // Read stdout for progress updates
   ;(async () => {
-    // Import spinner before try so it's available in finally
-    const { spinner } = await import("./sdk/spinner.js")
-
     try {
-      if (dryRun) {
-        const { setDryRun } = await import("./sdk/dryrun.js")
-        setDryRun(true)
-      }
-      const { run } = await import("./sdk/jig.js")
-      // Cache-bust to pick up file changes (same pattern as creator.ts dryRunJig)
-      const mod = await import(`${jigPath}?t=${Date.now()}`)
-      const def = mod.default
+      const reader = proc.stdout.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ""
 
-      const recorder: RunRecorder = {
-        onStepStart(seq, label) {
-          stepIds.set(seq, insertStep(runId, seq, label))
-        },
-        onStepDone(seq, output, status, durationMs, error) {
-          const stepId = stepIds.get(seq)
-          if (stepId) completeStep(stepId, output, status, durationMs, error)
-        },
-      }
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split("\n")
+        buffer = lines.pop() ?? ""
 
-      // Hook spinner for tool call tracking.
-      // completedTools = all tools from previous batches (finished).
-      // activeTools = tools in the current batch (still executing).
-      spinner.setToolCallback((chain, current) => {
-        // All batches except the last are completed
-        const completed = chain.slice(0, -1).flat()
-        runProgress.set(runId, { completedTools: completed, activeTools: [...current] })
-      })
-
-      const ctx = await run(def, params, { recorder })
-
-      // Capture completed tools before finally{} clears progress
-      const progress = runProgress.get(runId)
-      const allTools = [...(progress?.completedTools ?? []), ...(progress?.activeTools ?? [])]
-
-      // If no ctx.step() calls were made (e.g. agent() jigs),
-      // record all tool calls as steps so runs show what happened
-      if (stepIds.size === 0 && allTools.length > 0) {
-        for (let seq = 0; seq < allTools.length; seq++) {
-          const sid = insertStep(runId, seq + 1, allTools[seq])
-          completeStep(sid, "", "success", 0)
+        for (const line of lines) {
+          if (!line.trim()) continue
+          try {
+            const msg = JSON.parse(line)
+            if (msg.type === "tool") {
+              runProgress.set(runId, { completedTools: msg.completed ?? [], activeTools: msg.active ?? [] })
+            } else if (msg.type === "done") {
+              if (!dryRun) {
+                const tools = msg.tools ?? []
+                for (let seq = 0; seq < tools.length; seq++) {
+                  const sid = insertStep(runId, seq + 1, tools[seq])
+                  completeStep(sid, "", "success", 0)
+                }
+                if (msg.output) {
+                  const sid = insertStep(runId, tools.length + 1, "Result")
+                  completeStep(sid, msg.output, "success", Date.now() - startTime)
+                }
+                completeRun(runId, "success", Date.now() - startTime)
+              }
+            } else if (msg.type === "error") {
+              if (!dryRun) completeRun(runId, "fail", Date.now() - startTime, msg.message)
+              console.error(`Run ${runId} failed:`, msg.message)
+            }
+          } catch {}
         }
       }
 
-      // Capture jig output as the final step
-      if (stepIds.size === 0) {
-        const output = ctx.getOutput().join("\n")
-        if (output) {
-          const seq = allTools.length + 1
-          const sid = insertStep(runId, seq, "Result")
-          completeStep(sid, output, "success", Date.now() - startTime)
-        }
+      const exitCode = await proc.exited
+      // If process exited without a done/error message (killed)
+      if (exitCode !== 0 && activeRunId === runId) {
+        if (!dryRun) completeRun(runId, "fail", Date.now() - startTime, "Process killed")
       }
-
-      completeRun(runId, "success", Date.now() - startTime)
-    } catch (e: any) {
-      completeRun(runId, "fail", Date.now() - startTime, e?.message ?? String(e))
-      console.error(`Run ${runId} failed:`, e?.message ?? e)
     } finally {
-      // Always clean up — prevents leaks on any exit path
       activeRunId = null
-      spinner.setToolCallback(null)
+      activeRunAbort = null
+      activeRunJigId = null
+      activeRunDryRun = false
       runProgress.delete(runId)
-      if (dryRun) {
-        const { setDryRun } = await import("./sdk/dryrun.js")
-        setDryRun(false)
-      }
     }
   })()
 
   return json({ runId })
+}
+
+async function handleCancelRun(): Promise<Response> {
+  if (activeRunId === null) return json({ error: "No run in progress" }, 404)
+  const runId = activeRunId
+  // Kill the subprocess — cleanup happens in the finally block of the reader
+  const label = activeRunDryRun ? "Dry run" : `Run #${runId}`
+  const jigName = activeRunJigId ?? "unknown"
+  process.stderr.write(`\n\x1b[33m${label} of ${jigName} cancelled by user\x1b[0m\n`)
+  if (activeRunAbort) activeRunAbort.abort()
+  return json({ ok: true, runId })
+}
+
+async function handleGetActiveRun(): Promise<Response> {
+  if (activeRunId === null) return json({ active: false })
+  const progress = runProgress.get(activeRunId)
+  return json({
+    active: true,
+    runId: activeRunId,
+    completedTools: progress?.completedTools ?? [],
+    activeTools: progress?.activeTools ?? [],
+  })
 }
 
 async function handleGetRun(runId: number): Promise<Response> {
@@ -500,6 +531,9 @@ function matchRoute(pathname: string): { handler: string; params: Record<string,
   const editStatusMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/edit-status$/)
   if (editStatusMatch) return { handler: "editStatus", params: { id: editStatusMatch[1] } }
 
+  if (pathname === "/api/runs/active") return { handler: "activeRun", params: {} }
+  if (pathname === "/api/runs/cancel") return { handler: "cancelRun", params: {} }
+
   return null
 }
 
@@ -545,6 +579,12 @@ export function createApiServer(port: number) {
           case "editStatus": {
             const editId = url.searchParams.get("editId") ?? ""
             return handleEditStatus(route.params.id, editId)
+          }
+          case "activeRun":
+            return handleGetActiveRun()
+          case "cancelRun": {
+            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+            return handleCancelRun()
           }
           default:
             return notFound("Unknown handler")

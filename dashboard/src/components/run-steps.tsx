@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { ServiceIcon } from "@/components/service-icon";
+import { formatElapsed } from "@/lib/format";
 
 /** Step with optional live run status */
 export interface RunStep {
@@ -82,13 +83,11 @@ export function RunSteps({
 
   return (
     <div>
-      {mode.type === "done" && (
-        <div className="flex items-center gap-2 text-[10px] mb-2 px-1">
-          {mode.error && <span className="text-rose-400 flex-1">{mode.error}</span>}
-          {onClear && <button onClick={onClear} className="text-[#555] hover:text-[#888] transition-colors ml-auto">Clear</button>}
+      {mode.type === "done" && onClear && (
+        <div className="flex justify-end mb-1">
+          <button onClick={onClear} className="text-[10px] text-[#555] hover:text-[#888] transition-colors">Clear</button>
         </div>
       )}
-
       <div className="rounded-lg border border-[#1f1f23] bg-[#111113]">
         {steps.map((step, i) => {
           const group = step.agentGroup;
@@ -198,7 +197,7 @@ export function RunSteps({
                 </div>
                 {step.time && <span className={`text-[10px] font-mono shrink-0 mt-0.5 ${stepRunning ? "text-blue-400/60" : "text-[#444]"}`}>{step.time}</span>}
                 {!step.time && stepRunning && isRunning && (
-                  <span className="text-[10px] font-mono text-blue-400/60 shrink-0 mt-0.5">{mode.elapsed}s</span>
+                  <span className="text-[10px] font-mono text-blue-400/60 shrink-0 mt-0.5">{formatElapsed(mode.elapsed)}</span>
                 )}
                 {hasOutput && (
                   <span className={`text-[9px] text-[#333] transition-transform duration-150 shrink-0 mt-1 ${isExpanded ? "rotate-90" : ""}`}>&#9656;</span>

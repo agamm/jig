@@ -37,11 +37,22 @@ export class Spinner {
   private batches: ToolBatch[] = []
   private currentBatch: ToolBatch | null = null
   private _onTool: ToolCallback | null = null
+  private _abort: AbortController | null = null
 
   /** Set a callback that fires whenever a tool is called. Used by the API server for real-time progress. */
   setToolCallback(cb: ToolCallback | null) { this._onTool = cb }
 
+  /** Get the abort signal for passing to fetch/API calls. */
+  get signal(): AbortSignal | undefined { return this._abort?.signal }
+
+  /** Signal the agent to stop immediately — aborts in-flight HTTP requests. */
+  abort() { this._abort?.abort() }
+
+  /** Check if abort was signalled. */
+  get aborted() { return this._abort?.signal.aborted ?? false }
+
   show(label: string) {
+    this._abort = new AbortController()
     if (!process.stderr.isTTY) return
     this.label = label
     this.start = Date.now()

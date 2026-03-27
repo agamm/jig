@@ -17,7 +17,47 @@ export function useJigRun(jigId: string, entity?: string | null) {
     };
   }, []);
 
-  const startRun = useCallback(async (dryRun: boolean) => {
+  // Check for in-progress run on mount (survives page refresh)
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/runs/active");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.active && data.runId) {
+          setMode({ type: "running", elapsed: 0, dryRun: false });
+          setCompletedTools(data.completedTools ?? []);
+          setActiveTools(data.activeTools ?? []);
+          // Resume polling
+          const abort = new AbortController();
+          abortRef.current = abort;
+          const startTime = Date.now();
+          timerRef.current = setInterval(() => {
+            if (!abort.signal.aborted) setMode(prev => prev.type === "running" ? { ...prev, elapsed: Math.round((Date.now() - startTime) / 1000) } : prev);
+          }, 1000);
+          for (let i = 0; i < 300 && !abort.signal.aborted; i++) {
+            await new Promise(r => setTimeout(r, 1000));
+            if (abort.signal.aborted) return;
+            try {
+              const pollRes = await fetch(`/api/runs/${data.runId}`, { signal: abort.signal });
+              if (!pollRes.ok) continue;
+              const run = await pollRes.json();
+              if (run.steps?.length) setLiveSteps(run.steps.map((s: any, idx: number) => ({ num: idx + 1, name: s.label, status: s.status, time: s.time, output: s.output ?? undefined })));
+              setCompletedTools(run.completedTools ?? []);
+              setActiveTools(run.activeTools ?? []);
+              if (run.status === "success" || run.status === "fail") {
+                clearInterval(timerRef.current!);
+                setMode({ type: "done", elapsed: run.durationMs ? Math.round(run.durationMs / 1000) : Math.round((Date.now() - startTime) / 1000), dryRun: false, status: run.status, error: run.error ?? undefined });
+                return;
+              }
+            } catch (e: any) { if (abort.signal.aborted) return; }
+          }
+        }
+      } catch {}
+    })();
+  }, []);
+
+  const startRun = useCallback(async (dryRun: boolean, params?: Record<string, string>) => {
     // Abort any previous run's polling
     abortRef.current?.abort();
     const abort = new AbortController();
@@ -46,7 +86,7 @@ export function useJigRun(jigId: string, entity?: string | null) {
       const res = await fetch(`/api/jigs/${encodeURIComponent(jigId)}/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ entity: entity ?? undefined, dryRun }),
+        body: JSON.stringify({ entity: entity ?? undefined, dryRun, params }),
         signal: abort.signal,
       });
       if (!res.ok) {
@@ -101,7 +141,17 @@ export function useJigRun(jigId: string, entity?: string | null) {
     setActiveTools([]);
   }, []);
 
+  const cancelRun = useCallback(async () => {
+    abortRef.current?.abort();
+    if (timerRef.current) clearInterval(timerRef.current);
+    try { await fetch("/api/runs/cancel", { method: "POST" }); } catch {}
+    setMode(prev => prev.type === "running"
+      ? { type: "done", elapsed: prev.elapsed, dryRun: prev.dryRun, status: "fail" }
+      : prev
+    );
+  }, []);
+
   const isRunning = mode.type === "running";
 
-  return { mode, liveSteps, completedTools, activeTools, startRun, dismiss, isRunning };
+  return { mode, liveSteps, completedTools, activeTools, startRun, dismiss, cancelRun, isRunning };
 }

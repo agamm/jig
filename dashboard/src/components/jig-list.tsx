@@ -114,8 +114,15 @@ export function JigList({ jigs, selectedJigId, expandedGroup, onJigClick, onEnti
                   &#x2807;
                 </span>
 
-                {/* Status dot */}
-                <span className={`h-[7px] w-[7px] rounded-full shrink-0 ${statusDot(jig.status)}`} />
+                {/* Status dot / running indicator */}
+                {jig.running ? (
+                  <span className="relative h-[7px] w-[7px] shrink-0">
+                    <span className="absolute inset-0 rounded-full bg-blue-400/30 animate-ping" />
+                    <span className="absolute inset-0 rounded-full bg-blue-400" />
+                  </span>
+                ) : (
+                  <span className={`h-[7px] w-[7px] rounded-full shrink-0 ${statusDot(jig.status)}`} />
+                )}
 
                 {/* Name + group count */}
                 <span className={`text-[13px] font-medium w-40 truncate ${isSelected ? "text-[#ededed]" : "text-[#ccc]"}`}>
@@ -159,16 +166,6 @@ export function JigList({ jigs, selectedJigId, expandedGroup, onJigClick, onEnti
                   </span>
                 )}
 
-                {/* Run button — only on non-grouped jigs */}
-                {!jig.grouped && (
-                  <button
-                    onClick={(ev) => { ev.stopPropagation(); }}
-                    className="shrink-0 rounded-md text-[9px] px-1.5 py-0.5 bg-[#1a1a1d] border border-[#2a2a2e] text-[#666] hover:text-emerald-400 hover:border-emerald-500/30 transition-all duration-150 cursor-pointer"
-                  >
-                    Run
-                  </button>
-                )}
-
                 {/* Group chevron — down arrow when collapsed, up when expanded */}
                 {jig.grouped ? (
                   <svg
@@ -200,12 +197,6 @@ export function JigList({ jigs, selectedJigId, expandedGroup, onJigClick, onEnti
                       <span className="text-[12px] text-[#ccc]">{e.name}</span>
                       <span className="text-[10px] text-[#444]">{e.lastRun}</span>
                       <span className="flex-1" />
-                      <span
-                        onClick={(ev) => { ev.stopPropagation(); }}
-                        className="rounded-md text-[9px] px-1.5 py-0.5 bg-[#1a1a1d] border border-[#2a2a2e] text-[#666] hover:text-emerald-400 hover:border-emerald-500/30 transition-all duration-150 cursor-pointer opacity-0 group-hover/entity:opacity-100"
-                      >
-                        Run
-                      </span>
                     </button>
                   ))}
                 </div>

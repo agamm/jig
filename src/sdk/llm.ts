@@ -55,7 +55,7 @@ export async function llm<T = string>(
           },
         },
       },
-    })
+    }, { signal: spinner.signal })
 
     const text = response.choices[0]?.message?.content
     if (!text) throw new Error("LLM returned empty response")
@@ -66,7 +66,7 @@ export async function llm<T = string>(
     model,
     max_tokens: maxTokens,
     messages: [{ role: "user", content: userContent }],
-  })
+  }, { signal: spinner.signal })
 
   const text = response.choices[0]?.message?.content
   if (!text) throw new Error("LLM returned empty response")
@@ -131,12 +131,14 @@ async function runAgent<T>(
   ]
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    if (spinner.aborted) throw new Error("Run cancelled")
+
     const response = await getClient().chat.completions.create({
       model,
       max_tokens: maxTokens,
       messages,
       tools: toolDefs,
-    })
+    }, { signal: spinner.signal })
 
     const message = response.choices[0]?.message
     if (!message) throw new Error("LLM returned empty response")
@@ -150,6 +152,8 @@ async function runAgent<T>(
       }
       return (message.content ?? "") as T
     }
+
+    if (spinner.aborted) throw new Error("Run cancelled")
 
     // Execute all tool calls in parallel, report to spinner as a batch
     spinner.batch()
@@ -227,7 +231,7 @@ async function structureResponse<T>(
         },
       },
     },
-  })
+  }, { signal: spinner.signal })
 
   const text = response.choices[0]?.message?.content
   if (!text) throw new Error("Structured response was empty")

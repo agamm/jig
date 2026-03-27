@@ -23,7 +23,6 @@ export function JigDetailPane({ jig, selectedEntity, onClose, onEdit, expanded =
   const [editingTrigger, setEditingTrigger] = useState(false);
   const [triggerValue, setTriggerValue] = useState(jig.settings.trigger);
   const [expandedRun, setExpandedRun] = useState<number | null>(null);
-  const [selectedDay, setSelectedDay] = useState<string | null>(null);
 
   const { mode, liveSteps, completedTools, activeTools, startRun, dismiss, isRunning } = useJigRun(jig.id, selectedEntity);
   const [recompiling, setRecompiling] = useState(false);
@@ -226,63 +225,49 @@ export function JigDetailPane({ jig, selectedEntity, onClose, onEdit, expanded =
         <div>
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-[11px] font-medium text-[#555] uppercase tracking-wider">Runs</h3>
-            <div className="flex items-center gap-0.5 rounded-md border border-[#1f1f23] bg-[#0e0e10] p-0.5">
-              {(() => {
-                const runDates = [...new Set(jig.runs.map(r => r.date.replace("Mar ", "3/").replace("Feb ", "2/")))];
-                return [{ key: null as string | null, label: "All" }, ...runDates.map(d => ({ key: d, label: d.split("/")[1] }))];
-              })().map(d => (
-                <button
-                  key={d.key ?? "all"}
-                  onClick={() => { setSelectedDay(d.key); setExpandedRun(null); }}
-                  className={`px-1.5 py-0.5 text-[9px] rounded transition-colors tabular-nums ${selectedDay === d.key ? "bg-[#1a1a1d] text-[#ededed]" : "text-[#444] hover:text-[#888]"}`}
-                >
-                  {d.label}
-                </button>
-              ))}
-            </div>
+            <span className="text-[10px] text-[#444]">{jig.runs.length} total</span>
           </div>
           <div className="rounded-lg border border-[#1f1f23] bg-[#111113] divide-y divide-[#1a1a1d] max-h-[300px] overflow-y-auto">
-            {(selectedDay ? jig.runs.filter(r => r.date.replace("Mar ", "3/").replace("Feb ", "2/") === selectedDay) : jig.runs.slice(0, 5)).map((run, i) => (
-              <div key={i}>
-                <button
-                  onClick={() => setExpandedRun(expandedRun === i ? null : i)}
-                  className="flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors duration-150 hover:bg-[#151517]"
-                >
-                  <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${run.status === "success" ? "bg-emerald-400" : "bg-rose-400"}`} />
-                  <span className="text-[10px] text-[#666] w-11 shrink-0 tabular-nums">{run.date.replace("Mar ", "3/")}</span>
-                  <span className="text-[10px] font-mono text-[#444] shrink-0">{run.duration}</span>
-                  <span className="flex-1" />
-                  <span className="text-[10px] font-mono text-[#444] shrink-0">{run.cost}</span>
-                  <span className={`text-[9px] text-[#333] transition-transform duration-150 shrink-0 ${expandedRun === i ? "rotate-90" : ""}`}>&#9656;</span>
-                </button>
-                {expandedRun === i && run.steps && (
-                  <div className="border-t border-[#1a1a1d]" style={{ animation: "fade-up 0.15s ease" }}>
-                    {run.steps.map((s, si) => (
-                      <details key={si} className="group/rs border-b border-[#1a1a1d] last:border-0">
-                        <summary className="flex items-center gap-2 text-[10px] px-3 py-1.5 list-none hover:bg-[#0e0e10] transition-colors">
-                          <span className={`shrink-0 ${s.healed ? "text-amber-400" : "text-emerald-400/60"}`}>{s.healed ? "\u26A1" : "\u2713"}</span>
-                          <span className="text-[#888] flex-1 truncate">{s.label}</span>
-                          <span className="font-mono text-[#444] shrink-0">{s.time}</span>
-                          {s.cost && <span className="font-mono text-amber-400/40 shrink-0">{s.cost}</span>}
-                          {s.tag && <span className="rounded-full bg-violet-500/10 px-1 py-0 text-[8px] text-violet-400 shrink-0">{s.tag}</span>}
-                          <span className="text-[8px] text-[#333] group-open/rs:rotate-90 transition-transform duration-150 shrink-0">{"\u25B8"}</span>
-                        </summary>
-                        <div className="px-3 pb-2 pt-0.5 ml-5">
-                          <div className="rounded-md bg-[#0a0a0b] border border-[#1f1f23] px-3 py-2">
-                            <p className="text-[9px] text-[#555] uppercase tracking-wider mb-1">Output</p>
-                            <p className="text-[10px] text-[#888] font-mono whitespace-pre-wrap max-h-20 overflow-y-auto">{s.output || "Completed"}</p>
-                          </div>
-                        </div>
-                      </details>
-                    ))}
-                    <div className="flex items-center justify-between px-3 py-1.5 text-[10px] text-[#444] bg-[#0e0e10]/50">
-                      <span>Total: {run.duration}</span>
-                      <span>Cost: {run.cost}</span>
+            {jig.runs.slice(0, 10).map((run, i) => {
+              const resultStep = run.steps?.find(s => s.output);
+              const outputPreview = resultStep?.output?.slice(0, 80);
+              const date = new Date(run.date);
+              const isToday = new Date().toDateString() === date.toDateString();
+              const timeStr = date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+              const dateStr = isToday ? `Today ${timeStr}` : date.toLocaleDateString("en-US", { month: "short", day: "numeric" }) + ` ${timeStr}`;
+
+              return (
+                <div key={i}>
+                  <button
+                    onClick={() => setExpandedRun(expandedRun === i ? null : i)}
+                    className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors duration-150 hover:bg-[#151517]"
+                  >
+                    <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[8px] ${run.status === "success" ? "bg-emerald-500/15 text-emerald-400" : "bg-rose-500/15 text-rose-400"}`}>
+                      {run.status === "success" ? "✓" : "✗"}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] text-[#ccc]">{dateStr}</span>
+                        <span className="text-[10px] font-mono text-[#555]">{run.duration}</span>
+                      </div>
+                      {outputPreview && expandedRun !== i && (
+                        <p className="text-[9px] text-[#444] truncate mt-0.5">{outputPreview}…</p>
+                      )}
                     </div>
-                  </div>
-                )}
-              </div>
-            ))}
+                    <span className={`text-[9px] text-[#333] transition-transform duration-150 shrink-0 ${expandedRun === i ? "rotate-90" : ""}`}>&#9656;</span>
+                  </button>
+                  {expandedRun === i && (
+                    <div className="border-t border-[#1a1a1d] px-3 py-2.5" style={{ animation: "fade-up 0.15s ease" }}>
+                      {resultStep?.output ? (
+                        <pre className="text-[10px] text-[#888] font-mono whitespace-pre-wrap max-h-48 overflow-y-auto leading-relaxed">{resultStep.output}</pre>
+                      ) : (
+                        <p className="text-[10px] text-[#555] italic">No output recorded</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
 

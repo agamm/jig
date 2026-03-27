@@ -6,6 +6,7 @@
  * Single URL for the user, no CORS.
  */
 import { join } from "path"
+import { existsSync } from "fs"
 import { createInterface } from "node:readline/promises"
 import { createApiServer } from "./server.js"
 
@@ -83,6 +84,13 @@ function tryServe(start: number): ReturnType<typeof createApiServer> {
 }
 
 export async function startServer(options?: { port?: number }) {
+  // Auto-install dashboard deps if missing
+  if (!existsSync(join(DASHBOARD_DIR, "node_modules"))) {
+    console.log("Installing dashboard dependencies...")
+    const install = Bun.spawn(["pnpm", "install"], { cwd: DASHBOARD_DIR, stdout: "inherit", stderr: "inherit" })
+    await install.exited
+  }
+
   const envPort = parseInt(process.env.PORT ?? "0")
   const preferredPort = options?.port ?? (envPort || 3141)
 

@@ -9,12 +9,17 @@ import { discoverJigs } from "./discover.js"
 import { openDb, insertRun, completeRun, insertStep, completeStep, getJigRuns, getRun, getLastRun, getJigSteps, getJigMeta, cleanupOrphanedMeta } from "./db.js"
 import { loadServerConfigs } from "./mcp/config.js"
 import type { RunRecorder } from "./sdk/context.js"
+import { formatDuration } from "./utils.js"
 
 const PROJECT_ROOT = join(import.meta.dir, "..")
 const JIGS_DIR = join(PROJECT_ROOT, "jigs")
 const SCHEMAS_DIR = join(PROJECT_ROOT, ".jig/schemas")
 
-const editLocks = new Map<string, { editId: string; status: string; message?: string }>()
+const editLocks = new Map<string, { editId: string; status: string; message?: string; createdAt: number }>()
+/** Track tool calls per run for real-time progress. */
+const runProgress = new Map<number, { completedTools: string[]; activeTools: string[] }>()
+/** Only one run at a time (spinner + dryRun are global singletons). */
+let activeRunId: number | null = null
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -108,9 +113,11 @@ function getJigFilePath(id: string, entity?: string): string | null {
 }
 
 function deriveStatus(jigId: string): "healthy" | "attention" | "failed" {
-  const lastRun = getLastRun(jigId)
-  if (!lastRun) return "attention"
-  return lastRun.status === "success" ? "healthy" : lastRun.status === "fail" ? "failed" : "attention"
+  try {
+    const lastRun = getLastRun(jigId)
+    if (!lastRun) return "attention"
+    return lastRun.status === "success" ? "healthy" : lastRun.status === "fail" ? "failed" : "attention"
+  } catch { return "attention" }
 }
 
 function buildEntityList(jigId: string, entities: string[]) {
@@ -128,12 +135,12 @@ function formatRuns(runs: ReturnType<typeof getJigRuns>) {
   // Exclude in-progress runs — those are shown in the live progress panel
   return runs.filter((r) => r.status !== "running").map((r) => ({
     date: r.started_at,
-    duration: r.duration_ms ? `${(r.duration_ms / 1000).toFixed(1)}s` : "—",
+    duration: r.duration_ms ? formatDuration(r.duration_ms) : "—",
     status: (r.status === "fail" ? "fail" : "success") as "success" | "fail",
     cost: "",
     steps: r.steps.map((s) => ({
       label: s.label,
-      time: s.duration_ms ? `${(s.duration_ms / 1000).toFixed(1)}s` : "—",
+      time: s.duration_ms ? formatDuration(s.duration_ms) : "—",
       cost: undefined,
       tag: undefined,
       healed: s.status === "healed",
@@ -147,23 +154,30 @@ function buildJigResponse(id: string, entities: string[], runLimit: number) {
   const filePath = getJigFilePath(id, grouped ? entities[0] : undefined)
   const code = filePath ? readFileSync(filePath, "utf-8") : ""
 
-  // Steps from SQLite (derived by creator pipeline)
+  // Steps from SQLite (derived by creator pipeline) — graceful on DB errors
   const entity = grouped ? entities[0] : null
-  const cachedSteps = getJigSteps(id, entity)
-  const steps = cachedSteps.map(s => ({
-    num: s.seq,
-    name: s.name,
-    desc: s.description,
-    cost: s.cost_hint ?? undefined,
-    connections: s.connections ? JSON.parse(s.connections) : [],
-  }))
+  let steps: any[] = []
+  try {
+    steps = getJigSteps(id, entity).map(s => ({
+      num: s.seq,
+      name: s.name,
+      desc: s.description,
+      cost: s.cost_hint ?? undefined,
+      connections: s.connections ? JSON.parse(s.connections) : [],
+      tools: s.tools ? JSON.parse(s.tools) : [],
+      agentGroup: s.agent_group ?? undefined,
+    }))
+  } catch {}
 
-  // Stale detection: compare file hash against cached
-  const meta = getJigMeta(id, entity)
-  const currentHash = code ? fileHash(code) : null
-  const stale = !meta || (currentHash !== null && meta.code_hash !== currentHash)
-
-  const runs = getJigRuns(id, undefined, runLimit)
+  // Stale detection — graceful on DB errors
+  let stale = true
+  let runs: ReturnType<typeof getJigRuns> = []
+  try {
+    const meta = getJigMeta(id, entity)
+    const currentHash = code ? fileHash(code) : null
+    stale = !meta || (currentHash !== null && meta.code_hash !== currentHash)
+    runs = getJigRuns(id, undefined, runLimit)
+  } catch {}
 
   // Sparkline from last 7 runs' durations (normalized).
   // Math.max(...[], 1) === 1 — safe on empty arrays due to the trailing 1.
@@ -202,7 +216,7 @@ function buildJigResponse(id: string, entities: string[], runLimit: number) {
 
 async function handleGetJigs(): Promise<Response> {
   const discovered = discoverJigs(JIGS_DIR)
-  cleanupOrphanedMeta(new Set(discovered.keys()))
+  try { cleanupOrphanedMeta(new Set(discovered.keys())) } catch {}
   const jigs = [...discovered.entries()].map(([id, entities]) =>
     buildJigResponse(id, entities, 10)
   )
@@ -235,13 +249,20 @@ async function handleRunJig(id: string, body: any): Promise<Response> {
 
   if (!existsSync(jigPath)) return notFound(`Jig file not found`)
 
+  // Only one run at a time — spinner and dryRun are global singletons.
+  if (activeRunId !== null) return json({ error: "A run is already in progress" }, 409)
+
   const runId = insertRun(id, entity, Object.keys(params).length > 0 ? params : undefined)
+  activeRunId = runId
 
   // Track step IDs by seq so the recorder can complete them directly
   const stepIds = new Map<number, number>()
 
   const startTime = Date.now()
   ;(async () => {
+    // Import spinner before try so it's available in finally
+    const { spinner } = await import("./sdk/spinner.js")
+
     try {
       if (dryRun) {
         const { setDryRun } = await import("./sdk/dryrun.js")
@@ -262,12 +283,49 @@ async function handleRunJig(id: string, body: any): Promise<Response> {
         },
       }
 
-      await run(def, params, { recorder })
+      // Hook spinner for tool call tracking.
+      // completedTools = all tools from previous batches (finished).
+      // activeTools = tools in the current batch (still executing).
+      spinner.setToolCallback((chain, current) => {
+        // All batches except the last are completed
+        const completed = chain.slice(0, -1).flat()
+        runProgress.set(runId, { completedTools: completed, activeTools: [...current] })
+      })
+
+      const ctx = await run(def, params, { recorder })
+
+      // Capture completed tools before finally{} clears progress
+      const progress = runProgress.get(runId)
+      const allTools = [...(progress?.completedTools ?? []), ...(progress?.activeTools ?? [])]
+
+      // If no ctx.step() calls were made (e.g. agent() jigs),
+      // record all tool calls as steps so runs show what happened
+      if (stepIds.size === 0 && allTools.length > 0) {
+        for (let seq = 0; seq < allTools.length; seq++) {
+          const sid = insertStep(runId, seq + 1, allTools[seq])
+          completeStep(sid, "", "success", 0)
+        }
+      }
+
+      // Capture jig output as the final step
+      if (stepIds.size === 0) {
+        const output = ctx.getOutput().join("\n")
+        if (output) {
+          const seq = allTools.length + 1
+          const sid = insertStep(runId, seq, "Result")
+          completeStep(sid, output, "success", Date.now() - startTime)
+        }
+      }
+
       completeRun(runId, "success", Date.now() - startTime)
     } catch (e: any) {
       completeRun(runId, "fail", Date.now() - startTime, e?.message ?? String(e))
       console.error(`Run ${runId} failed:`, e?.message ?? e)
     } finally {
+      // Always clean up — prevents leaks on any exit path
+      activeRunId = null
+      spinner.setToolCallback(null)
+      runProgress.delete(runId)
       if (dryRun) {
         const { setDryRun } = await import("./sdk/dryrun.js")
         setDryRun(false)
@@ -282,6 +340,9 @@ async function handleGetRun(runId: number): Promise<Response> {
   const run = getRun(runId)
   if (!run) return notFound(`Run not found: ${runId}`)
 
+  // Include real-time tool progress if the run is still active
+  const progress = runProgress.get(runId)
+
   return json({
     id: run.id,
     jigId: run.jig_id,
@@ -291,9 +352,11 @@ async function handleGetRun(runId: number): Promise<Response> {
     status: run.status,
     durationMs: run.duration_ms,
     error: run.error,
+    completedTools: progress?.completedTools ?? [],
+    activeTools: progress?.activeTools ?? [],
     steps: run.steps.map((s) => ({
       label: s.label,
-      time: s.duration_ms ? `${(s.duration_ms / 1000).toFixed(1)}s` : "—",
+      time: s.duration_ms ? formatDuration(s.duration_ms) : "—",
       status: s.status,
       output: s.output,
       error: s.error,
@@ -344,7 +407,7 @@ async function handleEditJig(id: string, body: any): Promise<Response> {
   if (editLocks.has(lockKey)) return json({ error: "Edit already in progress" }, 409)
 
   const editId = crypto.randomUUID()
-  editLocks.set(lockKey, { editId, status: "planning" })
+  editLocks.set(lockKey, { editId, status: "planning", createdAt: Date.now() })
 
   ;(async () => {
     try {
@@ -376,6 +439,12 @@ async function handleEditJig(id: string, body: any): Promise<Response> {
 }
 
 async function handleEditStatus(id: string, editId: string): Promise<Response> {
+  // Clean up stale locks (older than 10 minutes)
+  const staleMs = 10 * 60 * 1000
+  for (const [key, lock] of editLocks) {
+    if (Date.now() - lock.createdAt > staleMs) editLocks.delete(key)
+  }
+
   for (const [key, lock] of editLocks) {
     if ((key === id || key.startsWith(id + "/")) && lock.editId === editId) {
       const result = { status: lock.status, message: lock.message }

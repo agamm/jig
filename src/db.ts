@@ -47,6 +47,8 @@ export interface JigStepRow {
   description: string
   cost_hint: string | null
   connections: string | null // JSON array of connection names
+  tools: string | null       // JSON array of exact MCP tool names
+  agent_group: string | null
 }
 
 export interface JigMetaRow {
@@ -97,7 +99,9 @@ CREATE TABLE IF NOT EXISTS jig_steps (
   name TEXT NOT NULL,
   description TEXT NOT NULL,
   cost_hint TEXT,
-  connections TEXT
+  connections TEXT,
+  tools TEXT,
+  agent_group TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_jig_steps_jig ON jig_steps(jig_id, entity);
 
@@ -119,10 +123,26 @@ let _db: Database | null = null
 export function openDb(path?: string): Database {
   if (_db) return _db
   const dbPath = path ?? join(PROJECT_ROOT, "jig.db")
-  _db = new Database(dbPath)
-  _db.exec("PRAGMA journal_mode = WAL")
-  _db.exec("PRAGMA foreign_keys = ON")
-  _db.exec(SCHEMA)
+  try {
+    _db = new Database(dbPath)
+    _db.exec("PRAGMA journal_mode = WAL")
+    _db.exec("PRAGMA foreign_keys = ON")
+    _db.exec(SCHEMA)
+  } catch (e) {
+    // If DB is corrupted, delete and retry once
+    if (dbPath !== ":memory:") {
+      console.warn("DB error, recreating:", (e as Error)?.message)
+      try { require("fs").unlinkSync(dbPath) } catch {}
+      try { require("fs").unlinkSync(dbPath + "-shm") } catch {}
+      try { require("fs").unlinkSync(dbPath + "-wal") } catch {}
+      _db = new Database(dbPath)
+      _db.exec("PRAGMA journal_mode = WAL")
+      _db.exec("PRAGMA foreign_keys = ON")
+      _db.exec(SCHEMA)
+    } else {
+      throw e
+    }
+  }
   return _db
 }
 
@@ -254,14 +274,16 @@ export function completeStep(
 export function upsertJigSteps(
   jigId: string,
   entity: string | null,
-  steps: { name: string; description: string; costHint: string | null; connections?: string[] }[]
+  steps: { name: string; description: string; costHint: string | null; connections?: string[]; tools?: string[]; agentGroup?: string }[]
 ): void {
   const db = openDb()
   db.prepare(`DELETE FROM jig_steps WHERE jig_id = ? AND entity IS ?`).run(jigId, entity)
-  const stmt = db.prepare(`INSERT INTO jig_steps (jig_id, entity, seq, name, description, cost_hint, connections) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+  const stmt = db.prepare(`INSERT INTO jig_steps (jig_id, entity, seq, name, description, cost_hint, connections, tools, agent_group) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
   for (let i = 0; i < steps.length; i++) {
     const conns = steps[i].connections?.length ? JSON.stringify(steps[i].connections) : null
-    stmt.run(jigId, entity, i + 1, steps[i].name, steps[i].description, steps[i].costHint, conns)
+    const tools = steps[i].tools?.length ? JSON.stringify(steps[i].tools) : null
+    const group = steps[i].agentGroup?.trim() || null
+    stmt.run(jigId, entity, i + 1, steps[i].name, steps[i].description, steps[i].costHint, conns, tools, group)
   }
 }
 

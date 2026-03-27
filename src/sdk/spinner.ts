@@ -23,6 +23,12 @@ const FRAMES = [
 
 type ToolBatch = string[]
 
+/** Batch of tool names called in parallel */
+export type ToolBatchInfo = string[]
+/** Full chain of tool batches: sequential rounds of parallel calls */
+export type ToolChain = ToolBatchInfo[]
+export type ToolCallback = (chain: ToolChain, currentBatch: ToolBatchInfo) => void
+
 export class Spinner {
   private interval?: Timer
   private start = Date.now()
@@ -30,6 +36,10 @@ export class Spinner {
   private label: string = ""
   private batches: ToolBatch[] = []
   private currentBatch: ToolBatch | null = null
+  private _onTool: ToolCallback | null = null
+
+  /** Set a callback that fires whenever a tool is called. Used by the API server for real-time progress. */
+  setToolCallback(cb: ToolCallback | null) { this._onTool = cb }
 
   show(label: string) {
     if (!process.stderr.isTTY) return
@@ -51,11 +61,12 @@ export class Spinner {
 
   /** Add a tool to the current batch */
   tool(name: string) {
-    if (!process.stderr.isTTY) return
     const short = name.includes("__") ? name.split("__")[1] : name
     if (!this.currentBatch) this.currentBatch = []
     this.currentBatch.push(short)
-    this.render()
+    // Notify callback with full chain + current batch
+    this._onTool?.([...this.batches, this.currentBatch], this.currentBatch)
+    if (process.stderr.isTTY) this.render()
   }
 
   stop() {

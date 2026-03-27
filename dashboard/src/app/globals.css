@@ -18,6 +18,10 @@
 }
 
 * { scrollbar-width: thin; scrollbar-color: #1f1f23 transparent; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+
+@keyframes spin-light { from { rotate: 0deg; } to { rotate: 360deg; } }
 body { background: var(--background); color: var(--foreground); }
 
 @keyframes fade-up {

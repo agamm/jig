@@ -806,13 +806,15 @@ Rules for fields:
 - shortTitle: concise plain English, no code
 - description: brief plain English explanation only if it adds value beyond the title. Empty string if title is self-explanatory.
 - connections: which services are used (e.g. "gmail", "granola", "github")
+- tools: exact MCP tool function names from the code that this step calls (e.g. "gmail_search", "list_commits", "calendar_listEvents"). These are the function names as they appear in the code after the connection dot (e.g. workspace.gmail_search → "gmail_search"). Include ALL tool names for this step.
+- agentGroup: if the step happens INSIDE an agent() call, give it a label (e.g. "Gather data & write email"). All steps in the same agent() call share the same label. Empty string if the step is a direct tool call outside agent().
 
-Example — for a jig that searches emails, drafts a reply, and sends it:
+Example — for a jig that uses agent() to gather data then creates a draft:
 {"steps":[
-  {"shortTitle":"Search inbox","description":"Find unread emails from today","connections":["gmail"]},
-  {"shortTitle":"Draft reply","description":"AI generates a contextual reply","connections":[]},
-  {"shortTitle":"Wait for approval","description":"","connections":[]},
-  {"shortTitle":"Send email","description":"","connections":["gmail"]}
+  {"shortTitle":"Search inbox","description":"Find unread emails","connections":["gmail"],"tools":["gmail_search"],"agentGroup":"Gather & draft"},
+  {"shortTitle":"Check calendar","description":"","connections":["calendar"],"tools":["calendar_listEvents"],"agentGroup":"Gather & draft"},
+  {"shortTitle":"Draft reply","description":"AI generates a reply","connections":[],"tools":[],"agentGroup":"Gather & draft"},
+  {"shortTitle":"Create Gmail draft","description":"","connections":["gmail"],"tools":["gmail_createDraft"],"agentGroup":""}
 ]}
 
 Now analyze this code:
@@ -833,8 +835,10 @@ ${code}` }],
                     shortTitle: { type: "string", description: "Concise action title in plain English" },
                     description: { type: "string", description: "Brief explanation, empty string if title is self-explanatory" },
                     connections: { type: "array", items: { type: "string" }, description: "Connection names used (e.g. 'gmail', 'granola', 'github')" },
+                    tools: { type: "array", items: { type: "string" }, description: "Exact MCP tool function names (e.g. 'gmail_search', 'list_commits')" },
+                    agentGroup: { type: "string", description: "Label for agent() group, empty string if not inside agent()" },
                   },
-                  required: ["shortTitle", "description", "connections"],
+                  required: ["shortTitle", "description", "connections", "tools", "agentGroup"],
                   additionalProperties: false,
                 },
               },
@@ -852,7 +856,7 @@ ${code}` }],
     const jsonStr = text.trim().replace(/^```(?:json)?\s*\n?/m, "").replace(/\n?```\s*$/m, "").trim()
     const parsed = JSON.parse(jsonStr)
     const stepArray = (parsed.steps ?? []).filter(
-      (s: any) => s.shortTitle?.trim() && s.description?.trim()
+      (s: any) => s.shortTitle?.trim()
     )
 
     upsertJigSteps(jigId, entity ?? null, stepArray.map((s: any) => ({
@@ -860,6 +864,8 @@ ${code}` }],
       description: s.description.trim(),
       costHint: null,
       connections: Array.isArray(s.connections) ? s.connections : [],
+      tools: Array.isArray(s.tools) ? s.tools : [],
+      agentGroup: s.agentGroup?.trim() || "",
     })))
 
     const hasher = new Bun.CryptoHasher("sha256")

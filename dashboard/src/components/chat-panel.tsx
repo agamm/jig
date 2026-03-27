@@ -61,7 +61,7 @@ export function ChatPanel({ messages, width, onReviewClick }: {
                   <div className="flex gap-1">
                     <button
                       onClick={() => onReviewClick("invoice")}
-                      className="rounded-md bg-emerald-600 px-2 py-1 text-[10px] font-medium text-white transition-all duration-150 hover:bg-emerald-500 active:scale-95"
+                      className="rounded-md bg-emerald-600 px-2 py-1 text-[10px] font-medium text-white transition-all duration-150 hover:bg-emerald-500 active:scale-95 cursor-pointer"
                     >
                       Review &rarr;
                     </button>

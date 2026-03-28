@@ -164,7 +164,8 @@ function formatRuns(runs: ReturnType<typeof getJigRuns>) {
 function buildJigResponse(id: string, entities: string[], runLimit: number) {
   const grouped = entities.length > 0
   const filePath = getJigFilePath(id, grouped ? entities[0] : undefined)
-  const code = filePath ? readFileSync(filePath, "utf-8") : ""
+  let code = ""
+  try { if (filePath) code = readFileSync(filePath, "utf-8") } catch {}
 
   // Steps from SQLite (derived by creator pipeline) — graceful on DB errors
   const entity = grouped ? entities[0] : null
@@ -417,7 +418,8 @@ async function handleRecompile(id: string, body: any): Promise<Response> {
   const filePath = getJigFilePath(id, entity)
   if (!filePath) return notFound(`Jig file not found`)
 
-  const code = readFileSync(filePath, "utf-8")
+  let code: string
+  try { code = readFileSync(filePath, "utf-8") } catch { return notFound("Jig file not readable") }
 
   // Derive steps from source code (no module import — avoids MCP connection issues)
   const { deriveSteps } = await import("./creator.js")

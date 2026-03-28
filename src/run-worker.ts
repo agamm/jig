@@ -13,11 +13,17 @@ const args = process.argv.slice(2)
 const jigPath = args[0]
 const dryRun = args.includes("--dry-run")
 const paramsIdx = args.indexOf("--params")
-const params = paramsIdx >= 0 ? JSON.parse(args[paramsIdx + 1]) : {}
-
-if (!jigPath) { console.error("Usage: bun run-worker.ts <jigPath> [--dry-run] [--params <json>]"); process.exit(1) }
 
 function emit(data: any) { process.stdout.write(JSON.stringify(data) + "\n") }
+
+if (!jigPath) { emit({ type: "error", message: "No jig path provided" }); process.exit(1) }
+
+let params: Record<string, string> = {}
+try {
+  params = paramsIdx >= 0 ? JSON.parse(args[paramsIdx + 1]) : {}
+} catch {
+  emit({ type: "error", message: "Invalid params JSON" }); process.exit(1)
+}
 
 ;(async () => {
   try {
@@ -47,6 +53,10 @@ function emit(data: any) { process.stdout.write(JSON.stringify(data) + "\n") }
     }
     const { run } = await import("./sdk/jig.js")
     const def = mod.default
+    if (!def || typeof def.handler !== "function") {
+      emit({ type: "error", message: "Jig file must export a default JigDefinition (use jig() function)" })
+      process.exit(1)
+    }
 
     // Silence ctx.log() — it writes to stdout which would corrupt our JSON protocol
     const ctx = await run(def, params, { silent: true })

@@ -88,7 +88,11 @@ export async function startServer(options?: { port?: number }) {
   if (!existsSync(join(DASHBOARD_DIR, "node_modules"))) {
     console.log("Installing dashboard dependencies...")
     const install = Bun.spawn(["pnpm", "install"], { cwd: DASHBOARD_DIR, stdout: "inherit", stderr: "inherit" })
-    await install.exited
+    const code = await install.exited
+    if (code !== 0) {
+      console.error("Failed to install dashboard dependencies. Is pnpm installed? (npm install -g pnpm)")
+      process.exit(1)
+    }
   }
 
   // Verify connection files are up-to-date (regenerate if they reference missing modules)

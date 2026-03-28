@@ -300,6 +300,7 @@ async function handleRunJig(id: string, body: any): Promise<Response> {
       lastRunResult = {
         status: p?.error ? "fail" : p?.done ? "success" : "fail",
         error: p?.error,
+        output: p?.output,
         completedTools: p?.completedTools ?? [],
       }
       activeRunId = null
@@ -336,6 +337,7 @@ async function handleGetActiveRun(): Promise<Response> {
       completedTools: progress?.completedTools ?? [],
       activeTools: progress?.activeTools ?? [],
       error: progress?.error,
+      output: progress?.output,
       status: progress?.error ? "fail" : progress?.done ? "success" : "running",
     })
   }

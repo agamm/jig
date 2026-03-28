@@ -4,9 +4,17 @@
  * Handles the full lifecycle: import → validate → run → collect results.
  * Callers observe execution via the onEvent callback.
  */
+import { join } from "path"
+import { appendFileSync } from "fs"
 import type { RunRecorder } from "./sdk/context.js"
 import type { RunEvent } from "./run-events.js"
 import { insertStep, completeStep, completeRun } from "./db.js"
+
+const LOG_PATH = join(import.meta.dir, "../jig_debug.log")
+function debug(msg: string) {
+  const ts = new Date().toISOString()
+  appendFileSync(LOG_PATH, `${ts} ${msg}\n`)
+}
 
 export interface RunResult {
   output: string
@@ -31,6 +39,10 @@ export async function runJig(
 ): Promise<RunResult> {
   const { dryRun, silent } = options ?? {}
   const start = Date.now()
+  const tag = dryRun ? "[dry-run]" : "[run]"
+  const log = (msg: string) => debug(`${tag} ${msg}`)
+
+  log(`start ${jigPath}`)
 
   // DryRun — must be set before jig imports (generated tools check isDryRun())
   if (dryRun) {
@@ -112,6 +124,7 @@ export async function runJig(
     }
 
     // --- Run ---
+    log(`executing handler (${def.name})`)
     const { run } = await import("./sdk/jig.js")
     const ctx = await run(def, params, { ...(silent && { silent: true }), recorder })
 
@@ -124,12 +137,14 @@ export async function runJig(
       onEvent({ type: "output", text: "[warn] Jig produced no output" })
     }
 
+    log(`done in ${(durationMs / 1000).toFixed(1)}s — ${tools.length} tools, ${output.length} chars output`)
     onEvent({ type: "done", tools, output, durationMs })
     return { output, tools, durationMs }
 
   } catch (e: any) {
     const error = e?.message ?? String(e)
     const durationMs = Date.now() - start
+    log(`error after ${(durationMs / 1000).toFixed(1)}s: ${error}`)
     onEvent({ type: "error", message: error })
     return { output: "", tools: [], durationMs, error }
 

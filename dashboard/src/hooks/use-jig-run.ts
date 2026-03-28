@@ -41,7 +41,7 @@ export function useJigRun(jigId: string, entity?: string | null) {
           const elapsed = Math.round((Date.now() - startTime) / 1000);
           setMode({ type: "done", elapsed, dryRun: isDryRun, status, error: data.error });
 
-          // Fetch final steps for real runs
+          // Fetch final steps — for real runs from DB, for dry runs use output from poll
           if (data.runId > 0) {
             try {
               const finalRes = await fetch(`/api/runs/${data.runId}`, { signal: abort.signal });
@@ -55,6 +55,9 @@ export function useJigRun(jigId: string, entity?: string | null) {
                 }
               }
             } catch {}
+          } else if (data.output) {
+            // Dry run — show output as a single "Result" step
+            setLiveSteps([{ num: 1, name: "Result", status: "success", output: data.output }]);
           }
           return;
         }

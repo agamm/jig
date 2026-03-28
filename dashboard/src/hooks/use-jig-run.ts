@@ -39,17 +39,16 @@ export function useJigRun(jigId: string, entity?: string | null) {
             await new Promise(r => setTimeout(r, 1000));
             if (abort.signal.aborted) return;
             try {
-              const pollRes = await fetch(`/api/runs/${data.runId}`, { signal: abort.signal });
+              const pollRes = await fetch("/api/runs/active", { signal: abort.signal });
               if (!pollRes.ok) continue;
-              const run = await pollRes.json();
-              if (run.steps?.length) setLiveSteps(run.steps.map((s: any, idx: number) => ({ num: idx + 1, name: s.label, status: s.status, time: s.time, output: s.output ?? undefined })));
-              setCompletedTools(run.completedTools ?? []);
-              setActiveTools(run.activeTools ?? []);
-              if (run.status === "success" || run.status === "fail") {
+              const poll = await pollRes.json();
+              if (!poll.active) {
                 clearInterval(timerRef.current!);
-                setMode({ type: "done", elapsed: run.durationMs ? Math.round(run.durationMs / 1000) : Math.round((Date.now() - startTime) / 1000), dryRun: false, status: run.status, error: run.error ?? undefined });
+                setMode({ type: "done", elapsed: Math.round((Date.now() - startTime) / 1000), dryRun: false, status: "success" });
                 return;
               }
+              setCompletedTools(poll.completedTools ?? []);
+              setActiveTools(poll.activeTools ?? []);
             } catch (e: any) { if (abort.signal.aborted) return; }
           }
         }
@@ -101,27 +100,35 @@ export function useJigRun(jigId: string, entity?: string | null) {
         await new Promise(r => setTimeout(r, 1000));
         if (abort.signal.aborted) return;
         try {
-          const pollRes = await fetch(`/api/runs/${runId}`, { signal: abort.signal });
+          // Poll active endpoint — works for both real runs and dry runs
+          const pollRes = await fetch("/api/runs/active", { signal: abort.signal });
           if (!pollRes.ok) continue;
-          const run = await pollRes.json();
+          const data = await pollRes.json();
 
-          if (run.steps?.length) {
-            setLiveSteps(run.steps.map((s: any, idx: number) => ({
-              num: idx + 1,
-              name: s.label,
-              status: s.status,
-              time: s.time,
-              output: s.output ?? undefined,
-            })));
-          }
-          setCompletedTools(run.completedTools ?? []);
-          setActiveTools(run.activeTools ?? []);
-
-          if (run.status === "success" || run.status === "fail") {
-            const elapsed = run.durationMs ? Math.round(run.durationMs / 1000) : Math.round((Date.now() - startTime) / 1000);
-            done(run.status, elapsed, run.error ?? undefined);
+          if (!data.active) {
+            // Run finished — fetch final result if it was a real run
+            if (runId > 0) {
+              try {
+                const finalRes = await fetch(`/api/runs/${runId}`, { signal: abort.signal });
+                if (finalRes.ok) {
+                  const run = await finalRes.json();
+                  if (run.steps?.length) {
+                    setLiveSteps(run.steps.map((s: any, idx: number) => ({
+                      num: idx + 1, name: s.label, status: s.status,
+                      time: s.time, output: s.output ?? undefined,
+                    })));
+                  }
+                  done(run.status, run.durationMs ? Math.round(run.durationMs / 1000) : Math.round((Date.now() - startTime) / 1000), run.error ?? undefined);
+                  return;
+                }
+              } catch {}
+            }
+            done("success", Math.round((Date.now() - startTime) / 1000));
             return;
           }
+
+          setCompletedTools(data.completedTools ?? []);
+          setActiveTools(data.activeTools ?? []);
         } catch (e: any) {
           if (abort.signal.aborted) return;
           console.warn("Poll error:", e?.message);

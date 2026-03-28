@@ -37,7 +37,8 @@ function emit(data: any) { process.stdout.write(JSON.stringify(data) + "\n") }
     const mod = await import(jigPath)
     const def = mod.default
 
-    const ctx = await run(def, params)
+    // Silence ctx.log() — it writes to stdout which would corrupt our JSON protocol
+    const ctx = await run(def, params, { silent: true })
 
     // Collect results
     const output = ctx.getOutput().join("\n")

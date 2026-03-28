@@ -369,10 +369,17 @@ async function handleGetActiveRun(): Promise<Response> {
 
 async function handleGetRun(runId: number): Promise<Response> {
   const run = getRun(runId)
-  if (!run) return notFound(`Run not found: ${runId}`)
 
-  // Include real-time tool progress if the run is still active
+  // For dry runs (runId=-1) or in-progress runs, serve from runProgress
   const progress = runProgress.get(runId)
+  if (!run && progress) {
+    return json({
+      id: runId, status: "running", durationMs: null, error: null,
+      completedTools: progress.completedTools, activeTools: progress.activeTools,
+      steps: [],
+    })
+  }
+  if (!run) return notFound(`Run not found: ${runId}`)
 
   return json({
     id: run.id,

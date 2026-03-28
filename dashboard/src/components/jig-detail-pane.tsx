@@ -12,7 +12,7 @@ import { formatElapsed } from "@/lib/format";
 const statusDot = (s: string) =>
   s === "healthy" ? "bg-emerald-400" : s === "attention" ? "bg-amber-400" : "bg-rose-400";
 
-export function JigDetailPane({ jig, selectedEntity, onClose, onEdit, expanded = false, onToggleExpand }: {
+export function JigDetailPane({ jig: jigProp, selectedEntity, onClose, onEdit, expanded = false, onToggleExpand }: {
   jig: Jig;
   selectedEntity: string | null;
   onClose: () => void;
@@ -20,6 +20,12 @@ export function JigDetailPane({ jig, selectedEntity, onClose, onEdit, expanded =
   expanded?: boolean;
   onToggleExpand?: () => void;
 }) {
+  // Local steps override (so derivation updates without page reload)
+  const [localSteps, setLocalSteps] = useState<Jig["steps"] | null>(null);
+  const [prevJigId, setPrevJigId] = useState(jigProp.id + (selectedEntity ?? ""));
+  const currentKey = jigProp.id + (selectedEntity ?? "");
+  if (currentKey !== prevJigId) { setPrevJigId(currentKey); setLocalSteps(null); }
+  const jig = localSteps ? { ...jigProp, steps: localSteps } : jigProp;
   const [detailTab, setDetailTab] = useState<"steps" | "code">("steps");
   const [editingTrigger, setEditingTrigger] = useState(false);
   const [triggerValue, setTriggerValue] = useState(jig.settings.trigger);
@@ -41,8 +47,13 @@ export function JigDetailPane({ jig, selectedEntity, onClose, onEdit, expanded =
         body: JSON.stringify({ entity: selectedEntity ?? undefined }),
       });
       const data = await res.json().catch(() => null);
-      if (data?.ok) window.location.reload();
-      else { console.warn("Step derivation failed:", data?.error); setDeriving(false); }
+      if (data?.ok && data.steps) {
+        setLocalSteps(data.steps);
+        setDeriving(false);
+      } else {
+        console.warn("Step derivation failed:", data?.error);
+        setDeriving(false);
+      }
     } catch {
       setDeriving(false);
     }
@@ -197,7 +208,10 @@ export function JigDetailPane({ jig, selectedEntity, onClose, onEdit, expanded =
               completedTools={completedTools}
               activeTools={activeTools}
               emptyAction={deriving ? (
-                <span className="mt-2 text-[10px] text-[#555] italic">Deriving steps…</span>
+                <div className="mt-3 flex items-center justify-center gap-2">
+                  <span className="h-3 w-3 rounded-full border-2 border-blue-400/30 border-t-blue-400 animate-spin" />
+                  <span className="text-[11px] text-[#666]">Analyzing code…</span>
+                </div>
               ) : (
                 <button
                   onClick={deriveSteps}

@@ -4,7 +4,7 @@
  */
 export type RunEvent =
   | { type: "step-start"; seq: number; label: string }
-  | { type: "step-done"; seq: number; output: string; status: "success" | "fail" | "healed"; durationMs: number; error?: string }
+  | { type: "step-done"; seq: number; output: string; status: "success" | "fail"; durationMs: number; error?: string }
   | { type: "tool"; completed: string[]; active: string[]; readOnly?: Record<string, boolean> }
   | { type: "output"; text: string }
   | { type: "done"; tools: string[]; output: string; durationMs: number }

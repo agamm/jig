@@ -35,7 +35,7 @@ export interface StepRow {
   finished_at: string | null
   duration_ms: number | null
   output: string | null
-  status: "running" | "success" | "fail" | "healed"
+  status: "running" | "success" | "fail"
   error: string | null
 }
 
@@ -257,7 +257,7 @@ export function insertStep(runId: number, seq: number, label: string): number {
 export function completeStep(
   stepId: number,
   output: string,
-  status: "success" | "fail" | "healed",
+  status: "success" | "fail",
   durationMs: number,
   error?: string
 ): void {

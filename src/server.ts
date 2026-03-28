@@ -9,7 +9,7 @@ import { discoverJigs } from "./discover.js"
 import { openDb, insertRun, getJigRuns, getRun, getLastRun, getJigSteps, getJigMeta, cleanupOrphanedMeta } from "./db.js"
 import { loadServerConfigs } from "./mcp/config.js"
 import { formatDuration } from "./utils.js"
-import { runJig, persist } from "./runner.js"
+import { runJig, persist, isValidJigId } from "./runner.js"
 import type { RunEvent } from "./run-events.js"
 
 const PROJECT_ROOT = join(import.meta.dir, "..")
@@ -32,12 +32,12 @@ function prettifyId(id: string): string {
   return id.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
-/** Extract params from jig source code: params: { company: "Client name" } */
+/** Extract params from jig source code — regex fallback for when import isn't possible. */
 function extractParams(code: string): Record<string, string> {
-  const m = code.match(/params\s*:\s*\{([^}]+)\}/)
+  const m = code.match(/params\s*:\s*\{([^}]*(?:\{[^}]*\}[^}]*)*)\}/s)
   if (!m) return {}
   const params: Record<string, string> = {}
-  const entries = m[1].matchAll(/(\w+)\s*:\s*["']([^"']*)["']/g)
+  const entries = m[1].matchAll(/(\w+)\s*:\s*["'`]([^"'`]*)["'`]/g)
   for (const e of entries) params[e[1]] = e[2]
   return params
 }
@@ -162,7 +162,7 @@ function formatRuns(runs: ReturnType<typeof getJigRuns>) {
   }))
 }
 
-function buildJigResponse(id: string, entities: string[], runLimit: number) {
+async function buildJigResponse(id: string, entities: string[], runLimit: number) {
   const grouped = entities.length > 0
   const filePath = getJigFilePath(id, grouped ? entities[0] : undefined)
   let code = ""
@@ -199,7 +199,27 @@ function buildJigResponse(id: string, entities: string[], runLimit: number) {
   const maxDur = Math.max(...recentDurations, 1)
   const sparkline = recentDurations.map((d) => Math.round((d / maxDur) * 100))
 
-  const trigger = extractTrigger(code)
+  // Extract params/trigger — try import first (robust), fall back to regex
+  let params: Record<string, string> = {}
+  let trigger = ""
+  if (filePath) {
+    try {
+      const mod = await import(filePath)
+      const def = mod.default
+      if (def?.options) {
+        params = def.options.params ?? {}
+        const t = def.options.trigger
+        if (t?.type === "cron") trigger = t.cron ? cronToText(t.cron) : "Scheduled"
+        else if (t?.type === "interval") trigger = t.minutes ? `Every ${t.minutes}m` : "Interval"
+        else if (t?.type === "event") trigger = t.source ? `On ${t.source}` : "Event"
+        else if (t?.type === "manual") trigger = "Manual"
+        else if (t?.type === "webhook") trigger = "Webhook"
+      }
+    } catch {
+      params = extractParams(code)
+      trigger = extractTrigger(code)
+    }
+  }
 
   return {
     id,
@@ -215,7 +235,7 @@ function buildJigResponse(id: string, entities: string[], runLimit: number) {
     steps,
     code: grouped ? "" : code,
     runs: formatRuns(runs),
-    params: extractParams(code),
+    params,
     settings: {
       trigger,
       connections: extractConnections(code),
@@ -233,8 +253,8 @@ function buildJigResponse(id: string, entities: string[], runLimit: number) {
 async function handleGetJigs(): Promise<Response> {
   const discovered = discoverJigs(JIGS_DIR)
   try { cleanupOrphanedMeta(new Set(discovered.keys())) } catch {}
-  const jigs = [...discovered.entries()].map(([id, entities]) =>
-    buildJigResponse(id, entities, 10)
+  const jigs = await Promise.all(
+    [...discovered.entries()].map(([id, entities]) => buildJigResponse(id, entities, 10))
   )
   return json(jigs)
 }
@@ -242,7 +262,7 @@ async function handleGetJigs(): Promise<Response> {
 async function handleGetJig(id: string): Promise<Response> {
   const discovered = discoverJigs(JIGS_DIR)
   if (!discovered.has(id)) return notFound(`Jig not found: ${id}`)
-  return json(buildJigResponse(id, discovered.get(id)!, 20))
+  return json(await buildJigResponse(id, discovered.get(id)!, 20))
 }
 
 async function handleRunJig(id: string, body: any): Promise<Response> {
@@ -297,13 +317,13 @@ async function handleRunJig(id: string, body: any): Promise<Response> {
       }, { dryRun, silent: true })
     } finally {
       const p = runProgress.get(runId)
-      lastRunResult = {
+      storeResult(runId, {
         status: p?.error ? "fail" : p?.done ? "success" : "fail",
         error: p?.error,
         output: p?.output,
         completedTools: p?.completedTools ?? [],
         readOnly: p?.readOnly,
-      }
+      })
       activeRunId = null
       activeRunJigId = null
       activeRunDryRun = false
@@ -326,8 +346,17 @@ async function handleCancelRun(): Promise<Response> {
   return json({ ok: true, runId })
 }
 
-/** Last completed run result — kept briefly for the dashboard to pick up */
-let lastRunResult: { status: string; error?: string; output?: string; completedTools: string[]; readOnly?: Record<string, boolean> } | null = null
+/** Recent run results — kept for 60s so the dashboard never misses them. */
+const recentResults = new Map<number, { data: any; expiresAt: number }>()
+
+function storeResult(runId: number, data: any) {
+  recentResults.set(runId, { data, expiresAt: Date.now() + 60_000 })
+  // Evict expired entries
+  const now = Date.now()
+  for (const [id, r] of recentResults) {
+    if (now > r.expiresAt) recentResults.delete(id)
+  }
+}
 
 async function handleGetActiveRun(): Promise<Response> {
   if (activeRunId !== null) {
@@ -343,11 +372,12 @@ async function handleGetActiveRun(): Promise<Response> {
       status: progress?.error ? "fail" : progress?.done ? "success" : "running",
     })
   }
-  // No active run — check if there's a recent result to report
-  if (lastRunResult) {
-    const result = lastRunResult
-    lastRunResult = null // consume once
-    return json({ active: false, ...result })
+  // No active run — check for recent result (60s TTL, not consumed)
+  const latest = [...recentResults.entries()]
+    .filter(([, r]) => Date.now() < r.expiresAt)
+    .sort((a, b) => b[1].expiresAt - a[1].expiresAt)[0]
+  if (latest) {
+    return json({ active: false, runId: latest[0], ...latest[1].data })
   }
   return json({ active: false })
 }
@@ -499,22 +529,37 @@ function matchRoute(pathname: string): { handler: string; params: Record<string,
   if (pathname === "/api/connections") return { handler: "connections", params: {} }
 
   const jigMatch = pathname.match(/^\/api\/jigs\/([^/]+)$/)
-  if (jigMatch) return { handler: "getJig", params: { id: jigMatch[1] } }
+  if (jigMatch) {
+    if (!isValidJigId(decodeURIComponent(jigMatch[1]))) return null
+    return { handler: "getJig", params: { id: decodeURIComponent(jigMatch[1]) } }
+  }
 
   const runMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/run$/)
-  if (runMatch) return { handler: "runJig", params: { id: runMatch[1] } }
+  if (runMatch) {
+    if (!isValidJigId(decodeURIComponent(runMatch[1]))) return null
+    return { handler: "runJig", params: { id: decodeURIComponent(runMatch[1]) } }
+  }
 
   const runDetailMatch = pathname.match(/^\/api\/runs\/(\d+)$/)
   if (runDetailMatch) return { handler: "getRun", params: { id: runDetailMatch[1] } }
 
   const recompileMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/recompile$/)
-  if (recompileMatch) return { handler: "recompile", params: { id: recompileMatch[1] } }
+  if (recompileMatch) {
+    if (!isValidJigId(decodeURIComponent(recompileMatch[1]))) return null
+    return { handler: "recompile", params: { id: decodeURIComponent(recompileMatch[1]) } }
+  }
 
   const editMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/edit$/)
-  if (editMatch) return { handler: "editJig", params: { id: editMatch[1] } }
+  if (editMatch) {
+    if (!isValidJigId(decodeURIComponent(editMatch[1]))) return null
+    return { handler: "editJig", params: { id: decodeURIComponent(editMatch[1]) } }
+  }
 
   const editStatusMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/edit-status$/)
-  if (editStatusMatch) return { handler: "editStatus", params: { id: editStatusMatch[1] } }
+  if (editStatusMatch) {
+    if (!isValidJigId(decodeURIComponent(editStatusMatch[1]))) return null
+    return { handler: "editStatus", params: { id: decodeURIComponent(editStatusMatch[1]) } }
+  }
 
   if (pathname === "/api/runs/active") return { handler: "activeRun", params: {} }
   if (pathname === "/api/runs/cancel") return { handler: "cancelRun", params: {} }

@@ -4,7 +4,7 @@
  */
 export interface RunRecorder {
   onStepStart(seq: number, label: string): void
-  onStepDone(seq: number, output: string, status: "success" | "fail" | "healed", durationMs: number, error?: string): void
+  onStepDone(seq: number, output: string, status: "success" | "fail", durationMs: number, error?: string): void
   onOutput?(text: string): void
 }
 

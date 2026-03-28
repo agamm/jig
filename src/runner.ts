@@ -5,17 +5,39 @@
  * Callers observe execution via the onEvent callback.
  */
 import { join } from "path"
-import { appendFileSync } from "fs"
 import type { RunRecorder } from "./sdk/context.js"
 import type { RunEvent } from "./run-events.js"
 import { insertStep, completeStep, completeRun } from "./db.js"
+import { dryRunContext } from "./sdk/dryrun.js"
 
+// --- Debug log (async, queued) ---
 const LOG_PATH = join(import.meta.dir, "../jig_debug.log")
+let _logQueue: string[] = []
+let _logFlushPending = false
+
 function debug(msg: string) {
-  const ts = new Date().toISOString()
-  appendFileSync(LOG_PATH, `${ts} ${msg}\n`)
+  _logQueue.push(`${new Date().toISOString()} ${msg}\n`)
+  if (!_logFlushPending) {
+    _logFlushPending = true
+    queueMicrotask(flushLog)
+  }
 }
 
+async function flushLog() {
+  const batch = _logQueue
+  _logQueue = []
+  _logFlushPending = false
+  try { await Bun.write(Bun.file(LOG_PATH), batch.join(""), { mode: "a" }) } catch {}
+}
+
+// --- Jig ID validation ---
+const VALID_JIG_ID = /^[a-z0-9][a-z0-9_-]*$/
+
+export function isValidJigId(id: string): boolean {
+  return VALID_JIG_ID.test(id)
+}
+
+// --- Runner ---
 export interface RunResult {
   output: string
   tools: string[]
@@ -38,17 +60,26 @@ export async function runJig(
   options?: { dryRun?: boolean; silent?: boolean }
 ): Promise<RunResult> {
   const { dryRun, silent } = options ?? {}
+
+  // Wrap entire execution in dryRun context (AsyncLocalStorage)
+  // Generated tool functions read isDryRun() which checks this context
+  return dryRunContext.run(dryRun ?? false, () =>
+    _runJig(jigPath, params, onEvent, { dryRun: dryRun ?? false, silent: silent ?? false })
+  )
+}
+
+async function _runJig(
+  jigPath: string,
+  params: Record<string, string>,
+  onEvent: (e: RunEvent) => void,
+  opts: { dryRun: boolean; silent: boolean }
+): Promise<RunResult> {
+  const { dryRun, silent } = opts
   const start = Date.now()
   const tag = dryRun ? "[dry-run]" : "[run]"
   const log = (msg: string) => debug(`${tag} ${msg}`)
 
   log(`start ${jigPath}`)
-
-  // DryRun — must be set before jig imports (generated tools check isDryRun())
-  if (dryRun) {
-    const { setDryRun } = await import("./sdk/dryrun.js")
-    setDryRun(true)
-  }
 
   // Wire spinner → onEvent for tool progress
   const { spinner } = await import("./sdk/spinner.js")
@@ -160,10 +191,6 @@ export async function runJig(
     return { output: "", tools: [], durationMs, error }
 
   } finally {
-    if (dryRun) {
-      const { setDryRun } = await import("./sdk/dryrun.js")
-      setDryRun(false)
-    }
     spinner.setToolCallback(null)
   }
 }

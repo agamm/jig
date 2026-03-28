@@ -144,7 +144,9 @@ export async function startServer(options?: { port?: number }) {
   }, 2000)
 
   // 5. Clean shutdown
-  const cleanup = () => {
+  const cleanup = async () => {
+    const { closeAllConnections } = await import("./mcp/client.js")
+    await closeAllConnections()
     nextProcess.kill()
     apiServer.stop(true)
     process.exit(0)

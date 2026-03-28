@@ -2,11 +2,11 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest"
 import { mkdirSync, writeFileSync, rmSync } from "fs"
 import { join, dirname } from "path"
 import { fileURLToPath } from "url"
-import { discoverJigs } from "../src/discover.js"
+import { discoverJigs, invalidateJigsCache } from "../src/discover.js"
 
 const TMP = join(dirname(fileURLToPath(import.meta.url)), ".tmp-jigs")
 
-beforeEach(() => mkdirSync(TMP, { recursive: true }))
+beforeEach(() => { invalidateJigsCache(); mkdirSync(TMP, { recursive: true }) })
 afterEach(() => rmSync(TMP, { recursive: true, force: true }))
 
 function touch(...paths: string[]) {

@@ -208,6 +208,23 @@ ${toolList}`,
 /**
  * Call a tool on a connected MCP server.
  */
+/** Registry of all open connections for cleanup. */
+const openConnections = new Map<string, McpConnection>()
+
+export function registerConnection(name: string, conn: McpConnection) {
+  openConnections.set(name, conn)
+}
+
+/** Close all open MCP connections. Call at end of CLI runs and server shutdown. */
+export async function closeAllConnections(): Promise<void> {
+  const closes = [...openConnections.values()].map(async (conn) => {
+    try { await conn.transport.close() } catch {}
+    try { await conn.client.close() } catch {}
+  })
+  await Promise.allSettled(closes)
+  openConnections.clear()
+}
+
 export async function callTool(
   connection: McpConnection,
   toolName: string,

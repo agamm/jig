@@ -8,6 +8,7 @@ import { RunSteps, type RunStep } from "@/components/run-steps";
 import { useJigRun } from "@/hooks/use-jig-run";
 import { TRIGGER_SUGGESTIONS } from "@/mock/mock-data";
 import { useTriggerSave } from "@/hooks/use-trigger-save";
+import { Spinner } from "@/components/spinner";
 
 const statusDot = (s: string) =>
   s === "healthy" ? "bg-emerald-400" : s === "attention" ? "bg-amber-400" : "bg-rose-400";
@@ -167,7 +168,7 @@ export function JigDetailPane({ jig: jigProp, selectedEntity, onClose, onEdit, e
           <div key="steps" className="flip-enter">
             {derivingSteps && runSteps.length === 0 ? (
               <div className="flex items-center justify-center gap-2 py-8">
-                <span className="h-3 w-3 rounded-full border-2 border-blue-400/30 border-t-blue-400 animate-spin" />
+                <Spinner size={14} />
                 <span className="text-[11px] text-[#666]">Analyzing steps…</span>
               </div>
             ) : (

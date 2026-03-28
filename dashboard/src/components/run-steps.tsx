@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ServiceIcon } from "@/components/service-icon";
 import { formatElapsed } from "@/lib/format";
+import { Spinner } from "@/components/spinner";
 
 /** Step with optional live run status */
 export interface RunStep {
@@ -100,9 +101,8 @@ export function RunSteps({
             }
             if (stepRunning) {
               return (
-                <span className="flex h-5 w-5 shrink-0 items-center justify-center mt-0.5 relative">
-                  <span className="absolute h-4 w-4 rounded-full bg-blue-400/20 animate-ping" />
-                  <span className="h-2.5 w-2.5 rounded-full bg-blue-400" />
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center mt-0.5">
+                  <Spinner size={18} />
                 </span>
               );
             }

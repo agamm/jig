@@ -91,6 +91,25 @@ export async function startServer(options?: { port?: number }) {
     await install.exited
   }
 
+  // Verify connection files are up-to-date (regenerate if they reference missing modules)
+  const connectionsDir = join(PROJECT_ROOT, ".jig/connections")
+  if (existsSync(connectionsDir)) {
+    const indexFile = join(connectionsDir, "index.ts")
+    if (existsSync(indexFile)) {
+      const { readFileSync, readdirSync } = await import("fs")
+      const files = readdirSync(connectionsDir).filter(f => f.endsWith(".ts") && f !== "index.ts")
+      for (const file of files) {
+        const content = readFileSync(join(connectionsDir, file), "utf-8")
+        if (content.includes("sdk/connections")) {
+          console.log(`Stale connection files detected. Regenerating...`)
+          const regen = Bun.spawn(["bun", "run", "src/mcp/typegen.ts"], { cwd: PROJECT_ROOT, stdout: "inherit", stderr: "inherit" })
+          await regen.exited
+          break
+        }
+      }
+    }
+  }
+
   const envPort = parseInt(process.env.PORT ?? "0")
   const preferredPort = options?.port ?? (envPort || 3141)
 

@@ -5,6 +5,7 @@
 export interface RunRecorder {
   onStepStart(seq: number, label: string): void
   onStepDone(seq: number, output: string, status: "success" | "fail" | "healed", durationMs: number, error?: string): void
+  onOutput?(text: string): void
 }
 
 /**
@@ -47,6 +48,7 @@ export class Context {
     this._output.push(line)
     this._stepOutput.push(line)
     this._sink(...args)
+    this._recorder?.onOutput?.(line)
   }
 
   /** Get all captured output. Used by dry-run and dashboard. */

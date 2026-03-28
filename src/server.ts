@@ -6,9 +6,11 @@
 import { join } from "path"
 import { existsSync, readFileSync } from "fs"
 import { discoverJigs } from "./discover.js"
-import { openDb, insertRun, completeRun, insertStep, completeStep, getJigRuns, getRun, getLastRun, getJigSteps, getJigMeta, cleanupOrphanedMeta } from "./db.js"
+import { openDb, insertRun, getJigRuns, getRun, getLastRun, getJigSteps, getJigMeta, cleanupOrphanedMeta } from "./db.js"
 import { loadServerConfigs } from "./mcp/config.js"
 import { formatDuration } from "./utils.js"
+import { runJig, persist } from "./runner.js"
+import type { RunEvent } from "./run-events.js"
 
 const PROJECT_ROOT = join(import.meta.dir, "..")
 const JIGS_DIR = join(PROJECT_ROOT, "jigs")
@@ -19,7 +21,6 @@ const editLocks = new Map<string, { editId: string; status: string; message?: st
 const runProgress = new Map<number, { completedTools: string[]; activeTools: string[]; error?: string; done?: boolean; output?: string }>()
 /** Only one run at a time (spinner + dryRun are global singletons). */
 let activeRunId: number | null = null
-let activeRunAbort: { abort(): void } | null = null
 let activeRunJigId: string | null = null
 let activeRunDryRun = false
 
@@ -276,80 +277,25 @@ async function handleRunJig(id: string, body: any): Promise<Response> {
   // Only persist real runs — dry runs are ephemeral
   const runId = dryRun ? -1 : insertRun(id, entity, Object.keys(params).length > 0 ? params : undefined)
   activeRunId = runId
-  activeRunAbort = new AbortController()
   activeRunJigId = id
   activeRunDryRun = dryRun
   runProgress.set(runId, { completedTools: [], activeTools: [] })
 
   const startTime = Date.now()
-  const workerPath = join(PROJECT_ROOT, "src/run-worker.ts")
-  const workerArgs = [workerPath, jigPath]
-  if (dryRun) workerArgs.push("--dry-run")
-  if (Object.keys(params).length > 0) workerArgs.push("--params", JSON.stringify(params))
+  const persistHandler = !dryRun ? persist(runId, startTime) : null
 
-  const proc = Bun.spawn(["bun", "run", ...workerArgs], {
-    cwd: PROJECT_ROOT,
-    stdout: "pipe",
-    stderr: "inherit",
-    env: { ...process.env },
-  })
-  activeRunAbort = { abort: () => proc.kill(9) }
-
-  // Read stdout for progress updates
   ;(async () => {
     try {
-      const reader = proc.stdout.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ""
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split("\n")
-        buffer = lines.pop() ?? ""
-
-        for (const line of lines) {
-          if (!line.trim()) continue
-          try {
-            const msg = JSON.parse(line)
-            if (msg.type === "tool") {
-              const p = runProgress.get(runId) ?? { completedTools: [], activeTools: [] }
-              p.completedTools = msg.completed ?? []
-              p.activeTools = msg.active ?? []
-              runProgress.set(runId, p)
-            } else if (msg.type === "done") {
-              const p = runProgress.get(runId)
-              if (p) { p.done = true; p.output = msg.output; p.activeTools = [] }
-              if (!dryRun) {
-                const tools = msg.tools ?? []
-                for (let seq = 0; seq < tools.length; seq++) {
-                  const sid = insertStep(runId, seq + 1, tools[seq])
-                  completeStep(sid, "", "success", 0)
-                }
-                if (msg.output) {
-                  const sid = insertStep(runId, tools.length + 1, "Result")
-                  completeStep(sid, msg.output, "success", Date.now() - startTime)
-                }
-                completeRun(runId, "success", Date.now() - startTime)
-              }
-            } else if (msg.type === "error") {
-              const p = runProgress.get(runId)
-              if (p) { p.done = true; p.error = msg.message; p.activeTools = [] }
-              if (!dryRun) completeRun(runId, "fail", Date.now() - startTime, msg.message)
-              console.error(`Run ${runId} failed:`, msg.message)
-            }
-          } catch {}
+      await runJig(jigPath, params, (event: RunEvent) => {
+        const p = runProgress.get(runId)
+        if (p) {
+          if (event.type === "tool") { p.completedTools = event.completed; p.activeTools = event.active }
+          if (event.type === "done") { p.done = true; p.output = event.output; p.activeTools = [] }
+          if (event.type === "error") { p.done = true; p.error = event.message; p.activeTools = [] }
         }
-      }
-
-      const exitCode = await proc.exited
-      // If process exited without a done/error message (killed)
-      if (exitCode !== 0 && activeRunId === runId) {
-        if (!dryRun) completeRun(runId, "fail", Date.now() - startTime, "Process killed")
-      }
+        persistHandler?.(event)
+      }, { dryRun, silent: true })
     } finally {
-      // Save result for dashboard to pick up after cleanup
       const p = runProgress.get(runId)
       lastRunResult = {
         status: p?.error ? "fail" : p?.done ? "success" : "fail",
@@ -357,7 +303,6 @@ async function handleRunJig(id: string, body: any): Promise<Response> {
         completedTools: p?.completedTools ?? [],
       }
       activeRunId = null
-      activeRunAbort = null
       activeRunJigId = null
       activeRunDryRun = false
       runProgress.delete(runId)
@@ -370,11 +315,12 @@ async function handleRunJig(id: string, body: any): Promise<Response> {
 async function handleCancelRun(): Promise<Response> {
   if (activeRunId === null) return json({ error: "No run in progress" }, 404)
   const runId = activeRunId
-  // Kill the subprocess — cleanup happens in the finally block of the reader
   const label = activeRunDryRun ? "Dry run" : `Run #${runId}`
   const jigName = activeRunJigId ?? "unknown"
   process.stderr.write(`\n\x1b[33m${label} of ${jigName} cancelled by user\x1b[0m\n`)
-  if (activeRunAbort) activeRunAbort.abort()
+  // Abort via spinner — fires AbortSignal wired into all LLM calls
+  const { spinner } = await import("./sdk/spinner.js")
+  spinner.abort()
   return json({ ok: true, runId })
 }
 

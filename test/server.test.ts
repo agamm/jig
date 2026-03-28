@@ -1,57 +1,37 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test"
 import { existsSync, writeFileSync, mkdirSync, rmSync, readFileSync } from "fs"
 import { join } from "path"
+import type { RunEvent } from "../src/run-events.js"
 
 const PROJECT_ROOT = join(import.meta.dir, "..")
 
-describe("run-worker", () => {
-  it("emits error for invalid params JSON", async () => {
-    const proc = Bun.spawn(
-      ["bun", "run", "src/run-worker.ts", "jigs/weekly-update.ts", "--params", "not-json"],
-      { cwd: PROJECT_ROOT, stdout: "pipe", stderr: "pipe" }
-    )
-    const out = await new Response(proc.stdout).text()
-    await proc.exited
-    expect(out).toContain('"type":"error"')
-    expect(out).toContain("Invalid params JSON")
-  })
-
-  it("emits error for missing jig path", async () => {
-    const proc = Bun.spawn(
-      ["bun", "run", "src/run-worker.ts"],
-      { cwd: PROJECT_ROOT, stdout: "pipe", stderr: "pipe" }
-    )
-    const out = await new Response(proc.stdout).text()
-    await proc.exited
-    expect(out).toContain('"type":"error"')
-    expect(out).toContain("No jig path")
-  })
-
+describe("runner", () => {
   it("emits error for jig without default export", async () => {
+    const { runJig } = await import("../src/runner.js")
+    const { openDb } = await import("../src/db.js")
+    openDb(":memory:")
+
     const testJig = join(PROJECT_ROOT, "jigs/_test_no_default.ts")
     writeFileSync(testJig, 'export const foo = "bar"')
     try {
-      const proc = Bun.spawn(
-        ["bun", "run", "src/run-worker.ts", testJig],
-        { cwd: PROJECT_ROOT, stdout: "pipe", stderr: "pipe" }
-      )
-      const out = await new Response(proc.stdout).text()
-      await proc.exited
-      expect(out).toContain('"type":"error"')
-      expect(out).toContain("default")
+      const events: RunEvent[] = []
+      const result = await runJig(testJig, {}, (e) => events.push(e), { dryRun: true, silent: true })
+      expect(result.error).toBeDefined()
+      expect(events.some(e => e.type === "error")).toBe(true)
     } finally {
       rmSync(testJig, { force: true })
     }
   })
 
   it("emits error for nonexistent jig file", async () => {
-    const proc = Bun.spawn(
-      ["bun", "run", "src/run-worker.ts", "/nonexistent/jig.ts"],
-      { cwd: PROJECT_ROOT, stdout: "pipe", stderr: "pipe" }
-    )
-    const out = await new Response(proc.stdout).text()
-    await proc.exited
-    expect(out).toContain('"type":"error"')
+    const { runJig } = await import("../src/runner.js")
+    const { openDb } = await import("../src/db.js")
+    openDb(":memory:")
+
+    const events: RunEvent[] = []
+    const result = await runJig("/nonexistent/jig.ts", {}, (e) => events.push(e), { dryRun: true, silent: true })
+    expect(result.error).toBeDefined()
+    expect(events.some(e => e.type === "error")).toBe(true)
   })
 })
 

@@ -679,25 +679,13 @@ async function dryRunAndReview(
 // ---------------------------------------------------------------------------
 
 async function dryRunJig(name: string, entity?: string): Promise<string | null> {
-  const { run } = await import("./sdk/jig.js")
-  const { setDryRun } = await import("./sdk/dryrun.js")
-
+  const { runJig } = await import("./runner.js")
   const jigPath = entity
     ? join(JIGS_DIR, name, `${entity}.ts`)
     : join(JIGS_DIR, `${name}.ts`)
-
   if (!existsSync(jigPath)) return null
-
-  setDryRun(true)
-  try {
-    const mod = await import(`${jigPath}?_dryrun=${Date.now()}`)
-    const ctx = await run(mod.default, {}, { silent: true })
-    return ctx.getOutput().join("\n").trim() || null
-  } catch (e) {
-    return `Error: ${(e as Error).message}`
-  } finally {
-    setDryRun(false)
-  }
+  const result = await runJig(jigPath, {}, () => {}, { dryRun: true, silent: true })
+  return result.error ? null : (result.output.trim() || null)
 }
 
 // ---------------------------------------------------------------------------

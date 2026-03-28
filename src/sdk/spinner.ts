@@ -51,14 +51,19 @@ export class Spinner {
   /** Check if abort was signalled. */
   get aborted() { return this._abort?.signal.aborted ?? false }
 
-  show(label: string) {
+  /** Reset tool tracking state. Called at the start of each run. */
+  reset() {
     this._abort = new AbortController()
+    this.batches = []
+    this.currentBatch = null
+  }
+
+  show(label: string) {
+    this.reset()
     if (!process.stderr.isTTY) return
     this.label = label
     this.start = Date.now()
     this.frame = 0
-    this.batches = []
-    this.currentBatch = null
     this.interval = setInterval(() => this.render(), 300)
   }
 
@@ -78,6 +83,13 @@ export class Spinner {
     // Notify callback with full chain + current batch
     this._onTool?.([...this.batches, this.currentBatch], this.currentBatch)
     if (process.stderr.isTTY) this.render()
+  }
+
+  /** Get all tools called so far (completed + in-progress). */
+  getTools(): string[] {
+    const all = [...this.batches]
+    if (this.currentBatch?.length) all.push(this.currentBatch)
+    return all.flat()
   }
 
   stop() {

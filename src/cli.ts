@@ -223,7 +223,7 @@ try {
       break
 
     case "run":
-      await runJig(rest[0], rest[1], io)
+      await handleRun(rest[0], rest[1], io)
       break
 
     case "new": {
@@ -362,22 +362,40 @@ function checkConnections(io: JigIO) {
   }
 }
 
-async function execJig(path: string, io: JigIO) {
-  const { run } = await import("./sdk/jig.js")
-  const mod = await import(path)
-  const def = mod.default
+async function runJigFile(path: string, io: JigIO, jigId: string, entity?: string) {
+  const { runJig, persist } = await import("./runner.js")
+  const { openDb, insertRun } = await import("./db.js")
 
-  // Prompt for missing params through IO (CLI prompts, dashboard shows a form)
-  const paramDefs = def.options?.params ?? {}
+  openDb()
+
+  // Extract param definitions — lightweight import just for prompting
+  let paramDefs: Record<string, string> = {}
+  try {
+    const mod = await import(path)
+    paramDefs = mod.default?.options?.params ?? {}
+  } catch {
+    // Import errors will be caught and classified by runJig() below
+  }
+
   const params: Record<string, string> = {}
   for (const [name, desc] of Object.entries(paramDefs)) {
     params[name] = await io.ask(`${name} (${desc})`)
   }
 
-  await run(def, params)
+  const isDry = dryRun
+  const runId = isDry ? -1 : insertRun(jigId, entity, Object.keys(params).length > 0 ? params : undefined)
+  const start = Date.now()
+  const persistHandler = !isDry ? persist(runId, start) : null
+
+  const result = await runJig(path, params, (event) => {
+    if (event.type === "error") console.error(event.message)
+    persistHandler?.(event)
+  })
+
+  if (result.error) process.exit(1)
 }
 
-async function runJig(name: string | undefined, entity: string | undefined, io: JigIO) {
+async function handleRun(name: string | undefined, entity: string | undefined, io: JigIO) {
   const jigsDir = join(PROJECT_ROOT, "jigs")
   const jigs = discoverJigs(jigsDir)
 
@@ -397,7 +415,7 @@ async function runJig(name: string | undefined, entity: string | undefined, io: 
   const entities = jigs.get(name)!
 
   if (entities.length === 0) {
-    await execJig(join(jigsDir, `${name}.ts`), io)
+    await runJigFile(join(jigsDir, `${name}.ts`), io, name)
     return
   }
 
@@ -409,7 +427,7 @@ async function runJig(name: string | undefined, entity: string | undefined, io: 
   if (entity === "all") {
     for (const e of entities) {
       io.emit({ type: "run-start", name: `${name}/${e}` })
-      await execJig(join(jigsDir, name, `${e}.ts`), io)
+      await runJigFile(join(jigsDir, name, `${e}.ts`), io, name, e)
     }
     return
   }
@@ -418,5 +436,5 @@ async function runJig(name: string | undefined, entity: string | undefined, io: 
     io.emit({ type: "error", code: "entity-not-found", message: `Entity not found: ${name}/${entity}` })
     process.exit(1)
   }
-  await execJig(join(jigsDir, name, `${entity}.ts`), io)
+  await runJigFile(join(jigsDir, name, `${entity}.ts`), io, name, entity)
 }

@@ -38,7 +38,7 @@ function toolService(tool: string): string | null {
 
 export function RunSteps({
   steps, mode = { type: "idle" }, onClear, emptyAction,
-  completedTools = [], activeTools = [],
+  completedTools = [], activeTools = [], toolReadOnly = {},
 }: {
   steps: RunStep[];
   mode?: RunStepsMode;
@@ -46,6 +46,7 @@ export function RunSteps({
   emptyAction?: React.ReactNode;
   completedTools?: string[];
   activeTools?: string[];
+  toolReadOnly?: Record<string, boolean>;
 }) {
   const [expandedStep, setExpandedStep] = useState<number | null>(null);
 
@@ -80,6 +81,7 @@ export function RunSteps({
 
   const isLive = mode.type !== "idle";
   const isRunning = mode.type === "running";
+  const isDryRun = mode.type !== "idle" ? mode.dryRun : false;
 
   return (
     <div>
@@ -175,10 +177,12 @@ export function RunSteps({
                     <div className="flex items-center gap-1 mt-2 flex-wrap">
                       {completedTools.map((t, ti) => {
                         const svc = toolService(t);
+                        const isWrite = isDryRun && toolReadOnly[t] === false;
                         return (
-                          <span key={`d-${ti}`} className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5">
+                          <span key={`d-${ti}`} className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 ${isWrite ? "bg-amber-500/10 border border-amber-500/20" : "bg-emerald-500/10 border border-emerald-500/20"}`}>
                             {svc && <ServiceIcon name={svc} size={9} />}
-                            <span className="text-[8px] text-emerald-400/70 font-mono">{t}</span>
+                            {isWrite && <span className="text-[7px] text-amber-400/60 font-mono">skip</span>}
+                            <span className={`text-[8px] font-mono ${isWrite ? "text-amber-400/50 line-through" : "text-emerald-400/70"}`}>{t}</span>
                           </span>
                         );
                       })}

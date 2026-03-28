@@ -31,7 +31,7 @@ export function JigDetailPane({ jig: jigProp, selectedEntity, onClose, onEdit, e
   const [triggerValue, setTriggerValue] = useState(jig.settings.trigger);
   const [expandedRun, setExpandedRun] = useState<number | null>(null);
 
-  const { mode, liveSteps, completedTools, activeTools, startRun, dismiss, cancelRun, isRunning } = useJigRun(jig.id, selectedEntity);
+  const { mode, liveSteps, completedTools, activeTools, toolReadOnly, startRun, dismiss, cancelRun, isRunning } = useJigRun(jig.id, selectedEntity);
   const [deriving, setDeriving] = useState(false);
   const hasParams = jig.params && Object.keys(jig.params).length > 0;
   const [paramValues, setParamValues] = useState<Record<string, string>>(() =>
@@ -207,6 +207,7 @@ export function JigDetailPane({ jig: jigProp, selectedEntity, onClose, onEdit, e
               onClear={dismiss}
               completedTools={completedTools}
               activeTools={activeTools}
+              toolReadOnly={toolReadOnly}
               emptyAction={deriving ? (
                 <div className="mt-3 flex items-center justify-center gap-2">
                   <span className="h-3 w-3 rounded-full border-2 border-blue-400/30 border-t-blue-400 animate-spin" />

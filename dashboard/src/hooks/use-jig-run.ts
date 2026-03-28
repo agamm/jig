@@ -6,6 +6,7 @@ export function useJigRun(jigId: string, entity?: string | null) {
   const [liveSteps, setLiveSteps] = useState<RunStep[]>([]);
   const [completedTools, setCompletedTools] = useState<string[]>([]);
   const [activeTools, setActiveTools] = useState<string[]>([]);
+  const [toolReadOnly, setToolReadOnly] = useState<Record<string, boolean>>({});
   const abortRef = useRef<AbortController | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -35,8 +36,11 @@ export function useJigRun(jigId: string, entity?: string | null) {
         const data = await res.json();
 
         if (!data.active) {
-          // Run finished
+          // Run finished — clear live tool state
           clearInterval(timerRef.current!);
+          setCompletedTools(data.completedTools ?? []);
+          setActiveTools([]);
+          if (data.readOnly) setToolReadOnly(data.readOnly);
           const status = data.status === "fail" ? "fail" : "success";
           const elapsed = Math.round((Date.now() - startTime) / 1000);
           setMode({ type: "done", elapsed, dryRun: isDryRun, status, error: data.error });
@@ -64,6 +68,7 @@ export function useJigRun(jigId: string, entity?: string | null) {
 
         setCompletedTools(data.completedTools ?? []);
         setActiveTools(data.activeTools ?? []);
+        if (data.readOnly) setToolReadOnly(data.readOnly);
       } catch (e: any) {
         if (abort.signal.aborted) return;
       }
@@ -106,6 +111,7 @@ export function useJigRun(jigId: string, entity?: string | null) {
     setLiveSteps([]);
     setActiveTools([]);
     setCompletedTools([]);
+    setToolReadOnly({});
     const startTime = Date.now();
 
     try {
@@ -134,6 +140,7 @@ export function useJigRun(jigId: string, entity?: string | null) {
     setLiveSteps([]);
     setCompletedTools([]);
     setActiveTools([]);
+    setToolReadOnly({});
   }, []);
 
   const cancelRun = useCallback(async () => {
@@ -145,5 +152,5 @@ export function useJigRun(jigId: string, entity?: string | null) {
     );
   }, [cleanup]);
 
-  return { mode, liveSteps, completedTools, activeTools, startRun, dismiss, cancelRun, isRunning: mode.type === "running" };
+  return { mode, liveSteps, completedTools, activeTools, toolReadOnly, startRun, dismiss, cancelRun, isRunning: mode.type === "running" };
 }

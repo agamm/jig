@@ -7,6 +7,7 @@ import { Context, type RunRecorder } from "./context.js"
 export type JigTool<TInput = unknown, TOutput = unknown> = {
   _serverName: string
   _toolName: string
+  _readOnly?: boolean
   (params: TInput): Promise<TOutput>
 }
 

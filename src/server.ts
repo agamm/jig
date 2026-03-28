@@ -18,7 +18,7 @@ const SCHEMAS_DIR = join(PROJECT_ROOT, ".jig/schemas")
 
 const editLocks = new Map<string, { editId: string; status: string; message?: string; createdAt: number }>()
 /** Track tool calls per run for real-time progress. */
-const runProgress = new Map<number, { completedTools: string[]; activeTools: string[]; error?: string; done?: boolean; output?: string }>()
+const runProgress = new Map<number, { completedTools: string[]; activeTools: string[]; error?: string; done?: boolean; output?: string; readOnly?: Record<string, boolean> }>()
 /** Only one run at a time (spinner + dryRun are global singletons). */
 let activeRunId: number | null = null
 let activeRunJigId: string | null = null
@@ -289,7 +289,7 @@ async function handleRunJig(id: string, body: any): Promise<Response> {
       await runJig(jigPath, params, (event: RunEvent) => {
         const p = runProgress.get(runId)
         if (p) {
-          if (event.type === "tool") { p.completedTools = event.completed; p.activeTools = event.active }
+          if (event.type === "tool") { p.completedTools = event.completed; p.activeTools = event.active; if (event.readOnly) p.readOnly = event.readOnly }
           if (event.type === "done") { p.done = true; p.output = event.output; p.activeTools = [] }
           if (event.type === "error") { p.done = true; p.error = event.message; p.activeTools = [] }
         }
@@ -302,6 +302,7 @@ async function handleRunJig(id: string, body: any): Promise<Response> {
         error: p?.error,
         output: p?.output,
         completedTools: p?.completedTools ?? [],
+        readOnly: p?.readOnly,
       }
       activeRunId = null
       activeRunJigId = null
@@ -326,7 +327,7 @@ async function handleCancelRun(): Promise<Response> {
 }
 
 /** Last completed run result — kept briefly for the dashboard to pick up */
-let lastRunResult: { status: string; error?: string; output?: string; completedTools: string[] } | null = null
+let lastRunResult: { status: string; error?: string; output?: string; completedTools: string[]; readOnly?: Record<string, boolean> } | null = null
 
 async function handleGetActiveRun(): Promise<Response> {
   if (activeRunId !== null) {
@@ -336,6 +337,7 @@ async function handleGetActiveRun(): Promise<Response> {
       runId: activeRunId,
       completedTools: progress?.completedTools ?? [],
       activeTools: progress?.activeTools ?? [],
+      readOnly: progress?.readOnly,
       error: progress?.error,
       output: progress?.output,
       status: progress?.error ? "fail" : progress?.done ? "success" : "running",

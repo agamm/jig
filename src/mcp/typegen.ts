@@ -115,6 +115,7 @@ function tool(name: string, readOnly: boolean) {
   }
   fn._serverName = "${serverName}"
   fn._toolName = name
+  fn._readOnly = readOnly
   return fn as JigTool<any, any>
 }
 

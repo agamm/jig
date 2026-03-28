@@ -53,8 +53,9 @@ export async function runJig(
   // Wire spinner → onEvent for tool progress
   const { spinner } = await import("./sdk/spinner.js")
   spinner.reset()
+  let toolReadOnly: Record<string, boolean> | undefined
   spinner.setToolCallback((chain, current) => {
-    onEvent({ type: "tool", completed: chain.slice(0, -1).flat(), active: [...current] })
+    onEvent({ type: "tool", completed: chain.slice(0, -1).flat(), active: [...current], ...(dryRun && toolReadOnly && { readOnly: toolReadOnly }) })
   })
 
   // Recorder bridges Context's step lifecycle → RunEvent stream
@@ -114,7 +115,17 @@ export async function runJig(
       return { output: "", tools: [], durationMs: Date.now() - start, error }
     }
 
-    // 3. Validate required params
+    // 3. Build readOnly map from tool definitions (for dry-run UI)
+    const defTools = def.options?.tools ?? []
+    if (defTools.length > 0) {
+      toolReadOnly = {}
+      for (const t of defTools) {
+        const short = t._toolName.includes("__") ? t._toolName.split("__")[1] : t._toolName
+        toolReadOnly[short] = t._readOnly ?? true
+      }
+    }
+
+    // 4. Validate required params
     const required = Object.keys(def.options?.params ?? {})
     const missing = required.filter((k: string) => !params[k]?.trim())
     if (missing.length > 0) {

@@ -6,6 +6,7 @@ import { ConnectionTag } from "@/components/connection-tag";
 import { HighlightedCode } from "@/components/highlighted-code";
 import { StepList } from "@/components/step-list";
 import { TRIGGER_SUGGESTIONS } from "@/mock/mock-data";
+import { useTriggerSave } from "@/hooks/use-trigger-save";
 
 export function ReviewPane({ jig, onClose, isEditing = false }: {
   jig: Jig;
@@ -13,8 +14,7 @@ export function ReviewPane({ jig, onClose, isEditing = false }: {
   isEditing?: boolean;
 }) {
   const [detailTab, setDetailTab] = useState<"steps" | "code">("steps");
-  const [editingTrigger, setEditingTrigger] = useState(false);
-  const [triggerValue, setTriggerValue] = useState(jig.settings.trigger);
+  const trigger = useTriggerSave(jig.id, jig.settings.trigger);
   const [editInput, setEditInput] = useState("");
   const [editId, setEditId] = useState<string | null>(null);
   const [editStatus, setEditStatus] = useState<string | null>(null);
@@ -68,12 +68,12 @@ export function ReviewPane({ jig, onClose, isEditing = false }: {
         {/* Trigger */}
         <div>
           <h3 className="text-[11px] font-medium text-[#555] uppercase tracking-wider mb-2">Trigger</h3>
-          {editingTrigger ? (
+          {trigger.editing ? (
             <div className="rounded-lg border border-blue-500/30 bg-[#111113] p-3 space-y-2" style={{ animation: "fade-up 0.15s ease" }}>
               <input
                 type="text"
-                value={triggerValue}
-                onChange={(e) => setTriggerValue(e.target.value)}
+                value={trigger.value}
+                onChange={(e) => trigger.setValue(e.target.value)}
                 className="w-full rounded-md border border-[#1f1f23] bg-[#0a0a0b] px-3 py-1.5 text-[12px] text-[#ededed] outline-none focus:border-blue-500/50 transition-colors duration-150"
                 autoFocus
               />
@@ -82,7 +82,7 @@ export function ReviewPane({ jig, onClose, isEditing = false }: {
                 {TRIGGER_SUGGESTIONS.map(s => (
                   <button
                     key={s}
-                    onClick={() => setTriggerValue(s)}
+                    onClick={() => trigger.setValue(s)}
                     className="rounded-md border border-[#1f1f23] bg-[#0a0a0b] px-2 py-1 text-[10px] text-[#888] transition-colors duration-150 hover:border-[#2a2a2e] hover:text-[#ededed]"
                   >
                     {s}
@@ -90,16 +90,20 @@ export function ReviewPane({ jig, onClose, isEditing = false }: {
                 ))}
               </div>
               <div className="flex gap-1.5 pt-1">
-                <button onClick={() => setEditingTrigger(false)} className="rounded-md bg-blue-600 px-2.5 py-1 text-[10px] font-medium text-white transition-colors duration-150 hover:bg-blue-500">Save</button>
-                <button onClick={() => { setEditingTrigger(false); setTriggerValue(jig.settings.trigger); }} className="rounded-md border border-[#1f1f23] px-2.5 py-1 text-[10px] text-[#555] transition-colors duration-150 hover:text-[#888]">Cancel</button>
+                <button
+                  disabled={trigger.saving}
+                  onClick={trigger.save}
+                  className="rounded-md bg-blue-600 px-2.5 py-1 text-[10px] font-medium text-white transition-colors duration-150 hover:bg-blue-500 disabled:opacity-50"
+                >{trigger.saving ? "Saving…" : "Save"}</button>
+                <button onClick={trigger.cancel} className="rounded-md border border-[#1f1f23] px-2.5 py-1 text-[10px] text-[#555] transition-colors duration-150 hover:text-[#888]">Cancel</button>
               </div>
             </div>
           ) : (
             <button
-              onClick={() => { setEditingTrigger(true); setTriggerValue(jig.settings.trigger); }}
+              onClick={trigger.startEditing}
               className="group inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-left"
             >
-              <span className="text-[12px] font-mono text-[#ccc] decoration-dotted underline-offset-4 group-hover:underline group-hover:decoration-[#555]">{jig.settings.trigger}</span>
+              <span className="text-[12px] font-mono text-[#ccc] decoration-dotted underline-offset-4 group-hover:underline group-hover:decoration-[#555]">{trigger.display}</span>
               <span className="text-[10px] text-[#333] opacity-0 group-hover:opacity-100 transition-opacity duration-150">&#9998;</span>
             </button>
           )}
@@ -204,8 +208,8 @@ export function ReviewPane({ jig, onClose, isEditing = false }: {
         ) : (
           <div className="pt-2">
             <button
-              disabled={!triggerValue}
-              title={!triggerValue ? "Set a trigger first" : ""}
+              disabled={!trigger.value}
+              title={!trigger.value ? "Set a trigger first" : ""}
               className="w-full rounded-md bg-gradient-to-r from-emerald-600 to-emerald-500 py-2 text-[12px] font-semibold text-white shadow-lg shadow-emerald-600/20 transition-all duration-200 hover:shadow-emerald-600/30 hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
               style={{ animation: "shimmer 3s infinite" }}
             >

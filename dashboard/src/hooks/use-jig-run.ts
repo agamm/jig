@@ -171,6 +171,8 @@ export function useJigRun(jigId: string, entity?: string | null) {
       ? { type: "done", elapsed: prev.elapsed, dryRun: prev.dryRun, status: "fail" }
       : prev
     );
+    setLiveSteps(prev => prev.map(s => s.status === "running" ? { ...s, status: "fail" } : s));
+    setActiveTools([]);
   }, [cleanup]);
 
   return { mode, liveSteps, completedTools, activeTools, toolReadOnly, startRun, dismiss, cancelRun, isRunning: mode.type === "running" };

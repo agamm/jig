@@ -4,7 +4,7 @@
  * Handles /api/* routes. Next.js rewrites /api/* here via next.config.ts.
  */
 import { join } from "path"
-import { existsSync, readFileSync } from "fs"
+import { existsSync, readFileSync, writeFileSync } from "fs"
 import { discoverJigs } from "./discover.js"
 import { openDb, insertRun, getJigRuns, getRun, getLastRun } from "./db.js"
 import { loadServerConfigs } from "./mcp/config.js"
@@ -85,6 +85,88 @@ function cronToText(cron: string): string {
   if (hour !== "*" && min !== "*") return `Daily ${time}`
   if (min.startsWith("*/")) return `Every ${min.slice(2)}m`
   return cron
+}
+
+/** Parse human-readable trigger text back into a JigTrigger object. */
+function textToTrigger(text: string): { type: string; cron?: string; minutes?: number; source?: string } | null {
+  const t = text.trim()
+  if (!t) return null
+
+  // Exact matches
+  if (/^manual$/i.test(t)) return { type: "manual" }
+  if (/^webhook$/i.test(t)) return { type: "webhook" }
+
+  // "Every Xm" or "Every X minutes"
+  const intervalMatch = t.match(/^every\s+(\d+)\s*m(?:in(?:ute)?s?)?$/i)
+  if (intervalMatch) return { type: "interval", minutes: parseInt(intervalMatch[1]) }
+
+  // Day name mapping
+  const dayMap: Record<string, number> = { sun: 0, sunday: 0, mon: 1, monday: 1, tue: 2, tuesday: 2, wed: 3, wednesday: 3, thu: 4, thursday: 4, fri: 5, friday: 5, sat: 6, saturday: 6 }
+
+  // Parse time from string — returns [hour, minute] or null
+  function parseTime(s: string): [number, number] | null {
+    // "9am", "9:30pm", "14:00", "2pm"
+    const m = s.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i)
+    if (!m) return null
+    let h = parseInt(m[1])
+    const min = m[2] ? parseInt(m[2]) : 0
+    if (m[3]?.toLowerCase() === "pm" && h < 12) h += 12
+    if (m[3]?.toLowerCase() === "am" && h === 12) h = 0
+    return [h, min]
+  }
+
+  // "Daily HH:MM" or "every day at HH:MM"
+  const dailyMatch = t.match(/^(?:daily|every\s+day(?:\s+at)?)\s+(.+)$/i)
+  if (dailyMatch) {
+    const time = parseTime(dailyMatch[1])
+    if (time) return { type: "cron", cron: `${time[1]} ${time[0]} * * *` }
+  }
+
+  // "Mon 8:00" / "Mon, Fri 9:00" / "every monday at 9am" / "every mon, wed at 9am"
+  const dayTimeMatch = t.match(/^(?:every\s+)?([a-z, ]+?)(?:\s+at)?\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\s*$/i)
+  if (dayTimeMatch) {
+    const dayPart = dayTimeMatch[1].toLowerCase().replace(/\s+/g, "")
+    const dayNames = dayPart.split(",").map(d => d.trim())
+    const dayNums = dayNames.map(d => dayMap[d]).filter(d => d !== undefined)
+    if (dayNums.length > 0) {
+      const time = parseTime(dayTimeMatch[2])
+      if (time) return { type: "cron", cron: `${time[1]} ${time[0]} * * ${dayNums.join(",")}` }
+    }
+  }
+
+  // "X of month HH:MM"
+  const monthMatch = t.match(/^(?:every\s+)?(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+(?:the\s+)?month|of\s+month)(?:\s+at)?\s+(.+)$/i)
+  if (monthMatch) {
+    const time = parseTime(monthMatch[2])
+    if (time) return { type: "cron", cron: `${time[1]} ${time[0]} ${monthMatch[1]} * *` }
+  }
+
+  // "On <source>" → event trigger
+  const eventMatch = t.match(/^on\s+(.+)$/i)
+  if (eventMatch) return { type: "event", source: eventMatch[1].trim() }
+
+  return null
+}
+
+/** Serialize a trigger object into source code text. */
+function triggerToSource(trigger: { type: string; cron?: string; minutes?: number; source?: string; filter?: string }): string {
+  switch (trigger.type) {
+    case "cron": return `{ type: "cron", cron: ${JSON.stringify(trigger.cron)} }`
+    case "interval": return `{ type: "interval", minutes: ${trigger.minutes} }`
+    case "event": return trigger.filter
+      ? `{ type: "event", source: ${JSON.stringify(trigger.source)}, filter: ${JSON.stringify(trigger.filter)} }`
+      : `{ type: "event", source: ${JSON.stringify(trigger.source)} }`
+    case "manual": return `{ type: "manual" }`
+    case "webhook": return `{ type: "webhook" }`
+    default: return `{ type: "manual" }`
+  }
+}
+
+/** Replace the trigger object in a jig source file. Returns updated code or null if no trigger found. */
+function replaceTriggerInSource(code: string, newTrigger: string): string | null {
+  const triggerRe = /trigger\s*:\s*\{[^}]*\}/
+  if (!triggerRe.test(code)) return null
+  return code.replace(triggerRe, `trigger: ${newTrigger}`)
 }
 
 function json(data: unknown, status = 200): Response {
@@ -429,6 +511,40 @@ async function handleGetSteps(id: string, body: any): Promise<Response> {
   }
 }
 
+async function handleUpdateTrigger(id: string, body: any): Promise<Response> {
+  const triggerText = body?.trigger as string
+  if (!triggerText) return json({ error: "Missing trigger text" }, 400)
+
+  const discovered = discoverJigs(JIGS_DIR)
+  if (!discovered.has(id)) return notFound(`Jig not found: ${id}`)
+
+  const entities = discovered.get(id)!
+  const filePath = getJigFilePath(id, entities.length > 0 ? entities[0] : undefined)
+  if (!filePath) return notFound("Jig file not found")
+
+  const trigger = textToTrigger(triggerText)
+  if (!trigger) return json({ error: `Could not parse trigger: "${triggerText}"` }, 400)
+
+  let code: string
+  try { code = readFileSync(filePath, "utf-8") } catch { return notFound("Jig file not readable") }
+
+  const updated = replaceTriggerInSource(code, triggerToSource(trigger))
+  if (!updated) return json({ error: "Could not find trigger in source file" }, 400)
+
+  try { writeFileSync(filePath, updated) } catch {
+    return json({ error: "Failed to write trigger to source file" }, 500)
+  }
+
+  // Return the new human-readable trigger text so the dashboard can update
+  const newTriggerText = trigger.type === "cron" && trigger.cron ? cronToText(trigger.cron)
+    : trigger.type === "interval" && trigger.minutes ? `Every ${trigger.minutes}m`
+    : trigger.type === "event" && trigger.source ? `On ${trigger.source}`
+    : trigger.type === "manual" ? "Manual"
+    : trigger.type === "webhook" ? "Webhook"
+    : triggerText
+  return json({ ok: true, trigger: newTriggerText })
+}
+
 async function handleEditJig(id: string, body: any): Promise<Response> {
   const discovered = discoverJigs(JIGS_DIR)
   if (!discovered.has(id)) return notFound(`Jig not found: ${id}`)
@@ -538,6 +654,12 @@ function matchRoute(pathname: string): { handler: string; params: Record<string,
     return { handler: "getSteps", params: { id: decodeURIComponent(stepsMatch[1]) } }
   }
 
+  const triggerMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/trigger$/)
+  if (triggerMatch) {
+    if (!isValidJigId(decodeURIComponent(triggerMatch[1]))) return null
+    return { handler: "updateTrigger", params: { id: decodeURIComponent(triggerMatch[1]) } }
+  }
+
   const editMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/edit$/)
   if (editMatch) {
     if (!isValidJigId(decodeURIComponent(editMatch[1]))) return null
@@ -588,6 +710,11 @@ export function createApiServer(port: number) {
           case "getSteps": {
             const body = req.method === "POST" ? await req.json().catch(() => ({})) : {}
             return handleGetSteps(route.params.id, body)
+          }
+          case "updateTrigger": {
+            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+            const body = await req.json().catch(() => ({}))
+            return handleUpdateTrigger(route.params.id, body)
           }
           case "editJig": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)

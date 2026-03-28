@@ -106,7 +106,10 @@ export function useJigRun(jigId: string, entity?: string | null) {
           const data = await pollRes.json();
 
           if (!data.active) {
-            // Run finished — fetch final result if it was a real run
+            // Run finished — use status/error from the active endpoint
+            const status = data.status === "fail" ? "fail" : "success";
+            done(status, Math.round((Date.now() - startTime) / 1000), data.error);
+            // For real runs, also fetch final steps/output
             if (runId > 0) {
               try {
                 const finalRes = await fetch(`/api/runs/${runId}`, { signal: abort.signal });
@@ -118,12 +121,9 @@ export function useJigRun(jigId: string, entity?: string | null) {
                       time: s.time, output: s.output ?? undefined,
                     })));
                   }
-                  done(run.status, run.durationMs ? Math.round(run.durationMs / 1000) : Math.round((Date.now() - startTime) / 1000), run.error ?? undefined);
-                  return;
                 }
               } catch {}
             }
-            done("success", Math.round((Date.now() - startTime) / 1000));
             return;
           }
 

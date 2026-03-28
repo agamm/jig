@@ -16,7 +16,7 @@ const SCHEMAS_DIR = join(PROJECT_ROOT, ".jig/schemas")
 
 const editLocks = new Map<string, { editId: string; status: string; message?: string; createdAt: number }>()
 /** Track tool calls per run for real-time progress. */
-const runProgress = new Map<number, { completedTools: string[]; activeTools: string[] }>()
+const runProgress = new Map<number, { completedTools: string[]; activeTools: string[]; error?: string; done?: boolean; output?: string }>()
 /** Only one run at a time (spinner + dryRun are global singletons). */
 let activeRunId: number | null = null
 let activeRunAbort: { abort(): void } | null = null
@@ -264,7 +264,7 @@ async function handleRunJig(id: string, body: any): Promise<Response> {
 
   if (!existsSync(jigPath)) return notFound(`Jig file not found`)
 
-  // Check connections are set up
+  // Pre-run checks
   const connectionsDir = join(PROJECT_ROOT, ".jig/connections")
   if (!existsSync(join(connectionsDir, "index.ts"))) {
     return json({ error: "No connections found. Run 'jig connect <server>' first." }, 400)
@@ -279,6 +279,7 @@ async function handleRunJig(id: string, body: any): Promise<Response> {
   activeRunAbort = new AbortController()
   activeRunJigId = id
   activeRunDryRun = dryRun
+  runProgress.set(runId, { completedTools: [], activeTools: [] })
 
   const startTime = Date.now()
   const workerPath = join(PROJECT_ROOT, "src/run-worker.ts")
@@ -313,8 +314,13 @@ async function handleRunJig(id: string, body: any): Promise<Response> {
           try {
             const msg = JSON.parse(line)
             if (msg.type === "tool") {
-              runProgress.set(runId, { completedTools: msg.completed ?? [], activeTools: msg.active ?? [] })
+              const p = runProgress.get(runId) ?? { completedTools: [], activeTools: [] }
+              p.completedTools = msg.completed ?? []
+              p.activeTools = msg.active ?? []
+              runProgress.set(runId, p)
             } else if (msg.type === "done") {
+              const p = runProgress.get(runId)
+              if (p) { p.done = true; p.output = msg.output; p.activeTools = [] }
               if (!dryRun) {
                 const tools = msg.tools ?? []
                 for (let seq = 0; seq < tools.length; seq++) {
@@ -328,6 +334,8 @@ async function handleRunJig(id: string, body: any): Promise<Response> {
                 completeRun(runId, "success", Date.now() - startTime)
               }
             } else if (msg.type === "error") {
+              const p = runProgress.get(runId)
+              if (p) { p.done = true; p.error = msg.message; p.activeTools = [] }
               if (!dryRun) completeRun(runId, "fail", Date.now() - startTime, msg.message)
               console.error(`Run ${runId} failed:`, msg.message)
             }
@@ -341,6 +349,13 @@ async function handleRunJig(id: string, body: any): Promise<Response> {
         if (!dryRun) completeRun(runId, "fail", Date.now() - startTime, "Process killed")
       }
     } finally {
+      // Save result for dashboard to pick up after cleanup
+      const p = runProgress.get(runId)
+      lastRunResult = {
+        status: p?.error ? "fail" : p?.done ? "success" : "fail",
+        error: p?.error,
+        completedTools: p?.completedTools ?? [],
+      }
       activeRunId = null
       activeRunAbort = null
       activeRunJigId = null
@@ -363,15 +378,28 @@ async function handleCancelRun(): Promise<Response> {
   return json({ ok: true, runId })
 }
 
+/** Last completed run result — kept briefly for the dashboard to pick up */
+let lastRunResult: { status: string; error?: string; output?: string; completedTools: string[] } | null = null
+
 async function handleGetActiveRun(): Promise<Response> {
-  if (activeRunId === null) return json({ active: false })
-  const progress = runProgress.get(activeRunId)
-  return json({
-    active: true,
-    runId: activeRunId,
-    completedTools: progress?.completedTools ?? [],
-    activeTools: progress?.activeTools ?? [],
-  })
+  if (activeRunId !== null) {
+    const progress = runProgress.get(activeRunId)
+    return json({
+      active: !progress?.done,
+      runId: activeRunId,
+      completedTools: progress?.completedTools ?? [],
+      activeTools: progress?.activeTools ?? [],
+      error: progress?.error,
+      status: progress?.error ? "fail" : progress?.done ? "success" : "running",
+    })
+  }
+  // No active run — check if there's a recent result to report
+  if (lastRunResult) {
+    const result = lastRunResult
+    lastRunResult = null // consume once
+    return json({ active: false, ...result })
+  }
+  return json({ active: false })
 }
 
 async function handleGetRun(runId: number): Promise<Response> {

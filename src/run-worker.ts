@@ -47,9 +47,12 @@ try {
       const msg = e?.message ?? String(e)
       if (msg.includes("Cannot find module")) {
         emit({ type: "error", message: `Connection module missing. Run "jig connect" to regenerate.\n${msg}` })
-        process.exit(1)
+      } else if (msg.includes("Export named")) {
+        emit({ type: "error", message: `SDK version mismatch. Run "git pull upstream main" and restart.\n${msg}` })
+      } else {
+        emit({ type: "error", message: `Failed to load jig: ${msg}` })
       }
-      throw e
+      process.exit(1)
     }
     const { run } = await import("./sdk/jig.js")
     const def = mod.default

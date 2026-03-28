@@ -2,6 +2,7 @@ import { join } from "path"
 import OpenAI from "openai"
 import type { JigTool } from "./jig.js"
 import { spinner } from "./spinner.js"
+import { runContext, isStepScan, truncLabel } from "./context.js"
 
 export const DEFAULT_MODEL = "anthropic/claude-sonnet-4-5"
 const MAX_TOOL_ROUNDS = 15
@@ -28,6 +29,11 @@ export async function llm<T = string>(
   data: Record<string, any>,
   options?: { schema?: Record<string, string>; model?: string; maxTokens?: number }
 ): Promise<T> {
+  const ctx = runContext.getStore()
+  if (ctx && !ctx.inAgent) ctx.step(truncLabel(prompt))
+
+  if (isStepScan()) return (options?.schema ? {} : "") as T
+
   const model = options?.model ?? DEFAULT_MODEL
   const maxTokens = options?.maxTokens ?? 4096
   const userContent = `${prompt}\n\nData:\n${JSON.stringify(data, null, 2)}`
@@ -88,6 +94,16 @@ export async function agent<T = string>(
   tools: JigTool<any, any>[],
   options?: { schema?: Record<string, string>; model?: string; maxTokens?: number }
 ): Promise<T> {
+  const ctx = runContext.getStore()
+  ctx?.step(truncLabel(prompt))
+  // Record all connections this agent can use
+  const connSet = new Set(tools.map(t => t._serverName))
+  for (const c of connSet) ctx?.addConnection(c)
+
+  if (isStepScan()) return (options?.schema ? {} : "") as T
+
+  ctx?.enterAgent()
+
   const model = options?.model ?? DEFAULT_MODEL
   spinner.show("agent")
 
@@ -95,6 +111,7 @@ export async function agent<T = string>(
     return await runAgent<T>(prompt, tools, options)
   } finally {
     spinner.stop()
+    ctx?.leaveAgent()
   }
 }
 

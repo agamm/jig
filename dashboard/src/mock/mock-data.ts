@@ -20,11 +20,11 @@ export const JIGS_WEEK2: Jig[] = [
     ],
     sparkline: [4, 6, 5, 7, 3, 6, 5],
     steps: [
-      { num: 1, name: "Read calendar events", desc: "Google Calendar \u2014 this week" },
-      { num: 2, name: "Fetch git commits", desc: "GitHub \u2014 last 7 days" },
-      { num: 3, name: "Search Gmail for updates", desc: "Gmail \u2014 from:client" },
-      { num: 4, name: "Generate update email", desc: "AI generation", cost: "$0.003" },
-      { num: 5, name: "Create Gmail draft", desc: "Gmail \u2014 draft for review" },
+      { num: 1, name: "Read calendar events" },
+      { num: 2, name: "Fetch git commits" },
+      { num: 3, name: "Search Gmail for updates" },
+      { num: 4, name: "Generate update email" },
+      { num: 5, name: "Create Gmail draft" },
     ],
     code: `import { calendar, github, gmail, ai } from "jig/tools";\n\nexport default async function weeklyUpdate(client: string) {\n  const events = await calendar.listEvents({ days: 7 });\n  const commits = await github.listCommits({ days: 7 });\n  const emails = await gmail.search(\`from:\${client}\`);\n\n  const draft = await ai.generate({\n    prompt: "Write a weekly update email",\n    context: { events, commits, emails },\n  });\n\n  await gmail.createDraft({\n    to: \`\${client}@example.com\`,\n    subject: "Weekly Update",\n    body: draft,\n  });\n}`,
     runs: [
@@ -75,12 +75,12 @@ export const JIGS_WEEK2: Jig[] = [
     ],
     sparkline: [3, 2, 4, 3, 5, 2, 4],
     steps: [
-      { num: 1, name: "Read timesheet", desc: 'drive.read("Clients/Acme/timesheet.xlsx")' },
-      { num: 2, name: "Find last invoice", desc: 'gmail.search("subject:invoice to:billing@acme.co")' },
-      { num: 3, name: "Compare hours", desc: 'llm("Compare hours, flag changes")', cost: "$0.003" },
-      { num: 4, name: "Draft invoice email", desc: 'llm("Draft invoice email")', cost: "$0.002" },
-      { num: 5, name: "Wait for approval", desc: 'ctx.human("Review draft")' },
-      { num: 6, name: "Send email", desc: 'gmail.send({ to: "billing@acme.co" })' },
+      { num: 1, name: "Read timesheet" },
+      { num: 2, name: "Find last invoice" },
+      { num: 3, name: "Compare hours" },
+      { num: 4, name: "Draft invoice email" },
+      { num: 5, name: "Wait for approval" },
+      { num: 6, name: "Send email" },
     ],
     code: `import { jig, llm } from "jig"
 import { workspace } from "jig/connections"
@@ -120,10 +120,10 @@ export default jig("invoice-acme", {
     id: "email-triage", name: "Email Triage", trigger: "Daily 8am", status: "healthy", costMonth: "$0.62", costLifetime: "$1.24",
     sparkline: [7, 6, 8, 7, 5, 8, 7],
     steps: [
-      { num: 1, name: "Fetch unread emails", desc: 'gmail.list({ unread: true, hours: 24 })' },
-      { num: 2, name: "Categorize by priority", desc: 'ai.classify(unread)', cost: "$0.002" },
-      { num: 3, name: "Label and archive", desc: 'gmail.label(email.id, priority)' },
-      { num: 4, name: "Summarize highlights", desc: 'ai.summarize(categorized)', cost: "$0.001" },
+      { num: 1, name: "Fetch unread emails" },
+      { num: 2, name: "Categorize by priority" },
+      { num: 3, name: "Label and archive" },
+      { num: 4, name: "Summarize highlights" },
     ],
     code: `import { gmail, ai } from "jig/tools";\n\nexport default async function emailTriage() {\n  const unread = await gmail.list({ unread: true, hours: 24 });\n  const categorized = await ai.classify(unread);\n\n  for (const email of categorized) {\n    await gmail.label(email.id, email.priority);\n  }\n\n  return ai.summarize(categorized);\n}`,
     runs: [
@@ -164,9 +164,9 @@ export default jig("invoice-acme", {
     id: "meeting-prep", name: "Meeting Prep", trigger: "Before meetings", status: "healthy", costMonth: "$0.31", costLifetime: "$0.62",
     sparkline: [2, 4, 3, 5, 2, 4, 3],
     steps: [
-      { num: 1, name: "Check calendar", desc: "Next meeting in 30 min" },
-      { num: 2, name: "Fetch attendee context", desc: "Gmail + CRM search" },
-      { num: 3, name: "Generate briefing", desc: "AI summary", cost: "$0.002" },
+      { num: 1, name: "Check calendar" },
+      { num: 2, name: "Fetch attendee context" },
+      { num: 3, name: "Generate briefing" },
     ],
     code: `import { calendar, gmail, ai } from "jig/tools";\n\nexport default async function meetingPrep() {\n  const next = await calendar.nextMeeting({ within: "30m" });\n  const context = await gmail.search(\n    \`from:\${next.attendees.join(" OR from:")}\`\n  );\n\n  return ai.summarize({\n    prompt: "Brief me for this meeting",\n    data: { meeting: next, context },\n  });\n}`,
     runs: [
@@ -192,10 +192,10 @@ export default jig("invoice-acme", {
     id: "client-onboarding", name: "Client Onboarding", trigger: "Manual", status: "healthy", costMonth: "$0.02", costLifetime: "$0.04",
     sparkline: [0, 1, 0, 0, 1, 0, 0],
     steps: [
-      { num: 1, name: "Create Drive folder", desc: "Clients/{name}/" },
-      { num: 2, name: "Send welcome email", desc: "Template email" },
-      { num: 3, name: "Create calendar series", desc: "Weekly check-in" },
-      { num: 4, name: "Set up invoice jig", desc: "Clone invoice template" },
+      { num: 1, name: "Create Drive folder" },
+      { num: 2, name: "Send welcome email" },
+      { num: 3, name: "Create calendar series" },
+      { num: 4, name: "Set up invoice jig" },
     ],
     code: `import { drive, gmail, calendar } from "jig/tools";\n\nexport default async function onboard(client: string) {\n  await drive.createFolder(\`Clients/\${client}\`);\n  await gmail.send({\n    to: \`contact@\${client}.co\`,\n    template: "welcome",\n  });\n  await calendar.createRecurring({\n    title: \`\${client} Check-in\`,\n    frequency: "weekly",\n  });\n}`,
     runs: [
@@ -216,9 +216,9 @@ export const JIGS_MONTH3: Jig[] = [
     id: "contract-tracker", name: "Contract Tracker", trigger: "Weekly", status: "healthy", costMonth: "$0.18", costLifetime: "$0.36",
     sparkline: [1, 1, 2, 1, 1, 2, 1],
     steps: [
-      { num: 1, name: "Scan Drive for contracts", desc: "Contracts/ folder" },
-      { num: 2, name: "Check expiry dates", desc: "AI extraction", cost: "$0.002" },
-      { num: 3, name: "Alert on expiring", desc: "Email if < 30 days" },
+      { num: 1, name: "Scan Drive for contracts" },
+      { num: 2, name: "Check expiry dates" },
+      { num: 3, name: "Alert on expiring" },
     ],
     code: `import { drive, ai, gmail } from "jig/tools";\n\nexport default async function contractTracker() {\n  const contracts = await drive.list("Contracts/");\n  const expiring = await ai.extractDates(contracts)\n    .filter(c => c.daysLeft < 30);\n\n  if (expiring.length) {\n    await gmail.send({\n      to: "me",\n      subject: \`\${expiring.length} contracts expiring soon\`,\n      body: expiring.map(c => c.summary).join("\\n"),\n    });\n  }\n}`,
     runs: [
@@ -239,9 +239,9 @@ export const JIGS_MONTH3: Jig[] = [
     id: "daily-summary", name: "Daily Summary", trigger: "Daily 6pm", status: "healthy", costMonth: "$0.93", costLifetime: "$2.79",
     sparkline: [6, 7, 5, 8, 6, 7, 6],
     steps: [
-      { num: 1, name: "Collect all jig runs", desc: "Today's activity" },
-      { num: 2, name: "Generate summary", desc: "AI digest", cost: "$0.002" },
-      { num: 3, name: "Send digest email", desc: "Gmail to self" },
+      { num: 1, name: "Collect all jig runs" },
+      { num: 2, name: "Generate summary" },
+      { num: 3, name: "Send digest email" },
     ],
     code: `import { jig, ai, gmail } from "jig/tools";\n\nexport default async function dailySummary() {\n  const runs = await jig.todaysRuns();\n  const digest = await ai.summarize(runs);\n  await gmail.send({\n    to: "me",\n    subject: "Daily Jig Summary",\n    body: digest,\n  });\n}`,
     runs: Array.from({ length: 5 }, (_, i) => ({

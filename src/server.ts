@@ -6,7 +6,7 @@
 import { join } from "path"
 import { existsSync, readFileSync } from "fs"
 import { discoverJigs } from "./discover.js"
-import { openDb, insertRun, getJigRuns, getRun, getLastRun, getJigSteps, getJigMeta, cleanupOrphanedMeta } from "./db.js"
+import { openDb, insertRun, getJigRuns, getRun, getLastRun } from "./db.js"
 import { loadServerConfigs } from "./mcp/config.js"
 import { formatDuration } from "./utils.js"
 import { runJig, persist, isValidJigId } from "./runner.js"
@@ -18,7 +18,8 @@ const SCHEMAS_DIR = join(PROJECT_ROOT, ".jig/schemas")
 
 const editLocks = new Map<string, { editId: string; status: string; message?: string; createdAt: number }>()
 /** Track tool calls per run for real-time progress. */
-const runProgress = new Map<number, { completedTools: string[]; activeTools: string[]; error?: string; done?: boolean; output?: string; readOnly?: Record<string, boolean> }>()
+type LiveStep = { seq: number; label: string; status: "running" | "success" | "fail"; output?: string; connections?: string[]; durationMs?: number; error?: string }
+const runProgress = new Map<number, { completedTools: string[]; activeTools: string[]; steps: LiveStep[]; error?: string; done?: boolean; output?: string; readOnly?: Record<string, boolean> }>()
 /** Only one run at a time (spinner + dryRun are global singletons). */
 let activeRunId: number | null = null
 let activeRunJigId: string | null = null
@@ -84,12 +85,6 @@ function cronToText(cron: string): string {
   if (hour !== "*" && min !== "*") return `Daily ${time}`
   if (min.startsWith("*/")) return `Every ${min.slice(2)}m`
   return cron
-}
-
-function fileHash(content: string): string {
-  const hasher = new Bun.CryptoHasher("sha256")
-  hasher.update(content)
-  return hasher.digest("hex")
 }
 
 function json(data: unknown, status = 200): Response {
@@ -162,46 +157,25 @@ function formatRuns(runs: ReturnType<typeof getJigRuns>) {
   }))
 }
 
-async function buildJigResponse(id: string, entities: string[], runLimit: number) {
+async function buildJigResponse(id: string, entities: string[], runLimit: number, includeSteps = false) {
   const grouped = entities.length > 0
   const filePath = getJigFilePath(id, grouped ? entities[0] : undefined)
   let code = ""
   try { if (filePath) code = readFileSync(filePath, "utf-8") } catch {}
 
-  // Steps from SQLite (derived by creator pipeline) — graceful on DB errors
   const entity = grouped ? entities[0] : null
-  let steps: any[] = []
-  try {
-    steps = getJigSteps(id, entity).map(s => ({
-      num: s.seq,
-      name: s.name,
-      desc: s.description,
-      cost: s.cost_hint ?? undefined,
-      connections: s.connections ? JSON.parse(s.connections) : [],
-      tools: s.tools ? JSON.parse(s.tools) : [],
-      agentGroup: s.agent_group ?? undefined,
-    }))
-  } catch {}
-
-  // Stale detection — graceful on DB errors
-  let stale = true
   let runs: ReturnType<typeof getJigRuns> = []
-  try {
-    const meta = getJigMeta(id, entity)
-    const currentHash = code ? fileHash(code) : null
-    stale = !meta || (currentHash !== null && meta.code_hash !== currentHash)
-    runs = getJigRuns(id, undefined, runLimit)
-  } catch {}
+  try { runs = getJigRuns(id, undefined, runLimit) } catch {}
 
   // Sparkline from last 7 runs' durations (normalized).
-  // Math.max(...[], 1) === 1 — safe on empty arrays due to the trailing 1.
   const recentDurations = runs.slice(0, 7).map((r) => r.duration_ms ?? 0).reverse()
   const maxDur = Math.max(...recentDurations, 1)
   const sparkline = recentDurations.map((d) => Math.round((d / maxDur) * 100))
 
-  // Extract params/trigger — try import first (robust), fall back to regex
+  // Import definition for params, trigger, and step scan
   let params: Record<string, string> = {}
   let trigger = ""
+  let steps: { num: number; name: string; connections: string[] }[] = []
   if (filePath) {
     try {
       const mod = await import(filePath)
@@ -215,6 +189,14 @@ async function buildJigResponse(id: string, entities: string[], runLimit: number
         else if (t?.type === "manual") trigger = "Manual"
         else if (t?.type === "webhook") trigger = "Webhook"
       }
+      // Steps from cache (instant). If miss, returned empty — dashboard fetches /steps endpoint.
+      if (includeSteps && def?.handler && code) {
+        const { getStepCache } = await import("./db.js")
+        const hasher = new Bun.CryptoHasher("sha256")
+        hasher.update(code)
+        const cached = getStepCache(id, entity, hasher.digest("hex"))
+        if (cached) steps = cached
+      }
     } catch {
       params = extractParams(code)
       trigger = extractTrigger(code)
@@ -227,7 +209,6 @@ async function buildJigResponse(id: string, entities: string[], runLimit: number
     trigger,
     status: deriveStatus(id),
     running: activeRunJigId === id && !activeRunDryRun,
-    stale,
     grouped,
     entityCount: grouped ? entities.length : undefined,
     entities: grouped ? buildEntityList(id, entities) : undefined,
@@ -252,7 +233,6 @@ async function buildJigResponse(id: string, entities: string[], runLimit: number
 
 async function handleGetJigs(): Promise<Response> {
   const discovered = discoverJigs(JIGS_DIR)
-  try { cleanupOrphanedMeta(new Set(discovered.keys())) } catch {}
   const jigs = await Promise.all(
     [...discovered.entries()].map(([id, entities]) => buildJigResponse(id, entities, 10))
   )
@@ -262,7 +242,7 @@ async function handleGetJigs(): Promise<Response> {
 async function handleGetJig(id: string): Promise<Response> {
   const discovered = discoverJigs(JIGS_DIR)
   if (!discovered.has(id)) return notFound(`Jig not found: ${id}`)
-  return json(await buildJigResponse(id, discovered.get(id)!, 20))
+  return json(await buildJigResponse(id, discovered.get(id)!, 20, true))
 }
 
 async function handleRunJig(id: string, body: any): Promise<Response> {
@@ -299,7 +279,7 @@ async function handleRunJig(id: string, body: any): Promise<Response> {
   activeRunId = runId
   activeRunJigId = id
   activeRunDryRun = dryRun
-  runProgress.set(runId, { completedTools: [], activeTools: [] })
+  runProgress.set(runId, { completedTools: [], activeTools: [], steps: [] })
 
   const startTime = Date.now()
   const persistHandler = !dryRun ? persist(runId, startTime) : null
@@ -309,6 +289,11 @@ async function handleRunJig(id: string, body: any): Promise<Response> {
       await runJig(jigPath, params, (event: RunEvent) => {
         const p = runProgress.get(runId)
         if (p) {
+          if (event.type === "step-start") { p.steps.push({ seq: event.seq, label: event.label, status: "running" }) }
+          if (event.type === "step-done") {
+            const s = p.steps.find(s => s.seq === event.seq)
+            if (s) { s.status = event.status; s.output = event.output; s.connections = event.connections; s.durationMs = event.durationMs; s.error = event.error }
+          }
           if (event.type === "tool") { p.completedTools = event.completed; p.activeTools = event.active; if (event.readOnly) p.readOnly = event.readOnly }
           if (event.type === "done") { p.done = true; p.output = event.output; p.activeTools = [] }
           if (event.type === "error") { p.done = true; p.error = event.message; p.activeTools = [] }
@@ -322,6 +307,7 @@ async function handleRunJig(id: string, body: any): Promise<Response> {
         error: p?.error,
         output: p?.output,
         completedTools: p?.completedTools ?? [],
+        steps: p?.steps ?? [],
         readOnly: p?.readOnly,
       })
       activeRunId = null
@@ -366,6 +352,7 @@ async function handleGetActiveRun(): Promise<Response> {
       runId: activeRunId,
       completedTools: progress?.completedTools ?? [],
       activeTools: progress?.activeTools ?? [],
+      steps: progress?.steps ?? [],
       readOnly: progress?.readOnly,
       error: progress?.error,
       output: progress?.output,
@@ -418,7 +405,7 @@ async function handleGetRun(runId: number): Promise<Response> {
   })
 }
 
-async function handleRecompile(id: string, body: any): Promise<Response> {
+async function handleGetSteps(id: string, body: any): Promise<Response> {
   const discovered = discoverJigs(JIGS_DIR)
   if (!discovered.has(id)) return notFound(`Jig not found: ${id}`)
 
@@ -429,15 +416,17 @@ async function handleRecompile(id: string, body: any): Promise<Response> {
   let code: string
   try { code = readFileSync(filePath, "utf-8") } catch { return notFound("Jig file not readable") }
 
-  // Derive steps from source code (no module import — avoids MCP connection issues)
-  const { deriveSteps } = await import("./creator.js")
-  await deriveSteps(code, id, entity)
+  try {
+    const mod = await import(filePath)
+    const def = mod.default
+    if (!def?.handler) return json({ steps: [] })
 
-  const steps = getJigSteps(id, entity ?? null)
-  return json({
-    ok: true,
-    steps: steps.map(s => ({ num: s.seq, name: s.name, desc: s.description, cost: s.cost_hint })),
-  })
+    const { deriveSteps } = await import("./derive-steps.js")
+    const steps = await deriveSteps(def, id, entity ?? null, code)
+    return json({ steps })
+  } catch (e: any) {
+    return json({ steps: [], error: e?.message }, 500)
+  }
 }
 
 async function handleEditJig(id: string, body: any): Promise<Response> {
@@ -543,10 +532,10 @@ function matchRoute(pathname: string): { handler: string; params: Record<string,
   const runDetailMatch = pathname.match(/^\/api\/runs\/(\d+)$/)
   if (runDetailMatch) return { handler: "getRun", params: { id: runDetailMatch[1] } }
 
-  const recompileMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/recompile$/)
-  if (recompileMatch) {
-    if (!isValidJigId(decodeURIComponent(recompileMatch[1]))) return null
-    return { handler: "recompile", params: { id: decodeURIComponent(recompileMatch[1]) } }
+  const stepsMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/steps$/)
+  if (stepsMatch) {
+    if (!isValidJigId(decodeURIComponent(stepsMatch[1]))) return null
+    return { handler: "getSteps", params: { id: decodeURIComponent(stepsMatch[1]) } }
   }
 
   const editMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/edit$/)
@@ -596,10 +585,9 @@ export function createApiServer(port: number) {
             return handleGetRun(parseInt(route.params.id))
           case "connections":
             return handleGetConnections()
-          case "recompile": {
-            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
-            const body = await req.json().catch(() => ({}))
-            return handleRecompile(route.params.id, body)
+          case "getSteps": {
+            const body = req.method === "POST" ? await req.json().catch(() => ({})) : {}
+            return handleGetSteps(route.params.id, body)
           }
           case "editJig": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)

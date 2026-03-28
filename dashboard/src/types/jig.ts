@@ -29,12 +29,11 @@ export interface Jig {
   trigger: string;
   status: "healthy" | "attention" | "failed";
   running?: boolean;
-  stale?: boolean;
   grouped?: boolean;
   entityCount?: number;
   entities?: JigEntity[];
   sparkline: number[];
-  steps: { num: number; name: string; desc: string; cost?: string; connections?: string[]; tools?: string[]; agentGroup?: string }[];
+  steps: { num: number; name: string; connections?: string[] }[];
   params?: Record<string, string>;
   code: string;
   runs: RunEntry[];

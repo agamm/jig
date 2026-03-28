@@ -1,4 +1,4 @@
-import { Context, type RunRecorder } from "./context.js"
+import { Context, runContext, stepScanContext, type RunRecorder } from "./context.js"
 
 /**
  * A typed MCP tool function. Generated at runtime by createConnection(),
@@ -55,12 +55,55 @@ export async function run(
   const ctx = new Context(params, toolNames)
   if (options?.silent) ctx.setSink(() => {})
   if (options?.recorder) ctx.setRecorder(options.recorder)
-  try {
-    await definition.handler(ctx)
-    ctx.finalize()
-  } catch (e) {
-    ctx.finalize(e)
-    throw e
-  }
-  return ctx
+  return runContext.run(ctx, async () => {
+    try {
+      await definition.handler(ctx)
+      ctx.finalize()
+    } catch (e) {
+      ctx.finalize(e)
+      throw e
+    }
+    return ctx
+  })
+}
+
+export type ScannedStep = { seq: number; label: string; connections: string[] }
+
+/**
+ * Scan a jig handler to collect step labels without executing anything.
+ * Runs the handler in step-scan mode: agent/llm/tool calls record their step
+ * and return stubs. If the handler crashes on a stub value, we still return
+ * whatever steps were recorded before the crash.
+ */
+export async function scanSteps(definition: JigDefinition): Promise<ScannedStep[]> {
+  const steps: ScannedStep[] = []
+  const toolNames = (definition.options.tools ?? []).map((t) => t._toolName)
+  // Empty params — handlers that branch on ctx.params will follow the falsy/default path.
+  // This is acceptable: scan captures the "typical" step shape, not all possible branches.
+  const ctx = new Context({}, toolNames)
+  ctx.setSink(() => {})
+  ctx.setRecorder({
+    onStepStart(seq, label) { steps.push({ seq, label, connections: [] }) },
+    onStepDone(seq, _output, _status, _ms, connections) {
+      const s = steps.find(s => s.seq === seq)
+      if (s) s.connections = connections
+    },
+  })
+
+  await stepScanContext.run(true, () =>
+    runContext.run(ctx, async () => {
+      try {
+        await definition.handler(ctx)
+      } catch (e) {
+        // If we recorded steps, this is likely a stub value crash (expected).
+        // If zero steps, the handler failed before any SDK call — real error.
+        if (steps.length === 0) {
+          console.warn("Step scan failed before recording any steps:", (e as Error)?.message)
+        }
+      }
+      ctx.finalize()
+    })
+  )
+
+  return steps
 }

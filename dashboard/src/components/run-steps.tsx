@@ -8,10 +8,7 @@ import { formatElapsed } from "@/lib/format";
 export interface RunStep {
   num: number;
   name: string;
-  desc?: string;
   connections?: string[];
-  tools?: string[];
-  agentGroup?: string;
   status?: "pending" | "running" | "success" | "fail" | "healed";
   time?: string;
   output?: string;
@@ -92,12 +89,6 @@ export function RunSteps({
       )}
       <div className="rounded-lg border border-[#1f1f23] bg-[#111113]">
         {steps.map((step, i) => {
-          const group = step.agentGroup;
-          const prevGroup = i > 0 ? steps[i - 1].agentGroup : undefined;
-          const nextGroup = i < steps.length - 1 ? steps[i + 1].agentGroup : undefined;
-          const isGrouped = !!group;
-          const isGroupStart = isGrouped && group !== prevGroup;
-          const isGroupEnd = isGrouped && group !== nextGroup;
           const hasOutput = !!step.output;
           const isExpanded = expandedStep === i;
           const stepRunning = step.status === "running";
@@ -136,23 +127,6 @@ export function RunSteps({
                 </>
               )}
 
-              {/* Agent group bar */}
-              {isGrouped && !stepRunning && (
-                <div
-                  className="absolute left-0 w-[3px] bg-violet-500/40"
-                  style={{
-                    top: isGroupStart ? "12px" : 0,
-                    bottom: isGroupEnd ? "12px" : 0,
-                    borderRadius: isGroupStart && isGroupEnd ? "2px" : isGroupStart ? "2px 2px 0 0" : isGroupEnd ? "0 0 2px 2px" : 0,
-                  }}
-                />
-              )}
-              {isGroupStart && (
-                <div className={`text-[8px] text-violet-400 font-medium tracking-wide uppercase ${stepRunning ? "relative z-10 pt-3 pl-4" : "absolute left-2 -top-2.5 bg-[#111113] px-1.5 z-10"}`}>
-                  agent
-                </div>
-              )}
-
               {/* Step content */}
               <div
                 onClick={hasOutput ? () => setExpandedStep(isExpanded ? null : i) : undefined}
@@ -161,7 +135,7 @@ export function RunSteps({
                 {statusEl}
                 <div className="flex-1 min-w-0">
                   <p className={`text-[13px] font-medium ${stepRunning ? "text-[#ededed]" : step.status === "success" ? "text-[#999]" : "text-[#ddd]"}`}>{step.name}</p>
-                  {(step.desc || (step.connections && step.connections.length > 0)) && (
+                  {step.connections && step.connections.length > 0 && (
                     <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                       {[...new Set(step.connections)].map(c => (
                         <span key={c} className="inline-flex items-center gap-1 rounded-full bg-[#1a1a1d] border border-[#2a2a2e] px-1.5 py-0.5">
@@ -169,11 +143,10 @@ export function RunSteps({
                           <span className="text-[9px] text-[#666]">{c}</span>
                         </span>
                       ))}
-                      {step.desc && <span className="text-[10px] text-[#555]">{step.desc}</span>}
                     </div>
                   )}
-                  {/* Tool chain — inside the first agent step */}
-                  {isGroupStart && isLive && (completedTools.length > 0 || activeTools.length > 0) && (
+                  {/* Tool chain — shown on the running step */}
+                  {stepRunning && isLive && (completedTools.length > 0 || activeTools.length > 0) && (
                     <div className="flex items-center gap-1 mt-2 flex-wrap">
                       {completedTools.map((t, ti) => {
                         const svc = toolService(t);

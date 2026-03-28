@@ -92,6 +92,7 @@ function generateRuntimeModule(serverName: string, tools: Tool[]): string {
 import { getServerConfig } from "../../src/mcp/config"
 import { connectServer, callTool, registerConnection } from "../../src/mcp/client"
 import { isDryRun } from "../../src/sdk/dryrun"
+import { runContext, isStepScan } from "../../src/sdk/context"
 import type { JigTool } from "../../src/sdk/jig"
 
 let _pending: Promise<any> | null = null
@@ -120,6 +121,10 @@ export async function closeConnection() {
 
 function tool(name: string, readOnly: boolean) {
   const fn = async (params: any) => {
+    const ctx = runContext.getStore()
+    if (ctx && !ctx.inAgent) ctx.step("${serverName}." + name)
+    ctx?.addConnection("${serverName}")
+    if (isStepScan()) return {} as any
     if (isDryRun() && !readOnly) {
       console.log(\`\\n[dry-run] ${serverName}.\${name}\`)
       return { _dryRun: true, tool: name, params }

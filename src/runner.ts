@@ -92,8 +92,8 @@ async function _runJig(
   // Recorder bridges Context's step lifecycle → RunEvent stream
   const recorder: RunRecorder = {
     onStepStart(seq, label) { onEvent({ type: "step-start", seq, label }) },
-    onStepDone(seq, output, status, ms, err) {
-      onEvent({ type: "step-done", seq, output, status, durationMs: ms, error: err })
+    onStepDone(seq, output, status, ms, connections, err) {
+      onEvent({ type: "step-done", seq, output, status, durationMs: ms, connections, error: err })
     },
     onOutput(text) { onEvent({ type: "output", text }) },
   }
@@ -208,7 +208,7 @@ export function persist(runId: number, startTime: number): (e: RunEvent) => void
         break
       case "step-done": {
         const sid = steps.get(event.seq)
-        if (sid) completeStep(sid, event.output, event.status, event.durationMs, event.error)
+        if (sid) completeStep(sid, event.output, event.status, event.durationMs, event.connections, event.error)
         break
       }
       case "done":

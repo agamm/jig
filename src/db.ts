@@ -37,25 +37,7 @@ export interface StepRow {
   output: string | null
   status: "running" | "success" | "fail"
   error: string | null
-}
-
-export interface JigStepRow {
-  jig_id: string
-  entity: string | null
-  seq: number
-  name: string
-  description: string
-  cost_hint: string | null
   connections: string | null // JSON array of connection names
-  tools: string | null       // JSON array of exact MCP tool names
-  agent_group: string | null
-}
-
-export interface JigMetaRow {
-  jig_id: string
-  entity: string | null
-  code_hash: string
-  steps_derived_at: string
 }
 
 // ---------------------------------------------------------------------------
@@ -85,38 +67,44 @@ CREATE TABLE IF NOT EXISTS run_steps (
   duration_ms INTEGER,
   output TEXT,
   status TEXT DEFAULT 'running',
-  error TEXT
+  error TEXT,
+  connections TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_runs_jig_id ON runs(jig_id);
 CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
 CREATE INDEX IF NOT EXISTS idx_run_steps_run_id ON run_steps(run_id);
 
-CREATE TABLE IF NOT EXISTS jig_steps (
-  jig_id TEXT NOT NULL,
-  entity TEXT,
-  seq INTEGER NOT NULL,
-  name TEXT NOT NULL,
-  description TEXT NOT NULL,
-  cost_hint TEXT,
-  connections TEXT,
-  tools TEXT,
-  agent_group TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_jig_steps_jig ON jig_steps(jig_id, entity);
-
-CREATE TABLE IF NOT EXISTS jig_meta (
+CREATE TABLE IF NOT EXISTS step_cache (
   jig_id TEXT NOT NULL,
   entity TEXT,
   code_hash TEXT NOT NULL,
-  steps_derived_at TEXT NOT NULL DEFAULT (datetime('now'))
+  steps TEXT NOT NULL
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_jig_meta_jig ON jig_meta(jig_id, COALESCE(entity, ''));
+CREATE UNIQUE INDEX IF NOT EXISTS idx_step_cache_jig ON step_cache(jig_id, COALESCE(entity, ''));
 `
+
+// Versioned migrations — each runs once, tracked by PRAGMA user_version.
+const MIGRATIONS: string[] = [
+  // v1: drop old LLM-derived step tables, add connections column
+  `DROP TABLE IF EXISTS jig_steps;
+   DROP TABLE IF EXISTS jig_meta;
+   ALTER TABLE run_steps ADD COLUMN connections TEXT;`,
+]
 
 // ---------------------------------------------------------------------------
 // Database singleton
 // ---------------------------------------------------------------------------
+
+function runMigrations(db: Database) {
+  const current = (db.prepare("PRAGMA user_version").get() as any)?.user_version ?? 0
+  for (let i = current; i < MIGRATIONS.length; i++) {
+    try { db.exec(MIGRATIONS[i]) } catch {}
+  }
+  if (MIGRATIONS.length > current) {
+    db.exec(`PRAGMA user_version = ${MIGRATIONS.length}`)
+  }
+}
 
 let _db: Database | null = null
 
@@ -128,6 +116,7 @@ export function openDb(path?: string): Database {
     _db.exec("PRAGMA journal_mode = WAL")
     _db.exec("PRAGMA foreign_keys = ON")
     _db.exec(SCHEMA)
+    runMigrations(_db)
   } catch (e) {
     // If DB is corrupted, delete and retry once
     if (dbPath !== ":memory:") {
@@ -259,57 +248,33 @@ export function completeStep(
   output: string,
   status: "success" | "fail",
   durationMs: number,
+  connections: string[],
   error?: string
 ): void {
   const db = openDb()
   db.prepare(
-    `UPDATE run_steps SET output = ?, status = ?, duration_ms = ?, finished_at = datetime('now'), error = ? WHERE id = ?`
-  ).run(output, status, durationMs, error ?? null, stepId)
+    `UPDATE run_steps SET output = ?, status = ?, duration_ms = ?, finished_at = datetime('now'), error = ?, connections = ? WHERE id = ?`
+  ).run(output, status, durationMs, error ?? null, connections.length ? JSON.stringify(connections) : null, stepId)
 }
 
 // ---------------------------------------------------------------------------
-// Jig Steps (LLM-derived step descriptions)
+// Step cache (scan + LLM humanized labels, keyed by code hash)
 // ---------------------------------------------------------------------------
 
-export function upsertJigSteps(
-  jigId: string,
-  entity: string | null,
-  steps: { name: string; description: string; costHint: string | null; connections?: string[]; tools?: string[]; agentGroup?: string }[]
-): void {
+export interface CachedStep { num: number; name: string; connections: string[] }
+
+export function getStepCache(jigId: string, entity: string | null, codeHash: string): CachedStep[] | null {
   const db = openDb()
-  db.prepare(`DELETE FROM jig_steps WHERE jig_id = ? AND entity IS ?`).run(jigId, entity)
-  const stmt = db.prepare(`INSERT INTO jig_steps (jig_id, entity, seq, name, description, cost_hint, connections, tools, agent_group) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-  for (let i = 0; i < steps.length; i++) {
-    const conns = steps[i].connections?.length ? JSON.stringify(steps[i].connections) : null
-    const tools = steps[i].tools?.length ? JSON.stringify(steps[i].tools) : null
-    const group = steps[i].agentGroup?.trim() || null
-    stmt.run(jigId, entity, i + 1, steps[i].name, steps[i].description, steps[i].costHint, conns, tools, group)
-  }
+  const row = db.prepare(
+    `SELECT steps FROM step_cache WHERE jig_id = ? AND entity IS ? AND code_hash = ?`
+  ).get(jigId, entity, codeHash) as { steps: string } | null
+  return row ? JSON.parse(row.steps) : null
 }
 
-export function getJigSteps(jigId: string, entity: string | null): JigStepRow[] {
+export function setStepCache(jigId: string, entity: string | null, codeHash: string, steps: CachedStep[]): void {
   const db = openDb()
-  return db.prepare(`SELECT * FROM jig_steps WHERE jig_id = ? AND entity IS ? ORDER BY seq`).all(jigId, entity) as JigStepRow[]
+  db.prepare(
+    `INSERT OR REPLACE INTO step_cache (jig_id, entity, code_hash, steps) VALUES (?, ?, ?, ?)`
+  ).run(jigId, entity, codeHash, JSON.stringify(steps))
 }
 
-export function upsertJigMeta(jigId: string, entity: string | null, codeHash: string): void {
-  const db = openDb()
-  db.prepare(`DELETE FROM jig_meta WHERE jig_id = ? AND entity IS ?`).run(jigId, entity)
-  db.prepare(`INSERT INTO jig_meta (jig_id, entity, code_hash) VALUES (?, ?, ?)`).run(jigId, entity, codeHash)
-}
-
-export function getJigMeta(jigId: string, entity: string | null): JigMetaRow | null {
-  const db = openDb()
-  return db.prepare(`SELECT * FROM jig_meta WHERE jig_id = ? AND entity IS ?`).get(jigId, entity) as JigMetaRow | null
-}
-
-export function cleanupOrphanedMeta(activeJigIds: Set<string>): void {
-  const db = openDb()
-  const allMeta = db.prepare(`SELECT DISTINCT jig_id FROM jig_meta`).all() as { jig_id: string }[]
-  for (const { jig_id } of allMeta) {
-    if (!activeJigIds.has(jig_id)) {
-      db.prepare(`DELETE FROM jig_meta WHERE jig_id = ?`).run(jig_id)
-      db.prepare(`DELETE FROM jig_steps WHERE jig_id = ?`).run(jig_id)
-    }
-  }
-}

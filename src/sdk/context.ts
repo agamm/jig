@@ -1,10 +1,28 @@
+import { AsyncLocalStorage } from "node:async_hooks"
+
+/** Per-run context — lets tool wrappers and SDK functions find the active Context. */
+export const runContext = new AsyncLocalStorage<Context>()
+
+/** Step scan mode — runs handler to collect step labels without executing anything. */
+export const stepScanContext = new AsyncLocalStorage<boolean>()
+
+export function isStepScan(): boolean {
+  return stepScanContext.getStore() ?? false
+}
+
+/** Truncate a label to max length (no ellipsis — humanize makes it readable). */
+export function truncLabel(s: string, max = 60): string {
+  const trimmed = s.trim()
+  return trimmed.length > max ? trimmed.slice(0, max).trim() : trimmed
+}
+
 /**
  * Records step-level events during jig execution.
  * Implemented by the API server to write to SQLite.
  */
 export interface RunRecorder {
   onStepStart(seq: number, label: string): void
-  onStepDone(seq: number, output: string, status: "success" | "fail", durationMs: number, error?: string): void
+  onStepDone(seq: number, output: string, status: "success" | "fail", durationMs: number, connections: string[], error?: string): void
   onOutput?(text: string): void
 }
 
@@ -19,6 +37,14 @@ export class Context {
   private _stepSeq = 0
   private _stepStart = 0
   private _stepOutput: string[] = []
+  private _stepConnections = new Set<string>()
+
+  /** True while inside an agent() call — tool calls won't auto-create steps. */
+  private _inAgent = false
+
+  get inAgent() { return this._inAgent }
+  enterAgent() { this._inAgent = true }
+  leaveAgent() { this._inAgent = false }
 
   constructor(
     public readonly params: Record<string, string>,
@@ -31,15 +57,19 @@ export class Context {
   /** Mark the start of a named step. */
   step(label: string) {
     // Finish previous step if one was active.
-    // No double-emit: finalize() emits for current _stepSeq, then _stepSeq++
-    // creates a new slot. End-of-handler finalize() emits for the final step only.
     if (this._stepSeq > 0) {
       this.finalize()
     }
     this._stepSeq++
     this._stepStart = Date.now()
     this._stepOutput = []
+    this._stepConnections = new Set()
     this._recorder?.onStepStart(this._stepSeq, label)
+  }
+
+  /** Record a connection used in the current step. */
+  addConnection(name: string) {
+    this._stepConnections.add(name)
   }
 
   /** Write output. Presentation layer decides how to render. */
@@ -64,7 +94,7 @@ export class Context {
       const errMsg = error instanceof Error ? error.message : error ? String(error) : undefined
       const durationMs = Date.now() - this._stepStart
       const output = this._stepOutput.join("\n")
-      this._recorder?.onStepDone(this._stepSeq, output, status, durationMs, errMsg)
+      this._recorder?.onStepDone(this._stepSeq, output, status, durationMs, Array.from(this._stepConnections), errMsg)
     }
   }
 

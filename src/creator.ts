@@ -131,7 +131,6 @@ export async function createJig(description: string, io: JigIO): Promise<CreateR
   }
 
   await Bun.write(targetPath, code)
-  await deriveSteps(code, plan.name, undefined)
 
   io.emit({ type: "created", name, file: relFile })
   return { path: targetPath, name, code }
@@ -216,7 +215,6 @@ export async function editJig(
   }
 
   await Bun.write(targetPath, code)
-  await deriveSteps(code, name, entity)
 
   const displayName = entity ? `${name} ${entity}` : name
   const relFile = relative(PROJECT_ROOT, targetPath)
@@ -772,95 +770,3 @@ export function extractImportedServers(code: string): string[] {
   return [...matches].map(m => m[1])
 }
 
-const STEP_DERIVATION_MODEL = "minimax/minimax-m2.7"
-
-/** Derive human-readable steps from jig code via LLM. Non-blocking — skips on failure. */
-export async function deriveSteps(code: string, jigId: string, entity?: string): Promise<void> {
-  try {
-    const { openDb, upsertJigSteps, upsertJigMeta } = await import("./db.js")
-    openDb()
-
-    const client = getClient()
-    const response = await client.chat.completions.create({
-      model: STEP_DERIVATION_MODEL,
-      max_tokens: 2048,
-      messages: [{ role: "user", content: `Analyze this jig code and extract the sequential steps it performs.
-
-Only include meaningful steps — skip imports, variable declarations, config.
-Focus on actions: tool calls, LLM calls, human approval, API calls.
-Each step should map to one logical action the user would recognize.
-
-Rules for fields:
-- shortTitle: concise plain English, no code
-- description: brief plain English explanation only if it adds value beyond the title. Empty string if title is self-explanatory.
-- connections: which services are used (e.g. "gmail", "granola", "github")
-- tools: exact MCP tool function names from the code that this step calls (e.g. "gmail_search", "list_commits", "calendar_listEvents"). These are the function names as they appear in the code after the connection dot (e.g. workspace.gmail_search → "gmail_search"). Include ALL tool names for this step.
-- agentGroup: if the step happens INSIDE an agent() call, give it a label (e.g. "Gather data & write email"). All steps in the same agent() call share the same label. Empty string if the step is a direct tool call outside agent().
-
-Example — for a jig that uses agent() to gather data then creates a draft:
-{"steps":[
-  {"shortTitle":"Search inbox","description":"Find unread emails","connections":["gmail"],"tools":["gmail_search"],"agentGroup":"Gather & draft"},
-  {"shortTitle":"Check calendar","description":"","connections":["calendar"],"tools":["calendar_listEvents"],"agentGroup":"Gather & draft"},
-  {"shortTitle":"Draft reply","description":"AI generates a reply","connections":[],"tools":[],"agentGroup":"Gather & draft"},
-  {"shortTitle":"Create Gmail draft","description":"","connections":["gmail"],"tools":["gmail_createDraft"],"agentGroup":""}
-]}
-
-Now analyze this code:
-${code}` }],
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "jig_steps",
-          strict: true,
-          schema: {
-            type: "object",
-            properties: {
-              steps: {
-                type: "array",
-                items: {
-                  type: "object",
-                  properties: {
-                    shortTitle: { type: "string", description: "Concise action title in plain English" },
-                    description: { type: "string", description: "Brief explanation, empty string if title is self-explanatory" },
-                    connections: { type: "array", items: { type: "string" }, description: "Connection names used (e.g. 'gmail', 'granola', 'github')" },
-                    tools: { type: "array", items: { type: "string" }, description: "Exact MCP tool function names (e.g. 'gmail_search', 'list_commits')" },
-                    agentGroup: { type: "string", description: "Label for agent() group, empty string if not inside agent()" },
-                  },
-                  required: ["shortTitle", "description", "connections", "tools", "agentGroup"],
-                  additionalProperties: false,
-                },
-              },
-            },
-            required: ["steps"],
-            additionalProperties: false,
-          },
-        },
-      },
-    })
-
-    const text = response.choices[0]?.message?.content
-    if (!text) throw new Error("LLM returned empty response")
-    // Some models wrap JSON in markdown fences — strip them
-    const jsonStr = text.trim().replace(/^```(?:json)?\s*\n?/m, "").replace(/\n?```\s*$/m, "").trim()
-    const parsed = JSON.parse(jsonStr)
-    const stepArray = (parsed.steps ?? []).filter(
-      (s: any) => s.shortTitle?.trim()
-    )
-
-    upsertJigSteps(jigId, entity ?? null, stepArray.map((s: any) => ({
-      name: s.shortTitle.trim(),
-      description: s.description.trim(),
-      costHint: null,
-      connections: Array.isArray(s.connections) ? s.connections : [],
-      tools: Array.isArray(s.tools) ? s.tools : [],
-      agentGroup: s.agentGroup?.trim() || "",
-    })))
-
-    const hasher = new Bun.CryptoHasher("sha256")
-    hasher.update(code)
-    upsertJigMeta(jigId, entity ?? null, hasher.digest("hex"))
-  } catch (e) {
-    // Step derivation is enhancement, not blocking — log and continue
-    console.error("Warning: Failed to derive steps:", (e as Error)?.message ?? e)
-  }
-}

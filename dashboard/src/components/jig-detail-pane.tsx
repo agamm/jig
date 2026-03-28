@@ -1,13 +1,12 @@
 "use client";
 
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useEffect } from "react";
 import type { Jig } from "@/types/jig";
 import { ConnectionTag } from "@/components/connection-tag";
 import { HighlightedCode } from "@/components/highlighted-code";
 import { RunSteps, type RunStep } from "@/components/run-steps";
 import { useJigRun } from "@/hooks/use-jig-run";
 import { TRIGGER_SUGGESTIONS } from "@/mock/mock-data";
-import { formatElapsed } from "@/lib/format";
 
 const statusDot = (s: string) =>
   s === "healthy" ? "bg-emerald-400" : s === "attention" ? "bg-amber-400" : "bg-rose-400";
@@ -20,90 +19,53 @@ export function JigDetailPane({ jig: jigProp, selectedEntity, onClose, onEdit, e
   expanded?: boolean;
   onToggleExpand?: () => void;
 }) {
-  // Local steps override (so derivation updates without page reload)
-  const [localSteps, setLocalSteps] = useState<Jig["steps"] | null>(null);
-  const [prevJigId, setPrevJigId] = useState(jigProp.id + (selectedEntity ?? ""));
-  const currentKey = jigProp.id + (selectedEntity ?? "");
-  if (currentKey !== prevJigId) { setPrevJigId(currentKey); setLocalSteps(null); }
-  const jig = localSteps ? { ...jigProp, steps: localSteps } : jigProp;
+  const jig = jigProp;
   const [detailTab, setDetailTab] = useState<"steps" | "code">("steps");
   const [editingTrigger, setEditingTrigger] = useState(false);
   const [triggerValue, setTriggerValue] = useState(jig.settings.trigger);
   const [expandedRun, setExpandedRun] = useState<number | null>(null);
 
   const { mode, liveSteps, completedTools, activeTools, toolReadOnly, startRun, dismiss, cancelRun, isRunning } = useJigRun(jig.id, selectedEntity);
-  const [deriving, setDeriving] = useState(false);
   const hasParams = jig.params && Object.keys(jig.params).length > 0;
   const [paramValues, setParamValues] = useState<Record<string, string>>(() =>
     Object.fromEntries(Object.entries(jig.params ?? {}).map(([k, v]) => [k, ""]))
   );
 
-  const deriveSteps = useCallback(async () => {
-    setDeriving(true);
-    try {
-      const res = await fetch(`/api/jigs/${encodeURIComponent(jig.id)}/recompile`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ entity: selectedEntity ?? undefined }),
-      });
-      const data = await res.json().catch(() => null);
-      if (data?.ok && data.steps) {
-        setLocalSteps(data.steps);
-        setDeriving(false);
-      } else {
-        console.warn("Step derivation failed:", data?.error);
-        setDeriving(false);
-      }
-    } catch {
-      setDeriving(false);
-    }
-  }, [jig.id, selectedEntity]);
-
-  // Auto-derive steps on first view (once per jig/entity)
+  // Fetch derived steps on demand (scan + humanize, cached server-side by code hash)
+  const [derivedSteps, setDerivedSteps] = useState<RunStep[]>(
+    jig.steps.map(s => ({ num: s.num, name: s.name, connections: s.connections }))
+  );
+  const [derivingSteps, setDerivingSteps] = useState(false);
   useEffect(() => {
-    if (jig.steps.length === 0 && !deriving) deriveSteps();
-  }, [jig.id, selectedEntity]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Always show derived steps as-is. Run status is shown at agent-group level,
-  // not per-step (agent calls tools nondeterministically — can't map to steps).
-  // After completion, attach output to the last step.
-  const runSteps: RunStep[] = useMemo(() => {
-    const derived: RunStep[] = jig.steps.map(s => ({
-      num: s.num, name: s.name, desc: s.desc,
-      connections: s.connections, tools: s.tools, agentGroup: s.agentGroup,
-    }));
-
-    if (derived.length === 0) return derived;
-
-    // After run completes: mark all as success/fail, attach output to last step
-    if (mode.type === "done") {
-      const runOutput = liveSteps.find(s => s.name === "Result")?.output;
-      return derived.map((s, i) => ({
-        ...s,
-        status: mode.status as RunStep["status"],
-        time: i === 0 ? formatElapsed(mode.elapsed) : undefined,
-        output: i === derived.length - 1 ? runOutput : undefined,
-      }));
+    // If steps already came from cache in buildJigResponse, use them
+    if (jig.steps.length > 0) {
+      setDerivedSteps(jig.steps.map(s => ({ num: s.num, name: s.name, connections: s.connections })));
+      return;
     }
-
-    // During run: the first step in each agent group is "running".
-    // Other agent steps stay as-is. Non-agent steps are pending.
-    if (mode.type === "running") {
-      const seenGroups = new Set<string>();
-      return derived.map(s => {
-        if (s.agentGroup) {
-          if (!seenGroups.has(s.agentGroup)) {
-            seenGroups.add(s.agentGroup);
-            return { ...s, status: "running" as const };
-          }
-          return s;
+    // Otherwise fetch from /steps endpoint (triggers scan + humanize)
+    let cancelled = false;
+    setDerivingSteps(true);
+    fetch(`/api/jigs/${encodeURIComponent(jig.id)}/steps`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entity: selectedEntity ?? undefined }),
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (!cancelled && data.steps?.length) {
+          setDerivedSteps(data.steps.map((s: any) => ({ num: s.num, name: s.name, connections: s.connections })));
         }
-        return { ...s, status: "pending" as const };
-      });
-    }
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setDerivingSteps(false); });
+    return () => { cancelled = true; };
+  }, [jig.id, selectedEntity, jig.steps]);
 
-    return derived;
-  }, [jig.steps, mode, liveSteps, completedTools, activeTools]);
+  // Steps: live steps during/after run, derived steps when idle
+  const runSteps: RunStep[] = useMemo(() => {
+    if (mode.type === "running" || mode.type === "done") return liveSteps;
+    return derivedSteps;
+  }, [derivedSteps, mode, liveSteps]);
 
   const handleRun = (dryRun: boolean) => {
     setDetailTab("steps");
@@ -164,13 +126,15 @@ export function JigDetailPane({ jig: jigProp, selectedEntity, onClose, onEdit, e
               <>
                 <button
                   onClick={() => handleRun(false)}
-                  className="rounded-md bg-emerald-600 px-2.5 py-1 text-[10px] font-medium text-white transition-all duration-150 hover:bg-emerald-500 active:scale-95"
+                  disabled={derivingSteps}
+                  className="rounded-md bg-emerald-600 px-2.5 py-1 text-[10px] font-medium text-white transition-all duration-150 hover:bg-emerald-500 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-emerald-600"
                 >
                   &#9654; Run
                 </button>
                 <button
                   onClick={() => handleRun(true)}
-                  className="rounded-md border border-emerald-600/30 bg-emerald-600/10 px-2.5 py-1 text-[10px] font-medium text-emerald-400 transition-all duration-150 hover:bg-emerald-600/20 active:scale-95"
+                  disabled={derivingSteps}
+                  className="rounded-md border border-emerald-600/30 bg-emerald-600/10 px-2.5 py-1 text-[10px] font-medium text-emerald-400 transition-all duration-150 hover:bg-emerald-600/20 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-emerald-600/10"
                   title="Read-only — no writes"
                 >
                   Dry Run
@@ -201,27 +165,21 @@ export function JigDetailPane({ jig: jigProp, selectedEntity, onClose, onEdit, e
         {/* Steps or Code */}
         {detailTab === "steps" ? (
           <div key="steps" className="flip-enter">
-            <RunSteps
-              steps={runSteps}
-              mode={mode}
-              onClear={dismiss}
-              completedTools={completedTools}
-              activeTools={activeTools}
-              toolReadOnly={toolReadOnly}
-              emptyAction={deriving ? (
-                <div className="mt-3 flex items-center justify-center gap-2">
-                  <span className="h-3 w-3 rounded-full border-2 border-blue-400/30 border-t-blue-400 animate-spin" />
-                  <span className="text-[11px] text-[#666]">Analyzing code…</span>
-                </div>
-              ) : (
-                <button
-                  onClick={deriveSteps}
-                  className="mt-2 text-[10px] text-blue-400 hover:text-blue-300 transition-colors font-medium"
-                >
-                  Derive steps
-                </button>
-              )}
-            />
+            {derivingSteps && runSteps.length === 0 ? (
+              <div className="flex items-center justify-center gap-2 py-8">
+                <span className="h-3 w-3 rounded-full border-2 border-blue-400/30 border-t-blue-400 animate-spin" />
+                <span className="text-[11px] text-[#666]">Analyzing steps…</span>
+              </div>
+            ) : (
+              <RunSteps
+                steps={runSteps}
+                mode={mode}
+                onClear={dismiss}
+                completedTools={completedTools}
+                activeTools={activeTools}
+                toolReadOnly={toolReadOnly}
+              />
+            )}
           </div>
         ) : (
           <div key="code" className="rounded-lg border border-[#1f1f23] bg-[#111113] p-4 font-mono overflow-x-auto flip-enter">

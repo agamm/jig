@@ -1,6 +1,23 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import type { RunStep, RunStepsMode } from "@/components/run-steps";
 
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`
+  const s = Math.round(ms / 1000)
+  if (s < 60) return `${s}s`
+  return `${Math.floor(s / 60)}m ${s % 60}s`
+}
+
+/** Map server step data to RunStep. */
+function toLiveSteps(steps: any[]): RunStep[] {
+  return steps.map((s: any) => ({
+    num: s.seq, name: s.label, status: s.status,
+    connections: s.connections,
+    output: s.output ?? undefined,
+    time: s.durationMs ? formatDuration(s.durationMs) : undefined,
+  }))
+}
+
 export function useJigRun(jigId: string, entity?: string | null) {
   const [mode, setMode] = useState<RunStepsMode>({ type: "idle" });
   const [liveSteps, setLiveSteps] = useState<RunStep[]>([]);
@@ -45,8 +62,11 @@ export function useJigRun(jigId: string, entity?: string | null) {
           const elapsed = Math.round((Date.now() - startTime) / 1000);
           setMode({ type: "done", elapsed, dryRun: isDryRun, status, error: data.error });
 
-          // Fetch final steps — for real runs from DB, for dry runs use output from poll
-          if (data.runId > 0) {
+          // Use steps from poll response (tracked in runProgress)
+          if (data.steps?.length) {
+            setLiveSteps(toLiveSteps(data.steps));
+          } else if (data.runId > 0) {
+            // Fallback: fetch from DB for runs started before this session
             try {
               const finalRes = await fetch(`/api/runs/${data.runId}`, { signal: abort.signal });
               if (finalRes.ok) {
@@ -59,13 +79,14 @@ export function useJigRun(jigId: string, entity?: string | null) {
                 }
               }
             } catch {}
-          } else if (data.output) {
-            // Dry run — show output as a single "Result" step
-            setLiveSteps([{ num: 1, name: "Result", status: "success", output: data.output }]);
           }
           return;
         }
 
+        // Update live steps during run
+        if (data.steps?.length) {
+          setLiveSteps(toLiveSteps(data.steps));
+        }
         setCompletedTools(data.completedTools ?? []);
         setActiveTools(data.activeTools ?? []);
         if (data.readOnly) setToolReadOnly(data.readOnly);

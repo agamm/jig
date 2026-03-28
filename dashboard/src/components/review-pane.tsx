@@ -61,7 +61,7 @@ export function ReviewPane({ jig, onClose, isEditing = false }: {
           </div>
         ) : (
           <div key="code" className="rounded-lg border border-[#1f1f23] bg-[#111113] p-4 font-mono overflow-x-auto flip-enter">
-            <HighlightedCode code={jig.code} />
+            <HighlightedCode code={jig.code} connections={jig.settings.connections} />
           </div>
         )}
 

@@ -31,7 +31,7 @@ export function ToastContainer() {
     _addToast = (message, type) => {
       const id = nextId++
       setToasts(prev => [...prev, { id, message, type }])
-      setTimeout(() => dismiss(id), 4000)
+      setTimeout(() => dismiss(id), type === "info" ? 8000 : 4000)
     }
     return () => { _addToast = () => {} }
   }, [dismiss])
@@ -49,7 +49,7 @@ export function ToastContainer() {
           } ${
             t.type === "success" ? "border-emerald-800/50 bg-emerald-950/80 text-emerald-300"
             : t.type === "error" ? "border-red-800/50 bg-red-950/80 text-red-300"
-            : "border-[#2a2a2e] bg-[#1a1a1e]/90 text-[#ccc]"
+            : "border-amber-800/50 bg-amber-950/80 text-amber-300"
           }`}
         >
           {t.message}

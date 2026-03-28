@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { toast } from "@/components/toast"
 
 export function useTriggerSave(jigId: string, serverTrigger: string) {
@@ -6,9 +6,11 @@ export function useTriggerSave(jigId: string, serverTrigger: string) {
   const [value, setValue] = useState(serverTrigger)
   const [display, setDisplay] = useState(serverTrigger)
   const [saving, setSaving] = useState(false)
+  const savedLocally = useRef(false)
 
   // Sync when parent prop changes (e.g. jig list re-fetch)
   useEffect(() => {
+    if (savedLocally.current) { savedLocally.current = false; return }
     setDisplay(serverTrigger)
     if (!editing) setValue(serverTrigger)
   }, [serverTrigger, editing])
@@ -26,9 +28,14 @@ export function useTriggerSave(jigId: string, serverTrigger: string) {
       })
       const data = await res.json()
       if (data.ok) {
+        savedLocally.current = true
         setDisplay(data.trigger)
         setValue(data.trigger)
-        toast.success(`Trigger updated to "${data.trigger}"`)
+        if (data.warning) {
+          toast.info(`Set to "${data.trigger}" — ${data.warning}`)
+        } else {
+          toast.success(`Trigger updated to "${data.trigger}"`)
+        }
       } else {
         toast.error(data.error || "Failed to save trigger")
       }

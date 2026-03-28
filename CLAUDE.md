@@ -54,6 +54,10 @@
 - **No personal or client info in code** — never commit real company names, contact details, repo names, or email addresses. Use generic placeholders ("CompanyName", "repo-name", "Your Name").
 - Examples in comments/docs should use fictional names only.
 
+## Architecture
+- **Next.js is a thin proxy** — the dashboard (`dashboard/`) is a Next.js frontend that rewrites `/api/*` to the Bun API server (`src/server.ts`) via `next.config.ts`. All backend logic (LLM calls, file I/O, DB) goes in `src/server.ts`, never in Next.js API routes or middleware. The Bun server auto-loads `.env`; Next.js does not.
+- **Don't import SDK modules into server.ts** — `src/sdk/` (llm.ts, context.ts, etc.) is designed for jig runtime, not the API server. For server-side LLM calls, use direct `fetch` to OpenRouter instead of `getClient()`.
+
 ## Code Style
 - **Programmatic over subprocess** — use library APIs (e.g. TypeScript compiler API, Bun APIs) instead of spawning CLI tools. Keeps things faster, more portable, and dashboard-ready.
 - **Abstract all I/O** — business logic must never call `console.log`, `process.exit`, or read `process.stdin` directly. Pass I/O through callback interfaces (like `JigIO`) so the same logic works from CLI and dashboard. The CLI file is thin glue that wires IO; the modules are reusable.

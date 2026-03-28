@@ -12,6 +12,8 @@ import { formatDuration } from "./utils.js"
 import { runJig, persist, isValidJigId } from "./runner.js"
 import type { RunEvent } from "./run-events.js"
 
+const TRIGGER_PARSE_MODEL = "minimax/minimax-m2.5:nitro"
+
 const PROJECT_ROOT = join(import.meta.dir, "..")
 const JIGS_DIR = join(PROJECT_ROOT, "jigs")
 const SCHEMAS_DIR = join(PROJECT_ROOT, ".jig/schemas")
@@ -103,8 +105,15 @@ function textToTrigger(text: string): { type: string; cron?: string; minutes?: n
   // Day name mapping
   const dayMap: Record<string, number> = { sun: 0, sunday: 0, mon: 1, monday: 1, tue: 2, tuesday: 2, wed: 3, wednesday: 3, thu: 4, thursday: 4, fri: 5, friday: 5, sat: 6, saturday: 6 }
 
+  // Named time aliases
+  const timeAlias: Record<string, [number, number]> = {
+    morning: [9, 0], noon: [12, 0], afternoon: [14, 0], evening: [18, 0], night: [21, 0], midnight: [0, 0],
+  }
+
   // Parse time from string — returns [hour, minute] or null
   function parseTime(s: string): [number, number] | null {
+    const alias = timeAlias[s.trim().toLowerCase()]
+    if (alias) return alias
     // "9am", "9:30pm", "14:00", "2pm"
     const m = s.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i)
     if (!m) return null
@@ -122,8 +131,9 @@ function textToTrigger(text: string): { type: string; cron?: string; minutes?: n
     if (time) return { type: "cron", cron: `${time[1]} ${time[0]} * * *` }
   }
 
-  // "Mon 8:00" / "Mon, Fri 9:00" / "every monday at 9am" / "every mon, wed at 9am"
-  const dayTimeMatch = t.match(/^(?:every\s+)?([a-z, ]+?)(?:\s+at)?\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\s*$/i)
+  // "Mon 8:00" / "Mon, Fri 9:00" / "every monday at 9am" / "every week on monday morning"
+  const timeAliasPattern = Object.keys(timeAlias).join("|")
+  const dayTimeMatch = t.match(new RegExp(`^(?:every\\s+(?:week\\s+on\\s+)?)?([a-z, ]+?)(?:\\s+at)?\\s+(\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)?|${timeAliasPattern})\\s*$`, "i"))
   if (dayTimeMatch) {
     const dayPart = dayTimeMatch[1].toLowerCase().replace(/\s+/g, "")
     const dayNames = dayPart.split(",").map(d => d.trim())
@@ -134,8 +144,8 @@ function textToTrigger(text: string): { type: string; cron?: string; minutes?: n
     }
   }
 
-  // "X of month HH:MM"
-  const monthMatch = t.match(/^(?:every\s+)?(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+(?:the\s+)?month|of\s+month)(?:\s+at)?\s+(.+)$/i)
+  // "X of month HH:MM" or "every month on the Xth at HH:MM"
+  const monthMatch = t.match(/^(?:every\s+(?:month\s+on\s+(?:the\s+)?)?)?(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+(?:the\s+)?month\s+)?(?:at\s+)?(.+)$/i)
   if (monthMatch) {
     const time = parseTime(monthMatch[2])
     if (time) return { type: "cron", cron: `${time[1]} ${time[0]} ${monthMatch[1]} * *` }
@@ -146,6 +156,52 @@ function textToTrigger(text: string): { type: string; cron?: string; minutes?: n
   if (eventMatch) return { type: "event", source: eventMatch[1].trim() }
 
   return null
+}
+
+type TriggerResult = { type: string; cron?: string; minutes?: number; source?: string; approximate?: boolean; note?: string }
+
+/** LLM fallback for trigger text that the regex parser can't handle. */
+async function textToTriggerLLM(text: string): Promise<TriggerResult | null> {
+  const apiKey = process.env.OPENROUTER_API_KEY
+  if (!apiKey) return null
+  try {
+    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: TRIGGER_PARSE_MODEL,
+        max_tokens: 2000,
+        messages: [
+          { role: "system", content: `Convert the user's scheduling description into a JSON trigger object. Return ONLY valid JSON, no explanation.
+
+Possible formats:
+- { "type": "cron", "cron": "<5-field cron expression>" }
+- { "type": "interval", "minutes": <number> }
+- { "type": "manual" }
+- { "type": "webhook" }
+- { "type": "event", "source": "<source name>" }
+
+If the request CANNOT be exactly represented in standard 5-field cron (e.g. "odd weeks", "every 3rd Tuesday", "random times"), return the closest approximation AND set "approximate": true with a "note" explaining what was lost.
+
+Examples:
+"every friday at 9am" → { "type": "cron", "cron": "0 9 * * 5" }
+"twice a day" → { "type": "cron", "cron": "0 9,17 * * *" }
+"every 30 minutes" → { "type": "interval", "minutes": 30 }
+"odd week tuesdays at 9am" → { "type": "cron", "cron": "0 9 * * 2", "approximate": true, "note": "Cron cannot express odd/even weeks — this will run every Tuesday" }` },
+          { role: "user", content: text },
+        ],
+      }),
+    })
+    const data = await res.json() as any
+    const content = data.choices?.[0]?.message?.content?.trim()
+    if (!content) return null
+    const parsed = JSON.parse(content.replace(/^```json?\s*|\s*```$/g, ""))
+    if (parsed?.type) return parsed
+    return null
+  } catch (e) {
+    console.error("[trigger-llm]", e)
+    return null
+  }
 }
 
 /** Serialize a trigger object into source code text. */
@@ -254,9 +310,10 @@ async function buildJigResponse(id: string, entities: string[], runLimit: number
   const maxDur = Math.max(...recentDurations, 1)
   const sparkline = recentDurations.map((d) => Math.round((d / maxDur) * 100))
 
-  // Import definition for params, trigger, and step scan
+  // Import definition for params and step scan; read trigger from source text
+  // (source text is always fresh from disk, while import() may be Bun-cached)
   let params: Record<string, string> = {}
-  let trigger = ""
+  let trigger = code ? extractTrigger(code) : ""
   let steps: { num: number; name: string; connections: string[] }[] = []
   if (filePath) {
     try {
@@ -264,12 +321,6 @@ async function buildJigResponse(id: string, entities: string[], runLimit: number
       const def = mod.default
       if (def?.options) {
         params = def.options.params ?? {}
-        const t = def.options.trigger
-        if (t?.type === "cron") trigger = t.cron ? cronToText(t.cron) : "Scheduled"
-        else if (t?.type === "interval") trigger = t.minutes ? `Every ${t.minutes}m` : "Interval"
-        else if (t?.type === "event") trigger = t.source ? `On ${t.source}` : "Event"
-        else if (t?.type === "manual") trigger = "Manual"
-        else if (t?.type === "webhook") trigger = "Webhook"
       }
       // Steps from cache (instant). If miss, returned empty — dashboard fetches /steps endpoint.
       if (includeSteps && def?.handler && code) {
@@ -522,7 +573,7 @@ async function handleUpdateTrigger(id: string, body: any): Promise<Response> {
   const filePath = getJigFilePath(id, entities.length > 0 ? entities[0] : undefined)
   if (!filePath) return notFound("Jig file not found")
 
-  const trigger = textToTrigger(triggerText)
+  const trigger = textToTrigger(triggerText) ?? await textToTriggerLLM(triggerText)
   if (!trigger) return json({ error: `Could not parse trigger: "${triggerText}"` }, 400)
 
   let code: string
@@ -542,7 +593,9 @@ async function handleUpdateTrigger(id: string, body: any): Promise<Response> {
     : trigger.type === "manual" ? "Manual"
     : trigger.type === "webhook" ? "Webhook"
     : triggerText
-  return json({ ok: true, trigger: newTriggerText })
+  const result: Record<string, any> = { ok: true, trigger: newTriggerText }
+  if (trigger.approximate) result.warning = trigger.note || "This is an approximation — cron cannot express the exact schedule"
+  return json(result)
 }
 
 async function handleEditJig(id: string, body: any): Promise<Response> {

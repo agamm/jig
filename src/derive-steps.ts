@@ -78,9 +78,9 @@ ${input}` }],
     },
   })
 
-  const text = response.choices[0]?.message?.content
+  const text = response.choices[0]?.message?.content?.trim()
   if (!text) throw new Error("LLM returned empty response")
-  const parsed = JSON.parse(text)
+  const parsed = JSON.parse(text.replace(/^```json?\s*|\s*```$/g, ""))
   const names: string[] = parsed.names ?? []
 
   return raw.map((s, i) => ({

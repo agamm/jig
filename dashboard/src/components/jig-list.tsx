@@ -135,7 +135,7 @@ export function JigList({ jigs, selectedJigId, expandedGroup, onJigClick, onEnti
                 )}
 
                 {/* Stacked connection icons — fan out on hover */}
-                <span className="flex shrink-0 -space-x-1.5 hover:space-x-0.5 transition-all duration-500 ease-out">
+                <span className="flex shrink-0 -space-x-1.5 hover:-space-x-0.5 transition-all duration-500 ease-out">
                   {jig.settings.connections.slice(0, 3).map((c, ci) => (
                     <span key={c} className="inline-block rounded-full bg-[#111113] border border-[#1f1f23] p-0.5 transition-all duration-500 ease-out" style={{ zIndex: 3 - ci }}>
                       <ServiceIcon name={c} size={12} />

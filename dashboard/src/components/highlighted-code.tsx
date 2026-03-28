@@ -1,17 +1,21 @@
+import { useMemo } from "react";
 import type { Token } from "@/types/jig";
 import { ServiceIcon } from "@/components/service-icon";
-
-export const SERVICE_KEYWORDS: Record<string, string> = {
-  "gmail": "Gmail", "calendar": "Calendar", "drive": "Drive",
-  "github": "GitHub", "slack": "Slack", "workspace": "Gmail",
-};
 
 /**
  * Tokenize an entire code block (not line-by-line).
  * Handles multi-line template literals so words inside strings
  * are never tagged as service badges.
  */
-function tokenizeFull(code: string): Token[] {
+function tokenizeFull(code: string, connections: string[]): Token[] {
+  const connSet = new Set(connections.map(c => c.toLowerCase()));
+  // Build regex for service.method calls and standalone service names
+  const connPattern = connections.length > 0
+    ? connections.map(c => c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")
+    : null;
+  const svcMethodRe = connPattern ? new RegExp(`^((?:${connPattern})\\.\\w+)`, "i") : null;
+  const svcNameRe = connPattern ? new RegExp(`^(${connPattern})\\b`, "i") : null;
+
   const tokens: Token[] = [];
   let remaining = code;
   while (remaining.length > 0) {
@@ -37,23 +41,23 @@ function tokenizeFull(code: string): Token[] {
     m = remaining.match(/^(import|from|export|default|async|await|const|let|var|return|if|else|for|of|in|function|new|throw|try|catch|typeof|void)\b/);
     if (m) { tokens.push({ text: m[1], color: "text-violet-400" }); remaining = remaining.slice(m[1].length); continue; }
 
-    // Service.method calls (workspace.gmail_search, github.list_commits, etc.)
-    m = remaining.match(/^(gmail\.\w+|calendar\.\w+|drive\.\w+|github\.\w+|slack\.\w+|workspace\.\w+|granola\.\w+)/);
-    if (m) { tokens.push({ text: m[1], color: "text-amber-400 __svc__" }); remaining = remaining.slice(m[1].length); continue; }
+    // Service.method calls (e.g. workspace.gmail_search, github.list_commits)
+    if (svcMethodRe) {
+      m = remaining.match(svcMethodRe);
+      if (m) { tokens.push({ text: m[1], color: "text-amber-400 __svc__" }); remaining = remaining.slice(m[1].length); continue; }
+    }
 
     // Standalone service names — only in import context (preceded by { or ,)
-    // This prevents tagging "calendar" in regular code as a service badge
-    m = remaining.match(/^(gmail|calendar|drive|github|slack|granola)\b/);
-    if (m) {
-      // Check if this looks like an import (previous non-whitespace token is { or ,)
-      const before = code.slice(0, code.length - remaining.length);
-      const trimmed = before.trimEnd();
-      const lastChar = trimmed[trimmed.length - 1];
-      if (lastChar === "{" || lastChar === ",") {
-        tokens.push({ text: m[1], color: "text-amber-400 __svc__" }); remaining = remaining.slice(m[1].length); continue;
+    if (svcNameRe) {
+      m = remaining.match(svcNameRe);
+      if (m && connSet.has(m[1].toLowerCase())) {
+        const before = code.slice(0, code.length - remaining.length).trimEnd();
+        const lastChar = before[before.length - 1];
+        if (lastChar === "{" || lastChar === ",") {
+          tokens.push({ text: m[1], color: "text-amber-400 __svc__" }); remaining = remaining.slice(m[1].length); continue;
+        }
+        tokens.push({ text: m[1], color: "text-[#ccc]" }); remaining = remaining.slice(m[1].length); continue;
       }
-      // Otherwise, treat as regular identifier
-      tokens.push({ text: m[1], color: "text-[#ccc]" }); remaining = remaining.slice(m[1].length); continue;
     }
 
     // Function-like names
@@ -87,14 +91,13 @@ function tokenizeFull(code: string): Token[] {
  * Tokenize code and split into lines for rendering.
  * Multi-line tokens (template literals, block comments) are split at newlines.
  */
-function tokenizeCode(code: string): Token[][] {
-  const allTokens = tokenizeFull(code);
+function tokenizeCode(code: string, connections: string[]): Token[][] {
+  const allTokens = tokenizeFull(code, connections);
   const lines: Token[][] = [[]];
   for (const tok of allTokens) {
     if (tok.text === "\n") {
       lines.push([]);
     } else if (tok.text.includes("\n")) {
-      // Multi-line token (template literal, block comment) — split at newlines
       const parts = tok.text.split("\n");
       for (let i = 0; i < parts.length; i++) {
         if (i > 0) lines.push([]);
@@ -107,17 +110,15 @@ function tokenizeCode(code: string): Token[][] {
   return lines;
 }
 
-export function HighlightedCode({ code }: { code: string }) {
-  const lines = tokenizeCode(code);
+export function HighlightedCode({ code, connections = [] }: { code: string; connections?: string[] }) {
+  const lines = useMemo(() => tokenizeCode(code, connections), [code, connections]);
   return (
     <pre className="whitespace-pre-wrap text-[12px] leading-7">
       {lines.map((tokens, li) => {
         const elements: React.ReactNode[] = [];
         tokens.forEach((tok, ti) => {
-          // Service.method tokens are marked with __svc__ — render as badge
           if (tok.color.includes("__svc__")) {
-            const svcKey = tok.text.split(".")[0].toLowerCase();
-            const svcName = SERVICE_KEYWORDS[svcKey] || svcKey;
+            const svcName = tok.text.split(".")[0];
             elements.push(
               <span key={`badge-${ti}`} className="inline-flex items-center gap-1 align-middle mx-0.5 rounded-full bg-[#1a1a1d] border border-[#2a2a2e] px-1.5 py-px">
                 <ServiceIcon name={svcName} size={10} />

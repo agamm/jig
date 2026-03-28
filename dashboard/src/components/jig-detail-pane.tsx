@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import type { Jig } from "@/types/jig";
 import { ConnectionTag } from "@/components/connection-tag";
 import { HighlightedCode } from "@/components/highlighted-code";
@@ -26,25 +26,37 @@ export function JigDetailPane({ jig, selectedEntity, onClose, onEdit, expanded =
   const [expandedRun, setExpandedRun] = useState<number | null>(null);
 
   const { mode, liveSteps, completedTools, activeTools, startRun, dismiss, cancelRun, isRunning } = useJigRun(jig.id, selectedEntity);
-  const [recompiling, setRecompiling] = useState(false);
+  const [deriving, setRecompiling] = useState(false);
   const hasParams = jig.params && Object.keys(jig.params).length > 0;
   const [paramValues, setParamValues] = useState<Record<string, string>>(() =>
     Object.fromEntries(Object.entries(jig.params ?? {}).map(([k, v]) => [k, ""]))
   );
 
-  const recompile = useCallback(async () => {
+  const deriveSteps = useCallback(async () => {
     setRecompiling(true);
     try {
-      await fetch(`/api/jigs/${encodeURIComponent(jig.id)}/recompile`, {
+      const res = await fetch(`/api/jigs/${encodeURIComponent(jig.id)}/deriveSteps`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ entity: selectedEntity ?? undefined }),
       });
-      window.location.reload();
+      const data = await res.json().catch(() => null);
+      // Reload to pick up new steps — but only if derivation succeeded
+      if (data?.ok) window.location.reload();
+      else setRecompiling(false);
     } catch {
       setRecompiling(false);
     }
   }, [jig.id, selectedEntity]);
+
+  // Auto-derive steps when empty (first time viewing a jig)
+  const [autoDeriveTried, setAutoDeriveTried] = useState(false);
+  useEffect(() => {
+    if (jig.steps.length === 0 && !deriving && !autoDeriveTried) {
+      setAutoDeriveTried(true);
+      deriveSteps();
+    }
+  }, [jig.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Always show derived steps as-is. Run status is shown at agent-group level,
   // not per-step (agent calls tools nondeterministically — can't map to steps).
@@ -126,17 +138,6 @@ export function JigDetailPane({ jig, selectedEntity, onClose, onEdit, expanded =
         </div>
       </div>
 
-      {/* Stale warning */}
-      {jig.stale && (
-        <div className="mx-4 mt-3 flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2" style={{ animation: "fade-up 0.15s ease" }}>
-          <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" />
-          <span className="text-[11px] text-amber-300 flex-1">Code changed outside the dashboard. Steps may be outdated.</span>
-          <button onClick={recompile} disabled={recompiling} className="text-[10px] text-amber-400 hover:text-amber-300 transition-colors font-medium disabled:opacity-50">
-            {recompiling ? "Compiling…" : "Re-compile"}
-          </button>
-        </div>
-      )}
-
       {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
         {/* Steps / Code toggle + Run buttons */}
@@ -200,15 +201,16 @@ export function JigDetailPane({ jig, selectedEntity, onClose, onEdit, expanded =
               onClear={dismiss}
               completedTools={completedTools}
               activeTools={activeTools}
-              emptyAction={
+              emptyAction={deriving ? (
+                <span className="mt-2 text-[10px] text-[#555] italic">Deriving steps…</span>
+              ) : (
                 <button
-                  onClick={recompile}
-                  disabled={recompiling}
-                  className="mt-2 text-[10px] text-blue-400 hover:text-blue-300 transition-colors font-medium disabled:opacity-50"
+                  onClick={deriveSteps}
+                  className="mt-2 text-[10px] text-blue-400 hover:text-blue-300 transition-colors font-medium"
                 >
-                  {recompiling ? "Deriving…" : "Derive steps"}
+                  Derive steps
                 </button>
-              }
+              )}
             />
           </div>
         ) : (

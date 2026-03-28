@@ -33,8 +33,19 @@ function emit(data: any) { process.stdout.write(JSON.stringify(data) + "\n") }
       emit({ type: "tool", completed, active: [...current] })
     })
 
+    // Pre-flight: check that the jig can be imported (catches stale connection modules)
+    let mod: any
+    try {
+      mod = await import(jigPath)
+    } catch (e: any) {
+      const msg = e?.message ?? String(e)
+      if (msg.includes("Cannot find module")) {
+        emit({ type: "error", message: `Connection module missing. Run "jig connect" to regenerate.\n${msg}` })
+        process.exit(1)
+      }
+      throw e
+    }
     const { run } = await import("./sdk/jig.js")
-    const mod = await import(jigPath)
     const def = mod.default
 
     // Silence ctx.log() — it writes to stdout which would corrupt our JSON protocol

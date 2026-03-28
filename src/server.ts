@@ -263,6 +263,12 @@ async function handleRunJig(id: string, body: any): Promise<Response> {
 
   if (!existsSync(jigPath)) return notFound(`Jig file not found`)
 
+  // Check connections are set up
+  const connectionsDir = join(PROJECT_ROOT, ".jig/connections")
+  if (!existsSync(join(connectionsDir, "index.ts"))) {
+    return json({ error: "No connections found. Run 'jig connect <server>' first." }, 400)
+  }
+
   // Only one run at a time — spinner and dryRun are global singletons.
   if (activeRunId !== null) return json({ error: "A run is already in progress" }, 409)
 

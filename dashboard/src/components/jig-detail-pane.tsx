@@ -26,37 +26,32 @@ export function JigDetailPane({ jig, selectedEntity, onClose, onEdit, expanded =
   const [expandedRun, setExpandedRun] = useState<number | null>(null);
 
   const { mode, liveSteps, completedTools, activeTools, startRun, dismiss, cancelRun, isRunning } = useJigRun(jig.id, selectedEntity);
-  const [deriving, setRecompiling] = useState(false);
+  const [deriving, setDeriving] = useState(false);
   const hasParams = jig.params && Object.keys(jig.params).length > 0;
   const [paramValues, setParamValues] = useState<Record<string, string>>(() =>
     Object.fromEntries(Object.entries(jig.params ?? {}).map(([k, v]) => [k, ""]))
   );
 
   const deriveSteps = useCallback(async () => {
-    setRecompiling(true);
+    setDeriving(true);
     try {
-      const res = await fetch(`/api/jigs/${encodeURIComponent(jig.id)}/deriveSteps`, {
+      const res = await fetch(`/api/jigs/${encodeURIComponent(jig.id)}/recompile`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ entity: selectedEntity ?? undefined }),
       });
       const data = await res.json().catch(() => null);
-      // Reload to pick up new steps — but only if derivation succeeded
       if (data?.ok) window.location.reload();
-      else setRecompiling(false);
+      else setDeriving(false);
     } catch {
-      setRecompiling(false);
+      setDeriving(false);
     }
   }, [jig.id, selectedEntity]);
 
-  // Auto-derive steps when empty (first time viewing a jig)
-  const [autoDeriveTried, setAutoDeriveTried] = useState(false);
+  // Auto-derive steps on first view (once per jig/entity)
   useEffect(() => {
-    if (jig.steps.length === 0 && !deriving && !autoDeriveTried) {
-      setAutoDeriveTried(true);
-      deriveSteps();
-    }
-  }, [jig.id]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (jig.steps.length === 0 && !deriving) deriveSteps();
+  }, [jig.id, selectedEntity]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Always show derived steps as-is. Run status is shown at agent-group level,
   // not per-step (agent calls tools nondeterministically — can't map to steps).

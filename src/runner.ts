@@ -57,6 +57,28 @@ export async function runJig(
   try {
     // --- Pre-run guards ---
 
+    // 0. Validate source code patterns (before import to catch side effects)
+    const source = await Bun.file(jigPath).text().catch(() => null)
+    if (source) {
+      const problems: string[] = []
+      const stripped = source.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "")
+
+      if (/^\s*await\s+run\s*\(/m.test(stripped))
+        problems.push("Jig calls run() at module level — remove it. The runner calls run() for you.")
+      if (/^\s*process\.exit/m.test(stripped))
+        problems.push("Jig calls process.exit() at module level — remove it.")
+      if (/console\.log\s*\(/.test(stripped))
+        problems.push("Use ctx.log() instead of console.log() — console.log bypasses the event stream.")
+      if (!/export\s+default/.test(stripped))
+        problems.push('Jig must have an export default — add "export default <jigName>".')
+
+      if (problems.length > 0) {
+        const error = `Jig validation failed:\n${problems.map(p => `  • ${p}`).join("\n")}`
+        onEvent({ type: "error", message: error })
+        return { output: "", tools: [], durationMs: Date.now() - start, error }
+      }
+    }
+
     // 1. Import jig (cache bust) — classified errors
     let mod: any
     try {

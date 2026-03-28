@@ -23,6 +23,32 @@ describe("runner", () => {
     }
   })
 
+  it("rejects jig with top-level run() call", async () => {
+    const { runJig } = await import("../src/runner.js")
+    const testJig = join(PROJECT_ROOT, "jigs/_test_bad_run.ts")
+    writeFileSync(testJig, 'import { jig, run } from "../src/index.js"\nconst j = jig("x", { trigger: { type: "manual" } }, async () => {})\nawait run(j)\nprocess.exit(0)')
+    try {
+      const events: RunEvent[] = []
+      const result = await runJig(testJig, {}, (e) => events.push(e), { dryRun: true, silent: true })
+      expect(result.error).toContain("run() at module level")
+    } finally {
+      rmSync(testJig, { force: true })
+    }
+  })
+
+  it("rejects jig with console.log", async () => {
+    const { runJig } = await import("../src/runner.js")
+    const testJig = join(PROJECT_ROOT, "jigs/_test_bad_console.ts")
+    writeFileSync(testJig, 'import { jig } from "../src/index.js"\nexport default jig("x", { trigger: { type: "manual" } }, async (ctx) => { console.log("bad") })')
+    try {
+      const events: RunEvent[] = []
+      const result = await runJig(testJig, {}, (e) => events.push(e), { dryRun: true, silent: true })
+      expect(result.error).toContain("ctx.log()")
+    } finally {
+      rmSync(testJig, { force: true })
+    }
+  })
+
   it("emits error for nonexistent jig file", async () => {
     const { runJig } = await import("../src/runner.js")
     const { openDb } = await import("../src/db.js")

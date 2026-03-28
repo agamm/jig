@@ -42,7 +42,7 @@ export function JigDetailPane({ jig, selectedEntity, onClose, onEdit, expanded =
       });
       const data = await res.json().catch(() => null);
       if (data?.ok) window.location.reload();
-      else setDeriving(false);
+      else { console.warn("Step derivation failed:", data?.error); setDeriving(false); }
     } catch {
       setDeriving(false);
     }

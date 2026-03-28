@@ -406,15 +406,7 @@ async function handleRecompile(id: string, body: any): Promise<Response> {
 
   const code = readFileSync(filePath, "utf-8")
 
-  // TypeScript validation
-  const { validateJigFile } = await import("./validate.js")
-  const validation = await validateJigFile(filePath)
-  if (!validation.ok) {
-    const errors = validation.errors.map(e => `${e.field}: ${e.message}`).join("\n")
-    return json({ ok: false, error: errors }, 400)
-  }
-
-  // Re-derive steps
+  // Derive steps from source code (no module import — avoids MCP connection issues)
   const { deriveSteps } = await import("./creator.js")
   await deriveSteps(code, id, entity)
 

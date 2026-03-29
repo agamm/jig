@@ -54,12 +54,12 @@ import { github } from "../.jig/connections/github.js"`
   })
 })
 
-describe("Context.log", () => {
+describe("Context.output", () => {
   it("captures output", () => {
     const ctx = new Context({}, [])
     ctx.setSink(() => {}) // silence console
-    ctx.log("hello")
-    ctx.log("world", 42)
+    ctx.output("hello")
+    ctx.output("world", 42)
     expect(ctx.getOutput()).toEqual(["hello", "world 42"])
   })
 
@@ -67,7 +67,7 @@ describe("Context.log", () => {
     const logged: string[] = []
     const ctx = new Context({}, [])
     ctx.setSink((...args: any[]) => logged.push(args.join(" ")))
-    ctx.log("test")
+    ctx.output("test")
     expect(logged).toEqual(["test"])
     expect(ctx.getOutput()).toEqual(["test"])
   })
@@ -76,8 +76,8 @@ describe("Context.log", () => {
 describe("run()", () => {
   it("returns context with captured output", async () => {
     const testJig = jig("test", {}, async (ctx) => {
-      ctx.log("line 1")
-      ctx.log("line 2")
+      ctx.output("line 1")
+      ctx.output("line 2")
     })
     const ctx = await run(testJig)
     expect(ctx.getOutput()).toEqual(["line 1", "line 2"])
@@ -89,7 +89,7 @@ describe("run()", () => {
     console.log = (...args: any[]) => sinkCalls.push(args.join(" "))
 
     const testJig = jig("test", {}, async (ctx) => {
-      ctx.log("hidden")
+      ctx.output("hidden")
     })
     const ctx = await run(testJig, {}, { silent: true })
 

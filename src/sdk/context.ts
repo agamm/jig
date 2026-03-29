@@ -73,13 +73,16 @@ export class Context {
   }
 
   /** Write output. Presentation layer decides how to render. */
-  log(...args: any[]) {
+  output(...args: any[]) {
     const line = args.map(String).join(" ")
     this._output.push(line)
     this._stepOutput.push(line)
     this._sink(...args)
     this._recorder?.onOutput?.(line)
   }
+
+  /** @deprecated Use ctx.output() instead. */
+  log(...args: any[]) { this.output(...args) }
 
   /** Get all captured output. Used by dry-run and dashboard. */
   getOutput(): string[] { return this._output }

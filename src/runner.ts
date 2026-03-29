@@ -112,7 +112,7 @@ async function _runJig(
       if (/^\s*process\.exit/m.test(stripped))
         problems.push("Jig calls process.exit() at module level — remove it.")
       if (/console\.log\s*\(/.test(stripped))
-        problems.push("Use ctx.log() instead of console.log() — console.log bypasses the event stream.")
+        problems.push("Use ctx.output() instead of console.log() — console.log bypasses the event stream.")
       if (!/export\s+default/.test(stripped))
         problems.push('Jig must have an export default — add "export default <jigName>".')
 

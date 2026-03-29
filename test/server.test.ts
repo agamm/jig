@@ -43,7 +43,7 @@ describe("runner", () => {
     try {
       const events: RunEvent[] = []
       const result = await runJig(testJig, {}, (e) => events.push(e), { dryRun: true, silent: true })
-      expect(result.error).toContain("ctx.log()")
+      expect(result.error).toContain("ctx.output()")
     } finally {
       rmSync(testJig, { force: true })
     }

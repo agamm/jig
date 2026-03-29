@@ -532,10 +532,10 @@ Follow SKILL.md's determinism hierarchy — prefer direct tool calls > llm() > a
 A single agent() wrapping everything is acceptable when the workflow is genuinely fuzzy end-to-end, but default to breaking steps apart.
 
 ### 2. Show progress
-Use ctx.log() to show status before each step so the user knows what's happening:
-  ctx.log("Listing meetings...")
+Use ctx.output() to show status before each step so the user knows what's happening:
+  ctx.output("Listing meetings...")
   const meetings = await granola.list_meetings(...)
-  ctx.log("Analyzing insights...")
+  ctx.output("Analyzing insights...")
   const insights = await llm(...)
 
 ### 3. Only add params when the user's description implies configurability
@@ -550,7 +550,7 @@ The tools array and probe results show what's available. Use multiple tools to g
 - Import SDK from "${options.importPrefix}/src/index.js" (jig, llm, agent)
 - Import connections from "${options.importPrefix}/.jig/connections/{server}.js"
 - Use exact param names and types from the type definitions and schemas above
-- Use ctx.log() for output, NEVER console.log()
+- Use ctx.output() for output, NEVER console.log()
 - End the file with: export default myJig (do NOT call run() or process.exit())
 - Do NOT use require() or CommonJS imports
 - Do NOT add markdown fences around the code`

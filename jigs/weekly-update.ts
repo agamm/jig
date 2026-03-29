@@ -77,7 +77,7 @@ Also figure out:
       { schema: { email: "string", to: "string", cc: "string", subject: "string" } }
     )
 
-    ctx.log(result.email)
+    ctx.output(result.email)
 
     // Create Gmail draft
     const draft = await workspace.gmail_createDraft({
@@ -89,7 +89,7 @@ Also figure out:
 
     const draftData = typeof draft === "object" ? draft as any : {}
     const messageId = draftData?.message?.id ?? draftData?.id ?? ""
-    ctx.log(`\nhttps://mail.google.com/mail/u/0/#drafts/${messageId}`)
+    ctx.output(`\nhttps://mail.google.com/mail/u/0/#drafts/${messageId}`)
   }
 )
 

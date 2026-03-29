@@ -667,7 +667,7 @@ ${parts.join("\n")}
 ## Rules
 - Import SDK from "../src/index.js" (jig, llm, agent) for top-level jigs, "../../src/index.js" for grouped jigs
 - Import connections from "../.jig/connections/{server}.js" (or "../../.jig/connections/{server}.js" for grouped)
-- Use ctx.log() for output, NEVER console.log()
+- Use ctx.output() for output, NEVER console.log()
 - End the file with: export default myJig
 - Do NOT use require() or CommonJS
 - ALWAYS run check_jig after writing code — never finish without a passing check

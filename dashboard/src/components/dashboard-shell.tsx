@@ -9,6 +9,7 @@ import { JigList } from "@/components/jig-list";
 import { JigDetailPane } from "@/components/jig-detail-pane";
 import { ReviewPane } from "@/components/review-pane";
 import { ApprovalPane } from "@/components/approval-pane";
+import { ConnectionPane } from "@/components/connection-pane";
 
 export function DashboardShell({
   jigs: initialJigs,
@@ -27,11 +28,11 @@ export function DashboardShell({
   const [selectedJig, setSelectedJig] = useState<string | null>(null);
   const [activeApproval, setActiveApproval] = useState<string | null>(null);
   const [reviewMode, setReviewMode] = useState(false);
-  const [isEditingExisting, setIsEditingExisting] = useState(false);
   const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
   const [selectedEntity, setSelectedEntity] = useState<string | null>(null);
   const [jigs, setJigs] = useState<Jig[]>(initialJigs);
   const [detailExpanded, setDetailExpanded] = useState(false);
+  const [selectedConnection, setSelectedConnection] = useState<string | null>(null);
 
   // Sync when parent changes jigs (e.g. phase change in mock mode)
   const [prevJigs, setPrevJigs] = useState(initialJigs);
@@ -69,13 +70,13 @@ export function DashboardShell({
     setSelectedEntity(null);
     setActiveApproval(null);
     setReviewMode(false);
-    setIsEditingExisting(false);
+
   }
 
   function handleReviewClick(jigId: string) {
     setSelectedJig(jigId);
     setReviewMode(true);
-    setIsEditingExisting(false); // From chat = new jig draft
+
     setActiveApproval(null);
     setSelectedEntity(null);
   }
@@ -104,7 +105,7 @@ export function DashboardShell({
       />
 
       <div className="flex flex-1 overflow-hidden">
-        <main className={`flex flex-col overflow-hidden transition-all duration-200 ${detailExpanded ? "w-0 min-w-0 opacity-0" : ((selectedJig && currentJig) || activeApproval) ? "w-[52%]" : "w-full"}`}>
+        <main className={`flex flex-col overflow-hidden transition-all duration-200 ${detailExpanded ? "w-0 min-w-0 opacity-0" : ((selectedJig && currentJig) || activeApproval || selectedConnection) ? "w-[52%]" : "w-full"}`}>
           <div className="flex h-11 shrink-0 items-center justify-between border-b border-[#1f1f23] px-5">
             <div className="flex items-center gap-4">
               <span className="text-[13px] font-medium text-[#ededed]">Your Jigs</span>
@@ -146,15 +147,39 @@ export function DashboardShell({
           </div>
         </main>
 
-        {selectedJig && currentJig && !activeApproval && !reviewMode && (
-          <JigDetailPane jig={currentJig} selectedEntity={selectedEntity} onClose={() => { setDetailExpanded(false); closeDetail(); }} onEdit={() => { setReviewMode(true); setIsEditingExisting(true); }} expanded={detailExpanded} onToggleExpand={() => setDetailExpanded(!detailExpanded)} />
+        {selectedJig && currentJig && !activeApproval && !reviewMode && !selectedConnection && (
+          <JigDetailPane
+            jig={currentJig}
+            selectedEntity={selectedEntity}
+            onClose={() => { setDetailExpanded(false); closeDetail(); }}
+            expanded={detailExpanded}
+            onToggleExpand={() => setDetailExpanded(!detailExpanded)}
+            onConnectionClick={(name) => { setSelectedConnection(name); }}
+            onRefresh={async () => {
+              try {
+                const res = await fetch(`/api/jigs/${encodeURIComponent(selectedJig)}`)
+                if (res.ok) {
+                  const updated = await res.json()
+                  setJigs(prev => prev.map(j => j.id === updated.id ? updated : j))
+                }
+              } catch {}
+            }}
+          />
         )}
 
-        {selectedJig && currentJig && reviewMode && (
-          <ReviewPane jig={currentJig} onClose={closeDetail} isEditing={isEditingExisting} />
+        {selectedConnection && (
+          <ConnectionPane
+            name={selectedConnection}
+            onClose={() => setSelectedConnection(null)}
+            onJigClick={(jigId) => { setSelectedConnection(null); setSelectedJig(jigId); setReviewMode(false); }}
+          />
         )}
 
-        {activeApproval && !selectedJig && (
+        {selectedJig && currentJig && reviewMode && !selectedConnection && (
+          <ReviewPane jig={currentJig} onClose={closeDetail} />
+        )}
+
+        {activeApproval && !selectedJig && !selectedConnection && (
           <ApprovalPane approvalId={activeApproval} onClose={() => setActiveApproval(null)} onApprove={() => {}} onReject={() => {}} />
         )}
       </div>

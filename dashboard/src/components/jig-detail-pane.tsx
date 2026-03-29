@@ -6,6 +6,8 @@ import { ConnectionTag } from "@/components/connection-tag";
 import { HighlightedCode } from "@/components/highlighted-code";
 import { RunSteps, type RunStep } from "@/components/run-steps";
 import { useJigRun } from "@/hooks/use-jig-run";
+import { useAgent } from "@/hooks/use-agent";
+import { AgentActivity } from "@/components/agent-activity";
 import { TRIGGER_SUGGESTIONS } from "@/mock/mock-data";
 import { useTriggerSave } from "@/hooks/use-trigger-save";
 import { Spinner } from "@/components/spinner";
@@ -13,20 +15,33 @@ import { Spinner } from "@/components/spinner";
 const statusDot = (s: string) =>
   s === "healthy" ? "bg-emerald-400" : s === "attention" ? "bg-amber-400" : "bg-rose-400";
 
-export function JigDetailPane({ jig: jigProp, selectedEntity, onClose, onEdit, expanded = false, onToggleExpand }: {
+export function JigDetailPane({ jig: jigProp, selectedEntity, onClose, expanded = false, onToggleExpand, onRefresh, onConnectionClick }: {
   jig: Jig;
   selectedEntity: string | null;
   onClose: () => void;
-  onEdit?: () => void;
   expanded?: boolean;
   onToggleExpand?: () => void;
+  onRefresh?: () => void;
+  onConnectionClick?: (name: string) => void;
 }) {
   const jig = jigProp;
   const [detailTab, setDetailTab] = useState<"steps" | "code">("steps");
   const trigger = useTriggerSave(jig.id, jig.settings.trigger);
   const [expandedRun, setExpandedRun] = useState<number | null>(null);
+  const [agentInput, setAgentInput] = useState("");
 
   const { mode, liveSteps, completedTools, activeTools, toolReadOnly, startRun, dismiss, cancelRun, isRunning } = useJigRun(jig.id, selectedEntity);
+  const agent = useAgent(() => { onRefresh?.() });
+
+  const handleAgentSend = () => {
+    if (!agentInput.trim() || agent.isActive) return;
+    if (agent.sessionId && (agent.status === "done" || agent.status === "error")) {
+      agent.sendMessage(agentInput.trim());
+    } else {
+      agent.startSession(agentInput.trim(), jig.id, selectedEntity ?? undefined);
+    }
+    setAgentInput("");
+  };
   const hasParams = jig.params && Object.keys(jig.params).length > 0;
   const [paramValues, setParamValues] = useState<Record<string, string>>(() =>
     Object.fromEntries(Object.entries(jig.params ?? {}).map(([k, v]) => [k, ""]))
@@ -88,7 +103,6 @@ export function JigDetailPane({ jig: jigProp, selectedEntity, onClose, onEdit, e
           <span className={`shrink-0 h-1.5 w-1.5 rounded-full ${statusDot(jig.status)}`} />
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
-          <button onClick={onEdit} className="rounded-md border border-[#1f1f23] bg-[#111113] px-2.5 py-1 text-[11px] text-[#888] transition-colors duration-150 hover:bg-[#1a1a1d]" title="Edit">&#9998;</button>
           {onToggleExpand && (
             <button
               onClick={onToggleExpand}
@@ -310,9 +324,44 @@ export function JigDetailPane({ jig: jigProp, selectedEntity, onClose, onEdit, e
           <h3 className="text-[11px] font-medium text-[#555] uppercase tracking-wider mb-2">Connections</h3>
           <div className="flex flex-wrap gap-1.5">
             {jig.settings.connections.map(c => (
-              <ConnectionTag key={c} name={c} />
+              <ConnectionTag key={c} name={c} onClick={onConnectionClick} />
             ))}
           </div>
+        </div>
+      </div>
+
+      {/* Agent activity stream (shown when active) */}
+      {agent.status !== "idle" && (
+        <div className="border-t border-[#1f1f23] px-4 py-3 max-h-[200px] overflow-y-auto" style={{ animation: "fade-up 0.15s ease" }}>
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[10px] font-medium text-[#555] uppercase tracking-wider">Agent</span>
+            {(agent.status === "done" || agent.status === "error") && (
+              <button onClick={agent.reset} className="text-[9px] text-[#555] hover:text-[#888] transition-colors">Clear</button>
+            )}
+          </div>
+          <AgentActivity events={agent.events} status={agent.status} />
+        </div>
+      )}
+
+      {/* Agent input bar */}
+      <div className="border-t border-[#1f1f23] p-3">
+        <div className="flex items-center gap-2 rounded-lg border border-[#1f1f23] bg-[#111113] px-3 py-2">
+          <input
+            type="text"
+            value={agentInput}
+            onChange={(e) => setAgentInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") handleAgentSend() }}
+            placeholder={agent.sessionId ? "Follow up..." : "Describe a change..."}
+            disabled={agent.isActive}
+            className="flex-1 bg-transparent text-[12px] text-[#ededed] outline-none placeholder:text-[#555] disabled:opacity-50"
+          />
+          <button
+            onClick={handleAgentSend}
+            disabled={!agentInput.trim() || agent.isActive}
+            className="rounded-md bg-emerald-600 px-2 py-0.5 text-[10px] font-medium text-white transition-colors duration-150 hover:bg-emerald-500 disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            &#8593;
+          </button>
         </div>
       </div>
     </aside>

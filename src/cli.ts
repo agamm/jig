@@ -13,6 +13,9 @@ import { createInterface } from "node:readline/promises"
 import type { JigIO, JigEvent } from "./creator.js"
 import { CreatorError } from "./creator.js"
 
+const API_PORT = parseInt(process.env.PORT ?? "3141")
+const API_BASE = `http://localhost:${API_PORT}`
+
 const PROJECT_ROOT = join(import.meta.dir, "..")
 const SCHEMAS_DIR = join(PROJECT_ROOT, ".jig/schemas")
 
@@ -213,6 +216,95 @@ function makeIO(): JigIO {
 const io = makeIO()
 
 // ---------------------------------------------------------------------------
+// Server-backed agent — ensures server is running, then calls /api/agent
+// ---------------------------------------------------------------------------
+
+async function ensureServer(): Promise<void> {
+  try {
+    const res = await fetch(`${API_BASE}/api/jigs`)
+    if (res.ok) return // Server already running
+  } catch {}
+
+  // Start server in background
+  console.log("Starting server...")
+  const proc = Bun.spawn(["bun", "run", "src/server.ts"], {
+    cwd: PROJECT_ROOT,
+    stdout: "ignore",
+    stderr: "ignore",
+    env: { ...process.env, PORT: String(API_PORT) },
+  })
+  proc.unref() // Don't block CLI exit
+
+  // Wait for server to be ready (up to 5s)
+  for (let i = 0; i < 50; i++) {
+    await new Promise(r => setTimeout(r, 100))
+    try {
+      const res = await fetch(`${API_BASE}/api/jigs`)
+      if (res.ok) return
+    } catch {}
+  }
+  throw new Error("Failed to start server")
+}
+
+async function agentCommand(instruction: string, jigId?: string, entity?: string): Promise<void> {
+  await ensureServer()
+
+  // Start agent session
+  const startRes = await fetch(`${API_BASE}/api/agent`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ instruction, jigId, entity }),
+  })
+  if (!startRes.ok) {
+    const err = await startRes.json().catch(() => ({ error: "Failed" }))
+    console.error(err.error ?? "Failed to start agent")
+    process.exit(1)
+  }
+
+  const { sessionId } = await startRes.json()
+  let eventIndex = 0
+
+  // Poll for events
+  for (let i = 0; i < 300; i++) {
+    await new Promise(r => setTimeout(r, 1000))
+
+    const res = await fetch(`${API_BASE}/api/agent/${sessionId}?since=${eventIndex}`)
+    if (!res.ok) continue
+    const data = await res.json()
+
+    // Render new events
+    for (const event of data.events ?? []) {
+      if (event.type === "tool-call") {
+        const statusIcon = event.status === "done" ? "\u2713" : event.status === "error" ? "\u2717" : "\u2026"
+        const argsStr = Object.entries(event.args as Record<string, any>)
+          .filter(([k]) => k !== "code")
+          .map(([k, v]) => `${k}=${typeof v === "string" ? v.slice(0, 50) : JSON.stringify(v)}`)
+          .join(", ")
+        console.log(`  ${statusIcon} ${event.tool}${argsStr ? ` (${argsStr})` : ""}`)
+        if (event.tool === "check_jig" && event.result && event.result !== "ok") {
+          console.log(`    ${event.result.replace(/\n/g, "\n    ")}`)
+        }
+      } else if (event.type === "text") {
+        console.log(`\n${event.content}`)
+      }
+    }
+
+    eventIndex += (data.events?.length ?? 0)
+
+    if (data.status === "done") {
+      if (data.jigId) console.log(`\nJig: ${data.jigId}`)
+      return
+    }
+    if (data.status === "error") {
+      process.exit(1)
+    }
+  }
+
+  console.error("Agent timed out")
+  process.exit(1)
+}
+
+// ---------------------------------------------------------------------------
 // Command dispatch
 // ---------------------------------------------------------------------------
 
@@ -227,21 +319,19 @@ try {
       break
 
     case "new": {
-      const { createJig } = await import("./creator.js")
       const desc = rest.join(" ") || await io.ask("What should this jig do?")
-      console.log(""); startLoading("Planning...")
-      await createJig(desc, io)
+      console.log("")
+      await agentCommand(desc)
       process.exit(0)
       break
     }
 
     case "edit": {
-      const { editJig } = await import("./creator.js")
       const [name, entity] = rest
       if (!name) { io.emit({ type: "error", code: "usage", message: "Usage: jig edit <name> [entity]" }); process.exit(1) }
       const instruction = await io.ask("What should change?")
-      console.log(""); startLoading("Planning...")
-      await editJig(name, entity ?? undefined, instruction, io)
+      console.log("")
+      await agentCommand(instruction, name, entity ?? undefined)
       process.exit(0)
       break
     }
@@ -262,11 +352,12 @@ try {
       console.log(`  jig edit <name> [ent]  AI modifies an existing jig`)
       break
   }
-} catch (e) {
+} catch (e: any) {
   if (e instanceof CreatorError) {
     process.exit(1) // events already emitted
   }
-  throw e
+  if (e?.message) console.error(e.message)
+  process.exit(1)
 }
 
 // ---------------------------------------------------------------------------

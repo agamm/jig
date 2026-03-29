@@ -3,8 +3,11 @@
  *
  * Handles /api/* routes. Next.js rewrites /api/* here via next.config.ts.
  */
-import { join } from "path"
-import { existsSync, readFileSync, writeFileSync } from "fs"
+import { join, resolve } from "path"
+import { existsSync, readFileSync, writeFileSync, readdirSync } from "fs"
+import ts from "typescript"
+import OpenAI from "openai"
+import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions"
 import { discoverJigs } from "./discover.js"
 import { openDb, insertRun, getJigRuns, getRun, getLastRun } from "./db.js"
 import { loadServerConfigs } from "./mcp/config.js"
@@ -13,12 +16,13 @@ import { runJig, persist, isValidJigId } from "./runner.js"
 import type { RunEvent } from "./run-events.js"
 
 const TRIGGER_PARSE_MODEL = "minimax/minimax-m2.5:nitro"
+const AGENT_MODEL = "xiaomi/mimo-v2-pro"
+const MAX_AGENT_ROUNDS = 15
 
 const PROJECT_ROOT = join(import.meta.dir, "..")
 const JIGS_DIR = join(PROJECT_ROOT, "jigs")
 const SCHEMAS_DIR = join(PROJECT_ROOT, ".jig/schemas")
-
-const editLocks = new Map<string, { editId: string; status: string; message?: string; createdAt: number }>()
+const TYPES_DIR = join(PROJECT_ROOT, ".jig/types")
 /** Track tool calls per run for real-time progress. */
 type LiveStep = { seq: number; label: string; status: "running" | "success" | "fail"; output?: string; connections?: string[]; durationMs?: number; error?: string }
 const runProgress = new Map<number, { completedTools: string[]; activeTools: string[]; steps: LiveStep[]; error?: string; done?: boolean; output?: string; readOnly?: Record<string, boolean> }>()
@@ -361,6 +365,479 @@ async function buildJigResponse(id: string, entities: string[], runLimit: number
 }
 
 // ---------------------------------------------------------------------------
+// Agent — agentic jig creation & editing
+// ---------------------------------------------------------------------------
+
+type AgentEvent =
+  | { type: "tool-call"; tool: string; args: Record<string, any>; status: "running" | "done" | "error"; result?: string }
+  | { type: "text"; content: string }
+
+type AgentSession = {
+  sessionId: string
+  jigId?: string
+  entity?: string
+  messages: ChatCompletionMessageParam[]
+  events: AgentEvent[]
+  status: "thinking" | "tool-calling" | "waiting" | "done" | "error"
+  createdAt: number
+}
+
+const agentSessions = new Map<string, AgentSession>()
+const activeAgentJigs = new Set<string>() // prevents concurrent edits on same jig
+const AGENT_SESSION_TTL = 30 * 60 * 1000 // 30 minutes
+
+function pruneAgentSessions() {
+  const now = Date.now()
+  for (const [id, s] of agentSessions) {
+    if (now - s.createdAt > AGENT_SESSION_TTL) {
+      if (s.jigId) activeAgentJigs.delete(s.jigId)
+      agentSessions.delete(id)
+    }
+  }
+}
+
+function getAgentClient(): OpenAI {
+  const apiKey = process.env.OPENROUTER_API_KEY
+  if (!apiKey) throw new Error("OPENROUTER_API_KEY not set")
+  return new OpenAI({ baseURL: "https://openrouter.ai/api/v1", apiKey })
+}
+
+// -- Agent tools (OpenAI function schemas) --
+
+const AGENT_TOOL_DEFS: ChatCompletionTool[] = [
+  {
+    type: "function",
+    function: {
+      name: "read_jig_file",
+      description: "Read the current source code of a jig file. Defaults to the session's jig if no jigId given.",
+      parameters: {
+        type: "object",
+        properties: {
+          jigId: { type: "string", description: "Jig ID to read (optional, defaults to session jig)" },
+          entity: { type: "string", description: "Entity name for grouped jigs" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "write_jig_file",
+      description: "Write full TypeScript source code to a jig file. Auto-commits to version control.",
+      parameters: {
+        type: "object",
+        properties: {
+          code: { type: "string", description: "The complete TypeScript source code" },
+          jigId: { type: "string", description: "Jig ID (required for creation, optional for editing)" },
+          entity: { type: "string", description: "Entity name for grouped jigs" },
+          message: { type: "string", description: "Short description of the change for the commit message" },
+        },
+        required: ["code"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "check_jig",
+      description: "Run TypeScript compiler and jig validator on the current jig file. Returns errors or 'ok'.",
+      parameters: {
+        type: "object",
+        properties: {
+          jigId: { type: "string", description: "Jig ID to check (optional, defaults to session jig)" },
+          entity: { type: "string", description: "Entity name for grouped jigs" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "browse",
+      description: "Navigate to a URL and return the page content as text. Use for reading docs, API references, etc.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: { type: "string", description: "The URL to navigate to" },
+        },
+        required: ["url"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "web_search",
+      description: "Search the web and return results. Use for finding API docs, examples, MCP tool schemas, etc.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Search query" },
+        },
+        required: ["query"],
+      },
+    },
+  },
+]
+
+// -- Agent tool implementations --
+
+function resolveJigPath(jigId: string, entity?: string): string {
+  if (!isValidJigId(jigId)) throw new Error(`Invalid jig ID: ${jigId}`)
+  if (entity && !isValidJigId(entity)) throw new Error(`Invalid entity: ${entity}`)
+  if (entity) return join(JIGS_DIR, jigId, `${entity}.ts`)
+  return join(JIGS_DIR, `${jigId}.ts`)
+}
+
+async function toolReadJigFile(args: { jigId?: string; entity?: string }, session: AgentSession): Promise<string> {
+  const jigId = args.jigId ?? session.jigId
+  if (!jigId) return JSON.stringify({ error: "No jigId specified and no session jig" })
+  const filePath = resolveJigPath(jigId, args.entity ?? session.entity)
+  if (!existsSync(filePath)) return JSON.stringify({ error: `File not found: ${filePath}` })
+  return readFileSync(filePath, "utf-8")
+}
+
+async function toolWriteJigFile(args: { code: string; jigId?: string; entity?: string; message?: string }, session: AgentSession): Promise<string> {
+  const jigId = args.jigId ?? session.jigId
+  if (!jigId) return JSON.stringify({ error: "No jigId specified — provide jigId for new jigs" })
+
+  // Update session jigId if this is creation, and acquire lock
+  if (!session.jigId) {
+    if (activeAgentJigs.has(jigId)) return JSON.stringify({ error: "Another session is already editing this jig" })
+    session.jigId = jigId
+    activeAgentJigs.add(jigId)
+  }
+
+  const filePath = resolveJigPath(jigId, args.entity ?? session.entity)
+
+  // Ensure parent directory exists for grouped jigs
+  const dir = join(JIGS_DIR, jigId)
+  if (args.entity && !existsSync(dir)) {
+    await Bun.spawn(["mkdir", "-p", dir]).exited
+  }
+
+  await Bun.write(filePath, args.code)
+
+  // Auto-commit if jigs/.git exists
+  if (existsSync(join(JIGS_DIR, ".git"))) {
+    const relPath = args.entity ? join(jigId, `${args.entity}.ts`) : `${jigId}.ts`
+    const msg = args.message ? `jig: ${jigId} — ${args.message}` : `jig: ${jigId} — update`
+    await Bun.spawn(["git", "add", relPath], { cwd: JIGS_DIR }).exited
+    await Bun.spawn(["git", "commit", "-m", msg], { cwd: JIGS_DIR, stdout: "ignore", stderr: "ignore" }).exited
+  }
+
+  return JSON.stringify({ ok: true, path: filePath })
+}
+
+async function toolCheckJig(args: { jigId?: string; entity?: string }, session: AgentSession): Promise<string> {
+  const jigId = args.jigId ?? session.jigId
+  if (!jigId) return JSON.stringify({ error: "No jigId specified" })
+  const filePath = resolveJigPath(jigId, args.entity ?? session.entity)
+  if (!existsSync(filePath)) return JSON.stringify({ error: `File not found: ${filePath}` })
+
+  const errors: string[] = []
+
+  // 1. TSC check
+  const tsconfigPath = join(PROJECT_ROOT, "tsconfig.json")
+  const configFile = ts.readConfigFile(tsconfigPath, p => readFileSync(p, "utf-8"))
+  const parsedConfig = ts.parseJsonConfigFileContent(configFile.config, ts.sys, PROJECT_ROOT)
+  const program = ts.createProgram([filePath], { ...parsedConfig.options, noEmit: true })
+  const diagnostics = ts.getPreEmitDiagnostics(program)
+  const fileErrors = diagnostics.filter(d => d.file && resolve(d.file.fileName) === resolve(filePath))
+
+  for (const d of fileErrors) {
+    const { line } = d.file!.getLineAndCharacterOfPosition(d.start!)
+    const msg = ts.flattenDiagnosticMessageText(d.messageText, "\n")
+    errors.push(`TSC Line ${line + 1}: ${msg}`)
+  }
+
+  // 2. Jig validator (import + check definition shape)
+  try {
+    const { validateJigFile } = await import("./validate.js")
+    const result = await validateJigFile(filePath)
+    if (!result.ok) {
+      for (const e of result.errors) {
+        errors.push(`Validator ${e.field}: ${e.message}`)
+      }
+    }
+  } catch (e: any) {
+    errors.push(`Validator error: ${e?.message}`)
+  }
+
+  return errors.length === 0 ? "ok" : errors.join("\n")
+}
+
+async function toolBrowse(args: { url: string }): Promise<string> {
+  try {
+    const proc = Bun.spawn(
+      ["npx", "agent-browser", "--engine", "chromium", "--headless", "open", args.url],
+      { stdout: "pipe", stderr: "pipe", timeout: 30_000 }
+    )
+    await proc.exited
+
+    const snap = Bun.spawn(
+      ["npx", "agent-browser", "snapshot"],
+      { stdout: "pipe", stderr: "pipe", timeout: 15_000 }
+    )
+    const text = await new Response(snap.stdout).text()
+    await snap.exited
+
+    // Truncate to ~50KB to avoid blowing up context
+    return text.slice(0, 50_000) || "(empty page)"
+  } catch (e: any) {
+    return JSON.stringify({ error: `Browse failed: ${e?.message}` })
+  }
+}
+
+async function toolWebSearch(args: { query: string }): Promise<string> {
+  const url = `https://www.google.com/search?q=${encodeURIComponent(args.query)}`
+  return toolBrowse({ url })
+}
+
+async function executeAgentTool(name: string, args: Record<string, any>, session: AgentSession): Promise<string> {
+  switch (name) {
+    case "read_jig_file": return toolReadJigFile(args, session)
+    case "write_jig_file": return toolWriteJigFile(args as any, session)
+    case "check_jig": return toolCheckJig(args, session)
+    case "browse": return toolBrowse(args as any)
+    case "web_search": return toolWebSearch(args as any)
+    default: return JSON.stringify({ error: `Unknown tool: ${name}` })
+  }
+}
+
+// -- System prompt assembly --
+
+async function buildAgentSystemPrompt(jigId?: string, entity?: string): Promise<string> {
+  const parts: string[] = []
+
+  // SKILL.md
+  const skillPath = join(PROJECT_ROOT, "SKILL.md")
+  if (existsSync(skillPath)) parts.push(readFileSync(skillPath, "utf-8"))
+
+  // Type definitions
+  const typeFiles = existsSync(TYPES_DIR) ? readdirSync(TYPES_DIR).filter(f => f.endsWith(".d.ts")) : []
+  for (const f of typeFiles) {
+    parts.push(`\n## Type: ${f}\n${readFileSync(join(TYPES_DIR, f), "utf-8")}`)
+  }
+
+  // Tool schemas (all connected servers)
+  const schemaFiles = existsSync(SCHEMAS_DIR) ? readdirSync(SCHEMAS_DIR).filter(f => f.endsWith(".json")) : []
+  for (const f of schemaFiles) {
+    const serverName = f.replace(".json", "")
+    const schemas = JSON.parse(readFileSync(join(SCHEMAS_DIR, f), "utf-8"))
+    parts.push(`\n## ${serverName} tools\n${schemas.map((t: any) => `  ${t.name}: ${t.description?.split("\n")[0] ?? ""}`).join("\n")}`)
+  }
+
+  // Server descriptions
+  try {
+    const configs = await loadServerConfigs()
+    const descs = Object.entries(configs).map(([name, cfg]) => `${name}: ${(cfg as any).description ?? ""}`).join("\n")
+    if (descs) parts.push(`\n## Available Connections\n${descs}`)
+  } catch {}
+
+  // Current jig code (if editing)
+  if (jigId) {
+    const filePath = resolveJigPath(jigId, entity)
+    if (existsSync(filePath)) {
+      parts.push(`\n## Current Jig Code (${jigId})\n\`\`\`typescript\n${readFileSync(filePath, "utf-8")}\n\`\`\``)
+    }
+  }
+
+  // Example jig
+  const examplePath = join(JIGS_DIR, "weekly-update.ts")
+  if (existsSync(examplePath) && jigId !== "weekly-update") {
+    parts.push(`\n## Example Jig\n\`\`\`typescript\n${readFileSync(examplePath, "utf-8")}\n\`\`\``)
+  }
+
+  return `You are a jig creation and editing agent. You write TypeScript jig files that automate workflows.
+
+${parts.join("\n")}
+
+## Rules
+- Import SDK from "../src/index.js" (jig, llm, agent) for top-level jigs, "../../src/index.js" for grouped jigs
+- Import connections from "../.jig/connections/{server}.js" (or "../../.jig/connections/{server}.js" for grouped)
+- Use ctx.log() for output, NEVER console.log()
+- End the file with: export default myJig
+- Do NOT use require() or CommonJS
+- Always run check_jig after writing to catch errors
+- Use web_search and browse to look up API docs when unsure about tool parameters`
+}
+
+// -- Agent loop --
+
+async function runAgentLoop(session: AgentSession): Promise<void> {
+  const client = getAgentClient()
+
+  for (let round = 0; round < MAX_AGENT_ROUNDS; round++) {
+    session.status = "thinking"
+
+    const response = await client.chat.completions.create({
+      model: AGENT_MODEL,
+      max_tokens: 16384,
+      messages: session.messages,
+      tools: AGENT_TOOL_DEFS,
+    })
+
+    const msg = response.choices[0]?.message
+    if (!msg) { session.status = "error"; return }
+
+    session.messages.push(msg as ChatCompletionMessageParam)
+
+    if (!msg.tool_calls?.length) {
+      session.events.push({ type: "text", content: msg.content ?? "" })
+      session.status = "done"
+      return
+    }
+
+    session.status = "tool-calling"
+    for (const tc of msg.tool_calls) {
+      let args: Record<string, any>
+      try { args = JSON.parse(tc.function.arguments) } catch {
+        session.messages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify({ error: "Invalid JSON in arguments" }) })
+        continue
+      }
+
+      const event: AgentEvent = { type: "tool-call", tool: tc.function.name, args, status: "running" }
+      session.events.push(event)
+
+      try {
+        const result = await executeAgentTool(tc.function.name, args, session)
+        event.status = "done"
+        event.result = result
+        session.messages.push({ role: "tool", tool_call_id: tc.id, content: result })
+      } catch (e: any) {
+        event.status = "error"
+        event.result = e?.message ?? String(e)
+        session.messages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify({ error: e?.message }) })
+      }
+    }
+  }
+
+  session.events.push({ type: "text", content: "Agent reached maximum rounds." })
+  session.status = "done"
+}
+
+// -- Agent endpoint handlers --
+
+async function handleStartAgent(body: any): Promise<Response> {
+  const instruction = body?.instruction as string
+  if (!instruction) return json({ error: "instruction is required" }, 400)
+
+  const jigId = body?.jigId as string | undefined
+  const entity = body?.entity as string | undefined
+
+  // Prevent concurrent edits on the same jig
+  if (jigId && activeAgentJigs.has(jigId)) {
+    return json({ error: "An agent session is already editing this jig" }, 409)
+  }
+
+  const sessionId = crypto.randomUUID()
+  const systemPrompt = await buildAgentSystemPrompt(jigId, entity)
+
+  const session: AgentSession = {
+    sessionId,
+    jigId,
+    entity,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: instruction },
+    ],
+    events: [],
+    status: "thinking",
+    createdAt: Date.now(),
+  }
+
+  pruneAgentSessions()
+  agentSessions.set(sessionId, session)
+  if (jigId) activeAgentJigs.add(jigId)
+
+  // Run async — don't block response
+  runAgentLoop(session).catch(e => {
+    session.status = "error"
+    session.events.push({ type: "text", content: e?.message ?? String(e) })
+  }).finally(() => {
+    if (session.jigId) activeAgentJigs.delete(session.jigId)
+  })
+
+  return json({ sessionId, jigId })
+}
+
+async function handleAgentStatus(sessionId: string, sinceIndex: number): Promise<Response> {
+  const session = agentSessions.get(sessionId)
+  if (!session) return notFound("Session not found")
+
+  // Return events since the given index (incremental polling)
+  const newEvents = session.events.slice(sinceIndex)
+  return json({
+    status: session.status,
+    jigId: session.jigId,
+    events: newEvents,
+    totalEvents: session.events.length,
+  })
+}
+
+async function handleAgentMessage(sessionId: string, body: any): Promise<Response> {
+  const session = agentSessions.get(sessionId)
+  if (!session) return notFound("Session not found")
+
+  const message = body?.message as string
+  if (!message) return json({ error: "message is required" }, 400)
+
+  session.messages.push({ role: "user", content: message })
+  session.status = "thinking"
+
+  runAgentLoop(session).catch(e => {
+    session.status = "error"
+    session.events.push({ type: "text", content: e?.message ?? String(e) })
+  })
+
+  return json({ ok: true })
+}
+
+// -- Jig version history --
+
+async function handleGetVersions(jigId: string, entity?: string): Promise<Response> {
+  if (entity && !isValidJigId(entity)) return json({ error: "Invalid entity" }, 400)
+  const gitDir = join(JIGS_DIR, ".git")
+  if (!existsSync(gitDir)) return json([])
+
+  const relPath = entity ? join(jigId, `${entity}.ts`) : `${jigId}.ts`
+  const proc = Bun.spawn(
+    ["git", "log", "--format=%H|%aI|%s", "--", relPath],
+    { cwd: JIGS_DIR, stdout: "pipe", stderr: "pipe" }
+  )
+  const output = await new Response(proc.stdout).text()
+  await proc.exited
+
+  const versions = output.trim().split("\n").filter(Boolean).map(line => {
+    const [sha, date, ...msgParts] = line.split("|")
+    return { sha, date, message: msgParts.join("|") }
+  })
+
+  return json(versions)
+}
+
+async function handleGetVersionCode(jigId: string, sha: string, entity?: string): Promise<Response> {
+  if (entity && !isValidJigId(entity)) return json({ error: "Invalid entity" }, 400)
+  const gitDir = join(JIGS_DIR, ".git")
+  if (!existsSync(gitDir)) return notFound("No version history")
+
+  // Validate sha is hex only (prevent injection)
+  if (!/^[0-9a-f]+$/.test(sha)) return json({ error: "Invalid sha" }, 400)
+
+  const relPath = entity ? join(jigId, `${entity}.ts`) : `${jigId}.ts`
+  const proc = Bun.spawn(
+    ["git", "show", `${sha}:${relPath}`],
+    { cwd: JIGS_DIR, stdout: "pipe", stderr: "pipe" }
+  )
+  const code = await new Response(proc.stdout).text()
+  const exitCode = await proc.exited
+
+  if (exitCode !== 0) return notFound("Version not found")
+  return json({ sha, code })
+}
+
+// ---------------------------------------------------------------------------
 // API route handlers
 // ---------------------------------------------------------------------------
 
@@ -598,67 +1075,6 @@ async function handleUpdateTrigger(id: string, body: any): Promise<Response> {
   return json(result)
 }
 
-async function handleEditJig(id: string, body: any): Promise<Response> {
-  const discovered = discoverJigs(JIGS_DIR)
-  if (!discovered.has(id)) return notFound(`Jig not found: ${id}`)
-
-  const instruction = body?.instruction as string
-  if (!instruction) return json({ error: "instruction is required" }, 400)
-
-  const entity = body?.entity as string | undefined
-  const lockKey = entity ? `${id}/${entity}` : id
-
-  if (editLocks.has(lockKey)) return json({ error: "Edit already in progress" }, 409)
-
-  const editId = crypto.randomUUID()
-  editLocks.set(lockKey, { editId, status: "planning", createdAt: Date.now() })
-
-  ;(async () => {
-    try {
-      const { editJig } = await import("./creator.js")
-      const io = {
-        ask: async () => instruction,
-        emit: (event: any) => {
-          const lock = editLocks.get(lockKey)
-          if (!lock) return
-          if (event.type === "plan") lock.status = "selecting-tools"
-          else if (event.type === "probe-start") lock.status = "probing"
-          else if (event.type === "generate-start") lock.status = "generating"
-          else if (event.type === "validate") lock.status = "validating"
-          else if (event.type === "dry-run-start") lock.status = "dry-running"
-          else if (event.type === "updated") lock.status = "done"
-          else if (event.type === "error") { lock.status = "error"; lock.message = event.message }
-        },
-      }
-      await editJig(id, entity, instruction, io)
-      const lock = editLocks.get(lockKey)
-      if (lock) lock.status = "done"
-    } catch (e: any) {
-      const lock = editLocks.get(lockKey)
-      if (lock) { lock.status = "error"; lock.message = e?.message ?? String(e) }
-    }
-  })()
-
-  return json({ editId })
-}
-
-async function handleEditStatus(id: string, editId: string): Promise<Response> {
-  // Clean up stale locks (older than 10 minutes)
-  const staleMs = 10 * 60 * 1000
-  for (const [key, lock] of editLocks) {
-    if (Date.now() - lock.createdAt > staleMs) editLocks.delete(key)
-  }
-
-  for (const [key, lock] of editLocks) {
-    if ((key === id || key.startsWith(id + "/")) && lock.editId === editId) {
-      const result = { status: lock.status, message: lock.message }
-      if (lock.status === "done" || lock.status === "error") editLocks.delete(key)
-      return json(result)
-    }
-  }
-  return json({ status: "done" })
-}
-
 async function handleGetConnections(): Promise<Response> {
   const configs = await loadServerConfigs()
   const connections = await Promise.all(
@@ -678,6 +1094,48 @@ async function handleGetConnections(): Promise<Response> {
   return json(connections)
 }
 
+async function handleGetConnection(name: string): Promise<Response> {
+  const configs = await loadServerConfigs()
+  const config = (configs as Record<string, any>)[name]
+  if (!config) return notFound(`Connection not found: ${name}`)
+
+  const schemaPath = join(SCHEMAS_DIR, `${name}.json`)
+  const connected = existsSync(schemaPath)
+  let tools: { name: string; description: string; readOnly: boolean }[] = []
+
+  if (connected) {
+    try {
+      const schemas = JSON.parse(readFileSync(schemaPath, "utf-8"))
+      tools = schemas.map((t: any) => ({
+        name: t.name,
+        description: t.description?.split("\n")[0] ?? "",
+        readOnly: t.annotations?.readOnlyHint === true,
+      }))
+    } catch {}
+  }
+
+  // Find which jigs use this connection
+  const discovered = discoverJigs(JIGS_DIR)
+  const usedBy: string[] = []
+  for (const [id, entities] of discovered) {
+    const filePath = getJigFilePath(id, entities.length > 0 ? entities[0] : undefined)
+    if (!filePath) continue
+    try {
+      const code = readFileSync(filePath, "utf-8")
+      if (extractConnections(code).includes(name)) usedBy.push(id)
+    } catch {}
+  }
+
+  return json({
+    name,
+    description: config.description ?? "",
+    connected,
+    toolCount: tools.length,
+    tools,
+    usedBy,
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -685,6 +1143,9 @@ async function handleGetConnections(): Promise<Response> {
 function matchRoute(pathname: string): { handler: string; params: Record<string, string> } | null {
   if (pathname === "/api/jigs") return { handler: "listJigs", params: {} }
   if (pathname === "/api/connections") return { handler: "connections", params: {} }
+
+  const connMatch = pathname.match(/^\/api\/connections\/([^/]+)$/)
+  if (connMatch) return { handler: "getConnection", params: { name: decodeURIComponent(connMatch[1]) } }
 
   const jigMatch = pathname.match(/^\/api\/jigs\/([^/]+)$/)
   if (jigMatch) {
@@ -713,16 +1174,26 @@ function matchRoute(pathname: string): { handler: string; params: Record<string,
     return { handler: "updateTrigger", params: { id: decodeURIComponent(triggerMatch[1]) } }
   }
 
-  const editMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/edit$/)
-  if (editMatch) {
-    if (!isValidJigId(decodeURIComponent(editMatch[1]))) return null
-    return { handler: "editJig", params: { id: decodeURIComponent(editMatch[1]) } }
+  // Agent endpoints
+  if (pathname === "/api/agent") return { handler: "startAgent", params: {} }
+
+  const agentStatusMatch = pathname.match(/^\/api\/agent\/([^/]+)$/)
+  if (agentStatusMatch) return { handler: "agentStatus", params: { sessionId: agentStatusMatch[1] } }
+
+  const agentMsgMatch = pathname.match(/^\/api\/agent\/([^/]+)\/message$/)
+  if (agentMsgMatch) return { handler: "agentMessage", params: { sessionId: agentMsgMatch[1] } }
+
+  // Version endpoints
+  const versionsMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/versions$/)
+  if (versionsMatch) {
+    if (!isValidJigId(decodeURIComponent(versionsMatch[1]))) return null
+    return { handler: "getVersions", params: { id: decodeURIComponent(versionsMatch[1]) } }
   }
 
-  const editStatusMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/edit-status$/)
-  if (editStatusMatch) {
-    if (!isValidJigId(decodeURIComponent(editStatusMatch[1]))) return null
-    return { handler: "editStatus", params: { id: decodeURIComponent(editStatusMatch[1]) } }
+  const versionCodeMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/versions\/([^/]+)$/)
+  if (versionCodeMatch) {
+    if (!isValidJigId(decodeURIComponent(versionCodeMatch[1]))) return null
+    return { handler: "getVersionCode", params: { id: decodeURIComponent(versionCodeMatch[1]), sha: versionCodeMatch[2] } }
   }
 
   if (pathname === "/api/runs/active") return { handler: "activeRun", params: {} }
@@ -760,6 +1231,8 @@ export function createApiServer(port: number) {
             return handleGetRun(parseInt(route.params.id))
           case "connections":
             return handleGetConnections()
+          case "getConnection":
+            return handleGetConnection(route.params.name)
           case "getSteps": {
             const body = req.method === "POST" ? await req.json().catch(() => ({})) : {}
             return handleGetSteps(route.params.id, body)
@@ -769,14 +1242,27 @@ export function createApiServer(port: number) {
             const body = await req.json().catch(() => ({}))
             return handleUpdateTrigger(route.params.id, body)
           }
-          case "editJig": {
+          case "startAgent": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
             const body = await req.json().catch(() => ({}))
-            return handleEditJig(route.params.id, body)
+            return handleStartAgent(body)
           }
-          case "editStatus": {
-            const editId = url.searchParams.get("editId") ?? ""
-            return handleEditStatus(route.params.id, editId)
+          case "agentStatus": {
+            const since = parseInt(url.searchParams.get("since") ?? "0")
+            return handleAgentStatus(route.params.sessionId, since)
+          }
+          case "agentMessage": {
+            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+            const body = await req.json().catch(() => ({}))
+            return handleAgentMessage(route.params.sessionId, body)
+          }
+          case "getVersions": {
+            const entity = url.searchParams.get("entity") ?? undefined
+            return handleGetVersions(route.params.id, entity)
+          }
+          case "getVersionCode": {
+            const entity = url.searchParams.get("entity") ?? undefined
+            return handleGetVersionCode(route.params.id, route.params.sha, entity)
           }
           case "activeRun":
             return handleGetActiveRun()

@@ -5,3 +5,6 @@ jig.db*
 .a5c/
 .worktrees/
 jig_debug.log
+.next
+
+jigs/.git

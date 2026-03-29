@@ -4,7 +4,7 @@ import type { JigTool } from "./jig.js"
 import { spinner } from "./spinner.js"
 import { runContext, isStepScan, truncLabel } from "./context.js"
 
-export const DEFAULT_MODEL = "anthropic/claude-sonnet-4-5"
+export const DEFAULT_MODEL = "xiaomi/mimo-v2-pro"
 const MAX_TOOL_ROUNDS = 15
 
 let _client: OpenAI | null = null

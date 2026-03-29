@@ -97,7 +97,7 @@ export function ApprovalPane({ approvalId, onClose, onApprove, onReject }: {
         </div>
 
         {/* Approve/Reject */}
-        <div className="flex gap-2 pt-2">
+        <div className="flex gap-2">
           <button onClick={onApprove} className="flex-1 rounded-md bg-emerald-600 py-2 text-[12px] font-medium text-white transition-all duration-150 hover:bg-emerald-500 active:scale-[0.98] cursor-pointer">
             Approve &amp; Continue
           </button>

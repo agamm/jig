@@ -41,7 +41,7 @@ export function JigList({ jigs, selectedJigId, expandedGroup, onJigClick, onEnti
           {/* Card 2 (middle — peeks below) */}
           <div className="absolute inset-x-2 bottom-1 h-14 rounded-lg border border-amber-500/12 bg-amber-500/[0.03]" />
           {/* Card 1 (front) */}
-          <div className="relative rounded-lg border border-amber-500/20 bg-[#111113] p-3.5 transition-all duration-150 hover:border-amber-500/30 hover:bg-[#141416]">
+          <div className="relative rounded-lg border border-amber-500/20 bg-[#111113] p-4 transition-all duration-150 hover:border-amber-500/30 hover:bg-[#141416]">
             <div className="flex items-center gap-2 mb-1.5">
               <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
               <span className="text-[12px] font-medium text-amber-400">3 pending approvals</span>
@@ -59,7 +59,7 @@ export function JigList({ jigs, selectedJigId, expandedGroup, onJigClick, onEnti
       )}
 
       {/* Jig filters + search inline */}
-      <div className="flex items-center gap-2 mb-3">
+      <div className="flex items-center gap-1.5 mb-3">
         <div className="flex gap-1">
           {["All", "Active", "Failed", "Scheduled"].map(f => (
             <span key={f} className={`rounded-full px-2.5 py-0.5 text-[11px] cursor-pointer transition-colors duration-150 ${f === "All" ? "bg-[#1a1a1d] text-[#ededed]" : "text-[#555] hover:text-[#888]"}`}>
@@ -186,7 +186,7 @@ export function JigList({ jigs, selectedJigId, expandedGroup, onJigClick, onEnti
 
               {/* Expanded group entities (inline) */}
               {expandedGroup === jig.id && jig.entities && (
-                <div className="ml-8 mt-1 mb-2 space-y-px" style={{ animation: "fade-up 0.2s ease" }}>
+                <div className="ml-[52px] mt-1 mb-2 space-y-px" style={{ animation: "fade-up 0.2s ease" }}>
                   {jig.entities.map(e => (
                     <button
                       key={e.name}

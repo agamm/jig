@@ -110,7 +110,7 @@ export function DashboardShell({
 
       <div className="flex flex-1 overflow-hidden">
         <main className={`flex flex-col overflow-hidden transition-all duration-200 ${detailExpanded ? "w-0 min-w-0 opacity-0" : ((selectedJig && currentJig) || activeApproval || selectedConnection) ? "w-[52%]" : "w-full"}`}>
-          <div className="flex h-11 shrink-0 items-center justify-between border-b border-[#1f1f23] px-5">
+          <div className="flex h-11 shrink-0 items-center justify-between border-b border-[#1f1f23] px-4">
             <div className="flex items-center gap-4">
               <span className="text-[13px] font-medium text-[#ededed]">Your Jigs</span>
             </div>
@@ -130,7 +130,7 @@ export function DashboardShell({
             )}
           </div>
 
-          <div className="flex-1 overflow-y-auto px-5 py-4">
+          <div className="flex-1 overflow-y-auto px-4 py-4">
             {loading && (
               <div className="flex items-center justify-center h-32 text-[#555] text-sm">Loading...</div>
             )}

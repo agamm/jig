@@ -253,7 +253,7 @@ export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, 
           ) : (
             <button
               onClick={trigger.startEditing}
-              className="inline-flex items-center gap-2 rounded-lg border border-transparent hover:border-[#2a2a2e] hover:bg-[#1a1a1d] px-3 py-2 text-left transition-all duration-150"
+              className="inline-flex items-center gap-2 rounded-lg border border-[#2a2a2e] bg-[#1a1a1d] px-3 py-2 text-left transition-all duration-150 hover:border-[#3a3a3e] hover:bg-[#222]"
             >
               <span className="text-[12px] font-mono text-[#ccc]">{trigger.display || "No trigger"}</span>
               <span className="text-[10px] text-[#444]">&#9998; edit</span>
@@ -280,7 +280,7 @@ export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, 
                 <div key={i}>
                   <button
                     onClick={() => setExpandedRun(expandedRun === i ? null : i)}
-                    className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors duration-150 hover:bg-[#151517]"
+                    className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors duration-150 hover:bg-[#151517]"
                   >
                     <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[8px] ${run.status === "success" ? "bg-emerald-500/15 text-emerald-400" : "bg-rose-500/15 text-rose-400"}`}>
                       {run.status === "success" ? "✓" : "✗"}
@@ -297,7 +297,7 @@ export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, 
                     <span className={`text-[9px] text-[#333] transition-transform duration-150 shrink-0 ${expandedRun === i ? "rotate-90" : ""}`}>&#9656;</span>
                   </button>
                   {expandedRun === i && (
-                    <div className="border-t border-[#1a1a1d] px-3 py-2.5" style={{ animation: "fade-up 0.15s ease" }}>
+                    <div className="border-t border-[#1a1a1d] px-4 py-2.5" style={{ animation: "fade-up 0.15s ease" }}>
                       {resultStep?.output ? (
                         <pre className="text-[10px] text-[#888] font-mono whitespace-pre-wrap max-h-48 overflow-y-auto leading-relaxed">{resultStep.output}</pre>
                       ) : (
@@ -341,7 +341,7 @@ export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, 
         {/* Connections */}
         <div>
           <h3 className="text-[11px] font-medium text-[#555] uppercase tracking-wider mb-2">Connections</h3>
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap gap-2">
             {jig.settings.connections.map(c => (
               <ConnectionTag key={c} name={c} onClick={onConnectionClick} />
             ))}

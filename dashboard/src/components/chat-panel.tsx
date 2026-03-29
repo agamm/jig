@@ -21,7 +21,7 @@ export function ChatPanel({ messages, width, onReviewClick }: {
       </div>
 
       {/* Search */}
-      <div className="border-b border-[#1f1f23] px-3 py-2">
+      <div className="border-b border-[#1f1f23] px-4 py-2">
         <div className="flex items-center gap-2 rounded-md border border-[#1f1f23] bg-[#111113] px-2.5 py-1.5 text-[11px] text-[#555]">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
@@ -31,11 +31,11 @@ export function ChatPanel({ messages, width, onReviewClick }: {
       </div>
 
       {/* Chat messages */}
-      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2.5">
+      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2.5">
         {messages.map((msg, i) => (
           <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
             <div
-              className={`max-w-[224px] rounded-lg px-3 py-2 text-[12px] leading-relaxed ${
+              className={`max-w-[85%] rounded-lg px-3 py-2 text-[12px] leading-relaxed ${
                 msg.role === "user"
                   ? "bg-[#1a1a1d] text-[#ededed]"
                   : "text-[#888]"
@@ -74,7 +74,7 @@ export function ChatPanel({ messages, width, onReviewClick }: {
       </div>
 
       {/* Chat input */}
-      <div className="border-t border-[#1f1f23] p-3">
+      <div className="border-t border-[#1f1f23] px-4 py-3">
         <div className="flex items-center gap-2 rounded-lg border border-[#1f1f23] bg-[#111113] px-3 py-2">
           <input
             type="text"

@@ -2,7 +2,7 @@
  * Laser-border spinner — conic gradient with glow, matches running-step style.
  */
 export function Spinner({ size = 14, className = "" }: { size?: number; className?: string }) {
-  const borderWidth = Math.max(2, size * 0.15)
+  const borderWidth = Math.max(1.5, size * 0.22)
   return (
     <span
       className={`relative inline-block shrink-0 rounded-full overflow-hidden ${className}`}

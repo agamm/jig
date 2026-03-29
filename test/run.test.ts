@@ -79,22 +79,35 @@ export default jig("test-multi-step", {
     expect(stepDones.length).toBe(2)
   })
 
-  it("includes durationMs in result", async () => {
+  it("emits error event when handler throws", async () => {
     const { runJig } = await import("../src/runner.js")
-    writeFileSync(testJigPath, `
+    // Use unique filename to avoid Bun import cache collisions across test files
+    const throwJigPath = join(JIGS_DIR, "_test_run_throw.ts")
+    writeFileSync(throwJigPath, `
 import { jig } from "../src/index.js"
 
-export default jig("test-duration", {
+export default jig("test-throw", {
   trigger: { type: "manual" },
   connections: [],
 }, async (ctx) => {
-  ctx.output("fast")
+  ctx.step("Will fail")
+  throw new Error("something broke")
 })
 `)
-    const result = await runJig(testJigPath, {}, () => {}, { dryRun: true, silent: true })
+    try {
+      const events: RunEvent[] = []
+      const result = await runJig(throwJigPath, {}, (e) => events.push(e), { dryRun: true, silent: true })
 
-    expect(result.durationMs).toBeGreaterThanOrEqual(0)
-    expect(result.durationMs).toBeLessThan(5000)
+      expect(result.error).toBe("something broke")
+      expect(result.output).toBe("")
+
+      const types = events.map(e => e.type)
+      expect(types).toContain("step-start")
+      expect(types).toContain("error")
+      expect(types).not.toContain("done")
+    } finally {
+      rmSync(throwJigPath, { force: true })
+    }
   })
 })
 

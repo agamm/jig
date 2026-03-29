@@ -78,7 +78,7 @@ function extractTrigger(code: string): string {
 }
 
 /** Convert a 5-field cron expression to human-readable text. */
-function cronToText(cron: string): string {
+export function cronToText(cron: string): string {
   const [min, hour, dom, , dow] = cron.trim().split(/\s+/)
   const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
   const time = `${hour}:${min.padStart(2, "0")}`
@@ -94,7 +94,7 @@ function cronToText(cron: string): string {
 }
 
 /** Parse human-readable trigger text back into a JigTrigger object. */
-function textToTrigger(text: string): { type: string; cron?: string; minutes?: number; source?: string } | null {
+export function textToTrigger(text: string): { type: string; cron?: string; minutes?: number; source?: string } | null {
   const t = text.trim()
   if (!t) return null
 
@@ -209,7 +209,7 @@ Examples:
 }
 
 /** Serialize a trigger object into source code text. */
-function triggerToSource(trigger: { type: string; cron?: string; minutes?: number; source?: string; filter?: string }): string {
+export function triggerToSource(trigger: { type: string; cron?: string; minutes?: number; source?: string; filter?: string }): string {
   switch (trigger.type) {
     case "cron": return `{ type: "cron", cron: ${JSON.stringify(trigger.cron)} }`
     case "interval": return `{ type: "interval", minutes: ${trigger.minutes} }`
@@ -223,7 +223,7 @@ function triggerToSource(trigger: { type: string; cron?: string; minutes?: numbe
 }
 
 /** Replace the trigger object in a jig source file. Returns updated code or null if no trigger found. */
-function replaceTriggerInSource(code: string, newTrigger: string): string | null {
+export function replaceTriggerInSource(code: string, newTrigger: string): string | null {
   const triggerRe = /trigger\s*:\s*\{[^}]*\}/
   if (!triggerRe.test(code)) return null
   return code.replace(triggerRe, `trigger: ${newTrigger}`)

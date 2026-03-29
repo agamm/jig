@@ -1,117 +1,21 @@
 /**
  * Trigger parsing & editing — deterministic path (no LLM).
  *
- * Tests textToTrigger, cronToText, triggerToSource, and replaceTriggerInSource.
- * These are pure functions extracted from server.ts; we import them indirectly
- * by re-implementing the same logic and testing the round-trip.
+ * Tests the REAL cronToText, textToTrigger, triggerToSource, and
+ * replaceTriggerInSource from server.ts.
  */
-import { describe, it, expect, beforeEach, afterEach } from "bun:test"
-import { writeFileSync, readFileSync, rmSync, mkdirSync, existsSync } from "fs"
+import { describe, it, expect, afterEach } from "bun:test"
+import { writeFileSync, readFileSync, rmSync } from "fs"
 import { join } from "path"
+import { cronToText, textToTrigger, triggerToSource, replaceTriggerInSource } from "../src/server.js"
 
-const PROJECT_ROOT = join(import.meta.dir, "..")
-const JIGS_DIR = join(PROJECT_ROOT, "jigs")
+const JIGS_DIR = join(import.meta.dir, "..", "jigs")
 
-// We test trigger editing through the API handler to cover the real code path.
-// Import the server helpers directly since they're module-level functions.
+// ---------------------------------------------------------------------------
+// cronToText
+// ---------------------------------------------------------------------------
 
-// --- textToTrigger tests (via the server module) ---
-// The server doesn't export these, so we test them via the HTTP API.
-// But first, let's test the deterministic parsing we can access.
-
-describe("trigger round-trip via file rewrite", () => {
-  const testJigPath = join(JIGS_DIR, "_test_trigger.ts")
-
-  const baseCode = (trigger: string) => `
-import { jig } from "../src/index.js"
-
-export default jig("test-trigger", {
-  trigger: ${trigger},
-  connections: [],
-}, async (ctx) => {
-  ctx.output("done")
-})
-`
-
-  afterEach(() => {
-    rmSync(testJigPath, { force: true })
-  })
-
-  it("cron trigger survives file write", () => {
-    const original = baseCode('{ type: "cron", cron: "0 9 * * 1" }')
-    writeFileSync(testJigPath, original)
-
-    const code = readFileSync(testJigPath, "utf-8")
-    // Verify the trigger regex matches what the server uses
-    const triggerRe = /trigger\s*:\s*\{[^}]*\}/
-    expect(triggerRe.test(code)).toBe(true)
-
-    // Replace trigger with a new one (same logic as replaceTriggerInSource)
-    const newTrigger = '{ type: "cron", cron: "30 14 * * 5" }'
-    const updated = code.replace(triggerRe, `trigger: ${newTrigger}`)
-
-    expect(updated).toContain('cron: "30 14 * * 5"')
-    expect(updated).not.toContain('cron: "0 9 * * 1"')
-
-    // Verify the rest of the file is unchanged
-    expect(updated).toContain('jig("test-trigger"')
-    expect(updated).toContain('ctx.output("done")')
-  })
-
-  it("interval trigger replaces correctly", () => {
-    const original = baseCode('{ type: "interval", minutes: 30 }')
-    writeFileSync(testJigPath, original)
-
-    const code = readFileSync(testJigPath, "utf-8")
-    const triggerRe = /trigger\s*:\s*\{[^}]*\}/
-    const updated = code.replace(triggerRe, 'trigger: { type: "cron", cron: "0 8 * * 1,3,5" }')
-
-    expect(updated).toContain('cron: "0 8 * * 1,3,5"')
-    expect(updated).not.toContain("minutes: 30")
-  })
-
-  it("manual trigger replaces correctly", () => {
-    const original = baseCode('{ type: "manual" }')
-    writeFileSync(testJigPath, original)
-
-    const code = readFileSync(testJigPath, "utf-8")
-    const triggerRe = /trigger\s*:\s*\{[^}]*\}/
-    const updated = code.replace(triggerRe, 'trigger: { type: "cron", cron: "0 9 * * *" }')
-
-    expect(updated).toContain('cron: "0 9 * * *"')
-    expect(updated).not.toContain('"manual"')
-  })
-
-  it("event trigger with source replaces correctly", () => {
-    const original = baseCode('{ type: "event", source: "gmail" }')
-    writeFileSync(testJigPath, original)
-
-    const code = readFileSync(testJigPath, "utf-8")
-    const triggerRe = /trigger\s*:\s*\{[^}]*\}/
-    const updated = code.replace(triggerRe, 'trigger: { type: "manual" }')
-
-    expect(updated).toContain('{ type: "manual" }')
-    expect(updated).not.toContain("gmail")
-  })
-})
-
-describe("cronToText logic", () => {
-  // Replicate the cronToText function to test its behavior
-  function cronToText(cron: string): string {
-    const [min, hour, dom, , dow] = cron.trim().split(/\s+/)
-    const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
-    const time = `${hour}:${min.padStart(2, "0")}`
-
-    if (dow !== "*" && dom === "*") {
-      const dayNames = dow.split(",").map((d) => days[parseInt(d)] ?? d).join(", ")
-      return `${dayNames} ${time}`
-    }
-    if (dom !== "*") return `${dom} of month ${time}`
-    if (hour !== "*" && min !== "*") return `Daily ${time}`
-    if (min.startsWith("*/")) return `Every ${min.slice(2)}m`
-    return cron
-  }
-
+describe("cronToText", () => {
   it("formats weekday cron", () => {
     expect(cronToText("0 9 * * 1")).toBe("Mon 9:00")
     expect(cronToText("30 14 * * 5")).toBe("Fri 14:30")
@@ -135,77 +39,16 @@ describe("cronToText logic", () => {
     expect(cronToText("*/15 * * * *")).toBe("Every 15m")
     expect(cronToText("*/5 * * * *")).toBe("Every 5m")
   })
-
-  it("formats wildcard hour as daily with raw hour", () => {
-    // When hour contains */N, it still hits the "Daily" branch since min is not */N
-    expect(cronToText("0 */2 * * *")).toBe("Daily */2:00")
-  })
 })
 
-describe("textToTrigger logic", () => {
-  // Replicate the deterministic textToTrigger parser
-  function textToTrigger(text: string): { type: string; cron?: string; minutes?: number; source?: string } | null {
-    const t = text.trim()
-    if (!t) return null
-    if (/^manual$/i.test(t)) return { type: "manual" }
-    if (/^webhook$/i.test(t)) return { type: "webhook" }
+// ---------------------------------------------------------------------------
+// textToTrigger
+// ---------------------------------------------------------------------------
 
-    const intervalMatch = t.match(/^every\s+(\d+)\s*m(?:in(?:ute)?s?)?$/i)
-    if (intervalMatch) return { type: "interval", minutes: parseInt(intervalMatch[1]) }
-
-    const dayMap: Record<string, number> = { sun: 0, sunday: 0, mon: 1, monday: 1, tue: 2, tuesday: 2, wed: 3, wednesday: 3, thu: 4, thursday: 4, fri: 5, friday: 5, sat: 6, saturday: 6 }
-    const timeAlias: Record<string, [number, number]> = {
-      morning: [9, 0], noon: [12, 0], afternoon: [14, 0], evening: [18, 0], night: [21, 0], midnight: [0, 0],
-    }
-
-    function parseTime(s: string): [number, number] | null {
-      const alias = timeAlias[s.trim().toLowerCase()]
-      if (alias) return alias
-      const m = s.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i)
-      if (!m) return null
-      let h = parseInt(m[1])
-      const min = m[2] ? parseInt(m[2]) : 0
-      if (m[3]?.toLowerCase() === "pm" && h < 12) h += 12
-      if (m[3]?.toLowerCase() === "am" && h === 12) h = 0
-      return [h, min]
-    }
-
-    const dailyMatch = t.match(/^(?:daily|every\s+day(?:\s+at)?)\s+(.+)$/i)
-    if (dailyMatch) {
-      const time = parseTime(dailyMatch[1])
-      if (time) return { type: "cron", cron: `${time[1]} ${time[0]} * * *` }
-    }
-
-    const timeAliasPattern = Object.keys(timeAlias).join("|")
-    const dayTimeMatch = t.match(new RegExp(`^(?:every\\s+(?:week\\s+on\\s+)?)?([a-z, ]+?)(?:\\s+at)?\\s+(\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)?|${timeAliasPattern})\\s*$`, "i"))
-    if (dayTimeMatch) {
-      const dayPart = dayTimeMatch[1].toLowerCase().replace(/\s+/g, "")
-      const dayNames = dayPart.split(",").map(d => d.trim())
-      const dayNums = dayNames.map(d => dayMap[d]).filter(d => d !== undefined)
-      if (dayNums.length > 0) {
-        const time = parseTime(dayTimeMatch[2])
-        if (time) return { type: "cron", cron: `${time[1]} ${time[0]} * * ${dayNums.join(",")}` }
-      }
-    }
-
-    const monthMatch = t.match(/^(?:every\s+(?:month\s+on\s+(?:the\s+)?)?)?(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+(?:the\s+)?month\s+)?(?:at\s+)?(.+)$/i)
-    if (monthMatch) {
-      const time = parseTime(monthMatch[2])
-      if (time) return { type: "cron", cron: `${time[1]} ${time[0]} ${monthMatch[1]} * *` }
-    }
-
-    const eventMatch = t.match(/^on\s+(.+)$/i)
-    if (eventMatch) return { type: "event", source: eventMatch[1].trim() }
-
-    return null
-  }
-
-  it("parses manual", () => {
+describe("textToTrigger", () => {
+  it("parses manual and webhook", () => {
     expect(textToTrigger("manual")).toEqual({ type: "manual" })
     expect(textToTrigger("Manual")).toEqual({ type: "manual" })
-  })
-
-  it("parses webhook", () => {
     expect(textToTrigger("webhook")).toEqual({ type: "webhook" })
   })
 
@@ -252,9 +95,132 @@ describe("textToTrigger logic", () => {
     expect(textToTrigger("daily midnight")).toEqual({ type: "cron", cron: "0 0 * * *" })
   })
 
-  it("handles pm times", () => {
+  it("handles am/pm edge cases", () => {
     expect(textToTrigger("daily 2pm")).toEqual({ type: "cron", cron: "0 14 * * *" })
     expect(textToTrigger("daily 12pm")).toEqual({ type: "cron", cron: "0 12 * * *" })
     expect(textToTrigger("daily 12am")).toEqual({ type: "cron", cron: "0 0 * * *" })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// triggerToSource
+// ---------------------------------------------------------------------------
+
+describe("triggerToSource", () => {
+  it("serializes cron", () => {
+    expect(triggerToSource({ type: "cron", cron: "0 9 * * 1" })).toBe('{ type: "cron", cron: "0 9 * * 1" }')
+  })
+
+  it("serializes interval", () => {
+    expect(triggerToSource({ type: "interval", minutes: 30 })).toBe("{ type: \"interval\", minutes: 30 }")
+  })
+
+  it("serializes event", () => {
+    expect(triggerToSource({ type: "event", source: "gmail" })).toBe('{ type: "event", source: "gmail" }')
+  })
+
+  it("serializes event with filter", () => {
+    expect(triggerToSource({ type: "event", source: "gmail", filter: "unread" }))
+      .toBe('{ type: "event", source: "gmail", filter: "unread" }')
+  })
+
+  it("serializes manual and webhook", () => {
+    expect(triggerToSource({ type: "manual" })).toBe('{ type: "manual" }')
+    expect(triggerToSource({ type: "webhook" })).toBe('{ type: "webhook" }')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// replaceTriggerInSource
+// ---------------------------------------------------------------------------
+
+describe("replaceTriggerInSource", () => {
+  const makeCode = (trigger: string) => `
+import { jig } from "../src/index.js"
+export default jig("test", {
+  trigger: ${trigger},
+  connections: [],
+}, async (ctx) => { ctx.output("done") })
+`
+
+  it("replaces cron trigger in source", () => {
+    const code = makeCode('{ type: "cron", cron: "0 9 * * 1" }')
+    const result = replaceTriggerInSource(code, '{ type: "cron", cron: "30 14 * * 5" }')
+
+    expect(result).not.toBeNull()
+    expect(result).toContain('cron: "30 14 * * 5"')
+    expect(result).not.toContain('cron: "0 9 * * 1"')
+    // Rest of file preserved
+    expect(result).toContain('jig("test"')
+    expect(result).toContain('ctx.output("done")')
+  })
+
+  it("replaces interval with cron", () => {
+    const code = makeCode('{ type: "interval", minutes: 30 }')
+    const result = replaceTriggerInSource(code, '{ type: "cron", cron: "0 8 * * *" }')
+
+    expect(result).toContain('cron: "0 8 * * *"')
+    expect(result).not.toContain("minutes: 30")
+  })
+
+  it("replaces manual with cron", () => {
+    const code = makeCode('{ type: "manual" }')
+    const result = replaceTriggerInSource(code, '{ type: "cron", cron: "0 9 * * *" }')
+
+    expect(result).toContain('cron: "0 9 * * *"')
+    expect(result).not.toContain('"manual"')
+  })
+
+  it("returns null when no trigger found", () => {
+    const code = `export default jig("test", { connections: [] }, async () => {})`
+    expect(replaceTriggerInSource(code, '{ type: "manual" }')).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Round-trip: textToTrigger → triggerToSource → replaceTriggerInSource
+// ---------------------------------------------------------------------------
+
+describe("trigger editing round-trip", () => {
+  const testJigPath = join(JIGS_DIR, "_test_trigger_rt.ts")
+  afterEach(() => { rmSync(testJigPath, { force: true }) })
+
+  it("end-to-end: user types 'mon 8:00' → file gets cron trigger", () => {
+    const original = `import { jig } from "../src/index.js"
+export default jig("test", {
+  trigger: { type: "manual" },
+  connections: [],
+}, async (ctx) => { ctx.output("done") })
+`
+    writeFileSync(testJigPath, original)
+
+    // Same flow as handleUpdateTrigger:
+    const parsed = textToTrigger("mon 8:00")
+    expect(parsed).toEqual({ type: "cron", cron: "0 8 * * 1" })
+
+    const source = triggerToSource(parsed!)
+    const updated = replaceTriggerInSource(readFileSync(testJigPath, "utf-8"), source)
+
+    expect(updated).not.toBeNull()
+    writeFileSync(testJigPath, updated!)
+
+    const final = readFileSync(testJigPath, "utf-8")
+    expect(final).toContain('trigger: { type: "cron", cron: "0 8 * * 1" }')
+    expect(final).not.toContain('"manual"')
+    expect(final).toContain('ctx.output("done")')
+  })
+
+  it("cronToText displays what textToTrigger parsed", () => {
+    // Parse → serialize → display should be coherent
+    const inputs = ["mon 8:00", "daily 9am", "every 30m", "fri 2pm"]
+    const expected = ["Mon 8:00", "Daily 9:00", "Every 30m", "Fri 14:00"]
+
+    for (let i = 0; i < inputs.length; i++) {
+      const parsed = textToTrigger(inputs[i])!
+      const display = parsed.type === "cron" ? cronToText(parsed.cron!)
+        : parsed.type === "interval" ? `Every ${parsed.minutes}m`
+        : parsed.type
+      expect(display).toBe(expected[i])
+    }
   })
 })

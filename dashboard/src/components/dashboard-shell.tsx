@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useQueryState, parseAsString, parseAsBoolean } from "nuqs";
 import type { Phase, Jig, ChatMsg } from "@/types/jig";
 import { useResizablePane } from "@/hooks/use-resizable-pane";
 import { ChatPanel } from "@/components/chat-panel";
@@ -25,14 +26,14 @@ export function DashboardShell({
   onPhaseChange?: (phase: Phase) => void;
 }) {
   const [phase, setPhase] = useState<Phase>("week2");
-  const [selectedJig, setSelectedJig] = useState<string | null>(null);
-  const [activeApproval, setActiveApproval] = useState<string | null>(null);
-  const [reviewMode, setReviewMode] = useState(false);
+  const [selectedJig, setSelectedJig] = useQueryState("jig", parseAsString);
+  const [selectedEntity, setSelectedEntity] = useQueryState("entity", parseAsString);
+  const [selectedConnection, setSelectedConnection] = useQueryState("connection", parseAsString);
+  const [activeApproval, setActiveApproval] = useQueryState("approval", parseAsString);
+  const [reviewMode, setReviewMode] = useQueryState("review", parseAsBoolean.withDefault(false));
   const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
-  const [selectedEntity, setSelectedEntity] = useState<string | null>(null);
   const [jigs, setJigs] = useState<Jig[]>(initialJigs);
   const [detailExpanded, setDetailExpanded] = useState(false);
-  const [selectedConnection, setSelectedConnection] = useState<string | null>(null);
 
   // Sync when parent changes jigs (e.g. phase change in mock mode)
   const [prevJigs, setPrevJigs] = useState(initialJigs);
@@ -52,8 +53,9 @@ export function DashboardShell({
     } else {
       setSelectedJig(jig.id);
       setActiveApproval(null);
-      setReviewMode(false);
+      setReviewMode(null);
       setSelectedEntity(null);
+      setSelectedConnection(null);
     }
   }
 
@@ -61,7 +63,8 @@ export function DashboardShell({
     setSelectedEntity(entity);
     setSelectedJig(expandedGroup);
     setActiveApproval(null);
-    setReviewMode(false);
+    setReviewMode(null);
+    setSelectedConnection(null);
     setExpandedGroup(null);
   }
 
@@ -69,22 +72,23 @@ export function DashboardShell({
     setSelectedJig(null);
     setSelectedEntity(null);
     setActiveApproval(null);
-    setReviewMode(false);
-
+    setReviewMode(null);
+    setSelectedConnection(null);
   }
 
   function handleReviewClick(jigId: string) {
     setSelectedJig(jigId);
     setReviewMode(true);
-
     setActiveApproval(null);
     setSelectedEntity(null);
+    setSelectedConnection(null);
   }
 
   function handleApprovalClick(approvalId: string) {
     setActiveApproval(approvalId);
     setSelectedJig(null);
-    setReviewMode(false);
+    setReviewMode(null);
+    setSelectedConnection(null);
   }
 
   function handlePhaseChange(p: Phase) {
@@ -171,7 +175,7 @@ export function DashboardShell({
           <ConnectionPane
             name={selectedConnection}
             onClose={() => setSelectedConnection(null)}
-            onJigClick={(jigId) => { setSelectedConnection(null); setSelectedJig(jigId); setReviewMode(false); }}
+            onJigClick={(jigId) => { setSelectedConnection(null); setSelectedJig(jigId); setReviewMode(null); }}
           />
         )}
 

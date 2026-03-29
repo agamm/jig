@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { Suspense, useState, useEffect } from "react";
 import type { Jig, ChatMsg } from "@/types/jig";
 import { DashboardShell } from "@/components/dashboard-shell";
 
-export default function Page() {
+function Dashboard() {
   const [jigs, setJigs] = useState<Jig[]>([]);
   const [chatMessages, setChatMessages] = useState<ChatMsg[]>([]);
   const [loading, setLoading] = useState(true);
@@ -17,7 +17,6 @@ export default function Page() {
       } catch (e) {
         console.error("Failed to fetch jigs:", e);
       }
-      // Chat is always mock for now
       const { CHAT_MESSAGES } = await import("@/mock/mock-data");
       setChatMessages(CHAT_MESSAGES);
       setLoading(false);
@@ -26,4 +25,8 @@ export default function Page() {
   }, []);
 
   return <DashboardShell jigs={jigs} chatMessages={chatMessages} loading={loading} />;
+}
+
+export default function Page() {
+  return <Suspense><Dashboard /></Suspense>;
 }

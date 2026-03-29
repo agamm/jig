@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
-import type { Phase, Jig, ChatMsg } from "@/types/jig";
+import { Suspense, useState } from "react";
+import type { Phase, Jig } from "@/types/jig";
 import { CHAT_MESSAGES, JIGS_WEEK2, JIGS_MONTH3 } from "@/mock/mock-data";
 import { DashboardShell } from "@/components/dashboard-shell";
 
-export default function MockPage() {
+function MockDashboard() {
   const [jigs, setJigs] = useState<Jig[]>(JIGS_WEEK2);
 
   function handlePhaseChange(phase: Phase) {
@@ -20,4 +20,8 @@ export default function MockPage() {
       onPhaseChange={handlePhaseChange}
     />
   );
+}
+
+export default function MockPage() {
+  return <Suspense><MockDashboard /></Suspense>;
 }

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { NuqsAdapter } from "nuqs/adapters/next/app";
 import { Geist, Geist_Mono } from "next/font/google";
 import { ToastContainer } from "@/components/toast";
 import "./globals.css";
@@ -14,7 +15,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full`}>
-      <body className="h-full font-sans antialiased">{children}<ToastContainer /></body>
+      <body className="h-full font-sans antialiased"><NuqsAdapter>{children}</NuqsAdapter><ToastContainer /></body>
     </html>
   );
 }

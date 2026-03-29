@@ -278,3 +278,8 @@ export function setStepCache(jigId: string, entity: string | null, codeHash: str
   ).run(jigId, entity, codeHash, JSON.stringify(steps))
 }
 
+export function clearStepCache(jigId: string, entity: string | null): void {
+  const db = openDb()
+  db.prepare(`DELETE FROM step_cache WHERE jig_id = ? AND entity IS ?`).run(jigId, entity)
+}
+

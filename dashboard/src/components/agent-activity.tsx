@@ -1,6 +1,7 @@
 "use client"
 
 import type { AgentEvent, AgentStatus } from "@/hooks/use-agent"
+import { useElapsed } from "@/hooks/use-elapsed"
 import { Spinner } from "@/components/spinner"
 
 const toolIcons: Record<string, string> = {
@@ -40,19 +41,24 @@ function ToolCallCard({ event }: { event: AgentEvent & { type: "tool-call" } }) 
 }
 
 function TextMessage({ content }: { content: string }) {
+  const short = content.length > 200 ? content.slice(0, 200).trim() + "..." : content
   return (
-    <div className="py-1.5 text-[11px] text-[#aaa] leading-relaxed">
-      {content}
+    <div className="py-1.5 text-[11px] text-[#aaa] leading-relaxed break-words max-h-24 overflow-y-auto">
+      {short}
     </div>
   )
 }
 
 export function AgentActivity({ events, status }: { events: AgentEvent[]; status: AgentStatus }) {
+  const active = status === "thinking" || status === "tool-calling"
+  const elapsed = useElapsed(active)
+  const timeStr = elapsed > 0 ? `${elapsed}s` : ""
+
   if (events.length === 0 && status === "thinking") {
     return (
       <div className="flex items-center gap-2 py-2">
         <Spinner size={12} />
-        <span className="text-[11px] text-[#666]">Thinking...</span>
+        <span className="text-[11px] text-[#666]">Thinking...{timeStr && <span className="text-[#444] ml-1">{timeStr}</span>}</span>
       </div>
     )
   }
@@ -65,10 +71,13 @@ export function AgentActivity({ events, status }: { events: AgentEvent[]; status
           {event.type === "text" && <TextMessage content={event.content} />}
         </div>
       ))}
-      {(status === "thinking" || status === "tool-calling") && (
+      {active && (
         <div className="flex items-center gap-2 py-2">
           <Spinner size={10} />
-          <span className="text-[10px] text-[#555]">{status === "thinking" ? "Thinking..." : "Running tools..."}</span>
+          <span className="text-[10px] text-[#555]">
+            {status === "thinking" ? "Thinking" : "Running tools"}...
+            {timeStr && <span className="text-[#444] ml-1">{timeStr}</span>}
+          </span>
         </div>
       )}
     </div>

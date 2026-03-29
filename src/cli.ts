@@ -11,7 +11,6 @@ import { existsSync } from "fs"
 import { join, relative } from "path"
 import { createInterface } from "node:readline/promises"
 import type { JigIO, JigEvent } from "./creator.js"
-import { CreatorError } from "./creator.js"
 
 const API_PORT = parseInt(process.env.PORT ?? "3141")
 const API_BASE = `http://localhost:${API_PORT}`
@@ -353,9 +352,6 @@ try {
       break
   }
 } catch (e: any) {
-  if (e instanceof CreatorError) {
-    process.exit(1) // events already emitted
-  }
   if (e?.message) console.error(e.message)
   process.exit(1)
 }

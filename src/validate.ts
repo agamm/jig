@@ -135,7 +135,7 @@ export async function validateJigFile(path: string): Promise<ValidationResult> {
   }
 
   try {
-    const mod = await import(path)
+    const mod = await import(`${path}?_t=${Date.now()}`)
     if (!mod.default) {
       return { ok: false, errors: [{ field: "default", message: "Jig file must have a default export" }] }
     }

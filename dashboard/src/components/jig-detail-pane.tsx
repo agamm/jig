@@ -11,27 +11,47 @@ import { AgentActivity } from "@/components/agent-activity";
 import { TRIGGER_SUGGESTIONS } from "@/mock/mock-data";
 import { useTriggerSave } from "@/hooks/use-trigger-save";
 import { Spinner } from "@/components/spinner";
+import { useElapsed } from "@/hooks/use-elapsed";
 
 const statusDot = (s: string) =>
   s === "healthy" ? "bg-emerald-400" : s === "attention" ? "bg-amber-400" : "bg-rose-400";
 
-export function JigDetailPane({ jig: jigProp, selectedEntity, onClose, expanded = false, onToggleExpand, onRefresh, onConnectionClick }: {
+export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, onToggleExpand, onRefresh, onConnectionClick }: {
   jig: Jig;
   selectedEntity: string | null;
   onClose: () => void;
   expanded?: boolean;
   onToggleExpand?: () => void;
-  onRefresh?: () => void;
+  onRefresh?: () => Promise<void> | void;
   onConnectionClick?: (name: string) => void;
 }) {
-  const jig = jigProp;
   const [detailTab, setDetailTab] = useState<"steps" | "code">("steps");
   const trigger = useTriggerSave(jig.id, jig.settings.trigger);
   const [expandedRun, setExpandedRun] = useState<number | null>(null);
   const [agentInput, setAgentInput] = useState("");
 
   const { mode, liveSteps, completedTools, activeTools, toolReadOnly, startRun, dismiss, cancelRun, isRunning } = useJigRun(jig.id, selectedEntity);
-  const agent = useAgent(() => { onRefresh?.() });
+
+  const agent = useAgent(async () => {
+    // Update parent state (code, trigger, connections, runs)
+    onRefresh?.();
+    // Derive fresh steps directly (step cache was cleared by write_jig_file)
+    setDerivingSteps(true);
+    try {
+      const res = await fetch(`/api/jigs/${encodeURIComponent(jig.id)}/steps`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ entity: selectedEntity ?? undefined }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.steps?.length) {
+          setDerivedSteps(data.steps.map((s: any) => ({ num: s.num, name: s.name, connections: s.connections })));
+        }
+      }
+    } catch {}
+    setDerivingSteps(false);
+  });
 
   const handleAgentSend = () => {
     if (!agentInput.trim() || agent.isActive) return;
@@ -47,18 +67,17 @@ export function JigDetailPane({ jig: jigProp, selectedEntity, onClose, expanded 
     Object.fromEntries(Object.entries(jig.params ?? {}).map(([k, v]) => [k, ""]))
   );
 
-  // Fetch derived steps on demand (scan + humanize, cached server-side by code hash)
+  // Fetch derived steps — always from /steps endpoint (cached server-side by code hash)
   const [derivedSteps, setDerivedSteps] = useState<RunStep[]>(
     jig.steps.map(s => ({ num: s.num, name: s.name, connections: s.connections }))
   );
   const [derivingSteps, setDerivingSteps] = useState(false);
+  const derivingElapsed = useElapsed(derivingSteps);
   useEffect(() => {
-    // If steps already came from cache in buildJigResponse, use them
+    // Use pre-loaded steps as initial value while fetching fresh ones
     if (jig.steps.length > 0) {
       setDerivedSteps(jig.steps.map(s => ({ num: s.num, name: s.name, connections: s.connections })));
-      return;
     }
-    // Otherwise fetch from /steps endpoint (triggers scan + humanize)
     let cancelled = false;
     setDerivingSteps(true);
     fetch(`/api/jigs/${encodeURIComponent(jig.id)}/steps`, {
@@ -75,7 +94,7 @@ export function JigDetailPane({ jig: jigProp, selectedEntity, onClose, expanded 
       .catch(() => {})
       .finally(() => { if (!cancelled) setDerivingSteps(false); });
     return () => { cancelled = true; };
-  }, [jig.id, selectedEntity, jig.steps]);
+  }, [jig.id, selectedEntity]);
 
   // Steps: live steps during/after run, derived steps when idle
   const runSteps: RunStep[] = useMemo(() => {
@@ -183,7 +202,7 @@ export function JigDetailPane({ jig: jigProp, selectedEntity, onClose, expanded 
             {derivingSteps && runSteps.length === 0 ? (
               <div className="flex items-center justify-center gap-2 py-8">
                 <Spinner size={14} />
-                <span className="text-[11px] text-[#666]">Analyzing steps…</span>
+                <span className="text-[11px] text-[#666]">Analyzing steps… {derivingElapsed}s</span>
               </div>
             ) : (
               <RunSteps
@@ -234,10 +253,10 @@ export function JigDetailPane({ jig: jigProp, selectedEntity, onClose, expanded 
           ) : (
             <button
               onClick={trigger.startEditing}
-              className="group inline-flex items-center gap-2 rounded-lg border border-transparent hover:border-[#2a2a2e] hover:bg-[#151517] px-3 py-2 text-left transition-all duration-150"
+              className="inline-flex items-center gap-2 rounded-lg border border-transparent hover:border-[#2a2a2e] hover:bg-[#1a1a1d] px-3 py-2 text-left transition-all duration-150"
             >
               <span className="text-[12px] font-mono text-[#ccc]">{trigger.display || "No trigger"}</span>
-              <span className="text-[10px] text-[#333] opacity-0 group-hover:opacity-100 transition-opacity duration-150">&#9998; edit</span>
+              <span className="text-[10px] text-[#444]">&#9998; edit</span>
             </button>
           )}
         </div>
@@ -333,11 +352,8 @@ export function JigDetailPane({ jig: jigProp, selectedEntity, onClose, expanded 
       {/* Agent activity stream (shown when active) */}
       {agent.status !== "idle" && (
         <div className="border-t border-[#1f1f23] px-4 py-3 max-h-[200px] overflow-y-auto" style={{ animation: "fade-up 0.15s ease" }}>
-          <div className="flex items-center justify-between mb-2">
+          <div className="mb-2">
             <span className="text-[10px] font-medium text-[#555] uppercase tracking-wider">Agent</span>
-            {(agent.status === "done" || agent.status === "error") && (
-              <button onClick={agent.reset} className="text-[9px] text-[#555] hover:text-[#888] transition-colors">Clear</button>
-            )}
           </div>
           <AgentActivity events={agent.events} status={agent.status} />
         </div>
@@ -355,6 +371,9 @@ export function JigDetailPane({ jig: jigProp, selectedEntity, onClose, expanded 
             disabled={agent.isActive}
             className="flex-1 bg-transparent text-[12px] text-[#ededed] outline-none placeholder:text-[#555] disabled:opacity-50"
           />
+          {(agent.status === "done" || agent.status === "error") && (
+            <button onClick={agent.reset} className="rounded-md border border-[#1f1f23] px-2 py-0.5 text-[10px] text-[#555] transition-colors duration-150 hover:text-[#888] hover:border-[#2a2a2e]">Clear</button>
+          )}
           <button
             onClick={handleAgentSend}
             disabled={!agentInput.trim() || agent.isActive}

@@ -57,7 +57,7 @@ async function humanizeLabels(
 
   const response = await client.chat.completions.create({
     model: HUMANIZE_MODEL,
-    max_tokens: 1024,
+    max_tokens: 4096,
     messages: [{ role: "user", content: `Rewrite these automation step labels as short, human-readable action titles. Max 32 characters each, 2-5 words. Keep the same order and count. Return JSON array of strings only.
 
 ${input}` }],
@@ -81,7 +81,7 @@ ${input}` }],
   const text = response.choices[0]?.message?.content?.trim()
   if (!text) throw new Error("LLM returned empty response")
   const parsed = JSON.parse(text.replace(/^```json?\s*|\s*```$/g, ""))
-  const names: string[] = parsed.names ?? []
+  const names: string[] = Array.isArray(parsed) ? parsed : (parsed.names ?? [])
 
   return raw.map((s, i) => ({
     num: s.seq,

@@ -321,7 +321,7 @@ async function buildJigResponse(id: string, entities: string[], runLimit: number
   let steps: { num: number; name: string; connections: string[] }[] = []
   if (filePath) {
     try {
-      const mod = await import(filePath)
+      const mod = await import(`${filePath}?_t=${Date.now()}`)
       const def = mod.default
       if (def?.options) {
         params = def.options.params ?? {}
@@ -490,15 +490,16 @@ function resolveJigPath(jigId: string, entity?: string): string {
 }
 
 async function toolReadJigFile(args: { jigId?: string; entity?: string }, session: AgentSession): Promise<string> {
-  const jigId = args.jigId ?? session.jigId
+  const jigId = session.jigId ?? args.jigId
   if (!jigId) return JSON.stringify({ error: "No jigId specified and no session jig" })
-  const filePath = resolveJigPath(jigId, args.entity ?? session.entity)
+  const entity = session.entity ?? args.entity
+  const filePath = resolveJigPath(jigId, entity)
   if (!existsSync(filePath)) return JSON.stringify({ error: `File not found: ${filePath}` })
   return readFileSync(filePath, "utf-8")
 }
 
 async function toolWriteJigFile(args: { code: string; jigId?: string; entity?: string; message?: string }, session: AgentSession): Promise<string> {
-  const jigId = args.jigId ?? session.jigId
+  const jigId = session.jigId ?? args.jigId
   if (!jigId) return JSON.stringify({ error: "No jigId specified — provide jigId for new jigs" })
 
   // Update session jigId if this is creation, and acquire lock
@@ -508,19 +509,26 @@ async function toolWriteJigFile(args: { code: string; jigId?: string; entity?: s
     activeAgentJigs.add(jigId)
   }
 
-  const filePath = resolveJigPath(jigId, args.entity ?? session.entity)
+  const entity = session.entity ?? args.entity
+  const filePath = resolveJigPath(jigId, entity)
 
   // Ensure parent directory exists for grouped jigs
   const dir = join(JIGS_DIR, jigId)
-  if (args.entity && !existsSync(dir)) {
+  if (entity && !existsSync(dir)) {
     await Bun.spawn(["mkdir", "-p", dir]).exited
   }
 
   await Bun.write(filePath, args.code)
 
+  // Invalidate step cache so next load re-derives from new code
+  try {
+    const { clearStepCache } = await import("./db.js")
+    clearStepCache(jigId, entity ?? null)
+  } catch {}
+
   // Auto-commit if jigs/.git exists
   if (existsSync(join(JIGS_DIR, ".git"))) {
-    const relPath = args.entity ? join(jigId, `${args.entity}.ts`) : `${jigId}.ts`
+    const relPath = entity ? join(jigId, `${entity}.ts`) : `${jigId}.ts`
     const msg = args.message ? `jig: ${jigId} — ${args.message}` : `jig: ${jigId} — update`
     await Bun.spawn(["git", "add", relPath], { cwd: JIGS_DIR }).exited
     await Bun.spawn(["git", "commit", "-m", msg], { cwd: JIGS_DIR, stdout: "ignore", stderr: "ignore" }).exited
@@ -530,9 +538,10 @@ async function toolWriteJigFile(args: { code: string; jigId?: string; entity?: s
 }
 
 async function toolCheckJig(args: { jigId?: string; entity?: string }, session: AgentSession): Promise<string> {
-  const jigId = args.jigId ?? session.jigId
+  const jigId = session.jigId ?? args.jigId
   if (!jigId) return JSON.stringify({ error: "No jigId specified" })
-  const filePath = resolveJigPath(jigId, args.entity ?? session.entity)
+  const entity = session.entity ?? args.entity
+  const filePath = resolveJigPath(jigId, entity)
   if (!existsSync(filePath)) return JSON.stringify({ error: `File not found: ${filePath}` })
 
   const errors: string[] = []
@@ -651,6 +660,8 @@ async function buildAgentSystemPrompt(jigId?: string, entity?: string): Promise<
 
   return `You are a jig creation and editing agent. You write TypeScript jig files that automate workflows.
 
+IMPORTANT: Act immediately. Do NOT describe what you plan to do — just do it. The jig code is already in your context below, so do NOT call read_jig_file unless you need a different jig. Write the code, check it, and confirm in 1-2 sentences.
+
 ${parts.join("\n")}
 
 ## Rules
@@ -659,8 +670,10 @@ ${parts.join("\n")}
 - Use ctx.log() for output, NEVER console.log()
 - End the file with: export default myJig
 - Do NOT use require() or CommonJS
-- Always run check_jig after writing to catch errors
-- Use web_search and browse to look up API docs when unsure about tool parameters`
+- ALWAYS run check_jig after writing code — never finish without a passing check
+- If check_jig reports errors, fix them and check again until it passes
+- Use web_search and browse to look up API docs when unsure about tool parameters
+- When done, reply with 1-2 short plain text sentences summarizing what you changed. No markdown, no code blocks, no bullet points.`
 }
 
 // -- Agent loop --
@@ -844,7 +857,7 @@ async function handleGetVersionCode(jigId: string, sha: string, entity?: string)
 async function handleGetJigs(): Promise<Response> {
   const discovered = discoverJigs(JIGS_DIR)
   const jigs = await Promise.all(
-    [...discovered.entries()].map(([id, entities]) => buildJigResponse(id, entities, 10))
+    [...discovered.entries()].map(([id, entities]) => buildJigResponse(id, entities, 10, true))
   )
   return json(jigs)
 }
@@ -1023,19 +1036,27 @@ async function handleGetSteps(id: string, body: any): Promise<Response> {
   const filePath = getJigFilePath(id, entity)
   if (!filePath) return notFound(`Jig file not found`)
 
-  let code: string
-  try { code = readFileSync(filePath, "utf-8") } catch { return notFound("Jig file not readable") }
+  // Derive steps in a subprocess — jig imports can crash the main process
+  const script = `
+    const { deriveSteps } = await import("./src/derive-steps.js");
+    const mod = await import("${filePath}?_t=${Date.now()}");
+    if (!mod.default?.handler) { console.log("[]"); process.exit(0); }
+    const code = require("fs").readFileSync("${filePath}", "utf-8");
+    const steps = await deriveSteps(mod.default, "${id}", ${entity ? `"${entity}"` : "null"}, code);
+    console.log(JSON.stringify(steps));
+  `
+  const proc = Bun.spawn(["bun", "-e", script], {
+    cwd: PROJECT_ROOT, stdout: "pipe", stderr: "pipe", timeout: 30_000,
+  })
+  const stdout = await new Response(proc.stdout).text()
+  const exitCode = await proc.exited
+
+  if (exitCode !== 0) return json({ steps: [] })
 
   try {
-    const mod = await import(filePath)
-    const def = mod.default
-    if (!def?.handler) return json({ steps: [] })
-
-    const { deriveSteps } = await import("./derive-steps.js")
-    const steps = await deriveSteps(def, id, entity ?? null, code)
-    return json({ steps })
-  } catch (e: any) {
-    return json({ steps: [], error: e?.message }, 500)
+    return json({ steps: JSON.parse(stdout) })
+  } catch {
+    return json({ steps: [] })
   }
 }
 
@@ -1280,6 +1301,11 @@ export function createApiServer(port: number) {
     },
   })
 }
+
+// Prevent unhandled rejections from crashing the server (e.g. jig imports with bad top-level code)
+process.on("unhandledRejection", (err) => {
+  console.error("[server] unhandled rejection:", err)
+})
 
 // Allow running standalone: bun run src/server.ts
 if (import.meta.main) {

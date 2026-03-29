@@ -10,10 +10,10 @@ export function useAgent(onComplete?: (jigId?: string) => void) {
   const [events, setEvents] = useState<AgentEvent[]>([])
   const [status, setStatus] = useState<AgentStatus>("idle")
   const [sessionId, setSessionId] = useState<string | null>(null)
-  const [jigId, setJigId] = useState<string | undefined>()
   const abortRef = useRef<AbortController | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const eventIndexRef = useRef(0)
+  const onCompleteRef = useRef(onComplete)
+  onCompleteRef.current = onComplete
 
   const cleanup = useCallback(() => {
     abortRef.current?.abort()
@@ -28,26 +28,25 @@ export function useAgent(onComplete?: (jigId?: string) => void) {
 
     pollRef.current = setInterval(async () => {
       try {
-        const res = await fetch(`/api/agent/${sid}?since=${eventIndexRef.current}`)
+        const res = await fetch(`/api/agent/${sid}`)
         if (!res.ok) return
         const data = await res.json()
 
         if (data.events?.length) {
-          setEvents(prev => [...prev, ...data.events])
-          eventIndexRef.current += data.events.length
+          setEvents(data.events)
         }
 
         setStatus(data.status)
-        if (data.jigId) setJigId(data.jigId)
+
 
         if (data.status === "done" || data.status === "error") {
           if (pollRef.current) clearInterval(pollRef.current)
           pollRef.current = null
-          onComplete?.(data.jigId)
+          onCompleteRef.current?.(data.jigId)
         }
       } catch {}
     }, 1000)
-  }, [onComplete])
+  }, [])
 
   const startSession = useCallback(async (instruction: string, targetJigId?: string, entity?: string) => {
     cleanup()
@@ -56,8 +55,6 @@ export function useAgent(onComplete?: (jigId?: string) => void) {
 
     setEvents([])
     setStatus("thinking")
-    setJigId(targetJigId)
-    eventIndexRef.current = 0
 
     try {
       const res = await fetch("/api/agent", {
@@ -76,7 +73,6 @@ export function useAgent(onComplete?: (jigId?: string) => void) {
 
       const data = await res.json()
       setSessionId(data.sessionId)
-      if (data.jigId) setJigId(data.jigId)
       poll(data.sessionId)
     } catch (e: any) {
       if (!abort.signal.aborted) {
@@ -105,15 +101,12 @@ export function useAgent(onComplete?: (jigId?: string) => void) {
     setEvents([])
     setStatus("idle")
     setSessionId(null)
-    setJigId(undefined)
-    eventIndexRef.current = 0
   }, [cleanup])
 
   return {
     events,
     status,
     sessionId,
-    jigId,
     isActive: status === "thinking" || status === "tool-calling",
     startSession,
     sendMessage,

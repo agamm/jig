@@ -42,15 +42,6 @@ export interface Jig {
   costLifetime?: string;
 }
 
-export interface ChatMsg {
-  role: "assistant" | "user";
-  text: string;
-  card?: "task";
-  taskTitle?: string;
-  taskSteps?: string[];
-  taskTools?: string;
-}
-
 export interface Token {
   text: string;
   color: string;

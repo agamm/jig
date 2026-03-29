@@ -2,7 +2,7 @@
 
 import { Suspense, useState } from "react";
 import type { Phase, Jig } from "@/types/jig";
-import { CHAT_MESSAGES, JIGS_WEEK2, JIGS_MONTH3 } from "@/mock/mock-data";
+import { JIGS_WEEK2, JIGS_MONTH3 } from "@/mock/mock-data";
 import { DashboardShell } from "@/components/dashboard-shell";
 
 function MockDashboard() {
@@ -15,7 +15,6 @@ function MockDashboard() {
   return (
     <DashboardShell
       jigs={jigs}
-      chatMessages={CHAT_MESSAGES}
       phaseToggle
       onPhaseChange={handlePhaseChange}
     />

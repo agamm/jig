@@ -1,12 +1,4 @@
-import type { ChatMsg, Jig } from "@/types/jig";
-
-/* ── Chat messages ── */
-export const CHAT_MESSAGES: ChatMsg[] = [
-  { role: "assistant", text: "Good morning. 5 jigs active, 1 needs approval." },
-  { role: "user", text: "Every month I need to invoice my clients" },
-  { role: "assistant", text: "I can build that. Here\u2019s what it would look like:", card: "task", taskTitle: "Monthly Invoice", taskSteps: ["Read timesheet", "Find last invoice", "Compare hours (AI)", "Draft email (AI)", "Approval", "Send"], taskTools: "Drive \u00b7 Gmail" },
-  { role: "assistant", text: "Saved! Created for Acme and Globex." },
-];
+import type { Jig } from "@/types/jig";
 
 /* ── Jig definitions ── */
 export const JIGS_WEEK2: Jig[] = [

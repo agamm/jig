@@ -1,24 +1,62 @@
 /**
- * Laser-border spinner — conic gradient with glow, matches running-step style.
+ * Orbiting dot spinner — glowing dot with comet trail.
  */
 export function Spinner({ size = 14, className = "" }: { size?: number; className?: string }) {
-  const borderWidth = Math.max(0.5, size * 0.05)
+  const stroke = Math.max(1.5, size * 0.1)
+  const r = (size - stroke * 2) / 2
+  const circ = 2 * Math.PI * r
+  const cx = size / 2
+  const cy = size / 2
+  const dotR = Math.max(1, size * 0.08)
+
   return (
-    <span
-      className={`relative inline-block shrink-0 rounded-full overflow-hidden ${className}`}
-      style={{ width: size, height: size, filter: `drop-shadow(0 0 ${size * 0.3}px rgba(110,190,255,0.7))` }}
+    <svg
+      className={`shrink-0 ${className}`}
+      width={size}
+      height={size}
+      viewBox={`0 0 ${size} ${size}`}
     >
-      <span
-        className="absolute inset-[-200%]"
-        style={{
-          animation: "spin-light 1.2s linear infinite",
-          background: "conic-gradient(transparent 160deg, rgba(110,190,255,0.7) 200deg, rgba(169,216,255,1) 260deg, rgba(230,242,255,1) 280deg, rgba(169,216,255,1) 300deg, rgba(110,190,255,0.7) 340deg, transparent 360deg)",
-        }}
+      <defs>
+        <linearGradient id={`trail-${size}`} x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stopColor="rgba(110,190,255,0)" />
+          <stop offset="70%" stopColor="rgba(110,190,255,0.4)" />
+          <stop offset="100%" stopColor="rgba(110,190,255,1)" />
+        </linearGradient>
+        <filter id={`glow-${size}`}>
+          <feGaussianBlur stdDeviation={size * 0.08} result="blur" />
+          <feMerge>
+            <feMergeNode in="blur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+      </defs>
+
+      {/* Faint track */}
+      <circle
+        cx={cx} cy={cy} r={r}
+        fill="none"
+        stroke="rgba(110,190,255,0.06)"
+        strokeWidth={stroke * 0.6}
       />
-      <span
-        className="absolute rounded-full bg-[#161619]"
-        style={{ inset: borderWidth }}
+
+      {/* Comet trail */}
+      <circle
+        cx={cx} cy={cy} r={r}
+        fill="none"
+        stroke={`url(#trail-${size})`}
+        strokeWidth={stroke}
+        strokeLinecap="round"
+        strokeDasharray={`${circ * 0.35} ${circ * 0.65}`}
+        style={{ animation: "spin-light 1s linear infinite" }}
       />
-    </span>
+
+      {/* Bright leading dot */}
+      <circle
+        cx={cx} cy={cy - r} r={dotR}
+        fill="rgba(200,225,255,1)"
+        filter={`url(#glow-${size})`}
+        style={{ animation: "spin-light 1s linear infinite", transformOrigin: `${cx}px ${cy}px` }}
+      />
+    </svg>
   )
 }

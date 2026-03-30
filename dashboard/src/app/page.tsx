@@ -9,16 +9,24 @@ function Dashboard() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
     async function load() {
-      try {
-        const res = await fetch("/api/jigs");
-        if (res.ok) setJigs(await res.json());
-      } catch (e) {
-        console.error("Failed to fetch jigs:", e);
+      for (let attempt = 0; attempt < 10; attempt++) {
+        try {
+          const res = await fetch("/api/jigs");
+          if (res.ok && !cancelled) {
+            setJigs(await res.json());
+            setLoading(false);
+            return;
+          }
+        } catch {}
+        // Backend may still be starting — wait and retry
+        await new Promise(r => setTimeout(r, 1000));
       }
-      setLoading(false);
+      if (!cancelled) setLoading(false);
     }
     load();
+    return () => { cancelled = true; };
   }, []);
 
   return <DashboardShell jigs={jigs} loading={loading} />;

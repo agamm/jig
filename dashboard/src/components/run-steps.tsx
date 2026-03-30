@@ -187,7 +187,10 @@ export function RunSteps({
               {/* Expanded output — also show mode.error on failed step */}
               {isExpanded && (step.output || (step.status === "fail" && mode.type === "done" && (mode as any).error)) && (
                 <div className={`px-4 pb-3 pl-12 ${stepRunning ? "relative z-10" : ""}`} style={{ animation: "fade-up 0.1s ease" }}>
-                  <pre className={`text-[10px] font-mono whitespace-pre-wrap rounded-md p-2 border max-h-[200px] overflow-y-auto ${step.status === "fail" ? "text-[#ccc] bg-rose-500/5 border-rose-500/20" : "text-[#888] bg-[#0a0a0b] border-[#1f1f23]"}`}>{step.output || (mode.type === "done" ? (mode as any).error : "")}</pre>
+                  <div className="relative group/output">
+                    <pre className={`text-[10px] font-mono whitespace-pre-wrap rounded-md p-2 pr-8 border max-h-[200px] overflow-y-auto ${step.status === "fail" ? "text-[#ccc] bg-rose-500/5 border-rose-500/20" : "text-[#888] bg-[#0a0a0b] border-[#1f1f23]"}`}>{step.output || (mode.type === "done" ? (mode as any).error : "")}</pre>
+                    <CopyButton text={step.output || (mode.type === "done" ? (mode as any).error : "") || ""} />
+                  </div>
                 </div>
               )}
             </div>
@@ -196,5 +199,27 @@ export function RunSteps({
       </div>
 
     </div>
+  );
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        navigator.clipboard.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      }}
+      className="absolute top-1.5 right-1.5 rounded-md p-1 text-[#444] opacity-0 group-hover/output:opacity-100 hover:text-[#888] hover:bg-[#1a1a1d] transition-all duration-150"
+      title="Copy output"
+    >
+      {copied ? (
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+      ) : (
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+      )}
+    </button>
   );
 }

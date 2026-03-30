@@ -56,6 +56,7 @@
 
 ## Architecture
 - **Next.js is a thin proxy** — the dashboard (`dashboard/`) is a Next.js frontend that rewrites `/api/*` to the Bun API server (`src/server.ts`) via `next.config.ts`. All backend logic (LLM calls, file I/O, DB) goes in `src/server.ts`, never in Next.js API routes or middleware. The Bun server auto-loads `.env`; Next.js does not.
+- **Dashboard uses pnpm, not bun** — Next.js doesn't work well with bun for package management. The dashboard has its own `pnpm-lock.yaml`. Use `pnpm install` and `pnpm run dev` in `dashboard/`. `jig start` auto-installs dashboard deps via pnpm if `node_modules` is missing.
 - **Don't import SDK modules into server.ts** — `src/sdk/` (llm.ts, context.ts, etc.) is designed for jig runtime, not the API server. For server-side LLM calls, use direct `fetch` to OpenRouter instead of `getClient()`.
 
 ## Code Style

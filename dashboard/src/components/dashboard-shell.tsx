@@ -135,11 +135,11 @@ export function DashboardShell({
             <div className="mt-1.5 space-y-1.5">
               <div>
                 <span className="text-[9px] text-[#555]">Main</span>
-                <div className="text-[10px] text-[#888] font-mono truncate" title="google/gemini-3-flash-preview">gemini-3-flash</div>
+                <div className="text-[10px] text-[#888] font-mono truncate" title="anthropic/claude-haiku-4.5">claude-haiku-4.5</div>
               </div>
               <div>
                 <span className="text-[9px] text-[#555]">Editor</span>
-                <div className="text-[10px] text-[#888] font-mono truncate" title="moonshotai/kimi-k2.5">kimi-k2.5</div>
+                <div className="text-[10px] text-[#888] font-mono truncate" title="deepseek/deepseek-v3.2">deepseek-v3.2</div>
               </div>
               <div>
                 <span className="text-[9px] text-[#555]">Fast</span>

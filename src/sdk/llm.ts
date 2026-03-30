@@ -4,8 +4,8 @@ import type { JigTool } from "./jig.js"
 import { spinner } from "./spinner.js"
 import { runContext, isStepScan, truncLabel } from "./context.js"
 
-export const MAIN_MODEL = "google/gemini-3-flash-preview"
-const MAX_TOOL_ROUNDS = 15
+export const MAIN_MODEL = "anthropic/claude-haiku-4.5"
+const MAX_TOOL_ROUNDS = 30
 
 let _client: OpenAI | null = null
 

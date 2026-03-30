@@ -22,29 +22,38 @@ export async function deriveSteps(
   hasher.update(code)
   const codeHash = hasher.digest("hex")
 
-  // Check cache
+  // Check cache — reject if any label looks unhumanized (raw prompt text)
   const cached = getStepCache(jigId, entity, codeHash)
-  if (cached) return cached
+  if (cached && cached.every(s => s.name.length <= 60)) return cached
 
   // Scan handler for raw steps
   const { scanSteps } = await import("./sdk/jig.js")
   const raw = await scanSteps(def)
   if (raw.length === 0) return []
 
-  // Humanize via LLM
+  // Humanize via LLM (retry once on failure)
   let steps: CachedStep[]
-  try {
-    steps = await humanizeLabels(raw)
-  } catch (e) {
-    // Fallback: use raw labels as-is
-    console.warn("Step humanization failed, using raw labels:", (e as Error)?.message)
+  let humanized = false
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      steps = await humanizeLabels(raw)
+      humanized = true
+      break
+    } catch (e) {
+      console.warn(`Step humanization attempt ${attempt + 1} failed:`, (e as Error)?.message)
+      if (attempt === 0) await new Promise(r => setTimeout(r, 500))
+    }
+  }
+  // Fallback: use raw labels — don't cache so next request retries
+  if (!humanized) {
     steps = raw.map(s => ({ num: s.seq, name: s.label, connections: s.connections }))
+    return steps
   }
 
-  // Cache
-  try { setStepCache(jigId, entity, codeHash, steps) } catch {}
+  // Only cache successfully humanized steps
+  try { setStepCache(jigId, entity, codeHash, steps!) } catch {}
 
-  return steps
+  return steps!
 }
 
 async function humanizeLabels(

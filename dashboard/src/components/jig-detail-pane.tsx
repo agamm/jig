@@ -96,9 +96,15 @@ export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, 
     return () => { cancelled = true; };
   }, [jig.id, selectedEntity]);
 
-  // Steps: live steps during/after run, derived steps when idle
+  // Steps: live steps during/after run (with humanized names from derived), derived when idle
   const runSteps: RunStep[] = useMemo(() => {
-    if (mode.type === "running" || mode.type === "done") return liveSteps;
+    if (mode.type === "running" || mode.type === "done") {
+      // Merge humanized names from derivedSteps into liveSteps by step number
+      return liveSteps.map(live => {
+        const derived = derivedSteps.find(d => d.num === live.num);
+        return derived && derived.name.length <= 60 ? { ...live, name: derived.name } : live;
+      });
+    }
     return derivedSteps;
   }, [derivedSteps, mode, liveSteps]);
 
@@ -186,7 +192,7 @@ export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, 
             className="flex-1 rounded-md border border-[#1f1f23] bg-[#111113] px-2 py-1 text-[10px] text-[#555] font-mono outline-none cursor-not-allowed opacity-50"
             title="Per-jig model override — coming soon"
           >
-            <option>gemini-3-flash (default)</option>
+            <option>claude-haiku-4.5 (default)</option>
           </select>
         </div>
 

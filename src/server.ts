@@ -16,7 +16,7 @@ import { runJig, persist, isValidJigId } from "./runner.js"
 import type { RunEvent } from "./run-events.js"
 
 const TRIGGER_PARSE_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
-const JIG_EDITOR_MODEL = "moonshotai/kimi-k2.5"
+const JIG_EDITOR_MODEL = "deepseek/deepseek-v3.2"
 const MAX_AGENT_ROUNDS = 15
 
 const PROJECT_ROOT = join(import.meta.dir, "..")

@@ -4,7 +4,6 @@
 export function Spinner({ size = 14, className = "" }: { size?: number; className?: string }) {
   const dotSize = Math.max(2, size * 0.2)
   const gap = Math.max(2, size * 0.15)
-  const totalW = dotSize * 3 + gap * 2
   return (
     <span
       className={`inline-flex items-center justify-center shrink-0 ${className}`}
@@ -23,12 +22,6 @@ export function Spinner({ size = 14, className = "" }: { size?: number; classNam
           }}
         />
       ))}
-      <style>{`
-        @keyframes spinner-pulse {
-          0%, 80%, 100% { opacity: 0.25; transform: scale(0.7); }
-          40% { opacity: 1; transform: scale(1); }
-        }
-      `}</style>
     </span>
   )
 }

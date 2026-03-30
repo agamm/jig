@@ -93,7 +93,8 @@ export function RunSteps({
       )}
       <div className="rounded-lg border border-[#1f1f23] bg-[#111113]">
         {steps.map((step, i) => {
-          const hasOutput = !!step.output || (step.status === "fail" && mode.type === "done" && !!(mode as any).error);
+          const modeError = mode.type === "done" ? mode.error : undefined;
+          const hasOutput = !!step.output || (step.status === "fail" && !!modeError);
           const isExpanded = expandedStep === i;
           const stepRunning = step.status === "running";
 
@@ -185,11 +186,11 @@ export function RunSteps({
               </div>
 
               {/* Expanded output — also show mode.error on failed step */}
-              {isExpanded && (step.output || (step.status === "fail" && mode.type === "done" && (mode as any).error)) && (
+              {isExpanded && (step.output || (step.status === "fail" && modeError)) && (
                 <div className={`px-4 pb-3 pl-12 ${stepRunning ? "relative z-10" : ""}`} style={{ animation: "fade-up 0.1s ease" }}>
                   <div className="relative group/output">
-                    <pre className={`text-[10px] font-mono whitespace-pre-wrap rounded-md p-2 pr-8 border max-h-[200px] overflow-y-auto ${step.status === "fail" ? "text-[#ccc] bg-rose-500/5 border-rose-500/20" : "text-[#888] bg-[#0a0a0b] border-[#1f1f23]"}`}>{step.output || (mode.type === "done" ? (mode as any).error : "")}</pre>
-                    <CopyButton text={step.output || (mode.type === "done" ? (mode as any).error : "") || ""} />
+                    <pre className={`text-[10px] font-mono whitespace-pre-wrap rounded-md p-2 pr-8 border max-h-[200px] overflow-y-auto ${step.status === "fail" ? "text-[#ccc] bg-rose-500/5 border-rose-500/20" : "text-[#888] bg-[#0a0a0b] border-[#1f1f23]"}`}>{step.output || modeError || ""}</pre>
+                    <CopyButton text={step.output || modeError || ""} />
                   </div>
                 </div>
               )}

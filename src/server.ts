@@ -15,6 +15,7 @@ import { formatDuration } from "./utils.js"
 import { runJig, persist, isValidJigId } from "./runner.js"
 import type { RunEvent } from "./run-events.js"
 
+const MAIN_MODEL = "anthropic/claude-haiku-4.5"  // keep in sync with src/sdk/llm.ts
 const TRIGGER_PARSE_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
 const JIG_EDITOR_MODEL = "deepseek/deepseek-v3.2"
 const MAX_AGENT_ROUNDS = 15
@@ -1240,14 +1241,12 @@ export function createApiServer(port: number) {
 
       try {
         switch (route.handler) {
-          case "getModels": {
-            const { MAIN_MODEL } = await import("./sdk/llm.js")
+          case "getModels":
             return json({
               main: { id: MAIN_MODEL, label: MAIN_MODEL.split("/").pop()! },
               editor: { id: JIG_EDITOR_MODEL, label: JIG_EDITOR_MODEL.split("/").pop()! },
               fast: { id: TRIGGER_PARSE_MODEL, label: TRIGGER_PARSE_MODEL.split("/").pop()!.replace(/:.*/, "") },
             })
-          }
           case "listJigs":
             return handleGetJigs()
           case "getJig":

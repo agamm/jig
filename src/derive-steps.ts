@@ -2,7 +2,7 @@
  * Derive human-readable steps for a jig.
  *
  * 1. scanSteps() runs the handler in stub mode → raw labels + connections
- * 2. minimax polishes raw labels into human-readable names
+ * 2. LLM polishes raw labels into human-readable names
  * 3. Result cached by code hash — only re-derives when code changes
  */
 import type { JigDefinition } from "./sdk/jig.js"

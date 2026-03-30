@@ -213,7 +213,7 @@ export function DashboardShell({
                   <h3 className="text-[12px] text-[#555] uppercase tracking-wider">LLM Provider</h3>
                   <div className="rounded-lg border border-[#1f1f23] bg-[#111113] px-4 py-3">
                     <div className="flex items-center justify-between">
-                      <span className="text-[13px] text-[#ededed]">Anthropic — Claude Sonnet 4.6</span>
+                      <span className="text-[13px] text-[#ededed]">{models?.main?.id ?? "Loading..."}</span>
                       <span className="text-[11px] text-[#555] rounded-md border border-[#1f1f23] px-2 py-0.5">Change</span>
                     </div>
                   </div>

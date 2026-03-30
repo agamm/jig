@@ -9,6 +9,13 @@
 - [x] Deleted: deriveSteps LLM, jig_steps/jig_meta tables, recompile endpoint, derive-steps CLI command
 
 ## TODO
+- [ ] Per-jig model override
+  - Dashboard has a disabled model dropdown in jig detail pane — wire it up
+  - Add `model` field to JigDefinition options (optional override)
+  - Search dropdown: fetch available models from OpenRouter /api/v1/models, filter by tool support
+  - Store selection in jig file's `jig()` options: `{ model: "google/gemini-3-flash-preview" }`
+  - Pass to `agent()` and `llm()` calls at runtime via ctx or options
+  - UI: enable the select, add search/filter, show price per model
 - [ ] CLI step display parity with dashboard
   - CLI `runJigFile` receives RunEvents but ignores step-start/step-done — should render them
   - CLI `jig run` (no args) lists jigs without steps — could show derived steps per jig

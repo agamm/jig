@@ -184,7 +184,16 @@ async function _runJig(
     return { output, tools, durationMs }
 
   } catch (e: any) {
-    const error = e?.message ?? String(e)
+    // Extract detailed error info from OpenAI SDK / provider errors
+    let error = e?.message ?? String(e)
+    if (e?.status && e?.error) {
+      const detail = typeof e.error === "object"
+        ? (e.error.message || JSON.stringify(e.error))
+        : String(e.error)
+      error = `${e.status} ${detail}`
+      log(`LLM error (${e.status}): ${detail}`)
+      if (e.error?.metadata) log(`  metadata: ${JSON.stringify(e.error.metadata)}`)
+    }
     const durationMs = Date.now() - start
     log(`error after ${(durationMs / 1000).toFixed(1)}s: ${error}`)
     onEvent({ type: "error", message: error })

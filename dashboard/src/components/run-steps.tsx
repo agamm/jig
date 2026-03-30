@@ -55,15 +55,18 @@ export function RunSteps({
     setPrevModeType(modeType);
     if (modeType === "running") setExpandedStep(null);
     if (modeType === "done") {
+      // Auto-expand: failed step first, then last step with output
+      const failedIdx = steps.findIndex(s => s.status === "fail");
       const lastWithOutput = steps.findLastIndex(s => s.output);
-      setExpandedStep(lastWithOutput >= 0 ? lastWithOutput : null);
+      setExpandedStep(failedIdx >= 0 ? failedIdx : lastWithOutput >= 0 ? lastWithOutput : null);
     }
   }
 
   if (steps.length === 0 && mode.type === "running") {
     return (
-      <div className="rounded-lg border border-[#1f1f23] bg-[#111113] px-4 py-6 text-center">
-        <p className="text-[11px] text-[#555] italic">Executing jig — gathering data from connected services…</p>
+      <div className="flex items-center justify-center gap-3 rounded-lg border border-[#1f1f23] bg-[#111113] px-4 py-6">
+        <Spinner size={16} />
+        <p className="text-[11px] text-[#888] italic">Executing jig — gathering data from connected services…</p>
       </div>
     );
   }
@@ -90,7 +93,7 @@ export function RunSteps({
       )}
       <div className="rounded-lg border border-[#1f1f23] bg-[#111113]">
         {steps.map((step, i) => {
-          const hasOutput = !!step.output;
+          const hasOutput = !!step.output || (step.status === "fail" && mode.type === "done" && !!(mode as any).error);
           const isExpanded = expandedStep === i;
           const stepRunning = step.status === "running";
 
@@ -181,16 +184,17 @@ export function RunSteps({
                 )}
               </div>
 
-              {/* Expanded output */}
-              {isExpanded && step.output && (
+              {/* Expanded output — also show mode.error on failed step */}
+              {isExpanded && (step.output || (step.status === "fail" && mode.type === "done" && (mode as any).error)) && (
                 <div className={`px-4 pb-3 pl-12 ${stepRunning ? "relative z-10" : ""}`} style={{ animation: "fade-up 0.1s ease" }}>
-                  <pre className="text-[10px] text-[#888] font-mono whitespace-pre-wrap bg-[#0a0a0b] rounded-md p-2 border border-[#1f1f23] max-h-[200px] overflow-y-auto">{step.output}</pre>
+                  <pre className={`text-[10px] font-mono whitespace-pre-wrap rounded-md p-2 border max-h-[200px] overflow-y-auto ${step.status === "fail" ? "text-[#ccc] bg-rose-500/5 border-rose-500/20" : "text-[#888] bg-[#0a0a0b] border-[#1f1f23]"}`}>{step.output || (mode.type === "done" ? (mode as any).error : "")}</pre>
                 </div>
               )}
             </div>
           );
         })}
       </div>
+
     </div>
   );
 }

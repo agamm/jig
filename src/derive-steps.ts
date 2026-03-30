@@ -8,7 +8,7 @@
 import type { JigDefinition } from "./sdk/jig.js"
 import type { CachedStep } from "./db.js"
 
-const HUMANIZE_MODEL = "minimax/minimax-m2.7"
+const HUMANIZE_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
 
 export async function deriveSteps(
   def: JigDefinition,

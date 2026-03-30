@@ -4,7 +4,7 @@ import type { JigTool } from "./jig.js"
 import { spinner } from "./spinner.js"
 import { runContext, isStepScan, truncLabel } from "./context.js"
 
-export const DEFAULT_MODEL = "xiaomi/mimo-v2-pro"
+export const MAIN_MODEL = "google/gemini-3-flash-preview"
 const MAX_TOOL_ROUNDS = 15
 
 let _client: OpenAI | null = null
@@ -34,7 +34,7 @@ export async function llm<T = string>(
 
   if (isStepScan()) return (options?.schema ? {} : "") as T
 
-  const model = options?.model ?? DEFAULT_MODEL
+  const model = options?.model ?? MAIN_MODEL
   const maxTokens = options?.maxTokens ?? 4096
   const userContent = `${prompt}\n\nData:\n${JSON.stringify(data, null, 2)}`
 
@@ -63,8 +63,11 @@ export async function llm<T = string>(
       },
     }, { signal: spinner.signal })
 
-    const text = response.choices[0]?.message?.content
-    if (!text) throw new Error("LLM returned empty response")
+    const raw = response.choices[0]?.message?.content
+    if (!raw) throw new Error("LLM returned empty response")
+    // Strip backtick fences — many models wrap JSON in ```json ... ```
+    const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/)
+    const text = fenced ? fenced[1].trim() : raw.trim()
     return JSON.parse(text) as T
   }
 
@@ -104,7 +107,7 @@ export async function agent<T = string>(
 
   ctx?.enterAgent()
 
-  const model = options?.model ?? DEFAULT_MODEL
+  const model = options?.model ?? MAIN_MODEL
   spinner.show("agent")
 
   try {
@@ -120,7 +123,7 @@ async function runAgent<T>(
   tools: JigTool<any, any>[],
   options?: { schema?: Record<string, string>; model?: string; maxTokens?: number }
 ): Promise<T> {
-  const model = options?.model ?? DEFAULT_MODEL
+  const model = options?.model ?? MAIN_MODEL
   const maxTokens = options?.maxTokens ?? 4096
 
   // Build tool mapping and OpenAI tool definitions
@@ -250,9 +253,21 @@ async function structureResponse<T>(
     },
   }, { signal: spinner.signal })
 
-  const text = response.choices[0]?.message?.content
-  if (!text) throw new Error("Structured response was empty")
-  return JSON.parse(text)
+  const raw = response.choices[0]?.message?.content
+  if (!raw) throw new Error("Structured response was empty")
+  // Strip backtick fences — many models wrap JSON in ```json ... ```
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/)
+  const text = fenced ? fenced[1].trim() : raw.trim()
+  try {
+    const parsed = JSON.parse(text)
+    const missing = Object.keys(schema).filter(k => parsed[k] === undefined || parsed[k] === null)
+    if (missing.length > 0) {
+      console.error(`[llm] structureResponse missing keys: ${missing.join(", ")} — raw: ${text.slice(0, 200)}`)
+    }
+    return parsed
+  } catch {
+    throw new Error(`Failed to parse structured response: ${raw.slice(0, 300)}`)
+  }
 }
 
 /**

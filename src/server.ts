@@ -15,8 +15,8 @@ import { formatDuration } from "./utils.js"
 import { runJig, persist, isValidJigId } from "./runner.js"
 import type { RunEvent } from "./run-events.js"
 
-const TRIGGER_PARSE_MODEL = "minimax/minimax-m2.5:nitro"
-const AGENT_MODEL = "xiaomi/mimo-v2-pro"
+const TRIGGER_PARSE_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
+const JIG_EDITOR_MODEL = "moonshotai/kimi-k2.5"
 const MAX_AGENT_ROUNDS = 15
 
 const PROJECT_ROOT = join(import.meta.dir, "..")
@@ -685,7 +685,7 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
     session.status = "thinking"
 
     const response = await client.chat.completions.create({
-      model: AGENT_MODEL,
+      model: JIG_EDITOR_MODEL,
       max_tokens: 16384,
       messages: session.messages,
       tools: AGENT_TOOL_DEFS,

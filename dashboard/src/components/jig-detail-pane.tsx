@@ -178,6 +178,18 @@ export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, 
           </div>
         </div>
 
+        {/* Model selector (disabled — coming soon) */}
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-[#444]">Model</span>
+          <select
+            disabled
+            className="flex-1 rounded-md border border-[#1f1f23] bg-[#111113] px-2 py-1 text-[10px] text-[#555] font-mono outline-none cursor-not-allowed opacity-50"
+            title="Per-jig model override — coming soon"
+          >
+            <option>gemini-3-flash (default)</option>
+          </select>
+        </div>
+
         {/* Parameter inputs */}
         {hasParams && (
           <div className="rounded-lg border border-[#1f1f23] bg-[#111113] p-3 space-y-2">

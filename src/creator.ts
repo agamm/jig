@@ -7,7 +7,7 @@
 import { join, relative, resolve } from "path"
 import { existsSync, readFileSync } from "fs"
 import ts from "typescript"
-import { llm, agent, getClient, DEFAULT_MODEL } from "./sdk/llm.js"
+import { llm, agent, getClient, MAIN_MODEL } from "./sdk/llm.js"
 import { discoverJigs } from "./discover.js"
 import { loadServerConfigs } from "./mcp/config.js"
 import type { JigTool } from "./sdk/jig.js"

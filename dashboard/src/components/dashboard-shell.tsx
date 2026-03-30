@@ -128,6 +128,32 @@ export function DashboardShell({
           <NavItem icon={NavIcons.settings} label="Settings" active={view === "settings"} collapsed={collapsed} onClick={() => { setView("settings"); closeDetail(); }} />
         </div>
 
+        {/* Models */}
+        {!collapsed && (
+          <div className="border-t border-[#1f1f23] px-3 py-2.5">
+            <span className="text-[9px] text-[#444] uppercase tracking-wider">Models</span>
+            <div className="mt-1.5 space-y-1.5">
+              <div>
+                <span className="text-[9px] text-[#555]">Main</span>
+                <div className="text-[10px] text-[#888] font-mono truncate" title="google/gemini-3-flash-preview">gemini-3-flash</div>
+              </div>
+              <div>
+                <span className="text-[9px] text-[#555]">Editor</span>
+                <div className="text-[10px] text-[#888] font-mono truncate" title="moonshotai/kimi-k2.5">kimi-k2.5</div>
+              </div>
+              <div>
+                <span className="text-[9px] text-[#555]">Fast</span>
+                <div className="text-[10px] text-[#888] font-mono truncate" title="nvidia/nemotron-3-super-120b-a12b:free">nemotron-3-super</div>
+              </div>
+            </div>
+          </div>
+        )}
+        {collapsed && (
+          <div className="border-t border-[#1f1f23] py-2 flex flex-col items-center gap-1">
+            <span className="text-[9px] text-[#444]" title="Models">AI</span>
+          </div>
+        )}
+
         {/* Collapse toggle */}
         <div className={`border-t border-[#1f1f23] py-2 ${collapsed ? "px-1" : "px-2"}`}>
           <button

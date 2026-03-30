@@ -1162,6 +1162,7 @@ async function handleGetConnection(name: string): Promise<Response> {
 // ---------------------------------------------------------------------------
 
 function matchRoute(pathname: string): { handler: string; params: Record<string, string> } | null {
+  if (pathname === "/api/models") return { handler: "getModels", params: {} }
   if (pathname === "/api/jigs") return { handler: "listJigs", params: {} }
   if (pathname === "/api/connections") return { handler: "connections", params: {} }
 
@@ -1239,6 +1240,14 @@ export function createApiServer(port: number) {
 
       try {
         switch (route.handler) {
+          case "getModels": {
+            const { MAIN_MODEL } = await import("./sdk/llm.js")
+            return json({
+              main: { id: MAIN_MODEL, label: MAIN_MODEL.split("/").pop()! },
+              editor: { id: JIG_EDITOR_MODEL, label: JIG_EDITOR_MODEL.split("/").pop()! },
+              fast: { id: TRIGGER_PARSE_MODEL, label: TRIGGER_PARSE_MODEL.split("/").pop()!.replace(/:.*/, "") },
+            })
+          }
           case "listJigs":
             return handleGetJigs()
           case "getJig":

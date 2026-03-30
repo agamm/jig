@@ -11,17 +11,19 @@ import { ApprovalPane } from "@/components/approval-pane";
 import { ConnectionPane } from "@/components/connection-pane";
 import { ServiceIcon } from "@/components/service-icon";
 
-function useLocalStorage(key: string, initial: boolean): [boolean, (v: boolean) => void] {
+function useLocalStorage(key: string, initial: boolean): [boolean, (v: boolean) => void, boolean] {
   const [value, setValue] = useState(initial);
+  const [mounted, setMounted] = useState(false);
   useEffect(() => {
     const stored = localStorage.getItem(key);
     if (stored !== null) setValue(stored === "true");
+    setMounted(true);
   }, [key]);
   function set(v: boolean) {
     setValue(v);
     localStorage.setItem(key, String(v));
   }
-  return [value, set];
+  return [value, set, mounted];
 }
 
 export function DashboardShell({
@@ -44,7 +46,7 @@ export function DashboardShell({
   const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
   const [jigs, setJigs] = useState<Jig[]>(initialJigs);
   const [detailExpanded, setDetailExpanded] = useState(false);
-  const [sidebarSlim, setSidebarSlim] = useLocalStorage("jig-sidebar-slim", false);
+  const [sidebarSlim, setSidebarSlim, sidebarMounted] = useLocalStorage("jig-sidebar-slim", false);
   const [view, setView] = useQueryState("view", parseAsString);
 
   // Sync when parent changes jigs (e.g. phase change in mock mode)
@@ -54,10 +56,15 @@ export function DashboardShell({
     setJigs(initialJigs);
   }
 
+  const [models, setModels] = useState<Record<string, { id: string; label: string }> | null>(null);
+  useEffect(() => {
+    fetch("/api/models").then(r => r.ok ? r.json() : null).then(setModels).catch(() => {});
+  }, []);
+
   const currentJig = jigs.find(j => j.id === selectedJig) ?? null;
   const showOnboarding = phaseToggle ? phase === "day1" : jigs.length === 0 && !loading;
   const hasDetail = (selectedJig && currentJig) || activeApproval || selectedConnection;
-  const collapsed = sidebarSlim;
+  const collapsed = sidebarMounted ? sidebarSlim : false;
   const allConnections = [...new Set(jigs.flatMap(j => j.settings.connections))];
 
   function handleJigClick(jig: Jig) {
@@ -129,22 +136,16 @@ export function DashboardShell({
         </div>
 
         {/* Models */}
-        {!collapsed && (
+        {!collapsed && models && (
           <div className="border-t border-[#1f1f23] px-3 py-2.5">
             <span className="text-[9px] text-[#444] uppercase tracking-wider">Models</span>
             <div className="mt-1.5 space-y-1.5">
-              <div>
-                <span className="text-[9px] text-[#555]">Main</span>
-                <div className="text-[10px] text-[#888] font-mono truncate" title="anthropic/claude-haiku-4.5">claude-haiku-4.5</div>
-              </div>
-              <div>
-                <span className="text-[9px] text-[#555]">Editor</span>
-                <div className="text-[10px] text-[#888] font-mono truncate" title="deepseek/deepseek-v3.2">deepseek-v3.2</div>
-              </div>
-              <div>
-                <span className="text-[9px] text-[#555]">Fast</span>
-                <div className="text-[10px] text-[#888] font-mono truncate" title="nvidia/nemotron-3-super-120b-a12b:free">nemotron-3-super</div>
-              </div>
+              {(["main", "editor", "fast"] as const).map(k => models[k] && (
+                <div key={k}>
+                  <span className="text-[9px] text-[#555] capitalize">{k}</span>
+                  <div className="text-[10px] text-[#888] font-mono truncate" title={models[k].id}>{models[k].label}</div>
+                </div>
+              ))}
             </div>
           </div>
         )}

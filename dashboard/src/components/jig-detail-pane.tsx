@@ -12,6 +12,7 @@ import { TRIGGER_SUGGESTIONS } from "@/mock/mock-data";
 import { useTriggerSave } from "@/hooks/use-trigger-save";
 import { Spinner } from "@/components/spinner";
 import { useElapsed } from "@/hooks/use-elapsed";
+import { fetchJigSteps } from "@/lib/api";
 
 const statusDot = (s: string) =>
   s === "healthy" ? "bg-emerald-400" : s === "attention" ? "bg-amber-400" : "bg-rose-400";
@@ -26,7 +27,7 @@ export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, 
   onConnectionClick?: (name: string) => void;
 }) {
   const [detailTab, setDetailTab] = useState<"steps" | "code">("steps");
-  const trigger = useTriggerSave(jig.id, jig.settings.trigger);
+  const trigger = useTriggerSave(jig.id, jig.settings.trigger, selectedEntity);
   const [expandedRun, setExpandedRun] = useState<number | null>(null);
   const [agentInput, setAgentInput] = useState("");
 
@@ -38,16 +39,9 @@ export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, 
     // Derive fresh steps directly (step cache was cleared by write_jig_file)
     setDerivingSteps(true);
     try {
-      const res = await fetch(`/api/jigs/${encodeURIComponent(jig.id)}/steps`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ entity: selectedEntity ?? undefined }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.steps?.length) {
-          setDerivedSteps(data.steps.map((s: any) => ({ num: s.num, name: s.name, connections: s.connections })));
-        }
+      const data = await fetchJigSteps(jig.id, selectedEntity);
+      if (data.steps?.length) {
+        setDerivedSteps(data.steps.map((s) => ({ num: s.num, name: s.name, connections: s.connections })));
       }
     } catch {}
     setDerivingSteps(false);
@@ -80,15 +74,10 @@ export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, 
     }
     let cancelled = false;
     setDerivingSteps(true);
-    fetch(`/api/jigs/${encodeURIComponent(jig.id)}/steps`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ entity: selectedEntity ?? undefined }),
-    })
-      .then(r => r.json())
+    fetchJigSteps(jig.id, selectedEntity)
       .then(data => {
         if (!cancelled && data.steps?.length) {
-          setDerivedSteps(data.steps.map((s: any) => ({ num: s.num, name: s.name, connections: s.connections })));
+          setDerivedSteps(data.steps.map((s) => ({ num: s.num, name: s.name, connections: s.connections })));
         }
       })
       .catch(() => {})

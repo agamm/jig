@@ -1,7 +1,7 @@
-import { join, dirname } from "path"
+import { join } from "path"
 import { homedir } from "os"
 import { existsSync } from "fs"
-import { fileURLToPath } from "url"
+import { PROJECT_ROOT } from "../config/paths.js"
 
 export type StdioServerConfig = {
   type: "stdio"
@@ -29,7 +29,6 @@ export type ServerConfig = StdioServerConfig | RemoteServerConfig | RepoServerCo
 
 type ServerRegistry = Record<string, ServerConfig>
 
-const PROJECT_ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..")
 const SERVERS_DIR = join(homedir(), ".jig", "servers")
 
 function expandHome(str: string): string {

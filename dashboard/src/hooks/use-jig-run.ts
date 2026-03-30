@@ -1,5 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import type { RunStep, RunStepsMode } from "@/components/run-steps";
+import { cancelActiveRun, fetchActiveRun, fetchRunStatus, startJigRun } from "@/lib/api";
+import type { RunDetailDto, RunStatusDto } from "@shared/api";
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`
@@ -8,14 +10,19 @@ function formatDuration(ms: number): string {
   return `${Math.floor(s / 60)}m ${s % 60}s`
 }
 
-/** Map server step data to RunStep. */
-function toLiveSteps(steps: any[]): RunStep[] {
-  return steps.map((s: any) => ({
-    num: s.seq, name: s.label, status: s.status,
-    connections: s.connections,
-    output: s.output ?? undefined,
-    time: s.durationMs ? formatDuration(s.durationMs) : undefined,
+function toRunSteps(data: Pick<RunDetailDto, "steps">): RunStep[] {
+  return data.steps.map((step, idx) => ({
+    num: idx + 1,
+    name: step.label,
+    status: step.status,
+    connections: step.connections,
+    output: step.output ?? undefined,
+    time: step.status === "running" ? undefined : step.time,
   }))
+}
+
+function matchesTarget(data: { jigId?: string; entity?: string | null }, jigId: string, entity?: string | null): boolean {
+  return data.jigId === jigId && (data.entity ?? null) === (entity ?? null)
 }
 
 export function useJigRun(jigId: string, entity?: string | null) {
@@ -26,16 +33,18 @@ export function useJigRun(jigId: string, entity?: string | null) {
   const [toolReadOnly, setToolReadOnly] = useState<Record<string, boolean>>({});
   const abortRef = useRef<AbortController | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const runIdRef = useRef<number | null>(null);
 
   const cleanup = useCallback(() => {
     abortRef.current?.abort();
     if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = null;
+    runIdRef.current = null;
   }, []);
 
   useEffect(() => cleanup, [cleanup]);
 
-  /** Poll /api/runs/active until the run finishes. Shared by mount recovery and startRun. */
-  const pollUntilDone = useCallback(async (abort: AbortController, startTime: number, isDryRun: boolean) => {
+  const pollUntilDone = useCallback(async (runId: number, abort: AbortController, startTime: number, isDryRun: boolean) => {
     // Tick elapsed time
     timerRef.current = setInterval(() => {
       if (!abort.signal.aborted) {
@@ -48,48 +57,28 @@ export function useJigRun(jigId: string, entity?: string | null) {
       if (abort.signal.aborted) return;
 
       try {
-        const res = await fetch("/api/runs/active", { signal: abort.signal });
-        if (!res.ok) continue;
-        const data = await res.json();
+        const data = await fetchRunStatus(runId);
+        if (runIdRef.current !== runId || abort.signal.aborted) return;
 
-        if (!data.active) {
-          // Run finished — clear live tool state
-          clearInterval(timerRef.current!);
-          setCompletedTools(data.completedTools ?? []);
-          setActiveTools([]);
-          if (data.readOnly) setToolReadOnly(data.readOnly);
-          const status = data.status === "fail" ? "fail" : "success";
-          const elapsed = Math.round((Date.now() - startTime) / 1000);
-          setMode({ type: "done", elapsed, dryRun: isDryRun, status, error: data.error });
-
-          // Use steps from poll response (tracked in runProgress)
-          if (data.steps?.length) {
-            setLiveSteps(toLiveSteps(data.steps));
-          } else if (data.runId > 0) {
-            // Fallback: fetch from DB for runs started before this session
-            try {
-              const finalRes = await fetch(`/api/runs/${data.runId}`, { signal: abort.signal });
-              if (finalRes.ok) {
-                const run = await finalRes.json();
-                if (run.steps?.length) {
-                  setLiveSteps(run.steps.map((s: any, idx: number) => ({
-                    num: idx + 1, name: s.label, status: s.status,
-                    time: s.time, output: s.output ?? undefined,
-                  })));
-                }
-              }
-            } catch {}
-          }
-          return;
-        }
-
-        // Update live steps during run
-        if (data.steps?.length) {
-          setLiveSteps(toLiveSteps(data.steps));
-        }
+        setLiveSteps(toRunSteps(data));
         setCompletedTools(data.completedTools ?? []);
         setActiveTools(data.activeTools ?? []);
-        if (data.readOnly) setToolReadOnly(data.readOnly);
+        setToolReadOnly(data.readOnly ?? {});
+
+        if (data.status !== "running") {
+          clearInterval(timerRef.current!);
+          timerRef.current = null;
+          runIdRef.current = null;
+          const elapsed = Math.round((Date.now() - startTime) / 1000);
+          setMode({
+            type: "done",
+            elapsed,
+            dryRun: isDryRun,
+            status: data.status === "fail" ? "fail" : "success",
+            error: data.error ?? undefined,
+          });
+          return;
+        }
       } catch (e: any) {
         if (abort.signal.aborted) return;
       }
@@ -97,6 +86,8 @@ export function useJigRun(jigId: string, entity?: string | null) {
 
     if (!abort.signal.aborted) {
       clearInterval(timerRef.current!);
+      timerRef.current = null;
+      runIdRef.current = null;
       setMode(prev => prev.type === "running"
         ? { type: "done", elapsed: prev.elapsed, dryRun: prev.dryRun, status: "fail", error: "Timed out" }
         : prev
@@ -108,20 +99,20 @@ export function useJigRun(jigId: string, entity?: string | null) {
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch("/api/runs/active");
-        if (!res.ok) return;
-        const data = await res.json();
-        if (data.active && data.runId) {
+        const data: RunStatusDto = await fetchActiveRun();
+        if (data.active && data.runId && matchesTarget(data, jigId, entity)) {
           const abort = new AbortController();
           abortRef.current = abort;
-          setMode({ type: "running", elapsed: 0, dryRun: false });
+          runIdRef.current = data.runId;
+          setMode({ type: "running", elapsed: 0, dryRun: data.dryRun === true });
           setCompletedTools(data.completedTools ?? []);
           setActiveTools(data.activeTools ?? []);
-          await pollUntilDone(abort, Date.now(), false);
+          if (data.readOnly) setToolReadOnly(data.readOnly);
+          await pollUntilDone(data.runId, abort, Date.now(), data.dryRun === true);
         }
       } catch {}
     })();
-  }, [pollUntilDone]);
+  }, [entity, jigId, pollUntilDone]);
 
   const startRun = useCallback(async (dryRun: boolean, params?: Record<string, string>) => {
     cleanup();
@@ -136,20 +127,9 @@ export function useJigRun(jigId: string, entity?: string | null) {
     const startTime = Date.now();
 
     try {
-      const res = await fetch(`/api/jigs/${encodeURIComponent(jigId)}/run`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ entity: entity ?? undefined, dryRun, params }),
-        signal: abort.signal,
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: "Request failed" }));
-        setMode({ type: "done", elapsed: 0, dryRun, status: "fail", error: err.error ?? `HTTP ${res.status}` });
-        return;
-      }
-
-      await pollUntilDone(abort, startTime, dryRun);
+      const data = await startJigRun(jigId, { entity: entity ?? undefined, dryRun, params });
+      runIdRef.current = data.runId;
+      await pollUntilDone(data.runId, abort, startTime, dryRun);
     } catch (e: any) {
       if (abort.signal.aborted) return;
       setMode({ type: "done", elapsed: Math.round((Date.now() - startTime) / 1000), dryRun, status: "fail", error: e?.message ?? "Unknown error" });
@@ -157,6 +137,7 @@ export function useJigRun(jigId: string, entity?: string | null) {
   }, [jigId, entity, cleanup, pollUntilDone]);
 
   const dismiss = useCallback(() => {
+    runIdRef.current = null;
     setMode({ type: "idle" });
     setLiveSteps([]);
     setCompletedTools([]);
@@ -166,14 +147,14 @@ export function useJigRun(jigId: string, entity?: string | null) {
 
   const cancelRun = useCallback(async () => {
     cleanup();
-    try { await fetch("/api/runs/cancel", { method: "POST" }); } catch {}
+    try { await cancelActiveRun(); } catch {}
     setMode(prev => prev.type === "running"
       ? { type: "done", elapsed: prev.elapsed, dryRun: prev.dryRun, status: "fail" }
       : prev
     );
     setLiveSteps(prev => prev.map(s => s.status === "running" ? { ...s, status: "fail" } : s));
     setActiveTools([]);
-  }, [cleanup]);
+}, [cleanup]);
 
   return { mode, liveSteps, completedTools, activeTools, toolReadOnly, startRun, dismiss, cancelRun, isRunning: mode.type === "running" };
 }

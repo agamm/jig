@@ -5,10 +5,12 @@
  * Callers observe execution via the onEvent callback.
  */
 import { join } from "path"
+import { appendFile } from "node:fs/promises"
 import type { RunRecorder } from "./sdk/context.js"
 import type { RunEvent } from "./run-events.js"
 import { insertStep, completeStep, completeRun } from "./db.js"
 import { dryRunContext } from "./sdk/dryrun.js"
+import { isValidJigId } from "./domain/jig-id.js"
 
 // --- Debug log (async, queued) ---
 const LOG_PATH = join(import.meta.dir, "../jig_debug.log")
@@ -27,14 +29,7 @@ async function flushLog() {
   const batch = _logQueue
   _logQueue = []
   _logFlushPending = false
-  try { await Bun.write(Bun.file(LOG_PATH), batch.join(""), { mode: "a" }) } catch {}
-}
-
-// --- Jig ID validation ---
-const VALID_JIG_ID = /^[a-z0-9][a-z0-9_-]*$/
-
-export function isValidJigId(id: string): boolean {
-  return VALID_JIG_ID.test(id)
+  try { await appendFile(LOG_PATH, batch.join("")) } catch {}
 }
 
 // --- Runner ---

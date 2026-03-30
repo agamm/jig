@@ -1,6 +1,6 @@
 "use client"
 
-import type { AgentEvent, AgentStatus } from "@/hooks/use-agent"
+import type { AgentEvent, AgentStatus } from "@shared/api"
 import { useElapsed } from "@/hooks/use-elapsed"
 import { Spinner } from "@/components/spinner"
 

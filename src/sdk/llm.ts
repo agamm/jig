@@ -3,8 +3,8 @@ import OpenAI from "openai"
 import type { JigTool } from "./jig.js"
 import { spinner } from "./spinner.js"
 import { runContext, isStepScan, truncLabel } from "./context.js"
+import { MAIN_MODEL } from "../config/models.js"
 
-export const MAIN_MODEL = "anthropic/claude-haiku-4.5"
 const MAX_TOOL_ROUNDS = 30
 
 let _client: OpenAI | null = null
@@ -179,6 +179,13 @@ async function runAgent<T>(
     spinner.batch()
     const toolResults = await Promise.all(
       message.tool_calls.map(async (call) => {
+        if (call.type !== "function") {
+          return {
+            role: "tool" as const,
+            tool_call_id: call.id,
+            content: JSON.stringify({ error: `Unsupported tool call type: ${call.type}` }),
+          }
+        }
         spinner.tool(call.function.name)
         const tool = toolMap.get(call.function.name)
         if (!tool) {

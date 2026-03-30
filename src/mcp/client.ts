@@ -9,9 +9,7 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js"
 import type { ServerConfig } from "./config.js"
 import { resolveToken } from "./config.js"
 import { JigOAuthProvider } from "./auth.js"
-
-const PROJECT_ROOT = join(import.meta.dir, "../..")
-const SCHEMAS_DIR = join(PROJECT_ROOT, ".jig/schemas")
+import { PROJECT_ROOT, SCHEMAS_DIR } from "../config/paths.js"
 
 export type McpConnection = {
   client: Client
@@ -41,7 +39,7 @@ export async function connectServer(
 
   // Remote server with token_command — use static auth header
   if (config.auth) {
-    return connectWithToken(name, config)
+    return connectWithToken(name, config as ServerConfig & { type: "remote"; auth: string })
   }
 
   // Remote server with browser OAuth

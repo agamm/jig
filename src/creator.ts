@@ -4,18 +4,15 @@
  * Abstract module with no CLI coupling. All I/O goes through JigIO.emit()
  * with structured events — the presentation layer decides how to render.
  */
-import { join, relative, resolve } from "path"
+import { join, relative } from "path"
 import { existsSync, readFileSync } from "fs"
-import ts from "typescript"
-import { llm, agent, getClient, MAIN_MODEL } from "./sdk/llm.js"
+import { llm, agent } from "./sdk/llm.js"
 import { discoverJigs } from "./discover.js"
 import { loadServerConfigs } from "./mcp/config.js"
 import type { JigTool } from "./sdk/jig.js"
-
-const PROJECT_ROOT = join(import.meta.dir, "..")
-const SCHEMAS_DIR = join(PROJECT_ROOT, ".jig/schemas")
-const TYPES_DIR = join(PROJECT_ROOT, ".jig/types")
-const JIGS_DIR = join(PROJECT_ROOT, "jigs")
+import { JIGS_DIR, PROJECT_ROOT, SCHEMAS_DIR, TYPES_DIR } from "./config/paths.js"
+import { validateTsFile } from "./services/jig-checker.js"
+import { writeJigSource } from "./services/jig-writer.js"
 const MAX_FIX_ATTEMPTS = 3
 
 // ---------------------------------------------------------------------------
@@ -114,7 +111,7 @@ export async function createJig(description: string, io: JigIO): Promise<CreateR
   // 8. Write + validate + fix loop
   const relFile = `jigs/${name}.ts`
   io.emit({ type: "write", file: relFile })
-  await Bun.write(targetPath, code)
+  await writeJigSource(targetPath, code, { jigId: name })
   code = await validateAndFix(targetPath, code, context, io)
 
   // 9. Dry-run + LLM review
@@ -130,7 +127,7 @@ export async function createJig(description: string, io: JigIO): Promise<CreateR
     )
   }
 
-  await Bun.write(targetPath, code)
+  await writeJigSource(targetPath, code, { jigId: name })
 
   io.emit({ type: "created", name, file: relFile })
   return { path: targetPath, name, code }
@@ -202,7 +199,7 @@ export async function editJig(
   })
   code = stripCodeFences(code)
 
-  await Bun.write(targetPath, code)
+  await writeJigSource(targetPath, code, { jigId: name, entity: entity ?? null })
   code = await validateAndFix(targetPath, code, context, io)
   code = await dryRunAndReview(instruction, code, context, name, entity, io)
 
@@ -214,7 +211,7 @@ export async function editJig(
     )
   }
 
-  await Bun.write(targetPath, code)
+  await writeJigSource(targetPath, code, { jigId: name, entity: entity ?? null })
 
   const displayName = entity ? `${name} ${entity}` : name
   const relFile = relative(PROJECT_ROOT, targetPath)
@@ -564,26 +561,7 @@ The tools array and probe results show what's available. Use multiple tools to g
 // ---------------------------------------------------------------------------
 
 async function validate(filePath: string): Promise<{ ok: boolean; errors?: string }> {
-  const tsconfigPath = join(PROJECT_ROOT, "tsconfig.json")
-  const configFile = ts.readConfigFile(tsconfigPath, p => readFileSync(p, "utf-8"))
-  const parsedConfig = ts.parseJsonConfigFileContent(configFile.config, ts.sys, PROJECT_ROOT)
-
-  const program = ts.createProgram([filePath], { ...parsedConfig.options, noEmit: true })
-  const diagnostics = ts.getPreEmitDiagnostics(program)
-
-  const fileErrors = diagnostics.filter(d =>
-    d.file && resolve(d.file.fileName) === resolve(filePath)
-  )
-
-  if (fileErrors.length === 0) return { ok: true }
-
-  const formatted = fileErrors.map(d => {
-    const { line } = d.file!.getLineAndCharacterOfPosition(d.start!)
-    const msg = ts.flattenDiagnosticMessageText(d.messageText, "\n")
-    return `Line ${line + 1}: ${msg}`
-  }).join("\n")
-
-  return { ok: false, errors: formatted }
+  return validateTsFile(filePath)
 }
 
 // ---------------------------------------------------------------------------
@@ -634,7 +612,7 @@ async function validateAndFix(
     io.emit({ type: "validate", ok: false, errors: result.errors })
     io.emit({ type: "fix", attempt: attempt + 1, max: MAX_FIX_ATTEMPTS })
     code = stripCodeFences(await fixCode(code, result.errors!, context.typeDefs))
-    await Bun.write(filePath, code)
+    await writeJigSource(filePath, code)
   }
   return code
 }
@@ -663,7 +641,7 @@ async function dryRunAndReview(
     const filePath = entity
       ? join(JIGS_DIR, name, `${entity}.ts`)
       : join(JIGS_DIR, `${name}.ts`)
-    await Bun.write(filePath, code)
+    await writeJigSource(filePath, code, { jigId: name, entity: entity ?? null })
     const recheck = await validate(filePath)
     io.emit({ type: "validate", ok: recheck.ok, errors: recheck.errors })
   } else {
@@ -769,4 +747,3 @@ export function extractImportedServers(code: string): string[] {
   const matches = code.matchAll(/from\s+["'].*\.jig\/connections\/(\w+)\.js["']/g)
   return [...matches].map(m => m[1])
 }
-

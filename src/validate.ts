@@ -4,11 +4,9 @@
  * Used by the creator pipeline after generating/editing jigs,
  * and can be run standalone: bun run src/validate.ts jigs/weekly-update.ts
  */
-import { join } from "path"
 import { existsSync } from "fs"
 import type { JigDefinition, JigTrigger } from "./sdk/jig.js"
-
-const PROJECT_ROOT = join(import.meta.dir, "..")
+import { PROJECT_ROOT } from "./config/paths.js"
 
 // ---------------------------------------------------------------------------
 // Validation errors
@@ -178,7 +176,7 @@ if (import.meta.main) {
     process.exit(1)
   }
 
-  const absPath = path.startsWith("/") ? path : join(PROJECT_ROOT, path)
+  const absPath = path.startsWith("/") ? path : `${PROJECT_ROOT}/${path}`
   const result = await validateJigFile(absPath)
 
   if (result.ok) {

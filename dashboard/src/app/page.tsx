@@ -3,6 +3,7 @@
 import { Suspense, useState, useEffect } from "react";
 import type { Jig } from "@/types/jig";
 import { DashboardShell } from "@/components/dashboard-shell";
+import { fetchJigs } from "@/lib/api";
 
 function Dashboard() {
   const [jigs, setJigs] = useState<Jig[]>([]);
@@ -13,9 +14,9 @@ function Dashboard() {
     async function load() {
       for (let attempt = 0; attempt < 10; attempt++) {
         try {
-          const res = await fetch("/api/jigs");
-          if (res.ok && !cancelled) {
-            setJigs(await res.json());
+          const data = await fetchJigs();
+          if (!cancelled) {
+            setJigs(data);
             setLoading(false);
             return;
           }

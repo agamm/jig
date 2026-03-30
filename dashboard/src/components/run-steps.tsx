@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ServiceIcon } from "@/components/service-icon";
 import { formatElapsed } from "@/lib/format";
 import { Spinner } from "@/components/spinner";
@@ -51,7 +51,8 @@ export function RunSteps({
   // Auto-expand output when run completes
   const modeType = mode.type;
   const [prevModeType, setPrevModeType] = useState(modeType);
-  if (modeType !== prevModeType) {
+  useEffect(() => {
+    if (modeType === prevModeType) return;
     setPrevModeType(modeType);
     if (modeType === "running") setExpandedStep(null);
     if (modeType === "done") {
@@ -60,7 +61,7 @@ export function RunSteps({
       const lastWithOutput = steps.findLastIndex(s => s.output);
       setExpandedStep(failedIdx >= 0 ? failedIdx : lastWithOutput >= 0 ? lastWithOutput : null);
     }
-  }
+  }, [modeType, prevModeType, steps]);
 
   if (steps.length === 0 && mode.type === "running") {
     return (
@@ -176,8 +177,8 @@ export function RunSteps({
                     </div>
                   )}
                 </div>
-                {step.time && <span className={`text-[10px] font-mono shrink-0 mt-0.5 ${stepRunning ? "text-blue-400/60" : "text-[#444]"}`}>{step.time}</span>}
-                {!step.time && stepRunning && isRunning && (
+                {step.time && !(stepRunning && isRunning) && <span className={`text-[10px] font-mono shrink-0 mt-0.5 ${stepRunning ? "text-blue-400/60" : "text-[#444]"}`}>{step.time}</span>}
+                {stepRunning && isRunning && (
                   <span className="text-[10px] font-mono text-blue-400/60 shrink-0 mt-0.5">{formatElapsed(mode.elapsed)}</span>
                 )}
                 {hasOutput && (

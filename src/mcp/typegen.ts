@@ -12,11 +12,7 @@
 import { join } from "node:path"
 import { readdir, mkdir } from "node:fs/promises"
 import type { Tool } from "@modelcontextprotocol/sdk/types.js"
-
-const PROJECT_ROOT = join(import.meta.dir, "../..")
-const SCHEMAS_DIR = join(PROJECT_ROOT, ".jig/schemas")
-const TYPES_DIR = join(PROJECT_ROOT, ".jig/types")
-const CONNECTIONS_DIR = join(PROJECT_ROOT, ".jig/connections")
+import { CONNECTIONS_DIR, PROJECT_ROOT, SCHEMAS_DIR, TYPES_DIR } from "../config/paths.js"
 
 function jsonSchemaTypeToTS(prop: any): string {
   if (prop.enum) {

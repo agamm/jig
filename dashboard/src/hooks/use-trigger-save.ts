@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from "react"
 import { toast } from "@/components/toast"
+import { updateJigTrigger } from "@/lib/api"
 
-export function useTriggerSave(jigId: string, serverTrigger: string) {
+export function useTriggerSave(jigId: string, serverTrigger: string, entity?: string | null) {
   const [editing, setEditing] = useState(false)
   const [value, setValue] = useState(serverTrigger)
   const [display, setDisplay] = useState(serverTrigger)
@@ -21,26 +22,17 @@ export function useTriggerSave(jigId: string, serverTrigger: string) {
   const save = async () => {
     setSaving(true)
     try {
-      const res = await fetch(`/api/jigs/${encodeURIComponent(jigId)}/trigger`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ trigger: value }),
-      })
-      const data = await res.json()
-      if (data.ok) {
-        savedLocally.current = true
-        setDisplay(data.trigger)
-        setValue(data.trigger)
-        if (data.warning) {
-          toast.info(`Set to "${data.trigger}" — ${data.warning}`)
-        } else {
-          toast.success(`Trigger updated to "${data.trigger}"`)
-        }
+      const data = await updateJigTrigger(jigId, value, entity)
+      savedLocally.current = true
+      setDisplay(data.trigger)
+      setValue(data.trigger)
+      if (data.warning) {
+        toast.info(`Set to "${data.trigger}" — ${data.warning}`)
       } else {
-        toast.error(data.error || "Failed to save trigger")
+        toast.success(`Trigger updated to "${data.trigger}"`)
       }
-    } catch {
-      toast.error("Failed to save trigger")
+    } catch (e: any) {
+      toast.error(e?.message ?? "Failed to save trigger")
     }
     setSaving(false)
     setEditing(false)

@@ -7,8 +7,7 @@
  */
 import type { JigDefinition } from "./sdk/jig.js"
 import type { CachedStep } from "./db.js"
-
-const HUMANIZE_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
+import { HUMANIZE_MODEL } from "./config/models.js"
 
 export async function deriveSteps(
   def: JigDefinition,

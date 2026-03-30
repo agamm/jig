@@ -10,6 +10,8 @@ import { ReviewPane } from "@/components/review-pane";
 import { ApprovalPane } from "@/components/approval-pane";
 import { ConnectionPane } from "@/components/connection-pane";
 import { ServiceIcon } from "@/components/service-icon";
+import { fetchModels } from "@/lib/api";
+import type { ModelsDto } from "@shared/api";
 
 function useLocalStorage(key: string, initial: boolean): [boolean, (v: boolean) => void, boolean] {
   const [value, setValue] = useState(initial);
@@ -50,15 +52,13 @@ export function DashboardShell({
   const [view, setView] = useQueryState("view", parseAsString);
 
   // Sync when parent changes jigs (e.g. phase change in mock mode)
-  const [prevJigs, setPrevJigs] = useState(initialJigs);
-  if (initialJigs !== prevJigs) {
-    setPrevJigs(initialJigs);
-    setJigs(initialJigs);
-  }
-
-  const [models, setModels] = useState<Record<string, { id: string; label: string }> | null>(null);
   useEffect(() => {
-    fetch("/api/models").then(r => r.ok ? r.json() : null).then(setModels).catch(() => {});
+    setJigs(initialJigs);
+  }, [initialJigs]);
+
+  const [models, setModels] = useState<ModelsDto | null>(null);
+  useEffect(() => {
+    fetchModels().then(setModels).catch(() => {});
   }, []);
 
   const currentJig = jigs.find(j => j.id === selectedJig) ?? null;

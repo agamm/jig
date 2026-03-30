@@ -6,9 +6,7 @@
  * This module only stores execution history.
  */
 import { Database } from "bun:sqlite"
-import { join } from "path"
-
-const PROJECT_ROOT = join(import.meta.dir, "..")
+import { PROJECT_ROOT } from "./config/paths.js"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -35,7 +33,7 @@ export interface StepRow {
   finished_at: string | null
   duration_ms: number | null
   output: string | null
-  status: "running" | "success" | "fail"
+  status: "running" | "success" | "fail" | "healed"
   error: string | null
   connections: string | null // JSON array of connection names
 }
@@ -110,7 +108,7 @@ let _db: Database | null = null
 
 export function openDb(path?: string): Database {
   if (_db) return _db
-  const dbPath = path ?? join(PROJECT_ROOT, "jig.db")
+  const dbPath = path ?? `${PROJECT_ROOT}/jig.db`
   try {
     _db = new Database(dbPath)
     _db.exec("PRAGMA journal_mode = WAL")
@@ -246,7 +244,7 @@ export function insertStep(runId: number, seq: number, label: string): number {
 export function completeStep(
   stepId: number,
   output: string,
-  status: "success" | "fail",
+  status: "success" | "fail" | "healed",
   durationMs: number,
   connections: string[],
   error?: string
@@ -282,4 +280,3 @@ export function clearStepCache(jigId: string, entity: string | null): void {
   const db = openDb()
   db.prepare(`DELETE FROM step_cache WHERE jig_id = ? AND entity IS ?`).run(jigId, entity)
 }
-

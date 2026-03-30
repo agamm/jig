@@ -11,12 +11,10 @@ import { existsSync } from "fs"
 import { join, relative } from "path"
 import { createInterface } from "node:readline/promises"
 import type { JigIO, JigEvent } from "./creator.js"
+import { CONNECTIONS_DIR, PROJECT_ROOT, SCHEMAS_DIR } from "./config/paths.js"
 
 const API_PORT = parseInt(process.env.PORT ?? "3141")
 const API_BASE = `http://localhost:${API_PORT}`
-
-const PROJECT_ROOT = join(import.meta.dir, "..")
-const SCHEMAS_DIR = join(PROJECT_ROOT, ".jig/schemas")
 
 const rawArgs = process.argv.slice(2)
 const dryRun = rawArgs.includes("--dry-run")
@@ -367,8 +365,6 @@ try {
 // ---------------------------------------------------------------------------
 
 async function update() {
-  const PROJECT_ROOT = join(import.meta.dir, "..")
-
   // Check if upstream remote exists
   const remoteCheck = Bun.spawn(["git", "remote", "get-url", "upstream"], { cwd: PROJECT_ROOT, stdout: "pipe", stderr: "pipe" })
   await remoteCheck.exited
@@ -470,8 +466,7 @@ async function connect(serverName: string | undefined, io: JigIO) {
 // ---------------------------------------------------------------------------
 
 function checkConnections(io: JigIO) {
-  const connectionsDir = join(PROJECT_ROOT, ".jig/connections")
-  if (!existsSync(connectionsDir) || !existsSync(join(connectionsDir, "index.ts"))) {
+  if (!existsSync(CONNECTIONS_DIR) || !existsSync(join(CONNECTIONS_DIR, "index.ts"))) {
     io.emit({ type: "error", code: "no-connections", message: `No connections found. Run "jig connect <server>" first.` })
     process.exit(1)
   }

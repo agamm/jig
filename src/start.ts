@@ -5,13 +5,10 @@
  * Next.js runs on the user-facing port and rewrites /api/* to the Bun server.
  * Single URL for the user, no CORS.
  */
-import { join } from "path"
 import { existsSync } from "fs"
 import { createInterface } from "node:readline/promises"
 import { createApiServer } from "./server.js"
-
-const PROJECT_ROOT = join(import.meta.dir, "..")
-const DASHBOARD_DIR = join(PROJECT_ROOT, "dashboard")
+import { CONNECTIONS_DIR, DASHBOARD_DIR, PROJECT_ROOT } from "./config/paths.js"
 
 /** Check if a port is free by briefly listening, then closing. */
 async function isPortFree(port: number): Promise<boolean> {
@@ -85,7 +82,7 @@ function tryServe(start: number): ReturnType<typeof createApiServer> {
 
 export async function startServer(options?: { port?: number }) {
   // Auto-install dashboard deps if missing
-  if (!existsSync(join(DASHBOARD_DIR, "node_modules"))) {
+  if (!existsSync(`${DASHBOARD_DIR}/node_modules`)) {
     console.log("Installing dashboard dependencies...")
     const install = Bun.spawn(["pnpm", "install"], { cwd: DASHBOARD_DIR, stdout: "inherit", stderr: "inherit" })
     const code = await install.exited
@@ -96,14 +93,14 @@ export async function startServer(options?: { port?: number }) {
   }
 
   // Verify connection files are up-to-date (regenerate if they reference missing modules)
-  const connectionsDir = join(PROJECT_ROOT, ".jig/connections")
+  const connectionsDir = CONNECTIONS_DIR
   if (existsSync(connectionsDir)) {
-    const indexFile = join(connectionsDir, "index.ts")
+    const indexFile = `${connectionsDir}/index.ts`
     if (existsSync(indexFile)) {
       const { readFileSync, readdirSync } = await import("fs")
       const files = readdirSync(connectionsDir).filter(f => f.endsWith(".ts") && f !== "index.ts")
       for (const file of files) {
-        const content = readFileSync(join(connectionsDir, file), "utf-8")
+        const content = readFileSync(`${connectionsDir}/${file}`, "utf-8")
         if (content.includes("sdk/connections")) {
           console.log(`Stale connection files detected. Regenerating...`)
           const regen = Bun.spawn(["bun", "run", "src/mcp/typegen.ts"], { cwd: PROJECT_ROOT, stdout: "inherit", stderr: "inherit" })

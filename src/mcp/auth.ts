@@ -3,12 +3,11 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { mkdir } from "node:fs/promises"
 import open from "open"
-import type {
-  OAuthClientProvider,
-  OAuthClientMetadata,
-  OAuthClientInformationMixed,
-  OAuthTokens,
-} from "@modelcontextprotocol/sdk/client/auth.js"
+import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js"
+
+type OAuthClientMetadata = OAuthClientProvider["clientMetadata"]
+type OAuthClientInformationMixed = NonNullable<Awaited<ReturnType<OAuthClientProvider["clientInformation"]>>>
+type OAuthTokens = NonNullable<Awaited<ReturnType<OAuthClientProvider["tokens"]>>>
 
 const TOKENS_DIR = join(homedir(), ".jig", "tokens")
 const CALLBACK_PORT = 9876
@@ -46,7 +45,7 @@ export class JigOAuthProvider implements OAuthClientProvider {
 
   get clientMetadata(): OAuthClientMetadata {
     return {
-      redirect_uris: [new URL(REDIRECT_URL)],
+      redirect_uris: [REDIRECT_URL],
       token_endpoint_auth_method: "client_secret_basic",
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
@@ -58,7 +57,7 @@ export class JigOAuthProvider implements OAuthClientProvider {
     try {
       const file = Bun.file(clientPath(this.serverName))
       if (!(await file.exists())) return undefined
-      return await file.json()
+      return await file.json() as OAuthClientInformationMixed
     } catch {
       return undefined
     }
@@ -73,7 +72,7 @@ export class JigOAuthProvider implements OAuthClientProvider {
     try {
       const file = Bun.file(tokenPath(this.serverName))
       if (!(await file.exists())) return undefined
-      return await file.json()
+      return await file.json() as OAuthTokens
     } catch {
       return undefined
     }

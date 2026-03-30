@@ -341,6 +341,11 @@ try {
       break
     }
 
+    case "update": {
+      await update()
+      break
+    }
+
     default:
       console.log(`jig — AI workflow automation\n`)
       console.log(`Commands:`)
@@ -349,11 +354,68 @@ try {
       console.log(`  jig run <name> [args]  Run a jig`)
       console.log(`  jig new [description]  AI generates a new jig`)
       console.log(`  jig edit <name> [ent]  AI modifies an existing jig`)
+      console.log(`  jig update             Pull latest from upstream`)
       break
   }
 } catch (e: any) {
   if (e?.message) console.error(e.message)
   process.exit(1)
+}
+
+// ---------------------------------------------------------------------------
+// update — pull latest from upstream, reinstall deps
+// ---------------------------------------------------------------------------
+
+async function update() {
+  const PROJECT_ROOT = join(import.meta.dir, "..")
+
+  // Check if upstream remote exists
+  const remoteCheck = Bun.spawn(["git", "remote", "get-url", "upstream"], { cwd: PROJECT_ROOT, stdout: "pipe", stderr: "pipe" })
+  await remoteCheck.exited
+  if (remoteCheck.exitCode !== 0) {
+    console.log("No upstream remote found — this is the upstream repo.")
+    console.log("Use git pull directly.")
+    return
+  }
+
+  console.log("Updating from upstream...\n")
+
+  // Stash any local changes (lockfile diffs, etc.)
+  const statusProc = Bun.spawn(["git", "status", "--porcelain"], { cwd: PROJECT_ROOT, stdout: "pipe" })
+  const status = await new Response(statusProc.stdout).text()
+  const hasChanges = status.trim().length > 0
+
+  if (hasChanges) {
+    console.log("  Stashing local changes...")
+    const stash = Bun.spawn(["git", "stash", "--include-untracked"], { cwd: PROJECT_ROOT, stdout: "inherit", stderr: "inherit" })
+    if (await stash.exited !== 0) {
+      console.error("Failed to stash changes.")
+      return
+    }
+  }
+
+  // Pull with rebase
+  console.log("  Pulling upstream main...")
+  const pull = Bun.spawn(["git", "pull", "upstream", "main", "--rebase"], { cwd: PROJECT_ROOT, stdout: "inherit", stderr: "inherit" })
+  const pullCode = await pull.exited
+
+  // Restore stash
+  if (hasChanges) {
+    console.log("  Restoring local changes...")
+    Bun.spawn(["git", "stash", "pop"], { cwd: PROJECT_ROOT, stdout: "inherit", stderr: "inherit" })
+  }
+
+  if (pullCode !== 0) {
+    console.error("\nPull failed. Resolve conflicts and try again.")
+    return
+  }
+
+  // Reinstall deps
+  console.log("  Installing dependencies...")
+  const install = Bun.spawn(["pnpm", "install"], { cwd: join(PROJECT_ROOT, "dashboard"), stdout: "inherit", stderr: "inherit" })
+  await install.exited
+
+  console.log("\n  ✓ Updated successfully.\n")
 }
 
 // ---------------------------------------------------------------------------

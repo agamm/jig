@@ -68,7 +68,6 @@ export function CreateJigPane({
       <div className="construction-stripe border-b border-amber-500/20 px-4 py-2 flex items-center gap-2">
         <span className="text-amber-400 text-[11px]">&#9888;</span>
         <span className="text-[11px] text-amber-400 font-medium">Draft &mdash; under construction</span>
-        <span className="text-[10px] text-amber-400/50 ml-auto">Name it, describe it, then create</span>
       </div>
 
       <PaneHeader

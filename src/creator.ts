@@ -13,6 +13,7 @@ import type { JigTool } from "./sdk/jig.js"
 import { JIGS_DIR, PROJECT_ROOT, SCHEMAS_DIR, TYPES_DIR } from "./config/paths.js"
 import { validateTsFile } from "./services/jig-checker.js"
 import { writeJigSource } from "./services/jig-writer.js"
+import { buildCreatorJigPrompt } from "./services/jig-writing-prompt.js"
 const MAX_FIX_ATTEMPTS = 3
 
 // ---------------------------------------------------------------------------
@@ -474,83 +475,13 @@ async function generateJigCode(
   context: CreatorContext,
   options: { importPrefix: string; edit?: { existingCode: string } }
 ): Promise<string> {
-  const isEdit = !!options.edit
-
-  let prompt = `${context.typeDefs}
-
-${context.skillMd}
-
-## Available Connections
-${context.serverDescriptions}
-
-## Tool Catalog
-${context.toolCatalog}
-
-## Tool Schemas (exact param names, types, required fields)
-${context.relevantSchemas}
-
-## Probe Results (real data from the user's connected services)
-${probeResults}
-
-## Example Jig (for reference)
-\`\`\`typescript
-${context.exampleJig}
-\`\`\`
-`
-
-  if (isEdit) {
-    prompt += `
-## Existing Jig Code (to modify)
-\`\`\`typescript
-${options.edit!.existingCode}
-\`\`\`
-
-## Edit Instruction
-${description}
-
-Modify the existing jig code according to the instruction. Preserve the existing structure and only change what's needed.
-`
-  } else {
-    prompt += `
-## Task
-Create a new jig that does the following:
-${description}
-`
-  }
-
-  prompt += `
-## Rules (in priority order)
-
-### 1. Maximize determinism (most important)
-Follow SKILL.md's determinism hierarchy — prefer direct tool calls > llm() > agent():
-- Direct call when you know the tool + params at write time (e.g. list_meetings({ time_range: "last_week" }))
-- llm() for synthesis, writing, or classification from known data (one call, no tools, deterministic given input)
-- agent() only when the sequence of tool calls requires runtime judgment (e.g. search → read results → search deeper)
-A single agent() wrapping everything is acceptable when the workflow is genuinely fuzzy end-to-end, but default to breaking steps apart.
-
-### 2. Show progress
-Use ctx.output() to show status before each step so the user knows what's happening:
-  ctx.output("Listing meetings...")
-  const meetings = await granola.list_meetings(...)
-  ctx.output("Analyzing insights...")
-  const insights = await llm(...)
-
-### 3. Only add params when the user's description implies configurability
-If the user said "last week", hardcode "last_week" — don't make it a param they'll be prompted for.
-Params are for things the user would genuinely want to change each run.
-
-### 4. Use all relevant tools
-The tools array and probe results show what's available. Use multiple tools to get richer data — don't rely on a single tool when others would improve the result.
-
-### 5. Code format
-- Output ONLY TypeScript code. No explanation, no markdown fences.
-- Import SDK from "${options.importPrefix}/src/index.js" (jig, llm, agent)
-- Import connections from "${options.importPrefix}/.jig/connections/{server}.js"
-- Use exact param names and types from the type definitions and schemas above
-- Use ctx.output() for output, NEVER console.log()
-- End the file with: export default myJig (do NOT call run() or process.exit())
-- Do NOT use require() or CommonJS imports
-- Do NOT add markdown fences around the code`
+  const prompt = buildCreatorJigPrompt({
+    description,
+    probeResults,
+    context,
+    importPrefix: options.importPrefix,
+    existingCode: options.edit?.existingCode,
+  })
 
   const result = await llm(prompt, {}, { maxTokens: 16384 })
   return result as string

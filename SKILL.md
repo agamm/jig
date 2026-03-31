@@ -41,6 +41,9 @@ const myJig = jig("my-jig", {
 export default myJig
 ```
 
+If a jig does not need user-supplied inputs, omit `params` entirely. Do not add placeholder
+or speculative params just because a jig could theoretically be configurable.
+
 ### `run(definition, params)` — called by the CLI, not by jig files
 
 Jig files just `export default myJig`. The CLI imports and calls `run()`.
@@ -147,6 +150,35 @@ Use `agent()` only where you genuinely need fuzzy judgment.
 - Calculating dates, building file paths, formatting strings
 - Conditional logic based on params
 - Combining or restructuring data between steps
+
+### Params
+
+Only add `params` when the user clearly wants to vary something between runs.
+
+- If the request already specifies the value, hardcode it
+- If the workflow can run sensibly without any user input, omit `params`
+- Do not add placeholder params for things like limits, labels, time ranges, or recipients unless the request implies they should be editable
+
+Good:
+
+```typescript
+const myJig = jig("weekly-update", {
+  tools: [granola.list_meetings],
+}, async (ctx) => {
+  const meetings = await granola.list_meetings({ time_range: "last_week" })
+})
+```
+
+Also good:
+
+```typescript
+const myJig = jig("client-update", {
+  params: { client: "Client or company name" },
+  tools: [workspace.gmail_search],
+}, async (ctx) => {
+  const emails = await workspace.gmail_search({ query: ctx.params.client })
+})
+```
 
 ---
 

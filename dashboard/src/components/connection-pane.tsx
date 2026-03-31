@@ -31,6 +31,13 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
       .finally(() => setLoading(false))
   }, [name])
 
+  function prettifyUsedByLabel(jigId: string): string {
+    return jigId
+      .replace(/::/g, " / ")
+      .replace(/[-_]/g, " ")
+      .replace(/\b\w/g, c => c.toUpperCase())
+  }
+
   return (
     <aside
       className={`flex shrink-0 flex-col border-l border-[#1f1f23] bg-[#0e0e10] overflow-hidden ${standalone ? "w-full max-w-2xl mx-auto border-x" : "w-[48%]"}`}
@@ -127,7 +134,7 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
                       onClick={() => onJigClick?.(jigId)}
                       className="rounded-md border border-[#1f1f23] bg-[#111113] px-2.5 py-1.5 text-[11px] text-[#ccc] hover:border-[#2a2a2e] hover:bg-[#151517] transition-colors"
                     >
-                      {jigId.replace(/[-_]/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
+                      {prettifyUsedByLabel(jigId)}
                     </button>
                   ))}
                 </div>

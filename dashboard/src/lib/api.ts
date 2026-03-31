@@ -25,8 +25,9 @@ export function fetchJigs(): Promise<JigDto[]> {
   return fetchJson("/api/jigs")
 }
 
-export function fetchJig(jigId: string): Promise<JigDto> {
-  return fetchJson(`/api/jigs/${encodeURIComponent(jigId)}`)
+export function fetchJig(jigId: string, entity?: string | null): Promise<JigDto> {
+  const search = entity ? `?entity=${encodeURIComponent(entity)}` : ""
+  return fetchJson(`/api/jigs/${encodeURIComponent(jigId)}${search}`)
 }
 
 export function deleteJig(jigId: string, entity?: string | null): Promise<{ ok: true }> {

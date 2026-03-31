@@ -68,6 +68,8 @@ export async function run(
 }
 
 export type ScannedStep = { seq: number; label: string; connections: string[] }
+export type ScannedStepTool = { connection: string; name: string; readOnly: boolean }
+export type ScannedStepWithTools = { seq: number; label: string; connections: string[]; tools: ScannedStepTool[] }
 
 /**
  * Scan a jig handler to collect step labels without executing anything.
@@ -75,18 +77,21 @@ export type ScannedStep = { seq: number; label: string; connections: string[] }
  * and return stubs. If the handler crashes on a stub value, we still return
  * whatever steps were recorded before the crash.
  */
-export async function scanSteps(definition: JigDefinition): Promise<ScannedStep[]> {
-  const steps: ScannedStep[] = []
+export async function scanSteps(definition: JigDefinition): Promise<ScannedStepWithTools[]> {
+  const steps: ScannedStepWithTools[] = []
   const toolNames = (definition.options.tools ?? []).map((t) => t._toolName)
   // Empty params — handlers that branch on ctx.params will follow the falsy/default path.
   // This is acceptable: scan captures the "typical" step shape, not all possible branches.
   const ctx = new Context({}, toolNames)
   ctx.setSink(() => {})
   ctx.setRecorder({
-    onStepStart(seq, label) { steps.push({ seq, label, connections: [] }) },
+    onStepStart(seq, label) { steps.push({ seq, label, connections: [], tools: [] }) },
     onStepDone(seq, _output, _status, _ms, connections) {
       const s = steps.find(s => s.seq === seq)
-      if (s) s.connections = connections
+      if (s) {
+        s.connections = connections
+        s.tools = ctx.getStepTools()
+      }
     },
   })
 

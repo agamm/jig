@@ -1,0 +1,168 @@
+"use client";
+
+import { Fragment } from "react";
+
+type Block =
+  | { type: "heading"; level: 1 | 2 | 3; text: string }
+  | { type: "paragraph"; text: string }
+  | { type: "list"; ordered: boolean; items: string[] }
+  | { type: "rule" }
+  | { type: "code"; code: string };
+
+function renderInline(text: string) {
+  const parts: Array<{ type: "text" | "code" | "strong"; value: string }> = [];
+  const pattern = /(`[^`]+`|\*\*[^*]+\*\*)/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push({ type: "text", value: text.slice(lastIndex, match.index) });
+    }
+    const token = match[0];
+    if (token.startsWith("`")) {
+      parts.push({ type: "code", value: token.slice(1, -1) });
+    } else {
+      parts.push({ type: "strong", value: token.slice(2, -2) });
+    }
+    lastIndex = match.index + token.length;
+  }
+
+  if (lastIndex < text.length) {
+    parts.push({ type: "text", value: text.slice(lastIndex) });
+  }
+
+  return parts.map((part, index) => {
+    if (part.type === "code") {
+      return (
+        <code key={index} className="rounded bg-[#151517] px-1 py-[1px] text-[#d9d9dd]">
+          {part.value}
+        </code>
+      );
+    }
+    if (part.type === "strong") {
+      return <strong key={index} className="font-semibold text-[#e7e7ea]">{part.value}</strong>;
+    }
+    return <Fragment key={index}>{part.value}</Fragment>;
+  });
+}
+
+function parseMarkdown(markdown: string): Block[] {
+  const lines = markdown.replace(/\r\n/g, "\n").split("\n");
+  const blocks: Block[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i].trimEnd();
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      i += 1;
+      continue;
+    }
+
+    if (trimmed.startsWith("```")) {
+      const codeLines: string[] = [];
+      i += 1;
+      while (i < lines.length && !lines[i].trim().startsWith("```")) {
+        codeLines.push(lines[i]);
+        i += 1;
+      }
+      if (i < lines.length) i += 1;
+      blocks.push({ type: "code", code: codeLines.join("\n") });
+      continue;
+    }
+
+    if (/^---+$/.test(trimmed)) {
+      blocks.push({ type: "rule" });
+      i += 1;
+      continue;
+    }
+
+    const heading = trimmed.match(/^(#{1,3})\s+(.*)$/);
+    if (heading) {
+      blocks.push({
+        type: "heading",
+        level: heading[1].length as 1 | 2 | 3,
+        text: heading[2],
+      });
+      i += 1;
+      continue;
+    }
+
+    if (/^[-*]\s+/.test(trimmed)) {
+      const items: string[] = [];
+      while (i < lines.length && /^[-*]\s+/.test(lines[i].trim())) {
+        items.push(lines[i].trim().replace(/^[-*]\s+/, ""));
+        i += 1;
+      }
+      blocks.push({ type: "list", ordered: false, items });
+      continue;
+    }
+
+    if (/^\d+\.\s+/.test(trimmed)) {
+      const items: string[] = [];
+      while (i < lines.length && /^\d+\.\s+/.test(lines[i].trim())) {
+        items.push(lines[i].trim().replace(/^\d+\.\s+/, ""));
+        i += 1;
+      }
+      blocks.push({ type: "list", ordered: true, items });
+      continue;
+    }
+
+    const paragraphLines = [trimmed];
+    i += 1;
+    while (i < lines.length) {
+      const next = lines[i].trim();
+      if (!next || next.startsWith("```") || /^#{1,3}\s+/.test(next) || /^[-*]\s+/.test(next) || /^\d+\.\s+/.test(next) || /^---+$/.test(next)) {
+        break;
+      }
+      paragraphLines.push(next);
+      i += 1;
+    }
+    blocks.push({ type: "paragraph", text: paragraphLines.join(" ") });
+  }
+
+  return blocks;
+}
+
+export function MarkdownOutput({ markdown }: { markdown: string }) {
+  const blocks = parseMarkdown(markdown);
+
+  return (
+    <div className="space-y-3 text-[11px] leading-relaxed text-[#b5b5ba]">
+      {blocks.map((block, index) => {
+        if (block.type === "heading") {
+          const cls =
+            block.level === 1
+              ? "text-[18px] font-semibold text-[#f0f0f2]"
+              : block.level === 2
+                ? "text-[15px] font-semibold text-[#e7e7ea]"
+                : "text-[13px] font-semibold text-[#dddddf]";
+          return <h3 key={index} className={cls}>{renderInline(block.text)}</h3>;
+        }
+        if (block.type === "paragraph") {
+          return <p key={index}>{renderInline(block.text)}</p>;
+        }
+        if (block.type === "rule") {
+          return <div key={index} className="border-t border-[#1f1f23]" />;
+        }
+        if (block.type === "code") {
+          return (
+            <pre key={index} className="overflow-x-auto rounded-md border border-[#1f1f23] bg-[#0d0d0f] p-3 font-mono text-[10px] text-[#d3d3d7]">
+              {block.code}
+            </pre>
+          );
+        }
+        const ListTag = block.ordered ? "ol" : "ul";
+        return (
+          <ListTag key={index} className={`space-y-1 pl-5 ${block.ordered ? "list-decimal" : "list-disc"}`}>
+            {block.items.map((item, itemIndex) => (
+              <li key={itemIndex}>{renderInline(item)}</li>
+            ))}
+          </ListTag>
+        );
+      })}
+    </div>
+  );
+}

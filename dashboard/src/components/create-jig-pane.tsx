@@ -5,11 +5,6 @@ import { AgentPanel } from "@/components/agent-panel";
 import { Button } from "@/components/button";
 import { useAgent } from "@/hooks/use-agent";
 
-const EXAMPLE_PROMPTS = [
-  "Write weekly ExampleCorp email using Gmail, Calendar, Drive, and GitHub activity.",
-  "Every weekday at 8am, summarize my calendar and unread Gmail into a morning briefing.",
-];
-
 function prettifyJigName(value: string): string {
   return value.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
@@ -157,25 +152,13 @@ export function CreateJigPane({
             <span className="flex h-4 w-4 items-center justify-center rounded-full bg-amber-500/10 text-[9px] font-medium text-amber-400">1</span>
             <span className="text-[10px] font-medium uppercase tracking-wider text-amber-400/80">Describe The Workflow</span>
           </div>
-          <div className="mb-2 flex flex-wrap gap-2">
-            {EXAMPLE_PROMPTS.map((prompt) => (
-              <button
-                key={prompt}
-                onClick={() => setInput(prompt)}
-                className="rounded-md border border-amber-500/15 bg-[#0a0a0b] px-2 py-1 text-left text-[10px] text-[#8d7a52] transition-colors duration-150 hover:border-amber-500/30 hover:text-[#f0ddb3]"
-              >
-                {prompt}
-              </button>
-            ))}
-          </div>
-          <div className="mb-2 flex items-center justify-between">
-            <span />
-            <span className="text-[10px] text-amber-400/50">
-              {agent.sessionId
-                ? (agent.jigId ? `Creating ${agent.jigId}` : "Choosing a name and shaping the draft")
-                : "The agent will choose a short jig name from your description"}
-            </span>
-          </div>
+          {agent.sessionId && (
+            <div className="mb-2 flex items-center justify-end">
+              <span className="text-[10px] text-amber-400/50">
+                {agent.jigId ? `Creating ${agent.jigId}` : "Choosing a name and shaping the draft"}
+              </span>
+            </div>
+          )}
           <div className="flex items-center gap-2">
           <input
             type="text"

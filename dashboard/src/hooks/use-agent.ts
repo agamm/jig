@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, useEffect } from "react"
 import type { AgentEvent, AgentStatus } from "@shared/api"
 import { fetchAgentStatus, sendAgentMessage, startAgentSession } from "@/lib/api"
 
-export function useAgent(onComplete?: (jigId?: string) => void) {
+export function useAgent(onComplete?: (jigId?: string) => void | Promise<void>) {
   const [events, setEvents] = useState<AgentEvent[]>([])
   const [status, setStatus] = useState<AgentStatus>("idle")
   const [sessionId, setSessionId] = useState<string | null>(null)
@@ -39,7 +39,7 @@ export function useAgent(onComplete?: (jigId?: string) => void) {
 
         if (data.status === "done" || data.status === "error") {
           pollRef.current = null
-          onCompleteRef.current?.(data.jigId)
+          await onCompleteRef.current?.(data.jigId)
           return
         }
       } catch (e: any) {

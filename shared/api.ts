@@ -2,10 +2,17 @@ export type JigHealth = "healthy" | "attention" | "failed"
 export type RunOutcomeStatus = "success" | "fail"
 export type LiveStepStatus = "running" | "success" | "fail" | "healed"
 
+export interface JigStepToolDto {
+  connection: string
+  name: string
+  readOnly: boolean
+}
+
 export interface JigStepDto {
   num: number
   name: string
   connections?: string[]
+  tools?: JigStepToolDto[]
 }
 
 export interface JigRunStepDto {
@@ -31,8 +38,18 @@ export interface JigEntityDto {
   status: RunOutcomeStatus
 }
 
+export interface JigToolDto {
+  connection: string
+  name: string
+  readOnly: boolean
+}
+
 export interface JigDto {
   id: string
+  sourceId?: string
+  entity?: string | null
+  groupId?: string | null
+  groupName?: string | null
   name: string
   trigger: string
   status: JigHealth
@@ -48,6 +65,7 @@ export interface JigDto {
   settings: {
     trigger: string
     connections: string[]
+    tools?: JigToolDto[]
     permissions: string[]
   }
   costMonth?: string

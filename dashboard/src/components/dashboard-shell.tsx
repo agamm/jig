@@ -42,7 +42,6 @@ export function DashboardShell({
 }) {
   const [phase, setPhase] = useState<Phase>("week2");
   const [selectedJig, setSelectedJig] = useQueryState("jig", parseAsString);
-  const [selectedEntity, setSelectedEntity] = useQueryState("entity", parseAsString);
   const [selectedConnection, setSelectedConnection] = useQueryState("connection", parseAsString);
   const [activeApproval, setActiveApproval] = useQueryState("approval", parseAsString);
   const [reviewMode, setReviewMode] = useQueryState("review", parseAsBoolean.withDefault(false));
@@ -73,29 +72,14 @@ export function DashboardShell({
   const allConnections = [...new Set(jigs.flatMap(j => j.settings.connections))];
 
   function handleJigClick(jig: Jig) {
-    if (jig.grouped) {
-      setExpandedGroup(expandedGroup === jig.id ? null : jig.id);
-    } else {
-      setSelectedJig(jig.id);
-      setActiveApproval(null);
-      setReviewMode(null);
-      setSelectedEntity(null);
-      setSelectedConnection(null);
-    }
-  }
-
-  function handleEntityClick(entity: string) {
-    setSelectedEntity(entity);
-    setSelectedJig(expandedGroup);
+    setSelectedJig(jig.id);
     setActiveApproval(null);
     setReviewMode(null);
     setSelectedConnection(null);
-    setExpandedGroup(null);
   }
 
   function closeDetail() {
     setSelectedJig(null);
-    setSelectedEntity(null);
     setActiveApproval(null);
     setReviewMode(null);
     setSelectedConnection(null);
@@ -104,7 +88,6 @@ export function DashboardShell({
 
   function openCreatePane(instruction = "", autoStart = false) {
     setSelectedJig(null);
-    setSelectedEntity(null);
     setActiveApproval(null);
     setReviewMode(null);
     setSelectedConnection(null);
@@ -133,31 +116,17 @@ export function DashboardShell({
     if (openJigId && mergedJigs.some((j) => j.id === openJigId)) {
       setCreateOpen(false);
       setSelectedJig(openJigId);
-      setSelectedEntity(null);
     }
   }
 
-  function removeJigFromState(jigId: string, entity?: string | null) {
-    setJigs((prev) => prev.flatMap((jig) => {
-      if (jig.id !== jigId) return [jig]
-      if (!entity || !jig.entities?.length) return []
-
-      const nextEntities = jig.entities.filter((item) => item.name !== entity)
-      if (nextEntities.length === 0) return []
-
-      return [{
-        ...jig,
-        entityCount: nextEntities.length,
-        entities: nextEntities,
-      }]
-    }))
+  function removeJigFromState(jigId: string) {
+    setJigs((prev) => prev.filter((jig) => jig.id !== jigId))
   }
 
   function handleReviewClick(jigId: string) {
     setSelectedJig(jigId);
     setReviewMode(true);
     setActiveApproval(null);
-    setSelectedEntity(null);
     setSelectedConnection(null);
   }
 
@@ -329,7 +298,6 @@ export function DashboardShell({
                 selectedJigId={selectedJig}
                 expandedGroup={expandedGroup}
                 onJigClick={handleJigClick}
-                onEntityClick={handleEntityClick}
                 onReorder={setJigs}
                 onExpandGroup={setExpandedGroup}
                 onApprovalClick={handleApprovalClick}
@@ -385,18 +353,17 @@ export function DashboardShell({
         {selectedJig && currentJig && !activeApproval && !reviewMode && !selectedConnection && (
           <JigDetailPane
             jig={currentJig}
-            selectedEntity={selectedEntity}
             onClose={() => { setDetailExpanded(false); closeDetail(); }}
             expanded={detailExpanded}
             onToggleExpand={() => setDetailExpanded(!detailExpanded)}
             onConnectionClick={(name) => { setSelectedConnection(name); }}
             onRefresh={async () => {
-              const updated = await fetchJig(selectedJig).catch(() => null);
+              const updated = await fetchJig(currentJig.sourceId ?? currentJig.id, currentJig.entity ?? undefined).catch(() => null);
               if (!updated) return;
               setJigs(prev => prev.map(j => j.id === updated.id ? updated : j));
             }}
             onDelete={async () => {
-              removeJigFromState(selectedJig, selectedEntity)
+              removeJigFromState(selectedJig)
               await refreshJigs()
               setDetailExpanded(false)
               closeDetail()

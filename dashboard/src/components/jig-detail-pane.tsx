@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
+import type { JigStepToolDto } from "@shared/api";
 import type { Jig } from "@/types/jig";
 import { ConnectionTag } from "@/components/connection-tag";
 import { HighlightedCode } from "@/components/highlighted-code";
@@ -14,15 +15,38 @@ import { toast } from "@/components/toast";
 import { TRIGGER_SUGGESTIONS } from "@/mock/mock-data";
 import { useTriggerSave } from "@/hooks/use-trigger-save";
 import { Spinner } from "@/components/spinner";
+import { MarkdownOutput } from "@/components/markdown-output";
 import { useElapsed } from "@/hooks/use-elapsed";
+import { useJigToolApproval } from "@/lib/jig-tool-approval";
+import { formatElapsed } from "@/lib/format";
 import { deleteJig, fetchJigSteps } from "@/lib/api";
 
 const statusDot = (s: string) =>
   s === "healthy" ? "bg-emerald-400" : s === "attention" ? "bg-amber-400" : "bg-rose-400";
 
-export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, onToggleExpand, onRefresh, onDelete, onConnectionClick }: {
+function toolKey(tool: JigStepToolDto) {
+  return `${tool.connection}:${tool.name}:${tool.readOnly ? "ro" : "rw"}`;
+}
+
+function sameTool(a: JigStepToolDto, b: JigStepToolDto) {
+  return toolKey(a) === toolKey(b);
+}
+
+function formatToolNames(tools: JigStepToolDto[]) {
+  const names = tools.map((tool) => tool.name);
+  if (names.length === 0) return "";
+  if (names.length === 1) return names[0];
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
+}
+
+function buildRemovalInstruction(tools: JigStepToolDto[]) {
+  if (tools.length === 0) return "";
+  return `Remove ${formatToolNames(tools)} from this jig and adjust the workflow if needed.`;
+}
+
+export function JigDetailPane({ jig, onClose, expanded = false, onToggleExpand, onRefresh, onDelete, onConnectionClick }: {
   jig: Jig;
-  selectedEntity: string | null;
   onClose: () => void;
   expanded?: boolean;
   onToggleExpand?: () => void;
@@ -30,24 +54,32 @@ export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, 
   onDelete?: () => Promise<void> | void;
   onConnectionClick?: (name: string) => void;
 }) {
+  const jigId = jig.sourceId ?? jig.id;
+  const entity = jig.entity ?? null;
   const [detailTab, setDetailTab] = useState<"steps" | "code">("steps");
-  const trigger = useTriggerSave(jig.id, jig.settings.trigger, selectedEntity);
+  const trigger = useTriggerSave(jigId, jig.settings.trigger, entity);
   const [expandedRun, setExpandedRun] = useState<number | null>(null);
   const [agentInput, setAgentInput] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [paramsExpanded, setParamsExpanded] = useState(false);
+  const [reviewedToolKeys, setReviewedToolKeys] = useState<Set<string>>(new Set());
+  const [queuedRemovalTools, setQueuedRemovalTools] = useState<JigStepToolDto[]>([]);
+  const tools = jig.settings.tools ?? [];
+  const toolApproval = useJigToolApproval(jigId, entity, tools);
+  const previousAutoRemovalRef = useRef("");
 
-  const { mode, liveSteps, completedTools, activeTools, toolReadOnly, startRun, dismiss, cancelRun, isRunning } = useJigRun(jig.id, selectedEntity);
+  const { mode, liveSteps, completedTools, activeTools, toolReadOnly, startRun, dismiss, cancelRun, isRunning } = useJigRun(jigId, entity);
 
   const agent = useAgent(async () => {
     // Update parent state (code, trigger, connections, runs)
-    onRefresh?.();
+    await onRefresh?.();
     // Derive fresh steps directly (step cache was cleared by write_jig_file)
     setDerivingSteps(true);
     try {
-      const data = await fetchJigSteps(jig.id, selectedEntity);
+      const data = await fetchJigSteps(jigId, entity);
       if (data.steps?.length) {
-        setDerivedSteps(data.steps.map((s) => ({ num: s.num, name: s.name, connections: s.connections })));
+        setDerivedSteps(data.steps.map((s) => ({ num: s.num, name: s.name, connections: s.connections, tools: s.tools })));
       }
     } catch {}
     setDerivingSteps(false);
@@ -58,8 +90,10 @@ export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, 
     if (agent.sessionId && (agent.status === "done" || agent.status === "error")) {
       agent.sendMessage(agentInput.trim());
     } else {
-      agent.startSession(agentInput.trim(), jig.id, selectedEntity ?? undefined);
+      agent.startSession(agentInput.trim(), jigId, entity ?? undefined);
     }
+    setQueuedRemovalTools([]);
+    previousAutoRemovalRef.current = "";
     setAgentInput("");
   };
   const hasParams = jig.params && Object.keys(jig.params).length > 0;
@@ -69,27 +103,27 @@ export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, 
 
   // Fetch derived steps — always from /steps endpoint (cached server-side by code hash)
   const [derivedSteps, setDerivedSteps] = useState<RunStep[]>(
-    jig.steps.map(s => ({ num: s.num, name: s.name, connections: s.connections }))
+    jig.steps.map(s => ({ num: s.num, name: s.name, connections: s.connections, tools: s.tools }))
   );
   const [derivingSteps, setDerivingSteps] = useState(false);
   const derivingElapsed = useElapsed(derivingSteps);
   useEffect(() => {
     // Use pre-loaded steps as initial value while fetching fresh ones
     if (jig.steps.length > 0) {
-      setDerivedSteps(jig.steps.map(s => ({ num: s.num, name: s.name, connections: s.connections })));
+      setDerivedSteps(jig.steps.map(s => ({ num: s.num, name: s.name, connections: s.connections, tools: s.tools })));
     }
     let cancelled = false;
     setDerivingSteps(true);
-    fetchJigSteps(jig.id, selectedEntity)
+    fetchJigSteps(jigId, entity)
       .then(data => {
         if (!cancelled && data.steps?.length) {
-          setDerivedSteps(data.steps.map((s) => ({ num: s.num, name: s.name, connections: s.connections })));
+          setDerivedSteps(data.steps.map((s) => ({ num: s.num, name: s.name, connections: s.connections, tools: s.tools })));
         }
       })
       .catch(() => {})
       .finally(() => { if (!cancelled) setDerivingSteps(false); });
     return () => { cancelled = true; };
-  }, [jig.id, selectedEntity]);
+  }, [entity, jig.id, jig.steps, jigId]);
 
   // Steps: live steps during/after run (with humanized names from derived), derived when idle
   const runSteps: RunStep[] = useMemo(() => {
@@ -102,6 +136,46 @@ export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, 
     }
     return derivedSteps;
   }, [derivedSteps, mode, liveSteps]);
+  const reviewableToolKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const step of runSteps) {
+      for (const tool of step.tools ?? []) keys.add(toolKey(tool));
+    }
+    if (keys.size === 0) {
+      for (const tool of tools) keys.add(toolKey(tool));
+    }
+    return keys;
+  }, [runSteps]);
+  const reviewableToolCount = reviewableToolKeys.size;
+  const reviewedToolCount = useMemo(
+    () => [...reviewedToolKeys].filter((key) => reviewableToolKeys.has(key)).length,
+    [reviewedToolKeys, reviewableToolKeys]
+  );
+  const removalInstruction = useMemo(() => buildRemovalInstruction(queuedRemovalTools), [queuedRemovalTools]);
+  useEffect(() => {
+    setReviewedToolKeys(new Set());
+    setQueuedRemovalTools([]);
+    previousAutoRemovalRef.current = "";
+  }, [toolApproval.signature]);
+  useEffect(() => {
+    const previousAuto = previousAutoRemovalRef.current;
+    setAgentInput((current) => {
+      const trimmed = current.trim();
+      if (!removalInstruction) {
+        if (trimmed === previousAuto) return "";
+        if (previousAuto && current.includes(previousAuto)) {
+          return current.replace(previousAuto, "").replace(/\n{3,}/g, "\n\n").trim();
+        }
+        return current;
+      }
+      if (!trimmed || trimmed === previousAuto) return removalInstruction;
+      if (previousAuto && current.includes(previousAuto)) {
+        return current.replace(previousAuto, removalInstruction);
+      }
+      return `${current.trim()}\n\n${removalInstruction}`;
+    });
+    previousAutoRemovalRef.current = removalInstruction;
+  }, [removalInstruction]);
 
   const handleRun = (dryRun: boolean) => {
     setDetailTab("steps");
@@ -111,7 +185,7 @@ export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, 
   const handleDelete = async () => {
     setDeleting(true)
     try {
-      await deleteJig(jig.id, selectedEntity)
+      await deleteJig(jigId, entity)
       setConfirmDeleteOpen(false)
       await onDelete?.()
     } catch (error: any) {
@@ -128,11 +202,11 @@ export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, 
     >
       <ConfirmDialog
         open={confirmDeleteOpen}
-        title={selectedEntity ? "Delete entity?" : "Delete jig?"}
-        message={selectedEntity
-          ? `This will remove ${jig.name} — ${selectedEntity} from the workspace.`
+        title="Delete jig?"
+        message={entity
+          ? `This will remove ${jig.groupName} — ${jig.name} from the workspace.`
           : `This will remove ${jig.name} from the workspace.`}
-        confirmLabel={selectedEntity ? "Delete Entity" : "Delete Jig"}
+        confirmLabel="Delete Jig"
         destructive
         loading={deleting}
         onConfirm={handleDelete}
@@ -143,8 +217,7 @@ export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, 
       <div className="flex h-11 shrink-0 items-center justify-between border-b border-[#1f1f23] px-4 gap-3">
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <h2 className="text-[14px] font-semibold text-[#ededed] whitespace-nowrap">
-            {jig.name}
-            {selectedEntity && <span className="text-[#555]"> &mdash; {selectedEntity}</span>}
+            {jig.groupName ? `${jig.groupName} — ${jig.name}` : jig.name}
           </h2>
           <span className={`shrink-0 h-1.5 w-1.5 rounded-full ${statusDot(jig.status)}`} />
         </div>
@@ -154,9 +227,9 @@ export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, 
             disabled={deleting || isRunning}
             variant="danger"
             size="sm"
-            title={selectedEntity ? "Delete entity" : "Delete jig"}
+            title="Delete jig"
           >
-            {deleting ? "Deleting…" : selectedEntity ? "Delete Entity" : "Delete"}
+            {deleting ? "Deleting…" : "Delete"}
           </Button>
           {onToggleExpand && (
             <Button
@@ -179,7 +252,7 @@ export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, 
       </div>
 
       {/* Scrollable content */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
+      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
         {/* Steps / Code toggle + Run buttons */}
         <div className="flex items-center justify-between">
           <div className="flex gap-0.5 rounded-lg border border-[#1f1f23] bg-[#0a0a0b] p-0.5 w-fit">
@@ -199,18 +272,19 @@ export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, 
               <>
                 <Button
                   onClick={() => handleRun(false)}
-                  disabled={derivingSteps}
+                  disabled={derivingSteps || toolApproval.reviewRequired}
                   variant="success"
                   size="xs"
+                  title={toolApproval.reviewRequired ? "Approve the tool usage below first" : undefined}
                 >
                   &#9654; Run
                 </Button>
                 <Button
                   onClick={() => handleRun(true)}
-                  disabled={derivingSteps}
+                  disabled={derivingSteps || toolApproval.reviewRequired}
                   variant="successOutline"
                   size="xs"
-                  title="Read-only — no writes"
+                  title={toolApproval.reviewRequired ? "Approve the tool usage below first" : "Read-only — no writes"}
                 >
                   Dry Run
                 </Button>
@@ -219,35 +293,55 @@ export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, 
           </div>
         </div>
 
-        {/* Model selector (disabled — coming soon) */}
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] text-[#444]">Model</span>
-          <select
-            disabled
-            className="flex-1 rounded-md border border-[#1f1f23] bg-[#111113] px-2 py-1 text-[10px] text-[#555] font-mono outline-none cursor-not-allowed opacity-50"
-            title="Per-jig model override — coming soon"
-          >
-            <option>claude-haiku-4.5 (default)</option>
-          </select>
-        </div>
-
-        {/* Parameter inputs */}
-        {hasParams && (
-          <div className="rounded-lg border border-[#1f1f23] bg-[#111113] p-3 space-y-2">
-            {Object.entries(jig.params!).map(([key, hint]) => (
-              <div key={key} className="flex items-center gap-2">
-                <label className="text-[11px] text-[#888] w-24 shrink-0 font-mono">{key}</label>
-                <input
-                  type="text"
-                  value={paramValues[key] ?? ""}
-                  onChange={(e) => setParamValues(prev => ({ ...prev, [key]: e.target.value }))}
-                  placeholder={hint || key}
-                  className="flex-1 rounded-md border border-[#1f1f23] bg-[#0a0a0b] px-2.5 py-1.5 text-[11px] text-[#ededed] placeholder:text-[#444] outline-none focus:border-[#2a2a2e] transition-colors"
-                />
-              </div>
-            ))}
+        <div className={hasParams && !paramsExpanded ? "grid gap-2 md:grid-cols-2" : "space-y-2"}>
+          {/* Model selector (disabled — coming soon) */}
+          <div className="flex items-center justify-between rounded-lg border border-[#17171a] bg-[#0d0d0f] px-3 py-1.5">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-[10px] font-medium uppercase tracking-wider text-[#3f3f45]">Model</span>
+              <span className="text-[10px] text-[#5a5a61] font-mono truncate">claude-haiku-4.5</span>
+              <span className="text-[10px] text-[#323238] shrink-0">default</span>
+            </div>
+            <span
+              className="text-[10px] text-[#4b4b51] shrink-0"
+              title="Per-jig model override coming soon"
+            >
+              Locked
+            </span>
           </div>
-        )}
+
+          {/* Parameter inputs */}
+          {hasParams && (
+            <div className="rounded-lg border border-[#17171a] bg-[#0d0d0f]">
+              <button
+                type="button"
+                onClick={() => setParamsExpanded((value) => !value)}
+                className="flex w-full items-center justify-between px-3 py-1.5 text-left"
+              >
+                <div className="flex items-center gap-2">
+                  <h3 className="text-[10px] font-medium uppercase tracking-wider text-[#3f3f45]">Parameters</h3>
+                  <span className="text-[10px] text-[#323238]">{Object.keys(jig.params!).length}</span>
+                </div>
+                <span className="text-[10px] text-[#4b4b51]">{paramsExpanded ? "Hide" : "Show"}</span>
+              </button>
+              {paramsExpanded && (
+                <div className="border-t border-[#17171a] px-3 pb-3 pt-2 space-y-1.5">
+                  {Object.entries(jig.params!).map(([key, hint]) => (
+                    <div key={key} className="grid grid-cols-[76px_minmax(0,1fr)] items-center gap-2">
+                      <label className="text-[10px] text-[#4f4f55] font-mono truncate" title={key}>{key}</label>
+                      <input
+                        type="text"
+                        value={paramValues[key] ?? ""}
+                        onChange={(e) => setParamValues(prev => ({ ...prev, [key]: e.target.value }))}
+                        placeholder={hint || key}
+                        className="h-7 rounded-md border border-[#151518] bg-[#0a0a0b] px-2 text-[10px] text-[#acacb1] placeholder:text-[#36363b] outline-none focus:border-[#222228] transition-colors"
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
         {/* Steps or Code */}
         {detailTab === "steps" ? (
@@ -255,7 +349,7 @@ export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, 
             {derivingSteps && runSteps.length === 0 ? (
               <div className="flex items-center justify-center gap-2 py-8">
                 <Spinner size={14} />
-                <span className="text-[11px] text-[#666]">Analyzing steps… {derivingElapsed}s</span>
+                <span className="text-[11px] text-[#666]">Analyzing steps… {formatElapsed(derivingElapsed)}</span>
               </div>
             ) : (
               <RunSteps
@@ -265,7 +359,47 @@ export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, 
                 completedTools={completedTools}
                 activeTools={activeTools}
                 toolReadOnly={toolReadOnly}
+                onConnectionClick={onConnectionClick}
+                toolDisplay={toolApproval.reviewRequired ? "expanded" : "collapsed"}
+                reviewedToolKeys={reviewedToolKeys}
+                onApproveTool={toolApproval.reviewRequired ? (tool) => {
+                  setReviewedToolKeys((current) => new Set(current).add(toolKey(tool)));
+                  setQueuedRemovalTools((current) => current.filter((candidate) => !sameTool(candidate, tool)));
+                } : undefined}
+                onRequestRemoveTool={toolApproval.reviewRequired ? (tool) => {
+                  setReviewedToolKeys((current) => {
+                    const next = new Set(current);
+                    next.delete(toolKey(tool));
+                    return next;
+                  });
+                  setQueuedRemovalTools((current) => (
+                    current.some((candidate) => sameTool(candidate, tool)) ? current : [...current, tool]
+                  ));
+                } : undefined}
               />
+            )}
+            {toolApproval.reviewRequired && (
+              <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-amber-500/20 bg-amber-500/[0.04] px-3 py-2">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-medium uppercase tracking-wider text-amber-300">Tool review required</p>
+                  <p className="mt-0.5 text-[10px] text-amber-100/60">
+                    Review the expanded tools in each step. Use ✓ to accept a tool and × to flag it for removal.
+                  </p>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  <span className="text-[10px] text-amber-100/60">
+                    {reviewableToolCount > 0 ? `${reviewedToolCount}/${reviewableToolCount} reviewed` : `${tools.length} tools`}
+                  </span>
+                <Button
+                  onClick={toolApproval.approve}
+                  disabled={reviewableToolCount > 0 && reviewedToolCount < reviewableToolCount}
+                  variant="success"
+                  size="xs"
+                >
+                  Approve Tools
+                </Button>
+                </div>
+              </div>
             )}
           </div>
         ) : (
@@ -353,7 +487,9 @@ export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, 
                   {expandedRun === i && (
                     <div className="border-t border-[#1a1a1d] px-4 py-2.5" style={{ animation: "fade-up 0.15s ease" }}>
                       {resultStep?.output ? (
-                        <pre className="text-[10px] text-[#888] font-mono whitespace-pre-wrap max-h-48 overflow-y-auto leading-relaxed">{resultStep.output}</pre>
+                        <div className="max-h-48 overflow-y-auto rounded-md border border-[#1f1f23] bg-[#0a0a0b] p-3">
+                          <MarkdownOutput markdown={resultStep.output} />
+                        </div>
                       ) : (
                         <p className="text-[10px] text-[#555] italic">No output recorded</p>
                       )}

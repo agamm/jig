@@ -1,7 +1,8 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import type { AgentEvent, AgentStatus } from "@shared/api"
-import { useElapsed } from "@/hooks/use-elapsed"
+import { formatElapsed } from "@/lib/format"
 import { Spinner } from "@/components/spinner"
 
 const toolIcons: Record<string, string> = {
@@ -51,8 +52,44 @@ function TextMessage({ content }: { content: string }) {
 
 export function AgentActivity({ events, status }: { events: AgentEvent[]; status: AgentStatus }) {
   const active = status === "thinking" || status === "tool-calling"
-  const elapsed = useElapsed(active)
-  const timeStr = elapsed > 0 ? `${elapsed}s` : ""
+  const [lastToolAt, setLastToolAt] = useState<number | null>(null)
+  const [elapsed, setElapsed] = useState(0)
+
+  useEffect(() => {
+    if (!active) {
+      setLastToolAt(null)
+      setElapsed(0)
+      return
+    }
+
+    const latestEvent = events.at(-1)
+    if (latestEvent?.type === "tool-call") {
+      setLastToolAt(Date.now())
+      setElapsed(0)
+      return
+    }
+
+    if (lastToolAt === null) {
+      setLastToolAt(Date.now())
+      setElapsed(0)
+    }
+  }, [active, events, lastToolAt])
+
+  useEffect(() => {
+    if (!active || lastToolAt === null) {
+      setElapsed(0)
+      return
+    }
+
+    setElapsed(Math.round((Date.now() - lastToolAt) / 1000))
+    const timer = setInterval(() => {
+      setElapsed(Math.round((Date.now() - lastToolAt) / 1000))
+    }, 1000)
+
+    return () => clearInterval(timer)
+  }, [active, lastToolAt])
+
+  const timeStr = elapsed > 0 ? formatElapsed(elapsed) : ""
 
   if (events.length === 0 && status === "thinking") {
     return (

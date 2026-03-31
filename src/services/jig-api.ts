@@ -1,31 +1,21 @@
 import { readFileSync } from "fs"
-import type { JigDto, JigEntityDto, JigRunDto } from "../../shared/api.js"
+import type { JigDto, JigRunDto, JigToolDto } from "../../shared/api.js"
 import { JIGS_DIR } from "../config/paths.js"
 import { getJigRuns, getLastRun, getStepCache } from "../db.js"
 import { discoverJigs } from "../discover.js"
+import { isUsableCachedSteps } from "../derive-steps.js"
 import { formatDuration } from "../utils.js"
 import { extractConnections, extractParams, extractTrigger, getJigFilePath, prettifyId } from "../domain/jig-source.js"
 import { getActiveRunStatus } from "./run-store.js"
 
-function deriveStatus(jigId: string): "healthy" | "attention" | "failed" {
+function deriveStatus(jigId: string, entity?: string): "healthy" | "attention" | "failed" {
   try {
-    const lastRun = getLastRun(jigId)
+    const lastRun = getLastRun(jigId, entity)
     if (!lastRun) return "attention"
     return lastRun.status === "success" ? "healthy" : lastRun.status === "fail" ? "failed" : "attention"
   } catch {
     return "attention"
   }
-}
-
-function buildEntityList(jigId: string, entities: string[]): JigEntityDto[] {
-  return entities.map((name) => {
-    const last = getLastRun(jigId, name)
-    return {
-      name,
-      lastRun: last?.finished_at ?? last?.started_at ?? "",
-      status: (last?.status === "fail" ? "fail" : "success") as "success" | "fail",
-    }
-  })
 }
 
 function formatRuns(runs: ReturnType<typeof getJigRuns>): JigRunDto[] {
@@ -45,18 +35,27 @@ function formatRuns(runs: ReturnType<typeof getJigRuns>): JigRunDto[] {
   }))
 }
 
-export async function buildJigResponse(id: string, entities: string[], runLimit: number, includeSteps = false): Promise<JigDto> {
-  const grouped = entities.length > 0
-  const filePath = getJigFilePath(id, grouped ? entities[0] : undefined)
+function dedupeTools(tools: JigToolDto[]): JigToolDto[] {
+  return [...new Map(tools.map((tool) => [`${tool.connection}:${tool.name}`, tool])).values()]
+}
+
+export async function buildJigResponse(
+  id: string,
+  entities: string[],
+  runLimit: number,
+  includeSteps = false,
+  selectedEntity?: string
+): Promise<JigDto> {
+  const entity = selectedEntity ?? null
+  const filePath = getJigFilePath(id, entity ?? undefined)
   let code = ""
   try {
     if (filePath) code = readFileSync(filePath, "utf-8")
   } catch {}
 
-  const entity = grouped ? entities[0] : null
   let runs: ReturnType<typeof getJigRuns> = []
   try {
-    runs = getJigRuns(id, undefined, runLimit)
+    runs = getJigRuns(id, entity ?? undefined, runLimit)
   } catch {}
 
   const recentDurations = runs.slice(0, 7).map((r) => r.duration_ms ?? 0).reverse()
@@ -65,17 +64,25 @@ export async function buildJigResponse(id: string, entities: string[], runLimit:
 
   let params: Record<string, string> = {}
   let trigger = code ? extractTrigger(code) : ""
+  let tools: JigToolDto[] = []
   let steps: JigDto["steps"] = []
   if (filePath) {
     try {
       const mod = await import(`${filePath}?_t=${Date.now()}`)
       const def = mod.default
       if (def?.options) params = def.options.params ?? {}
+      if (def?.options?.tools?.length) {
+        tools = dedupeTools(def.options.tools.map((tool: any) => ({
+          connection: tool._serverName,
+          name: tool._toolName,
+          readOnly: tool._readOnly === true,
+        })))
+      }
       if (includeSteps && def?.handler && code) {
         const hasher = new Bun.CryptoHasher("sha256")
         hasher.update(code)
         const cached = getStepCache(id, entity, hasher.digest("hex"))
-        if (cached) steps = cached
+        if (cached && isUsableCachedSteps(cached)) steps = cached
       }
     } catch {
       params = extractParams(code)
@@ -84,24 +91,35 @@ export async function buildJigResponse(id: string, entities: string[], runLimit:
   }
 
   const activeRun = getActiveRunStatus()
+  const connections = tools.length > 0
+    ? [...new Set(tools.map((tool) => tool.connection))]
+    : extractConnections(code)
+  const isGroupedChild = entity !== null
+  const uiId = isGroupedChild ? `${id}::${entity}` : id
 
   return {
-    id,
-    name: prettifyId(id),
+    id: uiId,
+    sourceId: id,
+    entity,
+    groupId: isGroupedChild ? id : null,
+    groupName: isGroupedChild ? prettifyId(id) : null,
+    name: prettifyId(entity ?? id),
     trigger,
-    status: deriveStatus(id),
-    running: activeRun.active && activeRun.jigId === id && !activeRun.dryRun,
-    grouped,
-    entityCount: grouped ? entities.length : undefined,
-    entities: grouped ? buildEntityList(id, entities) : undefined,
+    status: deriveStatus(id, entity ?? undefined),
+    running:
+      activeRun.active &&
+      activeRun.jigId === id &&
+      (activeRun.entity ?? null) === entity &&
+      !activeRun.dryRun,
     sparkline,
     steps,
-    code: grouped ? "" : code,
+    code,
     runs: formatRuns(runs),
     params,
     settings: {
       trigger,
-      connections: extractConnections(code),
+      connections,
+      tools,
       permissions: [],
     },
     costMonth: "",

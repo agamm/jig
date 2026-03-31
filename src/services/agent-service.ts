@@ -8,6 +8,7 @@ import { isValidJigId } from "../domain/jig-id.js"
 import { loadServerConfigs } from "../mcp/config.js"
 import { resolveJigPath } from "../domain/jig-source.js"
 import { checkJigFile } from "./jig-checker.js"
+import { buildAgentJigSystemPrompt } from "./jig-writing-prompt.js"
 import { writeJigSource } from "./jig-writer.js"
 import { ApiError } from "../server/http.js"
 
@@ -203,59 +204,50 @@ async function executeAgentTool(name: string, args: Record<string, any>, session
 }
 
 async function buildAgentSystemPrompt(jigId?: string, entity?: string): Promise<string> {
-  const parts: string[] = []
   const skillPath = `${PROJECT_ROOT}/SKILL.md`
-  if (existsSync(skillPath)) parts.push(readFileSync(skillPath, "utf-8"))
+  const skillMd = existsSync(skillPath) ? readFileSync(skillPath, "utf-8") : ""
 
   const typeFiles = existsSync(TYPES_DIR) ? readdirSync(TYPES_DIR).filter((f) => f.endsWith(".d.ts")) : []
+  const typeSections: string[] = []
   for (const file of typeFiles) {
-    parts.push(`\n## Type: ${file}\n${readFileSync(`${TYPES_DIR}/${file}`, "utf-8")}`)
+    typeSections.push(`## Type: ${file}\n${readFileSync(`${TYPES_DIR}/${file}`, "utf-8")}`)
   }
 
   const schemaFiles = existsSync(SCHEMAS_DIR) ? readdirSync(SCHEMAS_DIR).filter((f) => f.endsWith(".json")) : []
+  const toolCatalogSections: string[] = []
   for (const file of schemaFiles) {
     const serverName = file.replace(".json", "")
     const schemas = JSON.parse(readFileSync(`${SCHEMAS_DIR}/${file}`, "utf-8"))
-    parts.push(`\n## ${serverName} tools\n${schemas.map((t: any) => `  ${t.name}: ${t.description?.split("\n")[0] ?? ""}`).join("\n")}`)
+    toolCatalogSections.push(`## ${serverName} tools\n${schemas.map((t: any) => `  ${t.name}: ${t.description?.split("\n")[0] ?? ""}`).join("\n")}`)
   }
 
+  let serverDescriptions = ""
   try {
     const configs = await loadServerConfigs()
-    const descriptions = Object.entries(configs).map(([name, cfg]) => `${name}: ${(cfg as any).description ?? ""}`).join("\n")
-    if (descriptions) parts.push(`\n## Available Connections\n${descriptions}`)
+    serverDescriptions = Object.entries(configs).map(([name, cfg]) => `${name}: ${(cfg as any).description ?? ""}`).join("\n")
   } catch {}
 
+  let currentCode: string | undefined
   if (jigId) {
     const filePath = resolveJigPath(jigId, entity)
     if (existsSync(filePath)) {
-      parts.push(`\n## Current Jig Code (${jigId})\n\`\`\`typescript\n${readFileSync(filePath, "utf-8")}\n\`\`\``)
+      currentCode = readFileSync(filePath, "utf-8")
     }
   }
 
   const examplePath = `${JIGS_DIR}/weekly-update.ts`
-  if (existsSync(examplePath) && jigId !== "weekly-update") {
-    parts.push(`\n## Example Jig\n\`\`\`typescript\n${readFileSync(examplePath, "utf-8")}\n\`\`\``)
-  }
+  const exampleJig = existsSync(examplePath) ? readFileSync(examplePath, "utf-8") : undefined
 
-  return `You are a jig creation and editing agent. You write TypeScript jig files that automate workflows.
-
-IMPORTANT: Act immediately. Do NOT describe what you plan to do — just do it. The jig code is already in your context below, so do NOT call read_jig_file unless you need a different jig. Write the code, check it, and confirm in 1-2 sentences.
-
-${parts.join("\n")}
-
-## Rules
-- If creating a new jig, choose a short valid jigId first and include it in your first write_jig_file call
-- Prefer concise concept names over literal sentence fragments. Good: forgotten-emails, weekly-update, morning-briefing, meeting-prep. Bad: check-my-email-for-emails-i-forgot
-- Valid jigId and entity names use only lowercase letters, numbers, dashes, and underscores
-- Import SDK from "../src/index.js" (jig, llm, agent) for top-level jigs, "../../src/index.js" for grouped jigs
-- Import connections from "../.jig/connections/{server}.js" (or "../../.jig/connections/{server}.js" for grouped)
-- Use ctx.output() for output, NEVER console.log()
-- End the file with: export default myJig
-- Do NOT use require() or CommonJS
-- ALWAYS run check_jig after writing code — never finish without a passing check
-- If check_jig reports errors, fix them and check again until it passes
-- Use web_search and browse to look up API docs when unsure about tool parameters
-- When done, reply with 1-2 short plain text sentences summarizing what you changed. No markdown, no code blocks, no bullet points.`
+  return buildAgentJigSystemPrompt({
+    jigId,
+    entity,
+    skillMd,
+    typeDefs: typeSections.join("\n\n"),
+    toolCatalog: toolCatalogSections.join("\n\n"),
+    serverDescriptions,
+    currentCode,
+    exampleJig,
+  })
 }
 
 async function runAgentLoop(session: AgentSession): Promise<void> {

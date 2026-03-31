@@ -119,7 +119,7 @@ function tool(name: string, readOnly: boolean) {
   const fn = async (params: any) => {
     const ctx = runContext.getStore()
     if (ctx && !ctx.inAgent) ctx.step("${serverName}." + name)
-    ctx?.addConnection("${serverName}")
+    ctx?.addTool("${serverName}", name, readOnly)
     if (isStepScan()) return {} as any
     if (isDryRun() && !readOnly) {
       console.log(\`\\n[dry-run] ${serverName}.\${name}\`)

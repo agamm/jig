@@ -1,15 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { JigStepToolDto } from "@shared/api";
 import { ServiceIcon } from "@/components/service-icon";
 import { formatElapsed } from "@/lib/format";
 import { Spinner } from "@/components/spinner";
+import { MarkdownOutput } from "@/components/markdown-output";
 
 /** Step with optional live run status */
 export interface RunStep {
   num: number;
   name: string;
   connections?: string[];
+  tools?: JigStepToolDto[];
   status?: "pending" | "running" | "success" | "fail" | "healed";
   time?: string;
   output?: string;
@@ -34,9 +37,29 @@ function toolService(tool: string): string | null {
   return null;
 }
 
+function groupToolsByConnection(tools: JigStepToolDto[]) {
+  const grouped = new Map<string, JigStepToolDto[]>();
+  for (const tool of tools) {
+    const existing = grouped.get(tool.connection);
+    if (existing) existing.push(tool);
+    else grouped.set(tool.connection, [tool]);
+  }
+  return [...grouped.entries()];
+}
+
+function toolKey(tool: JigStepToolDto) {
+  return `${tool.connection}:${tool.name}:${tool.readOnly ? "ro" : "rw"}`;
+}
+
 export function RunSteps({
   steps, mode = { type: "idle" }, onClear, emptyAction,
   completedTools = [], activeTools = [], toolReadOnly = {},
+  onConnectionClick,
+  toolDisplay = "collapsed",
+  onRequestRemoveTool,
+  reviewedToolKeys,
+  pendingToolKeys,
+  onApproveTool,
 }: {
   steps: RunStep[];
   mode?: RunStepsMode;
@@ -45,6 +68,12 @@ export function RunSteps({
   completedTools?: string[];
   activeTools?: string[];
   toolReadOnly?: Record<string, boolean>;
+  onConnectionClick?: (name: string) => void;
+  toolDisplay?: "collapsed" | "expanded";
+  onRequestRemoveTool?: (tool: JigStepToolDto) => void;
+  reviewedToolKeys?: Set<string>;
+  pendingToolKeys?: Set<string>;
+  onApproveTool?: (tool: JigStepToolDto) => void;
 }) {
   const [expandedStep, setExpandedStep] = useState<number | null>(null);
 
@@ -98,6 +127,7 @@ export function RunSteps({
           const hasOutput = !!step.output || (step.status === "fail" && !!modeError);
           const isExpanded = expandedStep === i;
           const stepRunning = step.status === "running";
+          const groupedTools = step.tools ? groupToolsByConnection(step.tools) : [];
 
           // Status indicator
           const statusEl = (() => {
@@ -140,13 +170,148 @@ export function RunSteps({
                 {statusEl}
                 <div className="flex-1 min-w-0">
                   <p className={`text-[13px] font-medium ${stepRunning ? "text-[#ededed]" : step.status === "success" ? "text-[#999]" : "text-[#ddd]"}`}>{step.name}</p>
-                  {step.connections && step.connections.length > 0 && (
+                  {groupedTools.length > 0 && toolDisplay === "collapsed" ? (
+                    <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                      {groupedTools.map(([connection, tools]) => (
+                        <span key={connection} className="group/tool relative inline-flex">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onConnectionClick?.(connection);
+                            }}
+                            className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-[#2a2a2e] bg-[#1a1a1d] px-1.5 py-0.5 transition-colors hover:border-[#3a3a3e] hover:bg-[#202024]"
+                          >
+                            <ServiceIcon name={connection} size={11} />
+                            <span className="text-[9px] text-[#888] font-mono">{connection}</span>
+                            {tools.length > 1 && (
+                              <span className="rounded-full bg-[#222327] px-1 py-[1px] text-[8px] text-[#666]">
+                                {tools.length}
+                              </span>
+                            )}
+                          </button>
+                          <span className="pointer-events-none absolute left-0 top-full z-20 mt-1 hidden min-w-[180px] flex-col gap-1 rounded-md border border-[#2a2a2e] bg-[#151517] px-2 py-2 shadow-lg group-hover/tool:flex">
+                            {tools.map((tool) => (
+                              <span key={`${tool.connection}:${tool.name}`} className="flex items-center gap-2">
+                                <span className="text-[9px] font-mono text-[#ccc]">{tool.name}</span>
+                                <span className={`rounded-full px-1 py-[1px] text-[8px] ${
+                                  tool.readOnly
+                                    ? "bg-emerald-500/10 text-emerald-300"
+                                    : "bg-amber-500/10 text-amber-300"
+                                }`}>
+                                  {tool.readOnly ? "read" : "write"}
+                                </span>
+                              </span>
+                            ))}
+                          </span>
+                        </span>
+                      ))}
+                    </div>
+                  ) : step.tools && step.tools.length > 0 ? (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {step.tools.map((tool) => {
+                        const reviewed = reviewedToolKeys?.has(toolKey(tool)) ?? false;
+                        const pending = pendingToolKeys?.has(toolKey(tool)) ?? false;
+                        return (
+                        <span
+                          key={`${tool.connection}:${tool.name}`}
+                          className={`relative inline-flex items-center gap-1.5 overflow-hidden rounded-full border px-2.5 py-1.5 ${
+                            pending
+                              ? "border-blue-500/30"
+                              : reviewed
+                              ? "border-emerald-500/30 bg-emerald-500/[0.08]"
+                              : "border-[#34343a] bg-[#19191c]"
+                          }`}
+                        >
+                          {pending && (
+                            <>
+                              <span className="absolute inset-0 overflow-hidden rounded-full">
+                                <span
+                                  className="absolute inset-[-200%]"
+                                  style={{
+                                    animation: "spin-light 2.4s linear infinite",
+                                    background: "conic-gradient(transparent 240deg, rgba(96,165,250,0.24) 260deg, rgba(96,165,250,0.55) 275deg, rgba(96,165,250,0.95) 280deg, rgba(96,165,250,0.55) 285deg, rgba(96,165,250,0.24) 300deg, transparent 320deg)"
+                                  }}
+                                />
+                              </span>
+                              <span className="absolute inset-[1px] rounded-full bg-[#19191c]" />
+                            </>
+                          )}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onConnectionClick?.(tool.connection);
+                            }}
+                            disabled={pending}
+                            className="relative z-10 inline-flex cursor-pointer items-center gap-1 text-left transition-colors hover:text-[#ededed] disabled:cursor-default"
+                          >
+                            <ServiceIcon name={tool.connection} size={11} />
+                            <span className={`text-[9px] font-mono ${pending ? "text-[#dbeafe]" : reviewed ? "text-[#e7f8ef]" : "text-[#d0d0d4]"}`}>{tool.name}</span>
+                          </button>
+                          <span className={`relative z-10 rounded-full px-1.5 py-[1px] text-[8px] ${
+                            tool.readOnly
+                              ? "bg-emerald-500/10 text-emerald-300"
+                              : "bg-amber-500/10 text-amber-300"
+                          }`}>
+                            {tool.readOnly ? "read" : "write"}
+                          </span>
+                          {onApproveTool && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onApproveTool(tool);
+                              }}
+                              disabled={pending}
+                              className={`relative z-10 inline-flex h-4 w-4 items-center justify-center rounded-full text-[10px] transition-colors disabled:opacity-40 ${
+                                pending
+                                  ? "bg-[#232327] text-[#6d7d96]"
+                                  : reviewed
+                                  ? "bg-emerald-500/20 text-emerald-200"
+                                  : "bg-[#232327] text-[#7ad8a5] hover:bg-emerald-500/15"
+                              }`}
+                              title={reviewed ? `${tool.name} reviewed` : `Approve ${tool.name}`}
+                            >
+                              ✓
+                            </button>
+                          )}
+                          {onRequestRemoveTool && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onRequestRemoveTool(tool);
+                              }}
+                              disabled={pending}
+                              className={`relative z-10 inline-flex h-4 w-4 items-center justify-center rounded-full bg-[#232327] text-[10px] transition-colors disabled:opacity-70 ${
+                                pending
+                                  ? "text-blue-200"
+                                  : "text-[#d1a3a8] hover:bg-rose-500/15 hover:text-rose-200"
+                              }`}
+                              title={`Remove ${tool.name} from this jig`}
+                            >
+                              {pending ? "…" : "×"}
+                            </button>
+                          )}
+                        </span>
+                      )})}
+                    </div>
+                  ) : step.connections && step.connections.length > 0 && (
                     <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                       {[...new Set(step.connections)].map(c => (
-                        <span key={c} className="inline-flex items-center gap-1 rounded-full bg-[#1a1a1d] border border-[#2a2a2e] px-1.5 py-0.5">
+                        <button
+                          key={c}
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onConnectionClick?.(c);
+                          }}
+                          className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-[#2a2a2e] bg-[#1a1a1d] px-1.5 py-0.5 transition-colors hover:border-[#3a3a3e] hover:bg-[#202024]"
+                        >
                           <ServiceIcon name={c} size={11} />
                           <span className="text-[9px] text-[#666]">{c}</span>
-                        </span>
+                        </button>
                       ))}
                     </div>
                   )}
@@ -190,7 +355,13 @@ export function RunSteps({
               {isExpanded && (step.output || (step.status === "fail" && modeError)) && (
                 <div className={`px-4 pb-3 pl-12 ${stepRunning ? "relative z-10" : ""}`} style={{ animation: "fade-up 0.1s ease" }}>
                   <div className="relative group/output">
-                    <pre className={`text-[10px] font-mono whitespace-pre-wrap rounded-md p-2 pr-8 border max-h-[200px] overflow-y-auto ${step.status === "fail" ? "text-[#ccc] bg-rose-500/5 border-rose-500/20" : "text-[#888] bg-[#0a0a0b] border-[#1f1f23]"}`}>{step.output || modeError || ""}</pre>
+                    <div className={`rounded-md border max-h-[260px] overflow-y-auto p-3 pr-8 ${step.status === "fail" ? "bg-rose-500/5 border-rose-500/20" : "bg-[#0a0a0b] border-[#1f1f23]"}`}>
+                      {step.status === "fail" ? (
+                        <pre className="text-[10px] font-mono whitespace-pre-wrap text-[#ccc]">{step.output || modeError || ""}</pre>
+                      ) : (
+                        <MarkdownOutput markdown={step.output || modeError || ""} />
+                      )}
+                    </div>
                     <CopyButton text={step.output || modeError || ""} />
                   </div>
                 </div>

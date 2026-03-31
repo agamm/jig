@@ -365,6 +365,20 @@ try {
 // ---------------------------------------------------------------------------
 
 async function update() {
+  const runInherited = async (args: string[], cwd: string): Promise<number> => {
+    const proc = Bun.spawn(args, { cwd, stdout: "inherit", stderr: "inherit" })
+    return await proc.exited
+  }
+
+  const runText = async (args: string[], cwd: string): Promise<string> => {
+    const proc = Bun.spawn(args, { cwd, stdout: "pipe", stderr: "pipe" })
+    const [stdout] = await Promise.all([
+      new Response(proc.stdout).text(),
+      proc.exited,
+    ])
+    return stdout
+  }
+
   // Check if upstream remote exists
   const remoteCheck = Bun.spawn(["git", "remote", "get-url", "upstream"], { cwd: PROJECT_ROOT, stdout: "pipe", stderr: "pipe" })
   await remoteCheck.exited
@@ -377,39 +391,71 @@ async function update() {
   console.log("Updating from upstream...\n")
 
   // Stash any local changes (lockfile diffs, etc.)
-  const statusProc = Bun.spawn(["git", "status", "--porcelain"], { cwd: PROJECT_ROOT, stdout: "pipe" })
-  const status = await new Response(statusProc.stdout).text()
+  const status = await runText(["git", "status", "--porcelain"], PROJECT_ROOT)
   const hasChanges = status.trim().length > 0
+  let stashRef: string | null = null
 
   if (hasChanges) {
     console.log("  Stashing local changes...")
-    const stash = Bun.spawn(["git", "stash", "--include-untracked"], { cwd: PROJECT_ROOT, stdout: "inherit", stderr: "inherit" })
-    if (await stash.exited !== 0) {
+    const stashLabel = `jig-update-${Date.now()}`
+    const stashCode = await runInherited(["git", "stash", "push", "--include-untracked", "--message", stashLabel], PROJECT_ROOT)
+    if (stashCode !== 0) {
       console.error("Failed to stash changes.")
+      return
+    }
+
+    const stashList = await runText(["git", "stash", "list", "--format=%gd%x00%s"], PROJECT_ROOT)
+    stashRef = stashList
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => line.split("\0"))
+      .find(([, message]) => message === stashLabel)?.[0] ?? null
+
+    if (!stashRef) {
+      console.error("Failed to locate the temporary stash created for update.")
       return
     }
   }
 
   // Pull with rebase
   console.log("  Pulling upstream main...")
-  const pull = Bun.spawn(["git", "pull", "upstream", "main", "--rebase"], { cwd: PROJECT_ROOT, stdout: "inherit", stderr: "inherit" })
-  const pullCode = await pull.exited
-
-  // Restore stash
-  if (hasChanges) {
-    console.log("  Restoring local changes...")
-    Bun.spawn(["git", "stash", "pop"], { cwd: PROJECT_ROOT, stdout: "inherit", stderr: "inherit" })
-  }
+  const pullCode = await runInherited(["git", "pull", "upstream", "main", "--rebase"], PROJECT_ROOT)
 
   if (pullCode !== 0) {
     console.error("\nPull failed. Resolve conflicts and try again.")
+    if (stashRef) {
+      console.error(`Your local changes are stored in ${stashRef}. Re-apply them after resolving the pull/rebase.`)
+    }
     return
+  }
+
+  // Restore stash only after a successful pull. Use apply+drop so the stash is
+  // preserved if re-applying local changes conflicts.
+  if (stashRef) {
+    console.log("  Restoring local changes...")
+    const applyCode = await runInherited(["git", "stash", "apply", "--index", stashRef], PROJECT_ROOT)
+    if (applyCode !== 0) {
+      console.error(`\nUpdate completed, but restoring local changes failed. Your stash was kept as ${stashRef}.`)
+      console.error(`Resolve the conflicts, then drop it manually with: git stash drop ${stashRef}`)
+      return
+    }
+
+    const dropCode = await runInherited(["git", "stash", "drop", stashRef], PROJECT_ROOT)
+    if (dropCode !== 0) {
+      console.error(`\nUpdated and restored local changes, but failed to drop ${stashRef}.`)
+      console.error(`You can remove it manually with: git stash drop ${stashRef}`)
+      return
+    }
   }
 
   // Reinstall deps
   console.log("  Installing dependencies...")
-  const install = Bun.spawn(["pnpm", "install"], { cwd: join(PROJECT_ROOT, "dashboard"), stdout: "inherit", stderr: "inherit" })
-  await install.exited
+  const installCode = await runInherited(["pnpm", "install"], join(PROJECT_ROOT, "dashboard"))
+  if (installCode !== 0) {
+    console.error("\nDependencies failed to install. Fix the install issue and run `pnpm install` in dashboard.")
+    return
+  }
 
   console.log("\n  ✓ Updated successfully.\n")
 }

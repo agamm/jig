@@ -9,6 +9,84 @@ import type { JigDefinition } from "./sdk/jig.js"
 import type { CachedStep } from "./db.js"
 import { HUMANIZE_MODEL } from "./config/models.js"
 
+const TOOL_LABELS: Record<string, string> = {
+  gmail: "Gmail",
+  calendar: "Calendar",
+  drive: "Drive",
+  github: "GitHub",
+  granola: "Granola",
+  slack: "Slack",
+  notion: "Notion",
+}
+
+const VERB_LABELS: Record<string, string> = {
+  search: "Search",
+  get: "Read",
+  read: "Read",
+  list: "List",
+  create: "Create",
+  draft: "Create",
+  send: "Send",
+  write: "Write",
+  update: "Update",
+  sync: "Sync",
+  summarize: "Summarize",
+  analyze: "Analyze",
+  query: "Query",
+}
+
+function prettifyToken(value: string): string {
+  const normalized = value.toLowerCase()
+  if (TOOL_LABELS[normalized]) return TOOL_LABELS[normalized]
+  return normalized.replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
+function isRawToolLabel(name: string): boolean {
+  const value = name.trim()
+  return /^[a-z0-9_]+\.[a-z0-9_]+$/.test(value) || /^[a-z0-9_]+__[a-z0-9_]+$/.test(value)
+}
+
+export function isHumanizedStepName(name: string): boolean {
+  const value = name.trim()
+  return value.length > 0 && value.length <= 60 && !isRawToolLabel(value)
+}
+
+export function isUsableCachedSteps(steps: CachedStep[]): boolean {
+  return steps.every((step) =>
+    isHumanizedStepName(step.name) &&
+    (!(step.connections?.length) || (step.tools?.length ?? 0) > 0)
+  )
+}
+
+function fallbackStepName(step: {
+  label: string
+  tools: { connection: string; name: string; readOnly: boolean }[]
+}): string {
+  if (step.tools.length === 1) {
+    const tool = step.tools[0]
+    const parts = tool.name.split("_").filter(Boolean)
+    const last = parts.at(-1)?.toLowerCase() ?? ""
+    const first = parts[0]?.toLowerCase() ?? ""
+    const verb = VERB_LABELS[last]
+
+    if (verb && first && first !== last) {
+      return `${verb} ${prettifyToken(first)}`
+    }
+
+    return prettifyToken(tool.name)
+  }
+
+  if (step.tools.length > 1) {
+    const services = [...new Set(step.tools.map((tool) => tool.name.split("_")[0]).filter(Boolean))]
+    if (services.length === 1) {
+      return `Review ${prettifyToken(services[0])} data`
+    }
+    return "Review connected data"
+  }
+
+  return prettifyToken(step.label.replace(/^[^.]+\./, ""))
+}
+
 export async function deriveSteps(
   def: JigDefinition,
   jigId: string,
@@ -23,7 +101,7 @@ export async function deriveSteps(
 
   // Check cache — reject if any label looks unhumanized (raw prompt text)
   const cached = getStepCache(jigId, entity, codeHash)
-  if (cached && cached.every(s => s.name.length <= 60)) return cached
+  if (cached && isUsableCachedSteps(cached)) return cached
 
   // Scan handler for raw steps
   const { scanSteps } = await import("./sdk/jig.js")
@@ -45,7 +123,7 @@ export async function deriveSteps(
   }
   // Fallback: use raw labels — don't cache so next request retries
   if (!humanized) {
-    steps = raw.map(s => ({ num: s.seq, name: s.label, connections: s.connections }))
+    steps = raw.map(s => ({ num: s.seq, name: fallbackStepName(s), connections: s.connections, tools: s.tools }))
     return steps
   }
 
@@ -56,7 +134,7 @@ export async function deriveSteps(
 }
 
 async function humanizeLabels(
-  raw: { seq: number; label: string; connections: string[] }[]
+  raw: { seq: number; label: string; connections: string[]; tools: { connection: string; name: string; readOnly: boolean }[] }[]
 ): Promise<CachedStep[]> {
   const { getClient } = await import("./sdk/llm.js")
   const client = getClient()
@@ -93,7 +171,8 @@ ${input}` }],
 
   return raw.map((s, i) => ({
     num: s.seq,
-    name: names[i] ?? s.label,
+    name: isHumanizedStepName(names[i] ?? "") ? names[i]! : fallbackStepName(s),
     connections: s.connections,
+    tools: s.tools,
   }))
 }

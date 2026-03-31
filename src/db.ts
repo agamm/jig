@@ -259,7 +259,8 @@ export function completeStep(
 // Step cache (scan + LLM humanized labels, keyed by code hash)
 // ---------------------------------------------------------------------------
 
-export interface CachedStep { num: number; name: string; connections: string[] }
+export interface CachedStepTool { connection: string; name: string; readOnly: boolean }
+export interface CachedStep { num: number; name: string; connections: string[]; tools?: CachedStepTool[] }
 
 export function getStepCache(jigId: string, entity: string | null, codeHash: string): CachedStep[] | null {
   const db = openDb()

@@ -213,12 +213,24 @@ async function handleGetConnection(name: string): Promise<Response> {
   const discovered = discoverAllJigs()
   const usedBy: string[] = []
   for (const [id, entities] of discovered) {
-    const filePath = getJigFilePath(id, entities.length > 0 ? entities[0] : undefined)
-    if (!filePath) continue
-    try {
-      const code = readFileSync(filePath, "utf-8")
-      if (extractConnections(code).includes(name)) usedBy.push(id)
-    } catch {}
+    if (entities.length === 0) {
+      const filePath = getJigFilePath(id)
+      if (!filePath) continue
+      try {
+        const code = readFileSync(filePath, "utf-8")
+        if (extractConnections(code).includes(name)) usedBy.push(id)
+      } catch {}
+      continue
+    }
+
+    for (const entity of entities) {
+      const filePath = getJigFilePath(id, entity)
+      if (!filePath) continue
+      try {
+        const code = readFileSync(filePath, "utf-8")
+        if (extractConnections(code).includes(name)) usedBy.push(`${id}::${entity}`)
+      } catch {}
+    }
   }
 
   return json({
@@ -288,7 +300,11 @@ export function createApiServer(port: number) {
             return json(getModelCatalog())
           case "listJigs": {
             const jigs = await Promise.all(
-              [...discoverAllJigs().entries()].map(([id, entities]) => buildJigResponse(id, entities, 10, true))
+              [...discoverAllJigs().entries()].flatMap(([id, entities]) =>
+                entities.length === 0
+                  ? [buildJigResponse(id, entities, 10, true)]
+                  : entities.map((entity) => buildJigResponse(id, entities, 10, true, entity))
+              )
             )
             return json(jigs)
           }
@@ -299,7 +315,8 @@ export function createApiServer(port: number) {
             }
             const discovered = discoverAllJigs()
             if (!discovered.has(route.params.id)) throw new ApiError(404, `Jig not found: ${route.params.id}`)
-            return json(await buildJigResponse(route.params.id, discovered.get(route.params.id)!, 20, true))
+            const entity = url.searchParams.get("entity") ?? undefined
+            return json(await buildJigResponse(route.params.id, discovered.get(route.params.id)!, 20, true, entity))
           }
           case "runJig": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)

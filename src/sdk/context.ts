@@ -26,6 +26,12 @@ export interface RunRecorder {
   onOutput?(text: string): void
 }
 
+type StepTool = {
+  connection: string
+  name: string
+  readOnly: boolean
+}
+
 /**
  * Context object passed to every jig handler.
  * Provides access to params, output, and parallel execution.
@@ -38,6 +44,7 @@ export class Context {
   private _stepStart = 0
   private _stepOutput: string[] = []
   private _stepConnections = new Set<string>()
+  private _stepTools = new Map<string, StepTool>()
 
   /** True while inside an agent() call — tool calls won't auto-create steps. */
   private _inAgent = false
@@ -64,12 +71,22 @@ export class Context {
     this._stepStart = Date.now()
     this._stepOutput = []
     this._stepConnections = new Set()
+    this._stepTools = new Map()
     this._recorder?.onStepStart(this._stepSeq, label)
   }
 
   /** Record a connection used in the current step. */
   addConnection(name: string) {
     this._stepConnections.add(name)
+  }
+
+  addTool(connection: string, name: string, readOnly: boolean) {
+    this._stepConnections.add(connection)
+    this._stepTools.set(`${connection}:${name}`, { connection, name, readOnly })
+  }
+
+  getStepTools(): StepTool[] {
+    return Array.from(this._stepTools.values())
   }
 
   /** Write output. Presentation layer decides how to render. */

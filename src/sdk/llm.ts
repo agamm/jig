@@ -31,10 +31,11 @@ export async function llm<T = string>(
 ): Promise<T> {
   const ctx = runContext.getStore()
   if (ctx && !ctx.inAgent) ctx.step(truncLabel(prompt))
+  const model = options?.model ?? MAIN_MODEL
+  ctx?.addTool("llm", `llm(${model})`, true)
 
   if (isStepScan()) return (options?.schema ? {} : "") as T
 
-  const model = options?.model ?? MAIN_MODEL
   const maxTokens = options?.maxTokens ?? 4096
   const userContent = `${prompt}\n\nData:\n${JSON.stringify(data, null, 2)}`
 
@@ -102,6 +103,9 @@ export async function agent<T = string>(
   // Record all connections this agent can use
   const connSet = new Set(tools.map(t => t._serverName))
   for (const c of connSet) ctx?.addConnection(c)
+  for (const tool of tools) {
+    ctx?.addTool(tool._serverName, tool._toolName, tool._readOnly ?? true)
+  }
 
   if (isStepScan()) return (options?.schema ? {} : "") as T
 

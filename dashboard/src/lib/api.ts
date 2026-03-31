@@ -1,15 +1,18 @@
 import type {
-  AgentStatusResponseDto,
-  ConnectionDetailDto,
-  ConnectionDto,
-  JigDto,
-  ModelsDto,
-  RunDetailDto,
-  RunStatusDto,
-  StartAgentResponseDto,
-  StartRunResponseDto,
-  StepListDto,
-  TriggerUpdateResponseDto,
+  AgentStatusResponse,
+  Connection,
+  ConnectionDetail,
+  JigData,
+  JigVersionDetail,
+  JigVersion,
+  ModelCatalog,
+  RestoreJigVersionResult,
+  RunDetail,
+  RunStatus,
+  StartAgentResponse,
+  StartRunResponse,
+  StepList,
+  TriggerUpdateResponse,
 } from "@shared/api"
 
 async function fetchJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
@@ -21,11 +24,11 @@ async function fetchJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> 
   return res.json() as Promise<T>
 }
 
-export function fetchJigs(): Promise<JigDto[]> {
+export function fetchJigs(): Promise<JigData[]> {
   return fetchJson("/api/jigs")
 }
 
-export function fetchJig(jigId: string, entity?: string | null): Promise<JigDto> {
+export function fetchJig(jigId: string, entity?: string | null): Promise<JigData> {
   const search = entity ? `?entity=${encodeURIComponent(entity)}` : ""
   return fetchJson(`/api/jigs/${encodeURIComponent(jigId)}${search}`)
 }
@@ -37,19 +40,19 @@ export function deleteJig(jigId: string, entity?: string | null): Promise<{ ok: 
   })
 }
 
-export function fetchModels(): Promise<ModelsDto> {
+export function fetchModels(): Promise<ModelCatalog> {
   return fetchJson("/api/models")
 }
 
-export function fetchConnections(): Promise<ConnectionDto[]> {
+export function fetchConnections(): Promise<Connection[]> {
   return fetchJson("/api/connections")
 }
 
-export function fetchConnection(name: string): Promise<ConnectionDetailDto> {
+export function fetchConnection(name: string): Promise<ConnectionDetail> {
   return fetchJson(`/api/connections/${encodeURIComponent(name)}`)
 }
 
-export function fetchJigSteps(jigId: string, entity?: string | null): Promise<StepListDto> {
+export function fetchJigSteps(jigId: string, entity?: string | null): Promise<StepList> {
   return fetchJson(`/api/jigs/${encodeURIComponent(jigId)}/steps`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -57,7 +60,7 @@ export function fetchJigSteps(jigId: string, entity?: string | null): Promise<St
   })
 }
 
-export function updateJigTrigger(jigId: string, trigger: string, entity?: string | null): Promise<TriggerUpdateResponseDto> {
+export function updateJigTrigger(jigId: string, trigger: string, entity?: string | null): Promise<TriggerUpdateResponse> {
   return fetchJson(`/api/jigs/${encodeURIComponent(jigId)}/trigger`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -65,7 +68,7 @@ export function updateJigTrigger(jigId: string, trigger: string, entity?: string
   })
 }
 
-export function startAgentSession(instruction: string, jigId?: string, entity?: string): Promise<StartAgentResponseDto> {
+export function startAgentSession(instruction: string, jigId?: string, entity?: string): Promise<StartAgentResponse> {
   return fetchJson("/api/agent", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -73,7 +76,7 @@ export function startAgentSession(instruction: string, jigId?: string, entity?: 
   })
 }
 
-export function fetchAgentStatus(sessionId: string, since = 0): Promise<AgentStatusResponseDto> {
+export function fetchAgentStatus(sessionId: string, since = 0): Promise<AgentStatusResponse> {
   return fetchJson(`/api/agent/${sessionId}?since=${since}`)
 }
 
@@ -89,7 +92,7 @@ export function startJigRun(jigId: string, payload: {
   entity?: string
   dryRun: boolean
   params?: Record<string, string>
-}): Promise<StartRunResponseDto> {
+}): Promise<StartRunResponse> {
   return fetchJson(`/api/jigs/${encodeURIComponent(jigId)}/run`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -97,14 +100,31 @@ export function startJigRun(jigId: string, payload: {
   })
 }
 
-export function fetchRunStatus(runId: number): Promise<RunDetailDto> {
+export function fetchRunStatus(runId: number): Promise<RunDetail> {
   return fetchJson(`/api/runs/${runId}`)
 }
 
-export function fetchActiveRun(): Promise<RunStatusDto> {
+export function fetchActiveRun(): Promise<RunStatus> {
   return fetchJson("/api/runs/active")
 }
 
 export function cancelActiveRun(): Promise<{ ok: true; runId: number }> {
   return fetchJson("/api/runs/cancel", { method: "POST" })
+}
+
+export function fetchJigVersions(jigId: string, entity?: string | null): Promise<JigVersion[]> {
+  const search = entity ? `?entity=${encodeURIComponent(entity)}` : ""
+  return fetchJson(`/api/jigs/${encodeURIComponent(jigId)}/versions${search}`)
+}
+
+export function fetchJigVersionDetail(jigId: string, sha: string, entity?: string | null): Promise<JigVersionDetail> {
+  const search = entity ? `?entity=${encodeURIComponent(entity)}` : ""
+  return fetchJson(`/api/jigs/${encodeURIComponent(jigId)}/versions/${sha}${search}`)
+}
+
+export function restoreJigVersion(jigId: string, sha: string, entity?: string | null): Promise<RestoreJigVersionResult> {
+  const search = entity ? `?entity=${encodeURIComponent(entity)}` : ""
+  return fetchJson(`/api/jigs/${encodeURIComponent(jigId)}/versions/${sha}/restore${search}`, {
+    method: "POST",
+  })
 }

@@ -8,6 +8,9 @@ import { HighlightedCode } from "@/components/highlighted-code";
 import { StepList } from "@/components/step-list";
 import { TRIGGER_SUGGESTIONS } from "@/mock/mock-data";
 import { useTriggerSave } from "@/hooks/use-trigger-save";
+import { PaneHeader } from "@/components/pane-header";
+import { PaneSection } from "@/components/pane-section";
+import { SegmentedControl } from "@/components/segmented-control";
 
 export function ReviewPane({ jig, onClose }: {
   jig: Jig;
@@ -18,8 +21,7 @@ export function ReviewPane({ jig, onClose }: {
 
   return (
     <aside
-      className="flex w-[48%] shrink-0 flex-col border-l border-amber-500/30 bg-[#0e0e10] overflow-hidden"
-      style={{ animation: "slide-in-right 0.2s ease" }}
+      className="flex h-full w-full flex-col bg-[#0e0e10] overflow-hidden"
     >
       {/* Construction stripe banner */}
       <div className="construction-stripe border-b border-amber-500/20 px-4 py-2 flex items-center gap-2">
@@ -28,28 +30,27 @@ export function ReviewPane({ jig, onClose }: {
         <span className="text-[10px] text-amber-400/50 ml-auto">Edit steps below, then compile</span>
       </div>
 
-      {/* Header */}
-      <div className="flex h-11 shrink-0 items-center justify-between border-b border-[#1f1f23] px-4 gap-3">
-        <div className="flex items-center gap-2 min-w-0 flex-1">
-          <h2 className="text-[14px] font-semibold text-[#ededed] whitespace-nowrap">{jig.name}</h2>
-          <span className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[9px] text-amber-400">draft</span>
-        </div>
-        <Button
-          onClick={onClose}
-          variant="subtle"
-          size="sm"
-        >
-          &#10005;
-        </Button>
-      </div>
+      <PaneHeader
+        title={jig.name}
+        badge={<span className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[9px] text-amber-400">draft</span>}
+        actions={
+          <Button onClick={onClose} variant="subtle" size="sm">
+            &#10005;
+          </Button>
+        }
+      />
 
       {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
         {/* Steps / Code toggle */}
-        <div className="flex gap-0.5 rounded-lg border border-[#1f1f23] bg-[#0a0a0b] p-0.5 w-fit">
-          <button onClick={() => setDetailTab("steps")} className={`rounded-md px-3 py-1 text-[11px] font-medium transition-colors duration-150 ${detailTab === "steps" ? "bg-[#1a1a1d] text-[#ededed]" : "text-[#555] hover:text-[#888]"}`}>Steps</button>
-          <button onClick={() => setDetailTab("code")} className={`rounded-md px-3 py-1 text-[11px] font-medium transition-colors duration-150 ${detailTab === "code" ? "bg-[#1a1a1d] text-[#ededed]" : "text-[#555] hover:text-[#888]"}`}>Code</button>
-        </div>
+        <SegmentedControl
+          value={detailTab}
+          onChange={setDetailTab}
+          options={[
+            { value: "steps", label: "Steps" },
+            { value: "code", label: "Code" },
+          ]}
+        />
 
         {/* Steps or Code */}
         {detailTab === "steps" ? (
@@ -63,8 +64,7 @@ export function ReviewPane({ jig, onClose }: {
         )}
 
         {/* Trigger */}
-        <div>
-          <h3 className="text-[11px] font-medium text-[#555] uppercase tracking-wider mb-2">Trigger</h3>
+        <PaneSection title="Trigger">
           {trigger.editing ? (
             <div className="rounded-lg border border-blue-500/30 bg-[#111113] p-3 space-y-2" style={{ animation: "fade-up 0.15s ease" }}>
               <input
@@ -105,11 +105,9 @@ export function ReviewPane({ jig, onClose }: {
               <span className="text-[10px] text-[#333] opacity-0 group-hover:opacity-100 transition-opacity duration-150">&#9998;</span>
             </button>
           )}
-        </div>
+        </PaneSection>
 
-        {/* Connections */}
-        <div>
-          <h3 className="text-[11px] font-medium text-[#555] uppercase tracking-wider mb-2">Connections</h3>
+        <PaneSection title="Connections">
           <div className="flex flex-wrap gap-1.5">
             {jig.settings.connections.map(c => (
               <ConnectionTag key={c} name={c} />
@@ -118,7 +116,7 @@ export function ReviewPane({ jig, onClose }: {
               + Add
             </button>
           </div>
-        </div>
+        </PaneSection>
 
         {/* Compile & Save */}
         <div className="pt-2">

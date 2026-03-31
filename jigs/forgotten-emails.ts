@@ -16,35 +16,17 @@ const forgottenEmails = jig(
     ctx.output("Scanning Gmail for emails you might have forgotten to reply to...")
 
     const result = await agent(
-      `Find emails in my inbox that I received but probably forgot to reply to.
+      `Find emails in my inbox that I should have replied to but haven't.
       
-Look for:
-1. Emails where I was directly addressed (e.g., "Hi [my name]", "Hey [my name]", with my email in To: or CC:)
-2. Emails that ask questions or require a response
-3. Emails from colleagues, clients, or important contacts
-4. Threads where I'm the last to reply (no pending replies from me)
-5. Emails that are not spam or automated newsletters
-6. Messages that are more than 24 hours old but less than 2 weeks old (recent enough to matter)
+Look for messages from colleagues/clients (not automated alerts or newsletters) where:
+- I was addressed directly (To:/CC:)
+- Questions were asked or a response is expected
+- The thread shows no reply from me
+- They're 1-14 days old (recent but not immediate)
 
-Prioritize:
-- Emails from people I work with regularly
-- Emails with clear questions or requests
-- Emails where the sender is waiting on me
+Prioritize work contacts with clear requests. Skip newsletters, notifications, and personal emails.
 
-Skip:
-- Automated notifications (GitHub, calendar invites, system alerts)
-- Newsletters and marketing emails
-- Personal emails that don't require a response
-- Threads where someone else is expected to reply next
-
-For each email you find, provide:
-- Subject
-- Sender
-- Date received
-- Why it might need a reply (what was asked)
-- How urgent it seems (high/medium/low)
-
-Be thorough but concise. Search my inbox carefully.`,
+For each, show: subject, sender, date, why it needs reply, urgency (high/medium/low).`,
       gatherTools
     )
 

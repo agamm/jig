@@ -8,11 +8,11 @@ import { JigList } from "@/components/jig-list";
 import { JigDetailPane } from "@/components/jig-detail-pane";
 import { CreateJigPane } from "@/components/create-jig-pane";
 import { ReviewPane } from "@/components/review-pane";
-import { ApprovalPane } from "@/components/approval-pane";
 import { ConnectionPane } from "@/components/connection-pane";
 import { ServiceIcon } from "@/components/service-icon";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/resizable";
 import { fetchJig, fetchJigs, fetchModels } from "@/lib/api";
-import type { ModelsDto } from "@shared/api";
+import type { ModelCatalog } from "@shared/api";
 
 function useLocalStorage(key: string, initial: boolean): [boolean, (v: boolean) => void, boolean] {
   const [value, setValue] = useState(initial);
@@ -43,11 +43,8 @@ export function DashboardShell({
   const [phase, setPhase] = useState<Phase>("week2");
   const [selectedJig, setSelectedJig] = useQueryState("jig", parseAsString);
   const [selectedConnection, setSelectedConnection] = useQueryState("connection", parseAsString);
-  const [activeApproval, setActiveApproval] = useQueryState("approval", parseAsString);
   const [reviewMode, setReviewMode] = useQueryState("review", parseAsBoolean.withDefault(false));
-  const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
   const [jigs, setJigs] = useState<Jig[]>(initialJigs);
-  const [detailExpanded, setDetailExpanded] = useState(false);
   const [sidebarSlim, setSidebarSlim, sidebarMounted] = useLocalStorage("jig-sidebar-slim", false);
   const [view, setView] = useQueryState("view", parseAsString);
   const [createOpen, setCreateOpen] = useState(false);
@@ -55,32 +52,29 @@ export function DashboardShell({
   const [createStartToken, setCreateStartToken] = useState(0);
   const [commandInput, setCommandInput] = useState("");
 
-  // Sync when parent changes jigs (e.g. phase change in mock mode)
   useEffect(() => {
     setJigs(initialJigs);
   }, [initialJigs]);
 
-  const [models, setModels] = useState<ModelsDto | null>(null);
+  const [models, setModels] = useState<ModelCatalog | null>(null);
   useEffect(() => {
     fetchModels().then(setModels).catch(() => {});
   }, []);
 
-  const currentJig = jigs.find(j => j.id === selectedJig) ?? null;
+  const currentJig = jigs.find((j) => j.id === selectedJig) ?? null;
   const showOnboarding = phaseToggle ? phase === "day1" : jigs.length === 0 && !loading;
-  const hasDetail = createOpen || (selectedJig && currentJig) || activeApproval || selectedConnection;
+  const hasDetail = createOpen || (selectedJig && currentJig) || selectedConnection;
   const collapsed = sidebarMounted ? sidebarSlim : false;
-  const allConnections = [...new Set(jigs.flatMap(j => j.settings.connections))];
+  const allConnections = [...new Set(jigs.flatMap((j) => j.settings.connections))];
 
   function handleJigClick(jig: Jig) {
     setSelectedJig(jig.id);
-    setActiveApproval(null);
     setReviewMode(null);
     setSelectedConnection(null);
   }
 
   function closeDetail() {
     setSelectedJig(null);
-    setActiveApproval(null);
     setReviewMode(null);
     setSelectedConnection(null);
     setCreateOpen(false);
@@ -88,7 +82,6 @@ export function DashboardShell({
 
   function openCreatePane(instruction = "", autoStart = false) {
     setSelectedJig(null);
-    setActiveApproval(null);
     setReviewMode(null);
     setSelectedConnection(null);
     setView(null);
@@ -120,53 +113,147 @@ export function DashboardShell({
   }
 
   function removeJigFromState(jigId: string) {
-    setJigs((prev) => prev.filter((jig) => jig.id !== jigId))
-  }
-
-  function handleReviewClick(jigId: string) {
-    setSelectedJig(jigId);
-    setReviewMode(true);
-    setActiveApproval(null);
-    setSelectedConnection(null);
-  }
-
-  function handleApprovalClick(approvalId: string) {
-    setActiveApproval(approvalId);
-    setSelectedJig(null);
-    setReviewMode(null);
-    setSelectedConnection(null);
+    setJigs((prev) => prev.filter((jig) => jig.id !== jigId));
   }
 
   function handlePhaseChange(p: Phase) {
     setPhase(p);
     closeDetail();
-    setExpandedGroup(null);
     onPhaseChange?.(p);
   }
 
+  const jigsPane = (
+    <main className="flex h-full flex-1 flex-col overflow-hidden">
+      <div className="flex h-11 shrink-0 items-center justify-between border-b border-[#1f1f23] px-4">
+        <div className="flex items-center gap-4">
+          <span className="text-[13px] font-medium text-[#ededed]">Your Jigs</span>
+        </div>
+
+        {phaseToggle && (
+          <div className="flex items-center gap-0.5 rounded-lg border border-[#1f1f23] bg-[#0e0e10] p-0.5">
+            {([["day1", "Day 1"], ["week2", "Week 2"], ["month3", "Month 3"]] as const).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => handlePhaseChange(key)}
+                className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors duration-150 ${phase === key ? "bg-[#1a1a1d] text-[#ededed]" : "text-[#555] hover:text-[#888]"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-4 py-4">
+        {loading && (
+          <div className="flex h-32 items-center justify-center text-sm text-[#555]">Loading...</div>
+        )}
+        {showOnboarding && <OnboardingView onCreate={() => openCreatePane()} />}
+        {!showOnboarding && !loading && (
+          <JigList
+            jigs={jigs}
+            selectedJigId={selectedJig}
+            onJigClick={handleJigClick}
+            onReorder={setJigs}
+            onCreate={() => openCreatePane()}
+          />
+        )}
+      </div>
+
+      <div className="shrink-0 border-t border-[#1f1f23] px-4 py-2.5">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const instruction = commandInput.trim();
+            if (!instruction) return;
+            openCreatePane(instruction, true);
+            setCommandInput("");
+          }}
+          className="flex items-center gap-2 rounded-lg border border-[#1f1f23] bg-[#111113] px-3 py-2 text-[12px] transition-colors duration-150 hover:border-[#2a2a2e]"
+        >
+          <svg className="w-3.5 h-3.5 text-[#555]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          </svg>
+          <input
+            type="text"
+            value={commandInput}
+            onChange={(e) => setCommandInput(e.target.value)}
+            placeholder="Jig anything..."
+            className="flex-1 bg-transparent text-[12px] text-[#ededed] outline-none placeholder:text-[#444]"
+          />
+          <button
+            type="submit"
+            disabled={!commandInput.trim()}
+            className="rounded-md bg-emerald-600 px-2 py-0.5 text-[10px] font-medium text-white transition-colors duration-150 hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-30"
+          >
+            Create
+          </button>
+        </form>
+      </div>
+    </main>
+  );
+
+  const detailPane =
+    createOpen && !selectedConnection ? (
+      <CreateJigPane
+        initialInstruction={createInstruction}
+        startToken={createStartToken}
+        onClose={() => setCreateOpen(false)}
+        onCreated={async (jigId) => {
+          await refreshJigs(jigId);
+        }}
+      />
+    ) : selectedJig && currentJig && !reviewMode && !selectedConnection ? (
+      <JigDetailPane
+        jig={currentJig}
+        onClose={closeDetail}
+        onConnectionClick={(name) => {
+          setSelectedConnection(name);
+        }}
+        onRefresh={async () => {
+          const updated = await fetchJig(currentJig.sourceId ?? currentJig.id, currentJig.entity ?? undefined).catch(() => null);
+          if (!updated) return;
+          setJigs((prev) => prev.map((j) => (j.id === updated.id ? updated : j)));
+        }}
+        onDelete={async () => {
+          removeJigFromState(selectedJig);
+          await refreshJigs();
+          closeDetail();
+        }}
+      />
+    ) : selectedConnection ? (
+      <ConnectionPane
+        name={selectedConnection}
+        onClose={() => setSelectedConnection(null)}
+        onJigClick={(jigId) => {
+          setSelectedConnection(null);
+          setSelectedJig(jigId);
+          setReviewMode(null);
+        }}
+      />
+    ) : selectedJig && currentJig && reviewMode && !selectedConnection ? (
+      <ReviewPane jig={currentJig} onClose={closeDetail} />
+    ) : null;
+
   return (
     <div className="flex h-full" style={{ background: "#0a0a0b" }}>
-      {/* Nav sidebar */}
       <nav className={`flex shrink-0 flex-col border-r border-[#1f1f23] bg-[#0a0a0b] transition-all duration-200 overflow-hidden ${collapsed ? "w-[52px]" : "w-[180px]"}`}>
-        {/* Header */}
         <div className={`flex h-11 shrink-0 items-center border-b border-[#1f1f23] gap-2 ${collapsed ? "justify-center px-0" : "px-3"}`}>
           <span className="h-[7px] w-[7px] rounded-full bg-emerald-400 shrink-0" />
           {!collapsed && <span className="text-[13px] font-semibold text-[#ededed]">Jig</span>}
         </div>
 
-        {/* Nav items */}
         <div className="flex-1 flex flex-col gap-0.5 py-2">
           <NavItem icon={NavIcons.jigs} label="Jigs" active={!view || view === "jigs"} collapsed={collapsed} onClick={() => { setView(null); closeDetail(); }} />
           <NavItem icon={NavIcons.connections} label="Connections" active={view === "connections"} collapsed={collapsed} onClick={() => { setView("connections"); closeDetail(); }} />
           <NavItem icon={NavIcons.settings} label="Settings" active={view === "settings"} collapsed={collapsed} onClick={() => { setView("settings"); closeDetail(); }} />
         </div>
 
-        {/* Models */}
         {!collapsed && models && (
           <div className="border-t border-[#1f1f23] px-3 py-2.5">
             <span className="text-[9px] text-[#444] uppercase tracking-wider">Models</span>
             <div className="mt-1.5 space-y-1.5">
-              {(["main", "editor", "fast"] as const).map(k => models[k] && (
+              {(["main", "editor", "fast"] as const).map((k) => models[k] && (
                 <div key={k}>
                   <span className="text-[9px] text-[#555] capitalize">{k}</span>
                   <div className="text-[10px] text-[#888] font-mono truncate" title={models[k].id}>{models[k].label}</div>
@@ -181,7 +268,6 @@ export function DashboardShell({
           </div>
         )}
 
-        {/* Collapse toggle */}
         <div className={`border-t border-[#1f1f23] py-2 ${collapsed ? "px-1" : "px-2"}`}>
           <button
             onClick={() => setSidebarSlim(!sidebarSlim)}
@@ -198,7 +284,6 @@ export function DashboardShell({
       </nav>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Connections view */}
         {view === "connections" && (
           <main className="flex flex-col flex-1 overflow-hidden">
             <div className="flex h-11 shrink-0 items-center justify-between border-b border-[#1f1f23] px-4">
@@ -206,7 +291,7 @@ export function DashboardShell({
             </div>
             <div className="flex-1 overflow-y-auto px-6 py-6">
               <div className="max-w-2xl mx-auto space-y-3">
-                {allConnections.map(c => (
+                {allConnections.map((c) => (
                   <button
                     key={c}
                     onClick={() => { setView(null); setSelectedConnection(c); }}
@@ -227,7 +312,6 @@ export function DashboardShell({
           </main>
         )}
 
-        {/* Settings view */}
         {view === "settings" && (
           <main className="flex flex-col flex-1 overflow-hidden">
             <div className="flex h-11 shrink-0 items-center justify-between border-b border-[#1f1f23] px-4">
@@ -264,127 +348,20 @@ export function DashboardShell({
           </main>
         )}
 
-        {/* Jigs view (default) */}
         {(!view || view === "jigs") && (
-        <main className={`flex flex-col overflow-hidden transition-all duration-200 ${detailExpanded ? "w-0 min-w-0 opacity-0" : hasDetail ? "w-[52%]" : "w-full"}`}>
-          <div className="flex h-11 shrink-0 items-center justify-between border-b border-[#1f1f23] px-4">
-            <div className="flex items-center gap-4">
-              <span className="text-[13px] font-medium text-[#ededed]">Your Jigs</span>
-            </div>
-
-            {phaseToggle && (
-              <div className="flex items-center gap-0.5 rounded-lg border border-[#1f1f23] bg-[#0e0e10] p-0.5">
-                {([["day1", "Day 1"], ["week2", "Week 2"], ["month3", "Month 3"]] as const).map(([key, label]) => (
-                  <button
-                    key={key}
-                    onClick={() => handlePhaseChange(key)}
-                    className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors duration-150 ${phase === key ? "bg-[#1a1a1d] text-[#ededed]" : "text-[#555] hover:text-[#888]"}`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="flex-1 overflow-y-auto px-4 py-4">
-            {loading && (
-              <div className="flex items-center justify-center h-32 text-[#555] text-sm">Loading...</div>
-            )}
-            {showOnboarding && <OnboardingView onCreate={() => openCreatePane()} />}
-            {!showOnboarding && !loading && (
-              <JigList
-                jigs={jigs}
-                selectedJigId={selectedJig}
-                expandedGroup={expandedGroup}
-                onJigClick={handleJigClick}
-                onReorder={setJigs}
-                onExpandGroup={setExpandedGroup}
-                onApprovalClick={handleApprovalClick}
-                onCreate={() => openCreatePane()}
-                phase={phase}
-              />
-            )}
-          </div>
-
-          {/* Command bar chat */}
-          <div className="shrink-0 border-t border-[#1f1f23] px-4 py-2.5">
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                const instruction = commandInput.trim();
-                if (!instruction) return;
-                openCreatePane(instruction, true);
-                setCommandInput("");
-              }}
-              className="flex items-center gap-2 rounded-lg border border-[#1f1f23] bg-[#111113] px-3 py-2 text-[12px] transition-colors duration-150 hover:border-[#2a2a2e]"
-            >
-              <svg className="w-3.5 h-3.5 text-[#555]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
-              <input
-                type="text"
-                value={commandInput}
-                onChange={(e) => setCommandInput(e.target.value)}
-                placeholder="Jig anything..."
-                className="flex-1 bg-transparent text-[12px] text-[#ededed] outline-none placeholder:text-[#444]"
-              />
-              <button
-                type="submit"
-                disabled={!commandInput.trim()}
-                className="rounded-md bg-emerald-600 px-2 py-0.5 text-[10px] font-medium text-white transition-colors duration-150 hover:bg-emerald-500 disabled:opacity-30 disabled:cursor-not-allowed"
-              >
-                Create
-              </button>
-            </form>
-          </div>
-        </main>
-        )}
-
-        {createOpen && !selectedConnection && (
-          <CreateJigPane
-            initialInstruction={createInstruction}
-            startToken={createStartToken}
-            onClose={() => setCreateOpen(false)}
-            onCreated={async (jigId) => {
-              await refreshJigs(jigId);
-            }}
-          />
-        )}
-
-        {selectedJig && currentJig && !activeApproval && !reviewMode && !selectedConnection && (
-          <JigDetailPane
-            jig={currentJig}
-            onClose={() => { setDetailExpanded(false); closeDetail(); }}
-            expanded={detailExpanded}
-            onToggleExpand={() => setDetailExpanded(!detailExpanded)}
-            onConnectionClick={(name) => { setSelectedConnection(name); }}
-            onRefresh={async () => {
-              const updated = await fetchJig(currentJig.sourceId ?? currentJig.id, currentJig.entity ?? undefined).catch(() => null);
-              if (!updated) return;
-              setJigs(prev => prev.map(j => j.id === updated.id ? updated : j));
-            }}
-            onDelete={async () => {
-              removeJigFromState(selectedJig)
-              await refreshJigs()
-              setDetailExpanded(false)
-              closeDetail()
-            }}
-          />
-        )}
-
-        {selectedConnection && (
-          <ConnectionPane
-            name={selectedConnection}
-            onClose={() => setSelectedConnection(null)}
-            onJigClick={(jigId) => { setSelectedConnection(null); setSelectedJig(jigId); setReviewMode(null); }}
-          />
-        )}
-
-        {selectedJig && currentJig && reviewMode && !selectedConnection && (
-          <ReviewPane jig={currentJig} onClose={closeDetail} />
-        )}
-
-        {activeApproval && !selectedJig && !selectedConnection && (
-          <ApprovalPane approvalId={activeApproval} onClose={() => setActiveApproval(null)} onApprove={() => {}} onReject={() => {}} />
+          hasDetail && detailPane ? (
+            <ResizablePanelGroup direction="horizontal" className="flex-1">
+              <ResizablePanel defaultSize="52%" minSize="0%">
+                {jigsPane}
+              </ResizablePanel>
+              <ResizableHandle />
+              <ResizablePanel defaultSize="48%" minSize="28%" maxSize="100%">
+                {detailPane}
+              </ResizablePanel>
+            </ResizablePanelGroup>
+          ) : (
+            jigsPane
+          )
         )}
       </div>
     </div>

@@ -22,6 +22,7 @@ import { loadServerConfigs } from "./mcp/config.js"
 import { buildJigResponse, discoverAllJigs } from "./services/jig-api.js"
 import { getAgentSessionStatus, pushAgentMessage, startAgentSession } from "./services/agent-service.js"
 import { cancelActiveRun, getActiveRunSnapshot, getRunDetail, startJigRun } from "./services/run-api.js"
+import { getJigVersionDetail, listJigVersions, restoreJigVersion } from "./services/jig-versioning.js"
 import { ApiError, json } from "./server/http.js"
 import { matchRoute } from "./server/router.js"
 
@@ -51,44 +52,29 @@ function resolveJigRequest(id: string, requestedEntity?: string | null, options:
 }
 
 async function handleGetVersions(jigId: string, entity?: string): Promise<Response> {
-  const gitDir = `${JIGS_DIR}/.git`
-  if (!existsSync(gitDir)) return json([])
-
   const target = resolveJigRequest(jigId, entity)
-  const relPath = getJigRelativePath(jigId, target.entity)
-  if (!relPath) throw new ApiError(400, "Invalid jig path")
-  const proc = Bun.spawn(
-    ["git", "log", "--format=%H|%aI|%s", "--", relPath],
-    { cwd: JIGS_DIR, stdout: "pipe", stderr: "pipe" }
-  )
-  const output = await new Response(proc.stdout).text()
-  await proc.exited
-
-  const versions = output.trim().split("\n").filter(Boolean).map((line) => {
-    const [sha, date, ...msgParts] = line.split("|")
-    return { sha, date, message: msgParts.join("|") }
-  })
-
-  return json(versions)
+  try {
+    return json(await listJigVersions(jigId, target.entity))
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404 && error.message === "No version history") {
+      return json([])
+    }
+    throw error
+  }
 }
 
 async function handleGetVersionCode(jigId: string, sha: string, entity?: string): Promise<Response> {
-  const gitDir = `${JIGS_DIR}/.git`
-  if (!existsSync(gitDir)) throw new ApiError(404, "No version history")
-  if (!/^[0-9a-f]+$/.test(sha)) throw new ApiError(400, "Invalid sha")
-
   const target = resolveJigRequest(jigId, entity)
-  const relPath = getJigRelativePath(jigId, target.entity)
-  if (!relPath) throw new ApiError(400, "Invalid jig path")
-  const proc = Bun.spawn(
-    ["git", "show", `${sha}:${relPath}`],
-    { cwd: JIGS_DIR, stdout: "pipe", stderr: "pipe" }
-  )
-  const code = await new Response(proc.stdout).text()
-  const exitCode = await proc.exited
+  return json(await getJigVersionDetail(jigId, sha, target.entity))
+}
 
-  if (exitCode !== 0) throw new ApiError(404, "Version not found")
-  return json({ sha, code })
+async function handleRestoreVersion(jigId: string, sha: string, entity?: string): Promise<Response> {
+  const target = resolveJigRequest(jigId, entity)
+  const activeRun = getActiveRunSnapshot()
+  if (activeRun.active && activeRun.jigId === jigId && ((activeRun.entity ?? null) === (target.entity ?? null))) {
+    throw new ApiError(409, "Cannot restore a jig version while it is running")
+  }
+  return json(await restoreJigVersion(jigId, sha, target.entity))
 }
 
 async function handleGetSteps(id: string, body: any): Promise<Response> {
@@ -365,6 +351,11 @@ export function createApiServer(port: number) {
           case "getVersionCode": {
             const entity = url.searchParams.get("entity") ?? undefined
             return handleGetVersionCode(route.params.id, route.params.sha, entity)
+          }
+          case "restoreVersion": {
+            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+            const entity = url.searchParams.get("entity") ?? undefined
+            return handleRestoreVersion(route.params.id, route.params.sha, entity)
           }
           default:
             return json({ error: "Unknown handler" }, 404)

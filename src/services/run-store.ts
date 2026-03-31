@@ -1,4 +1,4 @@
-import type { RunStatusDto, LiveRunStepDto } from "../../shared/api.js"
+import type { LiveRunStep, RunStatus } from "../../shared/api.js"
 import type { RunEvent } from "../run-events.js"
 
 type RunRecord = {
@@ -8,7 +8,7 @@ type RunRecord = {
   dryRun: boolean
   completedTools: string[]
   activeTools: string[]
-  steps: LiveRunStepDto[]
+  steps: LiveRunStep[]
   readOnly?: Record<string, boolean>
   error?: string
   output?: string
@@ -95,17 +95,17 @@ export function finishTrackedRun(runId: number): void {
   pruneRecentResults()
 }
 
-export function getRunStatus(runId: number): RunStatusDto | null {
+export function getRunStatus(runId: number): RunStatus | null {
   const run = runs.get(runId) ?? recentResults.get(runId)
   if (!run) return null
-  return toStatusDto(run, runs.has(runId))
+  return toRunStatus(run, runs.has(runId))
 }
 
-export function getActiveRunStatus(): RunStatusDto {
+export function getActiveRunStatus(): RunStatus {
   pruneRecentResults()
   if (activeRunId !== null) {
     const run = runs.get(activeRunId)
-    if (run) return toStatusDto(run, true)
+    if (run) return toRunStatus(run, true)
   }
 
   const latest = [...recentResults.values()]
@@ -120,10 +120,10 @@ export function getActiveRunStatus(): RunStatusDto {
     }
   }
 
-  return toStatusDto(latest, false)
+  return toRunStatus(latest, false)
 }
 
-function toStatusDto(run: RunRecord, active: boolean): RunStatusDto {
+function toRunStatus(run: RunRecord, active: boolean): RunStatus {
   return {
     active,
     runId: run.runId,

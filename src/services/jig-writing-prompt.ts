@@ -52,7 +52,12 @@ Use ctx.output() to show what the jig is doing before each major step.
 - Do NOT invent placeholder params for values that are already implied by the request
 
 ### 4. Use the right tools
-The available tools and probe results show what's available. Use multiple relevant tools when they materially improve the result.`
+The available tools and probe results show what's available. Use multiple relevant tools when they materially improve the result.
+
+### 5. Preserve the existing toolset when editing
+- If you are editing an existing jig, do NOT add or remove tools unless the user explicitly asked for tool changes
+- Small logic, wording, output, or scheduling edits should usually keep the existing tools unchanged
+- Only change the toolset when the current tools are insufficient or invalid for the requested behavior`
 }
 
 function creatorOutputRules(importPrefix: string) {
@@ -82,6 +87,7 @@ function agentExecutionRules() {
 - ALWAYS run check_jig after writing code
 - If check_jig reports errors, fix them and check again until it passes
 - Use web_search and browse to look up API docs when unsure about tool parameters
+- When editing an existing jig, preserve the current tools unless the user explicitly asked to add or remove tools, or the current toolset is broken
 - When done, reply with 1-2 short plain text sentences summarizing what you changed. No markdown, no code blocks, no bullet points.`
 }
 

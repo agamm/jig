@@ -1,13 +1,13 @@
 "use client"
 
-import type { JigToolDto } from "@shared/api"
+import type { JigTool } from "@shared/api"
 import { ServiceIcon } from "@/components/service-icon"
 
 export function JigToolList({
   tools,
   emptyLabel = "No tools detected.",
 }: {
-  tools: JigToolDto[]
+  tools: JigTool[]
   emptyLabel?: string
 }) {
   if (tools.length === 0) {

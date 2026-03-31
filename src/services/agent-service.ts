@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from "fs"
 import OpenAI from "openai"
 import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions"
-import type { AgentEvent, AgentStatusResponseDto, StartAgentResponseDto } from "../../shared/api.js"
+import type { AgentEvent, AgentStatusResponse, StartAgentResponse } from "../../shared/api.js"
 import { JIGS_DIR, PROJECT_ROOT, SCHEMAS_DIR, TYPES_DIR } from "../config/paths.js"
 import { JIG_EDITOR_MODEL } from "../config/models.js"
 import { isValidJigId } from "../domain/jig-id.js"
@@ -19,6 +19,7 @@ type AgentSession = {
   sessionId: string
   jigId?: string
   entity?: string
+  currentPrompt: string
   messages: ChatCompletionMessageParam[]
   events: AgentEvent[]
   status: "thinking" | "tool-calling" | "waiting" | "done" | "error"
@@ -154,6 +155,7 @@ async function toolWriteJigFile(args: { code: string; jigId?: string; entity?: s
     entity: entity ?? null,
     commit: true,
     commitMessage: args.message ? `jig: ${jigId} — ${args.message}` : `jig: ${jigId} — update`,
+    commitPrompt: session.currentPrompt,
   })
 
   return JSON.stringify({ ok: true, path: filePath })
@@ -328,7 +330,7 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
   session.status = "done"
 }
 
-export async function startAgentSession(body: any): Promise<StartAgentResponseDto> {
+export async function startAgentSession(body: any): Promise<StartAgentResponse> {
   const instruction = body?.instruction as string
   if (!instruction) throw new ApiError(400, "instruction is required")
 
@@ -348,6 +350,7 @@ export async function startAgentSession(body: any): Promise<StartAgentResponseDt
     sessionId,
     jigId,
     entity,
+    currentPrompt: instruction,
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: instruction },
@@ -371,7 +374,7 @@ export async function startAgentSession(body: any): Promise<StartAgentResponseDt
   return { sessionId, jigId }
 }
 
-export function getAgentSessionStatus(sessionId: string, sinceIndex: number): AgentStatusResponseDto {
+export function getAgentSessionStatus(sessionId: string, sinceIndex: number): AgentStatusResponse {
   const session = agentSessions.get(sessionId)
   if (!session) throw new ApiError(404, "Session not found")
 
@@ -390,6 +393,7 @@ export async function pushAgentMessage(sessionId: string, body: any): Promise<{ 
   const message = body?.message as string
   if (!message) throw new ApiError(400, "message is required")
 
+  session.currentPrompt = message
   session.messages.push({ role: "user", content: message })
   session.status = "thinking"
 

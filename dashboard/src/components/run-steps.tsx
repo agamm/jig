@@ -1,18 +1,19 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { JigStepToolDto } from "@shared/api";
+import type { JigStepTool } from "@shared/api";
 import { ServiceIcon } from "@/components/service-icon";
 import { formatElapsed } from "@/lib/format";
 import { Spinner } from "@/components/spinner";
 import { MarkdownOutput } from "@/components/markdown-output";
+import { toolKey } from "@/lib/tool-review";
 
 /** Step with optional live run status */
 export interface RunStep {
   num: number;
   name: string;
   connections?: string[];
-  tools?: JigStepToolDto[];
+  tools?: JigStepTool[];
   status?: "pending" | "running" | "success" | "fail" | "healed";
   time?: string;
   output?: string;
@@ -37,18 +38,14 @@ function toolService(tool: string): string | null {
   return null;
 }
 
-function groupToolsByConnection(tools: JigStepToolDto[]) {
-  const grouped = new Map<string, JigStepToolDto[]>();
+function groupToolsByConnection(tools: JigStepTool[]) {
+  const grouped = new Map<string, JigStepTool[]>();
   for (const tool of tools) {
     const existing = grouped.get(tool.connection);
     if (existing) existing.push(tool);
     else grouped.set(tool.connection, [tool]);
   }
   return [...grouped.entries()];
-}
-
-function toolKey(tool: JigStepToolDto) {
-  return `${tool.connection}:${tool.name}:${tool.readOnly ? "ro" : "rw"}`;
 }
 
 export function RunSteps({
@@ -70,10 +67,10 @@ export function RunSteps({
   toolReadOnly?: Record<string, boolean>;
   onConnectionClick?: (name: string) => void;
   toolDisplay?: "collapsed" | "expanded";
-  onRequestRemoveTool?: (tool: JigStepToolDto) => void;
+  onRequestRemoveTool?: (tool: JigStepTool) => void;
   reviewedToolKeys?: Set<string>;
   pendingToolKeys?: Set<string>;
-  onApproveTool?: (tool: JigStepToolDto) => void;
+  onApproveTool?: (tool: JigStepTool) => void;
 }) {
   const [expandedStep, setExpandedStep] = useState<number | null>(null);
 

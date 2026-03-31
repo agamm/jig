@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect, useRef } from "react";
-import type { JigStepToolDto } from "@shared/api";
+import type { JigStepTool } from "@shared/api";
 import type { Jig } from "@/types/jig";
 import { ConnectionTag } from "@/components/connection-tag";
 import { HighlightedCode } from "@/components/highlighted-code";
@@ -11,6 +11,8 @@ import { useAgent } from "@/hooks/use-agent";
 import { AgentPanel } from "@/components/agent-panel";
 import { Button } from "@/components/button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { JigToolList } from "@/components/jig-tool-list";
+import { JigVersions } from "@/components/jig-versions";
 import { toast } from "@/components/toast";
 import { TRIGGER_SUGGESTIONS } from "@/mock/mock-data";
 import { useTriggerSave } from "@/hooks/use-trigger-save";
@@ -20,36 +22,17 @@ import { useElapsed } from "@/hooks/use-elapsed";
 import { useJigToolApproval } from "@/lib/jig-tool-approval";
 import { formatElapsed } from "@/lib/format";
 import { deleteJig, fetchJigSteps } from "@/lib/api";
+import { PaneHeader } from "@/components/pane-header";
+import { PaneSection } from "@/components/pane-section";
+import { SegmentedControl } from "@/components/segmented-control";
+import { buildRemovalInstruction, getReviewableToolKeys, sameTool, toolKey } from "@/lib/tool-review";
 
 const statusDot = (s: string) =>
   s === "healthy" ? "bg-emerald-400" : s === "attention" ? "bg-amber-400" : "bg-rose-400";
 
-function toolKey(tool: JigStepToolDto) {
-  return `${tool.connection}:${tool.name}:${tool.readOnly ? "ro" : "rw"}`;
-}
-
-function sameTool(a: JigStepToolDto, b: JigStepToolDto) {
-  return toolKey(a) === toolKey(b);
-}
-
-function formatToolNames(tools: JigStepToolDto[]) {
-  const names = tools.map((tool) => tool.name);
-  if (names.length === 0) return "";
-  if (names.length === 1) return names[0];
-  if (names.length === 2) return `${names[0]} and ${names[1]}`;
-  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
-}
-
-function buildRemovalInstruction(tools: JigStepToolDto[]) {
-  if (tools.length === 0) return "";
-  return `Remove ${formatToolNames(tools)} from this jig and adjust the workflow if needed.`;
-}
-
-export function JigDetailPane({ jig, onClose, expanded = false, onToggleExpand, onRefresh, onDelete, onConnectionClick }: {
+export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionClick }: {
   jig: Jig;
   onClose: () => void;
-  expanded?: boolean;
-  onToggleExpand?: () => void;
   onRefresh?: () => Promise<void> | void;
   onDelete?: () => Promise<void> | void;
   onConnectionClick?: (name: string) => void;
@@ -64,7 +47,7 @@ export function JigDetailPane({ jig, onClose, expanded = false, onToggleExpand, 
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [paramsExpanded, setParamsExpanded] = useState(false);
   const [reviewedToolKeys, setReviewedToolKeys] = useState<Set<string>>(new Set());
-  const [queuedRemovalTools, setQueuedRemovalTools] = useState<JigStepToolDto[]>([]);
+  const [queuedRemovalTools, setQueuedRemovalTools] = useState<JigStepTool[]>([]);
   const tools = jig.settings.tools ?? [];
   const toolApproval = useJigToolApproval(jigId, entity, tools);
   const previousAutoRemovalRef = useRef("");
@@ -106,23 +89,40 @@ export function JigDetailPane({ jig, onClose, expanded = false, onToggleExpand, 
     jig.steps.map(s => ({ num: s.num, name: s.name, connections: s.connections, tools: s.tools }))
   );
   const [derivingSteps, setDerivingSteps] = useState(false);
+  const [deriveError, setDeriveError] = useState<string | null>(null);
   const derivingElapsed = useElapsed(derivingSteps);
+
+  const loadDerivedSteps = async (cancelled?: () => boolean) => {
+    setDerivingSteps(true);
+    setDeriveError(null);
+    try {
+      const data = await fetchJigSteps(jigId, entity);
+      if (cancelled?.()) return;
+      if (data.steps?.length) {
+        setDerivedSteps(data.steps.map((s) => ({ num: s.num, name: s.name, connections: s.connections, tools: s.tools })));
+        setDeriveError(null);
+      } else {
+        setDerivedSteps([]);
+        setDeriveError("Steps could not be derived from this jig yet.");
+      }
+    } catch (error: any) {
+      if (cancelled?.()) return;
+      setDerivedSteps([]);
+      setDeriveError(error?.message ?? "Steps could not be derived from this jig yet.");
+    } finally {
+      if (!cancelled?.()) setDerivingSteps(false);
+    }
+  };
+
   useEffect(() => {
     // Use pre-loaded steps as initial value while fetching fresh ones
     if (jig.steps.length > 0) {
       setDerivedSteps(jig.steps.map(s => ({ num: s.num, name: s.name, connections: s.connections, tools: s.tools })));
+      setDeriveError(null);
     }
-    let cancelled = false;
-    setDerivingSteps(true);
-    fetchJigSteps(jigId, entity)
-      .then(data => {
-        if (!cancelled && data.steps?.length) {
-          setDerivedSteps(data.steps.map((s) => ({ num: s.num, name: s.name, connections: s.connections, tools: s.tools })));
-        }
-      })
-      .catch(() => {})
-      .finally(() => { if (!cancelled) setDerivingSteps(false); });
-    return () => { cancelled = true; };
+    let isCancelled = false;
+    void loadDerivedSteps(() => isCancelled);
+    return () => { isCancelled = true; };
   }, [entity, jig.id, jig.steps, jigId]);
 
   // Steps: live steps during/after run (with humanized names from derived), derived when idle
@@ -136,22 +136,16 @@ export function JigDetailPane({ jig, onClose, expanded = false, onToggleExpand, 
     }
     return derivedSteps;
   }, [derivedSteps, mode, liveSteps]);
-  const reviewableToolKeys = useMemo(() => {
-    const keys = new Set<string>();
-    for (const step of runSteps) {
-      for (const tool of step.tools ?? []) keys.add(toolKey(tool));
-    }
-    if (keys.size === 0) {
-      for (const tool of tools) keys.add(toolKey(tool));
-    }
-    return keys;
-  }, [runSteps]);
+  const reviewableToolKeys = useMemo(() => getReviewableToolKeys(runSteps, tools), [runSteps, tools]);
   const reviewableToolCount = reviewableToolKeys.size;
   const reviewedToolCount = useMemo(
     () => [...reviewedToolKeys].filter((key) => reviewableToolKeys.has(key)).length,
     [reviewedToolKeys, reviewableToolKeys]
   );
   const removalInstruction = useMemo(() => buildRemovalInstruction(queuedRemovalTools), [queuedRemovalTools]);
+  const pendingToolKeys = useMemo(() => new Set(queuedRemovalTools.map((tool) => toolKey(tool))), [queuedRemovalTools]);
+  const showDeriveFallback = detailTab === "steps" && mode.type === "idle" && !derivingSteps && runSteps.length === 0 && !!deriveError;
+  const approvalReady = runSteps.length === 0 ? tools.length > 0 : reviewableToolCount === 0 || reviewedToolCount >= reviewableToolCount;
   useEffect(() => {
     setReviewedToolKeys(new Set());
     setQueuedRemovalTools([]);
@@ -182,6 +176,16 @@ export function JigDetailPane({ jig, onClose, expanded = false, onToggleExpand, 
     startRun(dryRun, hasParams ? paramValues : undefined);
   };
 
+  const retryDerivation = () => {
+    void loadDerivedSteps();
+  };
+
+  const handleVersionRestored = async () => {
+    await onRefresh?.()
+    setDetailTab("code")
+    void loadDerivedSteps()
+  }
+
   const handleDelete = async () => {
     setDeleting(true)
     try {
@@ -197,8 +201,7 @@ export function JigDetailPane({ jig, onClose, expanded = false, onToggleExpand, 
 
   return (
     <aside
-      className={`flex shrink-0 flex-col border-l border-[#1f1f23] bg-[#0e0e10] overflow-hidden transition-all duration-200 ${expanded ? "w-full" : "w-[48%]"}`}
-      style={{ animation: "slide-in-right 0.2s ease" }}
+      className="flex h-full w-full flex-col bg-[#0e0e10] overflow-hidden"
     >
       <ConfirmDialog
         open={confirmDeleteOpen}
@@ -213,52 +216,43 @@ export function JigDetailPane({ jig, onClose, expanded = false, onToggleExpand, 
         onClose={() => !deleting && setConfirmDeleteOpen(false)}
       />
 
-      {/* Header */}
-      <div className="flex h-11 shrink-0 items-center justify-between border-b border-[#1f1f23] px-4 gap-3">
-        <div className="flex items-center gap-2 min-w-0 flex-1">
-          <h2 className="text-[14px] font-semibold text-[#ededed] whitespace-nowrap">
-            {jig.groupName ? `${jig.groupName} — ${jig.name}` : jig.name}
-          </h2>
-          <span className={`shrink-0 h-1.5 w-1.5 rounded-full ${statusDot(jig.status)}`} />
-        </div>
-        <div className="flex items-center gap-1.5 shrink-0">
-          <Button
-            onClick={() => setConfirmDeleteOpen(true)}
-            disabled={deleting || isRunning}
-            variant="danger"
-            size="sm"
-            title="Delete jig"
-          >
-            {deleting ? "Deleting…" : "Delete"}
-          </Button>
-          {onToggleExpand && (
+      <PaneHeader
+        title={jig.groupName ? `${jig.groupName} — ${jig.name}` : jig.name}
+        statusDotClass={statusDot(jig.status)}
+        actions={
+          <>
             <Button
-              onClick={onToggleExpand}
+              onClick={() => setConfirmDeleteOpen(true)}
+              disabled={deleting || isRunning}
+              variant="danger"
+              size="sm"
+              title="Delete jig"
+            >
+              {deleting ? "Deleting…" : "Delete"}
+            </Button>
+            <Button
+              onClick={onClose}
               variant="subtle"
               size="sm"
-              title={expanded ? "Collapse" : "Expand"}
             >
-              {expanded ? "\u21E5" : "\u21E4"}
+              &#10005;
             </Button>
-          )}
-          <Button
-            onClick={onClose}
-            variant="subtle"
-            size="sm"
-          >
-            &#10005;
-          </Button>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
         {/* Steps / Code toggle + Run buttons */}
         <div className="flex items-center justify-between">
-          <div className="flex gap-0.5 rounded-lg border border-[#1f1f23] bg-[#0a0a0b] p-0.5 w-fit">
-            <button onClick={() => setDetailTab("steps")} className={`rounded-md px-3 py-1 text-[11px] font-medium transition-colors duration-150 ${detailTab === "steps" ? "bg-[#1a1a1d] text-[#ededed]" : "text-[#555] hover:text-[#888]"}`}>Steps</button>
-            <button onClick={() => setDetailTab("code")} className={`rounded-md px-3 py-1 text-[11px] font-medium transition-colors duration-150 ${detailTab === "code" ? "bg-[#1a1a1d] text-[#ededed]" : "text-[#555] hover:text-[#888]"}`}>Code</button>
-          </div>
+          <SegmentedControl
+            value={detailTab}
+            onChange={setDetailTab}
+            options={[
+              { value: "steps", label: "Steps" },
+              { value: "code", label: "Code" },
+            ]}
+          />
           <div className="flex items-center gap-1.5">
             {isRunning ? (
               <Button
@@ -356,12 +350,41 @@ export function JigDetailPane({ jig, onClose, expanded = false, onToggleExpand, 
                 steps={runSteps}
                 mode={mode}
                 onClear={dismiss}
+                emptyAction={showDeriveFallback ? (
+                  <div className="mt-3 space-y-3 rounded-lg border border-amber-500/20 bg-amber-500/[0.04] p-3 text-left">
+                    <div>
+                      <p className="text-[10px] font-medium uppercase tracking-wider text-amber-300">Step derivation failed</p>
+                      <p className="mt-1 text-[11px] leading-relaxed text-amber-100/70">{deriveError}</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button onClick={retryDerivation} variant="subtle" size="xs">Retry Derivation</Button>
+                      <Button onClick={() => setDetailTab("code")} variant="subtle" size="xs">View Code</Button>
+                    </div>
+                    {tools.length > 0 && (
+                      <div className="space-y-2">
+                        <p className="text-[10px] text-amber-100/55">
+                          The jig still has a detected toolset. You can review that flat list and approve it even without derived steps.
+                        </p>
+                        <JigToolList tools={tools} />
+                        {toolApproval.reviewRequired && (
+                          <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-500/15 bg-[#111113] px-3 py-2">
+                            <span className="text-[10px] text-amber-100/60">Flat fallback review</span>
+                            <Button onClick={toolApproval.approve} variant="success" size="xs">
+                              Approve Tools
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ) : undefined}
                 completedTools={completedTools}
                 activeTools={activeTools}
                 toolReadOnly={toolReadOnly}
                 onConnectionClick={onConnectionClick}
                 toolDisplay={toolApproval.reviewRequired ? "expanded" : "collapsed"}
                 reviewedToolKeys={reviewedToolKeys}
+                pendingToolKeys={pendingToolKeys}
                 onApproveTool={toolApproval.reviewRequired ? (tool) => {
                   setReviewedToolKeys((current) => new Set(current).add(toolKey(tool)));
                   setQueuedRemovalTools((current) => current.filter((candidate) => !sameTool(candidate, tool)));
@@ -378,7 +401,7 @@ export function JigDetailPane({ jig, onClose, expanded = false, onToggleExpand, 
                 } : undefined}
               />
             )}
-            {toolApproval.reviewRequired && (
+            {toolApproval.reviewRequired && runSteps.length > 0 && (
               <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-amber-500/20 bg-amber-500/[0.04] px-3 py-2">
                 <div className="min-w-0">
                   <p className="text-[10px] font-medium uppercase tracking-wider text-amber-300">Tool review required</p>
@@ -390,14 +413,14 @@ export function JigDetailPane({ jig, onClose, expanded = false, onToggleExpand, 
                   <span className="text-[10px] text-amber-100/60">
                     {reviewableToolCount > 0 ? `${reviewedToolCount}/${reviewableToolCount} reviewed` : `${tools.length} tools`}
                   </span>
-                <Button
-                  onClick={toolApproval.approve}
-                  disabled={reviewableToolCount > 0 && reviewedToolCount < reviewableToolCount}
-                  variant="success"
-                  size="xs"
-                >
-                  Approve Tools
-                </Button>
+                  <Button
+                    onClick={toolApproval.approve}
+                    disabled={!approvalReady}
+                    variant="success"
+                    size="xs"
+                  >
+                    Approve Tools
+                  </Button>
                 </div>
               </div>
             )}
@@ -408,9 +431,7 @@ export function JigDetailPane({ jig, onClose, expanded = false, onToggleExpand, 
           </div>
         )}
 
-        {/* Trigger */}
-        <div>
-          <h3 className="text-[11px] font-medium text-[#555] uppercase tracking-wider mb-2">Trigger</h3>
+        <PaneSection title="Trigger">
           {trigger.editing ? (
             <div className="rounded-lg border border-blue-500/30 bg-[#111113] p-3 space-y-2" style={{ animation: "fade-up 0.15s ease" }}>
               <input
@@ -447,14 +468,12 @@ export function JigDetailPane({ jig, onClose, expanded = false, onToggleExpand, 
               <span className="text-[10px] text-[#444]">&#9998; edit</span>
             </button>
           )}
-        </div>
+        </PaneSection>
 
-        {/* Runs */}
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-[11px] font-medium text-[#555] uppercase tracking-wider">Runs</h3>
-            <span className="text-[10px] text-[#444]">{jig.runs.length} total</span>
-          </div>
+        <PaneSection
+          title="Runs"
+          meta={<span className="text-[10px] text-[#444]">{jig.runs.length} total</span>}
+        >
           <div className="rounded-lg border border-[#1f1f23] bg-[#111113] divide-y divide-[#1a1a1d] max-h-[300px] overflow-y-auto">
             {jig.runs.slice(0, 10).map((run, i) => {
               const resultStep = run.steps?.find(s => s.output);
@@ -499,7 +518,15 @@ export function JigDetailPane({ jig, onClose, expanded = false, onToggleExpand, 
               );
             })}
           </div>
-        </div>
+        </PaneSection>
+
+        <PaneSection title="History">
+          <JigVersions
+            jigId={jigId}
+            entity={entity}
+            onRestored={handleVersionRestored}
+          />
+        </PaneSection>
 
         {/* Costs & Usage */}
         {jig.costMonth && (
@@ -528,15 +555,13 @@ export function JigDetailPane({ jig, onClose, expanded = false, onToggleExpand, 
           </div>
         )}
 
-        {/* Connections */}
-        <div>
-          <h3 className="text-[11px] font-medium text-[#555] uppercase tracking-wider mb-2">Connections</h3>
+        <PaneSection title="Connections">
           <div className="flex flex-wrap gap-2">
             {jig.settings.connections.map(c => (
               <ConnectionTag key={c} name={c} onClick={onConnectionClick} />
             ))}
           </div>
-        </div>
+        </PaneSection>
       </div>
 
       {/* Agent activity stream (shown when active) */}

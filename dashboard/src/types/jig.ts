@@ -1,15 +1,15 @@
 import type {
-  JigDto,
-  JigEntityDto,
-  JigRunDto,
-  JigRunStepDto,
+  JigData,
+  JigEntity as ApiJigEntity,
+  JigRun,
+  JigRunStep,
 } from "@shared/api"
 
 export type Phase = "day1" | "week2" | "month3";
-export type RunStepEntry = JigRunStepDto;
-export type RunEntry = JigRunDto;
-export type JigEntity = JigEntityDto;
-export type Jig = JigDto;
+export type RunStepEntry = JigRunStep;
+export type RunEntry = JigRun;
+export type JigGroupEntity = ApiJigEntity;
+export type Jig = JigData;
 
 export interface Token {
   text: string;

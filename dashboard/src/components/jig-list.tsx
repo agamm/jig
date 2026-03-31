@@ -3,7 +3,6 @@
 import { useState } from "react";
 import type { Jig } from "@/types/jig";
 import { ServiceIcon } from "@/components/service-icon";
-import { ConnectionTag } from "@/components/connection-tag";
 import { Sparkline } from "@/components/sparkline";
 import { useDragReorder } from "@/hooks/use-drag-reorder";
 
@@ -13,46 +12,25 @@ const statusColor = (s: string) =>
 const statusDot = (s: string) =>
   s === "healthy" ? "bg-emerald-400" : s === "attention" ? "bg-amber-400" : "bg-rose-400";
 
-export function JigList({ jigs, selectedJigId, expandedGroup, onJigClick, onReorder, onExpandGroup, onApprovalClick, onCreate, phase }: {
+export function JigList({ jigs, selectedJigId, onJigClick, onReorder, onCreate }: {
   jigs: Jig[];
   selectedJigId: string | null;
-  expandedGroup: string | null;
   onJigClick: (jig: Jig) => void;
   onReorder: (newJigs: Jig[]) => void;
-  onExpandGroup: (jigId: string | null) => void;
-  onApprovalClick: (approvalId: string) => void;
   onCreate: () => void;
-  phase: string;
 }) {
   const [jigSearch, setJigSearch] = useState("");
   const { draggingIdx, dropTargetIdx, dropSide, getDragProps, handleDrop } = useDragReorder<Jig>();
 
-  const filteredJigs = jigSearch ? jigs.filter(j => j.name.toLowerCase().includes(jigSearch.toLowerCase())) : jigs;
+  const filteredJigs = jigSearch
+    ? jigs.filter((j) => {
+        const query = jigSearch.toLowerCase();
+        return j.name.toLowerCase().includes(query) || (j.groupName?.toLowerCase().includes(query) ?? false);
+      })
+    : jigs;
   const jigIndexById = new Map(filteredJigs.map((jig, idx) => [jig.id, idx]));
-  const sections: Array<{ type: "jig"; jig: Jig } | { type: "group"; groupId: string; groupName: string; items: Jig[] }> = [];
-  const groupSections = new Map<string, { type: "group"; groupId: string; groupName: string; items: Jig[] }>();
 
-  for (const jig of filteredJigs) {
-    if (!jig.groupId) {
-      sections.push({ type: "jig", jig });
-      continue;
-    }
-
-    if (!groupSections.has(jig.groupId)) {
-      const section = {
-        type: "group" as const,
-        groupId: jig.groupId,
-        groupName: jig.groupName ?? jig.groupId,
-        items: [] as Jig[],
-      };
-      groupSections.set(jig.groupId, section);
-      sections.push(section);
-    }
-
-    groupSections.get(jig.groupId)!.items.push(jig);
-  }
-
-  function renderJigRow(jig: Jig, idx: number, nested = false) {
+  function renderJigRow(jig: Jig, idx: number) {
     const isSelected = selectedJigId === jig.id;
     const isDragging = draggingIdx === idx;
     const isDropTarget = dropTargetIdx === idx;
@@ -61,7 +39,7 @@ export function JigList({ jigs, selectedJigId, expandedGroup, onJigClick, onReor
     return (
       <div key={jig.id} className="relative">
         {isDropTarget && dropSide === "above" && (
-          <div className={`absolute -top-[1px] right-3 h-[2px] bg-blue-500 rounded-full z-10 ${nested ? "left-8" : "left-3"}`} />
+          <div className="absolute -top-[1px] left-3 right-3 h-[2px] bg-blue-500 rounded-full z-10" />
         )}
         <div
           {...dragProps}
@@ -73,7 +51,6 @@ export function JigList({ jigs, selectedJigId, expandedGroup, onJigClick, onReor
           className={`group relative flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-all duration-150 cursor-pointer select-none
             ${isSelected ? "bg-[#1a1a1d]" : "hover:bg-[#111113]"}
             ${isDragging ? "opacity-40 shadow-lg" : ""}
-            ${nested ? "ml-5" : ""}
           `}
         >
           <span
@@ -92,8 +69,14 @@ export function JigList({ jigs, selectedJigId, expandedGroup, onJigClick, onReor
             <span className={`h-[7px] w-[7px] rounded-full shrink-0 ${statusDot(jig.status)}`} />
           )}
 
-          <span className={`text-[13px] font-medium w-40 truncate ${isSelected ? "text-[#ededed]" : "text-[#ccc]"}`}>
-            {jig.name}
+          <span className={`flex min-w-0 items-baseline gap-1.5 text-[13px] font-medium ${isSelected ? "text-[#ededed]" : "text-[#ccc]"}`}>
+            {jig.groupName && (
+              <span className="shrink-0 text-[11px] font-medium uppercase tracking-wide text-[#5a5a61]">
+                {jig.groupName}
+              </span>
+            )}
+            {jig.groupName && <span className="shrink-0 text-[#4b4b51]">/</span>}
+            <span className="truncate">{jig.name}</span>
           </span>
 
           <span className="flex shrink-0 -space-x-1.5 hover:-space-x-0.5 transition-all duration-500 ease-out">
@@ -128,7 +111,7 @@ export function JigList({ jigs, selectedJigId, expandedGroup, onJigClick, onReor
         </div>
 
         {isDropTarget && dropSide === "below" && (
-          <div className={`absolute -bottom-[1px] right-3 h-[2px] bg-blue-500 rounded-full z-10 ${nested ? "left-8" : "left-3"}`} />
+          <div className="absolute -bottom-[1px] left-3 right-3 h-[2px] bg-blue-500 rounded-full z-10" />
         )}
       </div>
     );
@@ -136,33 +119,6 @@ export function JigList({ jigs, selectedJigId, expandedGroup, onJigClick, onReor
 
   return (
     <div className="mx-auto max-w-3xl" style={{ animation: "fade-up 0.3s ease" }}>
-      {/* Needs Attention — 3D stacked cards */}
-      {phase === "week2" && (
-        <div className="mb-5 relative cursor-pointer pb-2" onClick={() => {
-          onApprovalClick("invoice-acme");
-        }}>
-          {/* Card 3 (back — peeks below) */}
-          <div className="absolute inset-x-4 bottom-0 h-14 rounded-lg border border-amber-500/8 bg-amber-500/[0.02]" />
-          {/* Card 2 (middle — peeks below) */}
-          <div className="absolute inset-x-2 bottom-1 h-14 rounded-lg border border-amber-500/12 bg-amber-500/[0.03]" />
-          {/* Card 1 (front) */}
-          <div className="relative rounded-lg border border-amber-500/20 bg-[#111113] p-4 transition-all duration-150 hover:border-amber-500/30 hover:bg-[#141416]">
-            <div className="flex items-center gap-2 mb-1.5">
-              <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
-              <span className="text-[12px] font-medium text-amber-400">3 pending approvals</span>
-            </div>
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2 min-w-0">
-                <p className="text-[13px] text-[#ededed]">Invoice &mdash; Acme: Send invoice email</p>
-                <span className="text-[13px] font-medium text-[#ededed]">$25,200</span>
-                <ConnectionTag name="Gmail" />
-              </div>
-              <button onClick={(e) => { e.stopPropagation(); onApprovalClick("invoice-acme"); }} className="shrink-0 rounded-md border border-[#1f1f23] px-3 py-1.5 text-[11px] text-[#555] transition-colors duration-150 hover:bg-[#1a1a1d] hover:text-[#ededed]">Details &rarr;</button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Jig filters + search inline */}
       <div className="flex items-center gap-1.5 mb-3">
         <div className="flex gap-1">
@@ -188,25 +144,7 @@ export function JigList({ jigs, selectedJigId, expandedGroup, onJigClick, onReor
 
       {/* Jig list rows */}
       <div className="space-y-0.5">
-        {sections.map((section) => {
-          if (section.type === "jig") {
-            return renderJigRow(section.jig, jigIndexById.get(section.jig.id) ?? 0);
-          }
-
-          return (
-            <div key={section.groupId} className="pt-2 first:pt-0">
-              <div className="mb-1 flex items-center gap-2 px-3">
-                <span className="text-[10px] font-medium uppercase tracking-wider text-[#555]">{section.groupName}</span>
-                <span className="rounded-full bg-[#1a1a1d] px-1.5 py-0 text-[9px] text-[#666] tabular-nums">
-                  {section.items.length}
-                </span>
-              </div>
-              <div className="space-y-0.5">
-                {section.items.map((jig) => renderJigRow(jig, jigIndexById.get(jig.id) ?? 0, true))}
-              </div>
-            </div>
-          );
-        })}
+        {filteredJigs.map((jig) => renderJigRow(jig, jigIndexById.get(jig.id) ?? 0))}
 
         {filteredJigs.length === 0 && (
           <div className="text-center py-8 text-[#444] text-[12px]">

@@ -1,5 +1,5 @@
 import { readFileSync } from "fs"
-import type { JigDto, JigRunDto, JigToolDto } from "../../shared/api.js"
+import type { JigData, JigRun, JigTool } from "../../shared/api.js"
 import { JIGS_DIR } from "../config/paths.js"
 import { getJigRuns, getLastRun, getStepCache } from "../db.js"
 import { discoverJigs } from "../discover.js"
@@ -18,7 +18,7 @@ function deriveStatus(jigId: string, entity?: string): "healthy" | "attention" |
   }
 }
 
-function formatRuns(runs: ReturnType<typeof getJigRuns>): JigRunDto[] {
+function formatRuns(runs: ReturnType<typeof getJigRuns>): JigRun[] {
   return runs.filter((r) => r.status !== "running").map((r) => ({
     date: r.started_at,
     duration: r.duration_ms ? formatDuration(r.duration_ms) : "—",
@@ -35,7 +35,7 @@ function formatRuns(runs: ReturnType<typeof getJigRuns>): JigRunDto[] {
   }))
 }
 
-function dedupeTools(tools: JigToolDto[]): JigToolDto[] {
+function dedupeTools(tools: JigTool[]): JigTool[] {
   return [...new Map(tools.map((tool) => [`${tool.connection}:${tool.name}`, tool])).values()]
 }
 
@@ -45,7 +45,7 @@ export async function buildJigResponse(
   runLimit: number,
   includeSteps = false,
   selectedEntity?: string
-): Promise<JigDto> {
+): Promise<JigData> {
   const entity = selectedEntity ?? null
   const filePath = getJigFilePath(id, entity ?? undefined)
   let code = ""
@@ -64,8 +64,8 @@ export async function buildJigResponse(
 
   let params: Record<string, string> = {}
   let trigger = code ? extractTrigger(code) : ""
-  let tools: JigToolDto[] = []
-  let steps: JigDto["steps"] = []
+  let tools: JigTool[] = []
+  let steps: JigData["steps"] = []
   if (filePath) {
     try {
       const mod = await import(`${filePath}?_t=${Date.now()}`)

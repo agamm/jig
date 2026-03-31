@@ -1,16 +1,13 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useState } from "react"
+import type { ConnectionDetail } from "@shared/api"
+import { Button } from "@/components/button"
+import { PaneHeader } from "@/components/pane-header"
+import { PaneSection } from "@/components/pane-section"
 import { ServiceIcon } from "@/components/service-icon"
-
-type ConnectionDetail = {
-  name: string
-  description: string
-  connected: boolean
-  toolCount: number
-  tools: { name: string; description: string; readOnly: boolean }[]
-  usedBy: string[]
-}
+import { fetchConnection } from "@/lib/api"
+import { useAsyncResource } from "@/hooks/use-async-resource"
 
 export function ConnectionPane({ name, onClose, onJigClick, standalone = false }: {
   name: string
@@ -18,18 +15,11 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
   onJigClick?: (jigId: string) => void
   standalone?: boolean
 }) {
-  const [conn, setConn] = useState<ConnectionDetail | null>(null)
-  const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
-
-  useEffect(() => {
-    setLoading(true)
-    fetch(`/api/connections/${encodeURIComponent(name)}`)
-      .then(r => r.ok ? r.json() : null)
-      .then(setConn)
-      .catch(() => setConn(null))
-      .finally(() => setLoading(false))
-  }, [name])
+  const { data: conn, loading, error, reload } = useAsyncResource<ConnectionDetail>(
+    () => fetchConnection(name),
+    [name]
+  )
 
   function prettifyUsedByLabel(jigId: string): string {
     return jigId
@@ -40,27 +30,26 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
 
   return (
     <aside
-      className={`flex shrink-0 flex-col border-l border-[#1f1f23] bg-[#0e0e10] overflow-hidden ${standalone ? "w-full max-w-2xl mx-auto border-x" : "w-[48%]"}`}
-      style={{ animation: "slide-in-right 0.2s ease" }}
+      className={`flex flex-col bg-[#0e0e10] overflow-hidden ${standalone ? "w-full max-w-2xl mx-auto border-x border-[#1f1f23]" : "h-full w-full"}`}
     >
-      {/* Header */}
-      <div className="flex h-11 shrink-0 items-center justify-between border-b border-[#1f1f23] px-4 gap-3">
-        <div className="flex items-center gap-2 min-w-0 flex-1">
-          <ServiceIcon name={name} size={18} />
-          <h2 className="text-[14px] font-semibold text-[#ededed] capitalize">{name}</h2>
-          {conn && (
-            <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-medium ${conn.connected ? "bg-emerald-500/10 text-emerald-400" : "bg-[#1a1a1d] text-[#555]"}`}>
-              {conn.connected ? "Connected" : "Not connected"}
-            </span>
-          )}
-        </div>
-        <button
-          onClick={onClose}
-          className="rounded-md border border-[#1f1f23] bg-[#111113] px-2 py-1 text-[11px] text-[#555] transition-colors duration-150 hover:text-[#888] hover:bg-[#1a1a1d]"
-        >
-          &#10005;
-        </button>
-      </div>
+      <PaneHeader
+        title={
+          <span className="inline-flex items-center gap-2">
+            <ServiceIcon name={name} size={18} />
+            <span className="capitalize">{name}</span>
+          </span>
+        }
+        badge={conn ? (
+          <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-medium ${conn.connected ? "bg-emerald-500/10 text-emerald-400" : "bg-[#1a1a1d] text-[#555]"}`}>
+            {conn.connected ? "Connected" : "Not connected"}
+          </span>
+        ) : undefined}
+        actions={
+          <Button onClick={onClose} variant="subtle" size="sm">
+            &#10005;
+          </Button>
+        }
+      />
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
@@ -68,8 +57,11 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
           <div className="flex items-center justify-center py-8 text-[#555] text-[11px]">Loading...</div>
         )}
 
-        {!loading && !conn && (
-          <p className="text-[12px] text-[#555]">Connection not found.</p>
+        {!loading && error && !conn && (
+          <div className="rounded-lg border border-[#1f1f23] bg-[#111113] px-4 py-4 space-y-3">
+            <p className="text-[12px] text-[#888]">{error}</p>
+            <Button onClick={reload} variant="subtle" size="xs">Retry</Button>
+          </div>
         )}
 
         {conn && (
@@ -79,13 +71,10 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
               <p className="text-[12px] text-[#888] leading-relaxed">{conn.description}</p>
             )}
 
-            {/* Tools */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-[11px] font-medium text-[#555] uppercase tracking-wider">
-                  Tools <span className="text-[#444]">{conn.toolCount}</span>
-                </h3>
-              </div>
+            <PaneSection
+              title="Tools"
+              meta={<span className="text-[10px] text-[#444]">{conn.toolCount}</span>}
+            >
               {conn.tools.length === 0 ? (
                 <p className="text-[11px] text-[#555]">
                   No tools discovered. Run <code className="text-[10px] bg-[#1a1a1d] px-1 py-0.5 rounded font-mono">jig connect {conn.name}</code>
@@ -121,12 +110,10 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
                   </div>
                 </>
               )}
-            </div>
+            </PaneSection>
 
-            {/* Used by */}
             {conn.usedBy.length > 0 && (
-              <div>
-                <h3 className="text-[11px] font-medium text-[#555] uppercase tracking-wider mb-2">Used by</h3>
+              <PaneSection title="Used By">
                 <div className="flex flex-wrap gap-1.5">
                   {conn.usedBy.map(jigId => (
                     <button
@@ -138,7 +125,7 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
                     </button>
                   ))}
                 </div>
-              </div>
+              </PaneSection>
             )}
           </>
         )}

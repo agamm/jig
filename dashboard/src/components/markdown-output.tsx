@@ -7,6 +7,7 @@ type Block =
   | { type: "paragraph"; text: string }
   | { type: "list"; ordered: boolean; items: string[] }
   | { type: "rule" }
+  | { type: "table"; headers: string[]; rows: string[][] }
   | { type: "code"; code: string };
 
 function renderInline(text: string) {
@@ -52,6 +53,22 @@ function parseMarkdown(markdown: string): Block[] {
   const blocks: Block[] = [];
   let i = 0;
 
+  const splitTableRow = (line: string) =>
+    line
+      .trim()
+      .replace(/^\|/, "")
+      .replace(/\|$/, "")
+      .split("|")
+      .map((cell) => cell.trim());
+
+  const isTableDivider = (line: string) => {
+    const cells = splitTableRow(line);
+    return (
+      cells.length > 0 &&
+      cells.every((cell) => /^:?-{3,}:?$/.test(cell))
+    );
+  };
+
   while (i < lines.length) {
     const line = lines[i].trimEnd();
     const trimmed = line.trim();
@@ -76,6 +93,27 @@ function parseMarkdown(markdown: string): Block[] {
     if (/^---+$/.test(trimmed)) {
       blocks.push({ type: "rule" });
       i += 1;
+      continue;
+    }
+
+    if (
+      trimmed.includes("|") &&
+      i + 1 < lines.length &&
+      lines[i + 1].trim().includes("|") &&
+      isTableDivider(lines[i + 1].trim())
+    ) {
+      const headers = splitTableRow(trimmed);
+      const rows: string[][] = [];
+      i += 2;
+      while (i < lines.length) {
+        const next = lines[i].trim();
+        if (!next || !next.includes("|")) break;
+        const row = splitTableRow(next);
+        if (row.length !== headers.length) break;
+        rows.push(row);
+        i += 1;
+      }
+      blocks.push({ type: "table", headers, rows });
       continue;
     }
 
@@ -114,7 +152,15 @@ function parseMarkdown(markdown: string): Block[] {
     i += 1;
     while (i < lines.length) {
       const next = lines[i].trim();
-      if (!next || next.startsWith("```") || /^#{1,3}\s+/.test(next) || /^[-*]\s+/.test(next) || /^\d+\.\s+/.test(next) || /^---+$/.test(next)) {
+      if (
+        !next ||
+        next.startsWith("```") ||
+        /^#{1,3}\s+/.test(next) ||
+        /^[-*]\s+/.test(next) ||
+        /^\d+\.\s+/.test(next) ||
+        /^---+$/.test(next) ||
+        (next.includes("|") && i + 1 < lines.length && isTableDivider(lines[i + 1].trim()))
+      ) {
         break;
       }
       paragraphLines.push(next);
@@ -152,6 +198,34 @@ export function MarkdownOutput({ markdown }: { markdown: string }) {
             <pre key={index} className="overflow-x-auto rounded-md border border-[#1f1f23] bg-[#0d0d0f] p-3 font-mono text-[10px] text-[#d3d3d7]">
               {block.code}
             </pre>
+          );
+        }
+        if (block.type === "table") {
+          return (
+            <div key={index} className="overflow-x-auto rounded-md border border-[#1f1f23] bg-[#101012]">
+              <table className="min-w-full border-collapse text-left text-[11px]">
+                <thead className="bg-[#151517] text-[#dddddf]">
+                  <tr>
+                    {block.headers.map((header, headerIndex) => (
+                      <th key={headerIndex} className="border-b border-[#232327] px-3 py-2 font-medium">
+                        {renderInline(header)}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {block.rows.map((row, rowIndex) => (
+                    <tr key={rowIndex} className="border-b border-[#1a1a1d] last:border-b-0">
+                      {row.map((cell, cellIndex) => (
+                        <td key={cellIndex} className="px-3 py-2 align-top text-[#bfc0c5]">
+                          {renderInline(cell)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           );
         }
         const ListTag = block.ordered ? "ol" : "ul";

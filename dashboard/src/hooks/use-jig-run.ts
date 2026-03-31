@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import type { RunStep, RunStepsMode } from "@/components/run-steps";
 import { cancelActiveRun, fetchActiveRun, fetchRunStatus, startJigRun } from "@/lib/api";
-import type { RunDetailDto, RunStatusDto } from "@shared/api";
+import type { RunDetail, RunStatus } from "@shared/api";
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`
@@ -10,7 +10,7 @@ function formatDuration(ms: number): string {
   return `${Math.floor(s / 60)}m ${s % 60}s`
 }
 
-function toRunSteps(data: Pick<RunDetailDto, "steps">): RunStep[] {
+function toRunSteps(data: Pick<RunDetail, "steps">): RunStep[] {
   return data.steps.map((step, idx) => ({
     num: idx + 1,
     name: step.label,
@@ -99,7 +99,7 @@ export function useJigRun(jigId: string, entity?: string | null) {
   useEffect(() => {
     (async () => {
       try {
-        const data: RunStatusDto = await fetchActiveRun();
+        const data: RunStatus = await fetchActiveRun();
         if (data.active && data.runId && matchesTarget(data, jigId, entity)) {
           const abort = new AbortController();
           abortRef.current = abort;

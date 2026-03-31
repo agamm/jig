@@ -1,4 +1,4 @@
-import type { RunDetailDto, StartRunResponseDto } from "../../shared/api.js"
+import type { RunDetail, StartRunResponse } from "../../shared/api.js"
 import { PROJECT_ROOT } from "../config/paths.js"
 import { insertRun, getRun } from "../db.js"
 import { discoverAllJigs } from "./jig-api.js"
@@ -9,7 +9,7 @@ import { applyRunEvent, finishTrackedRun, getActiveRunId, getActiveRunStatus, ge
 import { resolveJigPath, selectJigEntity } from "../domain/jig-source.js"
 import { existsSync } from "fs"
 
-export async function startJigRun(id: string, body: any): Promise<StartRunResponseDto> {
+export async function startJigRun(id: string, body: any): Promise<StartRunResponse> {
   const discovered = discoverAllJigs()
   if (!discovered.has(id)) throw new ApiError(404, `Jig not found: ${id}`)
 
@@ -75,7 +75,7 @@ export function getActiveRunSnapshot() {
   return getActiveRunStatus()
 }
 
-export function getRunDetail(runId: number): RunDetailDto {
+export function getRunDetail(runId: number): RunDetail {
   const status = getRunStatus(runId)
   const run = runId > 0 ? getRun(runId) : null
 

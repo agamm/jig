@@ -55,6 +55,12 @@ export function matchRoute(pathname: string): { handler: string; params: Record<
     return { handler: "getVersionCode", params: { id: decodeURIComponent(versionCodeMatch[1]), sha: versionCodeMatch[2] } }
   }
 
+  const restoreVersionMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/versions\/([^/]+)\/restore$/)
+  if (restoreVersionMatch) {
+    if (!isValidJigId(decodeURIComponent(restoreVersionMatch[1]))) return null
+    return { handler: "restoreVersion", params: { id: decodeURIComponent(restoreVersionMatch[1]), sha: restoreVersionMatch[2] } }
+  }
+
   if (pathname === "/api/runs/active") return { handler: "activeRun", params: {} }
   if (pathname === "/api/runs/cancel") return { handler: "cancelRun", params: {} }
 

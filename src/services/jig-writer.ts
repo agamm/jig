@@ -10,6 +10,7 @@ export async function writeJigSource(
     jigId?: string
     entity?: string | null
     commitMessage?: string
+    commitPrompt?: string | null
     commit?: boolean
   }
 ): Promise<void> {
@@ -35,10 +36,43 @@ export async function writeJigSource(
 
   const relPath = entity ? join(jigId, `${entity}.ts`) : `${jigId}.ts`
   const msg = options.commitMessage ?? `jig: ${jigId} — update`
-  await Bun.spawn(["git", "add", relPath], { cwd: JIGS_DIR }).exited
-  await Bun.spawn(["git", "commit", "-m", msg], {
+  const addProc = Bun.spawn(["git", "add", relPath], {
+    cwd: JIGS_DIR,
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  const addError = await new Response(addProc.stderr).text()
+  const addExitCode = await addProc.exited
+  if (addExitCode !== 0) {
+    throw new Error(addError.trim() || `git add failed for ${relPath}`)
+  }
+
+  const diffProc = Bun.spawn(["git", "diff", "--cached", "--quiet", "--", relPath], {
     cwd: JIGS_DIR,
     stdout: "ignore",
-    stderr: "ignore",
-  }).exited
+    stderr: "pipe",
+  })
+  const diffError = await new Response(diffProc.stderr).text()
+  const diffExitCode = await diffProc.exited
+  if (diffExitCode === 0) return
+  if (diffExitCode !== 1) {
+    throw new Error(diffError.trim() || `git diff failed for ${relPath}`)
+  }
+
+  const trimmedPrompt = options.commitPrompt?.trim()
+  const commitArgs = ["git", "commit", "-m", msg]
+  if (trimmedPrompt) {
+    commitArgs.push("-m", `jig-meta:${JSON.stringify({ prompt: trimmedPrompt })}`)
+  }
+
+  const commitProc = Bun.spawn(commitArgs, {
+    cwd: JIGS_DIR,
+    stdout: "ignore",
+    stderr: "pipe",
+  })
+  const commitError = await new Response(commitProc.stderr).text()
+  const commitExitCode = await commitProc.exited
+  if (commitExitCode !== 0) {
+    throw new Error(commitError.trim() || `git commit failed for ${relPath}`)
+  }
 }

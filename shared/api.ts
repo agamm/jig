@@ -2,20 +2,20 @@ export type JigHealth = "healthy" | "attention" | "failed"
 export type RunOutcomeStatus = "success" | "fail"
 export type LiveStepStatus = "running" | "success" | "fail" | "healed"
 
-export interface JigStepToolDto {
+export interface JigStepTool {
   connection: string
   name: string
   readOnly: boolean
 }
 
-export interface JigStepDto {
+export interface JigStep {
   num: number
   name: string
   connections?: string[]
-  tools?: JigStepToolDto[]
+  tools?: JigStepTool[]
 }
 
-export interface JigRunStepDto {
+export interface JigRunStep {
   label: string
   time: string
   cost?: string
@@ -24,27 +24,27 @@ export interface JigRunStepDto {
   output?: string
 }
 
-export interface JigRunDto {
+export interface JigRun {
   date: string
   duration: string
   status: RunOutcomeStatus
   cost: string
-  steps?: JigRunStepDto[]
+  steps?: JigRunStep[]
 }
 
-export interface JigEntityDto {
+export interface JigEntity {
   name: string
   lastRun: string
   status: RunOutcomeStatus
 }
 
-export interface JigToolDto {
+export interface JigTool {
   connection: string
   name: string
   readOnly: boolean
 }
 
-export interface JigDto {
+export interface JigData {
   id: string
   sourceId?: string
   entity?: string | null
@@ -56,49 +56,49 @@ export interface JigDto {
   running?: boolean
   grouped?: boolean
   entityCount?: number
-  entities?: JigEntityDto[]
+  entities?: JigEntity[]
   sparkline: number[]
-  steps: JigStepDto[]
+  steps: JigStep[]
   params?: Record<string, string>
   code: string
-  runs: JigRunDto[]
+  runs: JigRun[]
   settings: {
     trigger: string
     connections: string[]
-    tools?: JigToolDto[]
+    tools?: JigTool[]
     permissions: string[]
   }
   costMonth?: string
   costLifetime?: string
 }
 
-export interface ConnectionDto {
+export interface Connection {
   name: string
   connected: boolean
   toolCount: number
   description: string
 }
 
-export interface ConnectionToolDto {
+export interface ConnectionTool {
   name: string
   description: string
   readOnly: boolean
 }
 
-export interface ConnectionDetailDto extends ConnectionDto {
-  tools: ConnectionToolDto[]
+export interface ConnectionDetail extends Connection {
+  tools: ConnectionTool[]
   usedBy: string[]
 }
 
-export interface ModelInfoDto {
+export interface ModelInfo {
   id: string
   label: string
 }
 
-export interface ModelsDto {
-  main: ModelInfoDto
-  editor: ModelInfoDto
-  fast: ModelInfoDto
+export interface ModelCatalog {
+  main: ModelInfo
+  editor: ModelInfo
+  fast: ModelInfo
 }
 
 export type AgentEvent =
@@ -116,19 +116,19 @@ export type AgentEvent =
 
 export type AgentStatus = "thinking" | "tool-calling" | "waiting" | "done" | "error" | "idle"
 
-export interface StartAgentResponseDto {
+export interface StartAgentResponse {
   sessionId: string
   jigId?: string
 }
 
-export interface AgentStatusResponseDto {
+export interface AgentStatusResponse {
   status: AgentStatus
   jigId?: string
   events: AgentEvent[]
   totalEvents: number
 }
 
-export interface LiveRunStepDto {
+export interface LiveRunStep {
   seq: number
   label: string
   status: LiveStepStatus
@@ -138,7 +138,7 @@ export interface LiveRunStepDto {
   error?: string
 }
 
-export interface RunStatusDto {
+export interface RunStatus {
   active: boolean
   runId?: number
   jigId?: string
@@ -146,21 +146,21 @@ export interface RunStatusDto {
   dryRun?: boolean
   completedTools: string[]
   activeTools: string[]
-  steps: LiveRunStepDto[]
+  steps: LiveRunStep[]
   readOnly?: Record<string, boolean>
   error?: string
   output?: string
   status?: "running" | "success" | "fail"
 }
 
-export interface StartRunResponseDto {
+export interface StartRunResponse {
   runId: number
   jigId: string
   entity?: string | null
   dryRun: boolean
 }
 
-export interface RunDetailStepDto {
+export interface RunDetailStep {
   label: string
   time: string
   status: LiveStepStatus
@@ -170,7 +170,7 @@ export interface RunDetailStepDto {
   connections?: string[]
 }
 
-export interface RunDetailDto {
+export interface RunDetail {
   id: number
   jigId: string
   entity: string | null
@@ -182,15 +182,34 @@ export interface RunDetailDto {
   completedTools: string[]
   activeTools: string[]
   readOnly?: Record<string, boolean>
-  steps: RunDetailStepDto[]
+  steps: RunDetailStep[]
 }
 
-export interface StepListDto {
-  steps: JigStepDto[]
+export interface StepList {
+  steps: JigStep[]
 }
 
-export interface TriggerUpdateResponseDto {
+export interface TriggerUpdateResponse {
   ok: boolean
   trigger: string
   warning?: string
+}
+
+export interface JigVersion {
+  sha: string
+  date: string
+  message: string
+}
+
+export interface JigVersionDetail {
+  sha: string
+  code: string
+  diff: string
+  hasChanges: boolean
+  prompt?: string | null
+}
+
+export interface RestoreJigVersionResult {
+  ok: true
+  sha: string
 }

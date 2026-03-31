@@ -1,6 +1,7 @@
 "use client";
 
 import { ConnectionTag } from "@/components/connection-tag";
+import { Button } from "@/components/button";
 import { StepIO } from "@/components/step-io";
 import { APPROVAL_DATA } from "@/mock/mock-data";
 
@@ -24,12 +25,13 @@ export function ApprovalPane({ approvalId, onClose, onApprove, onReject }: {
           <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
           <h2 className="text-[14px] font-semibold text-amber-400">Pending Approval</h2>
         </div>
-        <button
+        <Button
           onClick={onClose}
-          className="rounded-md border border-[#1f1f23] bg-[#111113] px-2 py-1 text-[11px] text-[#555] transition-colors duration-150 hover:text-[#888] hover:bg-[#1a1a1d]"
+          variant="subtle"
+          size="sm"
         >
           &#10005;
-        </button>
+        </Button>
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
@@ -98,12 +100,12 @@ export function ApprovalPane({ approvalId, onClose, onApprove, onReject }: {
 
         {/* Approve/Reject */}
         <div className="flex gap-2">
-          <button onClick={onApprove} className="flex-1 rounded-md bg-emerald-600 py-2 text-[12px] font-medium text-white transition-all duration-150 hover:bg-emerald-500 active:scale-[0.98] cursor-pointer">
+          <Button onClick={onApprove} variant="success" size="md" className="flex-1 py-2 text-[12px] active:scale-[0.98]">
             Approve &amp; Continue
-          </button>
-          <button onClick={onReject} className="flex-1 rounded-md border border-rose-500/30 bg-rose-500/10 py-2 text-[12px] font-medium text-rose-400 transition-all duration-150 hover:bg-rose-500/20 active:scale-[0.98] cursor-pointer">
+          </Button>
+          <Button onClick={onReject} variant="danger" size="md" className="flex-1 py-2 text-[12px] active:scale-[0.98]">
             Reject
-          </button>
+          </Button>
         </div>
       </div>
     </aside>

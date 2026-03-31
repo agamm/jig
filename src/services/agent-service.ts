@@ -27,6 +27,12 @@ type AgentSession = {
 const agentSessions = new Map<string, AgentSession>()
 const activeAgentJigs = new Set<string>()
 
+function hasCompletedTool(session: AgentSession, tool: string): boolean {
+  return session.events.some((event) =>
+    event.type === "tool-call" && event.tool === tool && event.status === "done"
+  )
+}
+
 function pruneAgentSessions() {
   const now = Date.now()
   for (const [id, session] of agentSessions) {
@@ -131,6 +137,7 @@ async function toolReadJigFile(args: { jigId?: string; entity?: string }, sessio
 async function toolWriteJigFile(args: { code: string; jigId?: string; entity?: string; message?: string }, session: AgentSession): Promise<string> {
   const jigId = session.jigId ?? args.jigId
   if (!jigId) return JSON.stringify({ error: "No jigId specified — provide jigId for new jigs" })
+  if (!isValidJigId(jigId)) return JSON.stringify({ error: "Invalid jigId. Use lowercase letters, numbers, dashes, or underscores." })
 
   if (!session.jigId) {
     if (activeAgentJigs.has(jigId)) return JSON.stringify({ error: "Another session is already editing this jig" })
@@ -139,6 +146,7 @@ async function toolWriteJigFile(args: { code: string; jigId?: string; entity?: s
   }
 
   const entity = session.entity ?? args.entity
+  if (entity && !isValidJigId(entity)) return JSON.stringify({ error: "Invalid entity. Use lowercase letters, numbers, dashes, or underscores." })
   const filePath = resolveJigPath(jigId, entity)
   await writeJigSource(filePath, args.code, {
     jigId,
@@ -236,6 +244,9 @@ IMPORTANT: Act immediately. Do NOT describe what you plan to do — just do it. 
 ${parts.join("\n")}
 
 ## Rules
+- If creating a new jig, choose a short valid jigId first and include it in your first write_jig_file call
+- Prefer concise concept names over literal sentence fragments. Good: forgotten-emails, weekly-update, morning-briefing, meeting-prep. Bad: check-my-email-for-emails-i-forgot
+- Valid jigId and entity names use only lowercase letters, numbers, dashes, and underscores
 - Import SDK from "../src/index.js" (jig, llm, agent) for top-level jigs, "../../src/index.js" for grouped jigs
 - Import connections from "../.jig/connections/{server}.js" (or "../../.jig/connections/{server}.js" for grouped)
 - Use ctx.output() for output, NEVER console.log()
@@ -275,6 +286,8 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
     }
 
     session.status = "tool-calling"
+    let roundHadToolError = false
+    let roundHadSuccessfulCheck = false
     for (const toolCall of msg.tool_calls) {
       if (toolCall.type !== "function") {
         session.messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ error: `Unsupported tool call type: ${toolCall.type}` }) })
@@ -295,12 +308,27 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
         const result = await executeAgentTool(toolCall.function.name, args, session)
         event.status = "done"
         event.result = result
+        if (toolCall.function.name === "check_jig" && result === "ok") {
+          roundHadSuccessfulCheck = true
+        }
         session.messages.push({ role: "tool", tool_call_id: toolCall.id, content: result })
       } catch (e: any) {
         event.status = "error"
         event.result = e?.message ?? String(e)
+        roundHadToolError = true
         session.messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ error: e?.message }) })
       }
+    }
+
+    if (!roundHadToolError && roundHadSuccessfulCheck && hasCompletedTool(session, "write_jig_file")) {
+      session.events.push({
+        type: "text",
+        content: session.jigId
+          ? `Updated ${session.jigId} and it passed the jig check.`
+          : "Jig written and it passed the jig check.",
+      })
+      session.status = "done"
+      return
     }
   }
 

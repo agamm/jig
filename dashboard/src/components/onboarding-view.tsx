@@ -1,7 +1,7 @@
 import { ServiceIcon } from "@/components/service-icon";
 import { ConnectionTag } from "@/components/connection-tag";
 
-export function OnboardingView() {
+export function OnboardingView({ onCreate }: { onCreate?: () => void }) {
   return (
     <div className="mx-auto max-w-xl space-y-6 pt-8" style={{ animation: "fade-up 0.3s ease" }}>
       <div className="text-center">
@@ -27,7 +27,10 @@ export function OnboardingView() {
             </div>
           </button>
         ))}
-        <button className="group flex items-center gap-3 rounded-lg border border-dashed border-[#2a2a2e] bg-transparent p-3.5 text-left transition-colors duration-150 hover:border-emerald-500/30 hover:bg-emerald-500/[0.03]">
+        <button
+          onClick={onCreate}
+          className="group flex items-center gap-3 rounded-lg border border-dashed border-[#2a2a2e] bg-transparent p-3.5 text-left transition-colors duration-150 hover:border-emerald-500/30 hover:bg-emerald-500/[0.03]"
+        >
           <span className="flex h-8 w-8 items-center justify-center rounded-md bg-emerald-500/10 text-sm text-emerald-400">&#10024;</span>
           <div>
             <p className="text-[13px] font-medium text-[#ededed]">Create your first jig</p>

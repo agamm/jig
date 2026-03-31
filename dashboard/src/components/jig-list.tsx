@@ -13,7 +13,7 @@ const statusColor = (s: string) =>
 const statusDot = (s: string) =>
   s === "healthy" ? "bg-emerald-400" : s === "attention" ? "bg-amber-400" : "bg-rose-400";
 
-export function JigList({ jigs, selectedJigId, expandedGroup, onJigClick, onEntityClick, onReorder, onExpandGroup, onApprovalClick, phase }: {
+export function JigList({ jigs, selectedJigId, expandedGroup, onJigClick, onEntityClick, onReorder, onExpandGroup, onApprovalClick, onCreate, phase }: {
   jigs: Jig[];
   selectedJigId: string | null;
   expandedGroup: string | null;
@@ -22,6 +22,7 @@ export function JigList({ jigs, selectedJigId, expandedGroup, onJigClick, onEnti
   onReorder: (newJigs: Jig[]) => void;
   onExpandGroup: (jigId: string | null) => void;
   onApprovalClick: (approvalId: string) => void;
+  onCreate: () => void;
   phase: string;
 }) {
   const [jigSearch, setJigSearch] = useState("");
@@ -212,7 +213,10 @@ export function JigList({ jigs, selectedJigId, expandedGroup, onJigClick, onEnti
         )}
 
         {/* + New Jig row */}
-        <button className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors duration-150 text-[#444] hover:text-emerald-400 hover:bg-[#111113] mt-1">
+        <button
+          onClick={onCreate}
+          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors duration-150 text-[#444] hover:text-emerald-400 hover:bg-[#111113] mt-1"
+        >
           <span className="flex h-5 w-5 items-center justify-center rounded-full border border-dashed border-[#2a2a2e] text-[11px]">+</span>
           <span className="text-[12px]">New Jig</span>
         </button>

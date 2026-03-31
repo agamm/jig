@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { Jig } from "@/types/jig";
 import { ConnectionTag } from "@/components/connection-tag";
+import { Button } from "@/components/button";
 import { HighlightedCode } from "@/components/highlighted-code";
 import { StepList } from "@/components/step-list";
 import { TRIGGER_SUGGESTIONS } from "@/mock/mock-data";
@@ -33,12 +34,13 @@ export function ReviewPane({ jig, onClose }: {
           <h2 className="text-[14px] font-semibold text-[#ededed] whitespace-nowrap">{jig.name}</h2>
           <span className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[9px] text-amber-400">draft</span>
         </div>
-        <button
+        <Button
           onClick={onClose}
-          className="rounded-md border border-[#1f1f23] bg-[#111113] px-2 py-1 text-[11px] text-[#555] transition-colors duration-150 hover:text-[#888] hover:bg-[#1a1a1d]"
+          variant="subtle"
+          size="sm"
         >
           &#10005;
-        </button>
+        </Button>
       </div>
 
       {/* Scrollable content */}
@@ -85,12 +87,13 @@ export function ReviewPane({ jig, onClose }: {
                 ))}
               </div>
               <div className="flex gap-1.5 pt-1">
-                <button
+                <Button
                   disabled={trigger.saving}
                   onClick={trigger.save}
-                  className="rounded-md bg-blue-600 px-2.5 py-1 text-[10px] font-medium text-white transition-colors duration-150 hover:bg-blue-500 disabled:opacity-50"
-                >{trigger.saving ? "Saving…" : "Save"}</button>
-                <button onClick={trigger.cancel} className="rounded-md border border-[#1f1f23] px-2.5 py-1 text-[10px] text-[#555] transition-colors duration-150 hover:text-[#888]">Cancel</button>
+                  variant="accent"
+                  size="xs"
+                >{trigger.saving ? "Saving…" : "Save"}</Button>
+                <Button onClick={trigger.cancel} variant="subtle" size="xs">Cancel</Button>
               </div>
             </div>
           ) : (
@@ -119,14 +122,16 @@ export function ReviewPane({ jig, onClose }: {
 
         {/* Compile & Save */}
         <div className="pt-2">
-          <button
+          <Button
             disabled={!trigger.value}
             title={!trigger.value ? "Set a trigger first" : ""}
-            className="w-full rounded-md bg-gradient-to-r from-emerald-600 to-emerald-500 py-2 text-[12px] font-semibold text-white shadow-lg shadow-emerald-600/20 transition-all duration-200 hover:shadow-emerald-600/30 hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+            variant="success"
+            size="md"
+            className="w-full bg-gradient-to-r from-emerald-600 to-emerald-500 py-2 text-[12px] font-semibold shadow-lg shadow-emerald-600/20 transition-all duration-200 hover:brightness-110 hover:shadow-emerald-600/30 active:scale-[0.98]"
             style={{ animation: "shimmer 3s infinite" }}
           >
             Compile &amp; Save
-          </button>
+          </Button>
         </div>
       </div>
     </aside>

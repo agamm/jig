@@ -6,11 +6,12 @@ import type { Phase, Jig } from "@/types/jig";
 import { OnboardingView } from "@/components/onboarding-view";
 import { JigList } from "@/components/jig-list";
 import { JigDetailPane } from "@/components/jig-detail-pane";
+import { CreateJigPane } from "@/components/create-jig-pane";
 import { ReviewPane } from "@/components/review-pane";
 import { ApprovalPane } from "@/components/approval-pane";
 import { ConnectionPane } from "@/components/connection-pane";
 import { ServiceIcon } from "@/components/service-icon";
-import { fetchModels } from "@/lib/api";
+import { fetchJig, fetchJigs, fetchModels } from "@/lib/api";
 import type { ModelsDto } from "@shared/api";
 
 function useLocalStorage(key: string, initial: boolean): [boolean, (v: boolean) => void, boolean] {
@@ -50,6 +51,10 @@ export function DashboardShell({
   const [detailExpanded, setDetailExpanded] = useState(false);
   const [sidebarSlim, setSidebarSlim, sidebarMounted] = useLocalStorage("jig-sidebar-slim", false);
   const [view, setView] = useQueryState("view", parseAsString);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createInstruction, setCreateInstruction] = useState("");
+  const [createStartToken, setCreateStartToken] = useState(0);
+  const [commandInput, setCommandInput] = useState("");
 
   // Sync when parent changes jigs (e.g. phase change in mock mode)
   useEffect(() => {
@@ -63,7 +68,7 @@ export function DashboardShell({
 
   const currentJig = jigs.find(j => j.id === selectedJig) ?? null;
   const showOnboarding = phaseToggle ? phase === "day1" : jigs.length === 0 && !loading;
-  const hasDetail = (selectedJig && currentJig) || activeApproval || selectedConnection;
+  const hasDetail = createOpen || (selectedJig && currentJig) || activeApproval || selectedConnection;
   const collapsed = sidebarMounted ? sidebarSlim : false;
   const allConnections = [...new Set(jigs.flatMap(j => j.settings.connections))];
 
@@ -94,6 +99,58 @@ export function DashboardShell({
     setActiveApproval(null);
     setReviewMode(null);
     setSelectedConnection(null);
+    setCreateOpen(false);
+  }
+
+  function openCreatePane(instruction = "", autoStart = false) {
+    setSelectedJig(null);
+    setSelectedEntity(null);
+    setActiveApproval(null);
+    setReviewMode(null);
+    setSelectedConnection(null);
+    setView(null);
+    setCreateOpen(true);
+    setCreateInstruction(instruction);
+    if (autoStart && instruction.trim()) {
+      setCreateStartToken((prev) => prev + 1);
+    }
+  }
+
+  async function refreshJigs(openJigId?: string) {
+    const nextJigs = await fetchJigs().catch(() => null);
+    if (!nextJigs) return;
+
+    let mergedJigs = nextJigs;
+    if (openJigId && !nextJigs.some((j) => j.id === openJigId)) {
+      const createdJig = await fetchJig(openJigId).catch(() => null);
+      if (createdJig && !nextJigs.some((j) => j.id === createdJig.id)) {
+        mergedJigs = [createdJig, ...nextJigs];
+      }
+    }
+
+    setJigs(mergedJigs);
+
+    if (openJigId && mergedJigs.some((j) => j.id === openJigId)) {
+      setCreateOpen(false);
+      setSelectedJig(openJigId);
+      setSelectedEntity(null);
+    }
+  }
+
+  function removeJigFromState(jigId: string, entity?: string | null) {
+    setJigs((prev) => prev.flatMap((jig) => {
+      if (jig.id !== jigId) return [jig]
+      if (!entity || !jig.entities?.length) return []
+
+      const nextEntities = jig.entities.filter((item) => item.name !== entity)
+      if (nextEntities.length === 0) return []
+
+      return [{
+        ...jig,
+        entityCount: nextEntities.length,
+        entities: nextEntities,
+      }]
+    }))
   }
 
   function handleReviewClick(jigId: string) {
@@ -265,7 +322,7 @@ export function DashboardShell({
             {loading && (
               <div className="flex items-center justify-center h-32 text-[#555] text-sm">Loading...</div>
             )}
-            {showOnboarding && <OnboardingView />}
+            {showOnboarding && <OnboardingView onCreate={() => openCreatePane()} />}
             {!showOnboarding && !loading && (
               <JigList
                 jigs={jigs}
@@ -276,6 +333,7 @@ export function DashboardShell({
                 onReorder={setJigs}
                 onExpandGroup={setExpandedGroup}
                 onApprovalClick={handleApprovalClick}
+                onCreate={() => openCreatePane()}
                 phase={phase}
               />
             )}
@@ -283,13 +341,45 @@ export function DashboardShell({
 
           {/* Command bar chat */}
           <div className="shrink-0 border-t border-[#1f1f23] px-4 py-2.5">
-            <div className="flex items-center gap-2 rounded-lg border border-[#1f1f23] bg-[#111113] px-3 py-2 text-[12px] text-[#444] cursor-text transition-colors duration-150 hover:border-[#2a2a2e] hover:text-[#555]">
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const instruction = commandInput.trim();
+                if (!instruction) return;
+                openCreatePane(instruction, true);
+                setCommandInput("");
+              }}
+              className="flex items-center gap-2 rounded-lg border border-[#1f1f23] bg-[#111113] px-3 py-2 text-[12px] transition-colors duration-150 hover:border-[#2a2a2e]"
+            >
               <svg className="w-3.5 h-3.5 text-[#555]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
-              <span className="flex-1">Jig anything...</span>
-              <kbd className="rounded bg-[#1a1a1d] px-1.5 py-0.5 text-[10px] text-[#555] font-mono">⌘K</kbd>
-            </div>
+              <input
+                type="text"
+                value={commandInput}
+                onChange={(e) => setCommandInput(e.target.value)}
+                placeholder="Jig anything..."
+                className="flex-1 bg-transparent text-[12px] text-[#ededed] outline-none placeholder:text-[#444]"
+              />
+              <button
+                type="submit"
+                disabled={!commandInput.trim()}
+                className="rounded-md bg-emerald-600 px-2 py-0.5 text-[10px] font-medium text-white transition-colors duration-150 hover:bg-emerald-500 disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                Create
+              </button>
+            </form>
           </div>
         </main>
+        )}
+
+        {createOpen && !selectedConnection && (
+          <CreateJigPane
+            initialInstruction={createInstruction}
+            startToken={createStartToken}
+            onClose={() => setCreateOpen(false)}
+            onCreated={async (jigId) => {
+              await refreshJigs(jigId);
+            }}
+          />
         )}
 
         {selectedJig && currentJig && !activeApproval && !reviewMode && !selectedConnection && (
@@ -301,13 +391,15 @@ export function DashboardShell({
             onToggleExpand={() => setDetailExpanded(!detailExpanded)}
             onConnectionClick={(name) => { setSelectedConnection(name); }}
             onRefresh={async () => {
-              try {
-                const res = await fetch(`/api/jigs/${encodeURIComponent(selectedJig)}`)
-                if (res.ok) {
-                  const updated = await res.json()
-                  setJigs(prev => prev.map(j => j.id === updated.id ? updated : j))
-                }
-              } catch {}
+              const updated = await fetchJig(selectedJig).catch(() => null);
+              if (!updated) return;
+              setJigs(prev => prev.map(j => j.id === updated.id ? updated : j));
+            }}
+            onDelete={async () => {
+              removeJigFromState(selectedJig, selectedEntity)
+              await refreshJigs()
+              setDetailExpanded(false)
+              closeDetail()
             }}
           />
         )}

@@ -25,6 +25,17 @@ export function fetchJigs(): Promise<JigDto[]> {
   return fetchJson("/api/jigs")
 }
 
+export function fetchJig(jigId: string): Promise<JigDto> {
+  return fetchJson(`/api/jigs/${encodeURIComponent(jigId)}`)
+}
+
+export function deleteJig(jigId: string, entity?: string | null): Promise<{ ok: true }> {
+  const search = entity ? `?entity=${encodeURIComponent(entity)}` : ""
+  return fetchJson(`/api/jigs/${encodeURIComponent(jigId)}${search}`, {
+    method: "DELETE",
+  })
+}
+
 export function fetchModels(): Promise<ModelsDto> {
   return fetchJson("/api/models")
 }

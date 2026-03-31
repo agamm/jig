@@ -4,11 +4,13 @@
  * Route parsing and side-effect orchestration live here; domain logic lives in
  * dedicated services under src/services and src/domain.
  */
-import { existsSync, readFileSync, writeFileSync } from "fs"
+import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs"
+import { join } from "path"
 import { openDb } from "./db.js"
 import { getModelCatalog } from "./config/models.js"
 import { JIGS_DIR, PROJECT_ROOT, SCHEMAS_DIR } from "./config/paths.js"
 import { extractConnections, getJigFilePath, getJigRelativePath, selectJigEntity } from "./domain/jig-source.js"
+import { invalidateJigsCache } from "./discover.js"
 import {
   cronToText,
   replaceTriggerInSource,
@@ -229,6 +231,47 @@ async function handleGetConnection(name: string): Promise<Response> {
   })
 }
 
+async function handleDeleteJig(id: string, entity?: string): Promise<Response> {
+  const discovered = discoverAllJigs()
+  if (!discovered.has(id)) throw new ApiError(404, `Jig not found: ${id}`)
+
+  const activeRun = getActiveRunSnapshot()
+  if (activeRun.active && activeRun.jigId === id && (!entity || (activeRun.entity ?? null) === entity)) {
+    throw new ApiError(409, "Cannot delete a jig while it is running")
+  }
+
+  const entities = discovered.get(id)!
+  if (entity) {
+    const target = resolveJigRequest(id, entity)
+    const filePath = getJigFilePath(id, target.entity)
+    if (!filePath) throw new ApiError(404, "Jig file not found")
+
+    rmSync(filePath, { force: true })
+
+    const dir = join(JIGS_DIR, id)
+    const remainingEntities = existsSync(dir)
+      ? readdirSync(dir).filter((name) => name.endsWith(".ts") && !name.startsWith("_"))
+      : []
+    if (remainingEntities.length === 0 && existsSync(dir)) {
+      rmSync(dir, { recursive: true, force: true })
+    }
+
+    invalidateJigsCache()
+    return json({ ok: true, deleted: "entity", jigId: id, entity: target.entity ?? null })
+  }
+
+  if (entities.length === 0) {
+    const filePath = getJigFilePath(id)
+    if (!filePath) throw new ApiError(404, "Jig file not found")
+    rmSync(filePath, { force: true })
+  } else {
+    rmSync(join(JIGS_DIR, id), { recursive: true, force: true })
+  }
+
+  invalidateJigsCache()
+  return json({ ok: true, deleted: "jig", jigId: id, entity: null })
+}
+
 export function createApiServer(port: number) {
   openDb()
 
@@ -250,6 +293,10 @@ export function createApiServer(port: number) {
             return json(jigs)
           }
           case "getJig": {
+            if (req.method === "DELETE") {
+              const entity = url.searchParams.get("entity") ?? undefined
+              return handleDeleteJig(route.params.id, entity)
+            }
             const discovered = discoverAllJigs()
             if (!discovered.has(route.params.id)) throw new ApiError(404, `Jig not found: ${route.params.id}`)
             return json(await buildJigResponse(route.params.id, discovered.get(route.params.id)!, 20, true))

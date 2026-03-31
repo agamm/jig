@@ -6,6 +6,7 @@ export function useAgent(onComplete?: (jigId?: string) => void) {
   const [events, setEvents] = useState<AgentEvent[]>([])
   const [status, setStatus] = useState<AgentStatus>("idle")
   const [sessionId, setSessionId] = useState<string | null>(null)
+  const [jigId, setJigId] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const onCompleteRef = useRef(onComplete)
   const sinceRef = useRef(0)
@@ -34,6 +35,7 @@ export function useAgent(onComplete?: (jigId?: string) => void) {
         }
 
         setStatus(data.status)
+        setJigId(data.jigId ?? null)
 
         if (data.status === "done" || data.status === "error") {
           pollRef.current = null
@@ -61,12 +63,14 @@ export function useAgent(onComplete?: (jigId?: string) => void) {
 
     setEvents([])
     setStatus("thinking")
+    setJigId(null)
     sinceRef.current = 0
 
     try {
       const data = await startAgentSession(instruction, targetJigId, entity)
       if (generationRef.current !== generation) return
       setSessionId(data.sessionId)
+      setJigId(data.jigId ?? null)
       poll(data.sessionId, generation)
     } catch (e: any) {
       if (generationRef.current === generation) {
@@ -94,12 +98,14 @@ export function useAgent(onComplete?: (jigId?: string) => void) {
     setEvents([])
     setStatus("idle")
     setSessionId(null)
+    setJigId(null)
   }, [cleanup])
 
   return {
     events,
     status,
     sessionId,
+    jigId,
     isActive: status === "thinking" || status === "tool-calling",
     startSession,
     sendMessage,

@@ -7,29 +7,35 @@ import { HighlightedCode } from "@/components/highlighted-code";
 import { RunSteps, type RunStep } from "@/components/run-steps";
 import { useJigRun } from "@/hooks/use-jig-run";
 import { useAgent } from "@/hooks/use-agent";
-import { AgentActivity } from "@/components/agent-activity";
+import { AgentPanel } from "@/components/agent-panel";
+import { Button } from "@/components/button";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import { toast } from "@/components/toast";
 import { TRIGGER_SUGGESTIONS } from "@/mock/mock-data";
 import { useTriggerSave } from "@/hooks/use-trigger-save";
 import { Spinner } from "@/components/spinner";
 import { useElapsed } from "@/hooks/use-elapsed";
-import { fetchJigSteps } from "@/lib/api";
+import { deleteJig, fetchJigSteps } from "@/lib/api";
 
 const statusDot = (s: string) =>
   s === "healthy" ? "bg-emerald-400" : s === "attention" ? "bg-amber-400" : "bg-rose-400";
 
-export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, onToggleExpand, onRefresh, onConnectionClick }: {
+export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, onToggleExpand, onRefresh, onDelete, onConnectionClick }: {
   jig: Jig;
   selectedEntity: string | null;
   onClose: () => void;
   expanded?: boolean;
   onToggleExpand?: () => void;
   onRefresh?: () => Promise<void> | void;
+  onDelete?: () => Promise<void> | void;
   onConnectionClick?: (name: string) => void;
 }) {
   const [detailTab, setDetailTab] = useState<"steps" | "code">("steps");
   const trigger = useTriggerSave(jig.id, jig.settings.trigger, selectedEntity);
   const [expandedRun, setExpandedRun] = useState<number | null>(null);
   const [agentInput, setAgentInput] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
   const { mode, liveSteps, completedTools, activeTools, toolReadOnly, startRun, dismiss, cancelRun, isRunning } = useJigRun(jig.id, selectedEntity);
 
@@ -102,11 +108,37 @@ export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, 
     startRun(dryRun, hasParams ? paramValues : undefined);
   };
 
+  const handleDelete = async () => {
+    setDeleting(true)
+    try {
+      await deleteJig(jig.id, selectedEntity)
+      setConfirmDeleteOpen(false)
+      await onDelete?.()
+    } catch (error: any) {
+      toast.error(error?.message ?? "Failed to delete jig")
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   return (
     <aside
       className={`flex shrink-0 flex-col border-l border-[#1f1f23] bg-[#0e0e10] overflow-hidden transition-all duration-200 ${expanded ? "w-full" : "w-[48%]"}`}
       style={{ animation: "slide-in-right 0.2s ease" }}
     >
+      <ConfirmDialog
+        open={confirmDeleteOpen}
+        title={selectedEntity ? "Delete entity?" : "Delete jig?"}
+        message={selectedEntity
+          ? `This will remove ${jig.name} — ${selectedEntity} from the workspace.`
+          : `This will remove ${jig.name} from the workspace.`}
+        confirmLabel={selectedEntity ? "Delete Entity" : "Delete Jig"}
+        destructive
+        loading={deleting}
+        onConfirm={handleDelete}
+        onClose={() => !deleting && setConfirmDeleteOpen(false)}
+      />
+
       {/* Header */}
       <div className="flex h-11 shrink-0 items-center justify-between border-b border-[#1f1f23] px-4 gap-3">
         <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -117,21 +149,32 @@ export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, 
           <span className={`shrink-0 h-1.5 w-1.5 rounded-full ${statusDot(jig.status)}`} />
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
+          <Button
+            onClick={() => setConfirmDeleteOpen(true)}
+            disabled={deleting || isRunning}
+            variant="danger"
+            size="sm"
+            title={selectedEntity ? "Delete entity" : "Delete jig"}
+          >
+            {deleting ? "Deleting…" : selectedEntity ? "Delete Entity" : "Delete"}
+          </Button>
           {onToggleExpand && (
-            <button
+            <Button
               onClick={onToggleExpand}
-              className="rounded-md border border-[#1f1f23] bg-[#111113] px-2 py-1 text-[11px] text-[#555] transition-colors duration-150 hover:text-[#888] hover:bg-[#1a1a1d]"
+              variant="subtle"
+              size="sm"
               title={expanded ? "Collapse" : "Expand"}
             >
               {expanded ? "\u21E5" : "\u21E4"}
-            </button>
+            </Button>
           )}
-          <button
+          <Button
             onClick={onClose}
-            className="rounded-md border border-[#1f1f23] bg-[#111113] px-2 py-1 text-[11px] text-[#555] transition-colors duration-150 hover:text-[#888] hover:bg-[#1a1a1d]"
+            variant="subtle"
+            size="sm"
           >
             &#10005;
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -145,29 +188,32 @@ export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, 
           </div>
           <div className="flex items-center gap-1.5">
             {isRunning ? (
-              <button
+              <Button
                 onClick={cancelRun}
-                className="rounded-md border border-rose-600/30 bg-rose-600/10 px-2.5 py-1 text-[10px] font-medium text-rose-400 transition-all duration-150 hover:bg-rose-600/20 active:scale-95"
+                variant="danger"
+                size="xs"
               >
                 Cancel
-              </button>
+              </Button>
             ) : (
               <>
-                <button
+                <Button
                   onClick={() => handleRun(false)}
                   disabled={derivingSteps}
-                  className="rounded-md bg-emerald-600 px-2.5 py-1 text-[10px] font-medium text-white transition-all duration-150 hover:bg-emerald-500 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-emerald-600"
+                  variant="success"
+                  size="xs"
                 >
                   &#9654; Run
-                </button>
-                <button
+                </Button>
+                <Button
                   onClick={() => handleRun(true)}
                   disabled={derivingSteps}
-                  className="rounded-md border border-emerald-600/30 bg-emerald-600/10 px-2.5 py-1 text-[10px] font-medium text-emerald-400 transition-all duration-150 hover:bg-emerald-600/20 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-emerald-600/10"
+                  variant="successOutline"
+                  size="xs"
                   title="Read-only — no writes"
                 >
                   Dry Run
-                </button>
+                </Button>
               </>
             )}
           </div>
@@ -249,12 +295,13 @@ export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, 
                 ))}
               </div>
               <div className="flex gap-1.5 pt-1">
-                <button
+                <Button
                   disabled={trigger.saving}
                   onClick={trigger.save}
-                  className="rounded-md bg-blue-600 px-2.5 py-1 text-[10px] font-medium text-white transition-colors duration-150 hover:bg-blue-500 disabled:opacity-50"
-                >{trigger.saving ? "Saving…" : "Save"}</button>
-                <button onClick={trigger.cancel} className="rounded-md border border-[#1f1f23] px-2.5 py-1 text-[10px] text-[#555] transition-colors duration-150 hover:text-[#888]">Cancel</button>
+                  variant="accent"
+                  size="xs"
+                >{trigger.saving ? "Saving…" : "Save"}</Button>
+                <Button onClick={trigger.cancel} variant="subtle" size="xs">Cancel</Button>
               </div>
             </div>
           ) : (
@@ -357,14 +404,7 @@ export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, 
       </div>
 
       {/* Agent activity stream (shown when active) */}
-      {agent.status !== "idle" && (
-        <div className="border-t border-[#1f1f23] px-4 py-3 max-h-[200px] overflow-y-auto" style={{ animation: "fade-up 0.15s ease" }}>
-          <div className="mb-2">
-            <span className="text-[10px] font-medium text-[#555] uppercase tracking-wider">Agent</span>
-          </div>
-          <AgentActivity events={agent.events} status={agent.status} />
-        </div>
-      )}
+      <AgentPanel events={agent.events} status={agent.status} />
 
       {/* Agent input bar */}
       <div className="border-t border-[#1f1f23] p-3">
@@ -379,15 +419,16 @@ export function JigDetailPane({ jig, selectedEntity, onClose, expanded = false, 
             className="flex-1 bg-transparent text-[12px] text-[#ededed] outline-none placeholder:text-[#555] disabled:opacity-50"
           />
           {(agent.status === "done" || agent.status === "error") && (
-            <button onClick={agent.reset} className="rounded-md border border-[#1f1f23] px-2 py-0.5 text-[10px] text-[#555] transition-colors duration-150 hover:text-[#888] hover:border-[#2a2a2e]">Clear</button>
+            <Button onClick={agent.reset} variant="subtle" size="xs">Clear</Button>
           )}
-          <button
+          <Button
             onClick={handleAgentSend}
             disabled={!agentInput.trim() || agent.isActive}
-            className="rounded-md bg-emerald-600 px-2 py-0.5 text-[10px] font-medium text-white transition-colors duration-150 hover:bg-emerald-500 disabled:opacity-30 disabled:cursor-not-allowed"
+            variant="success"
+            size="xs"
           >
             &#8593;
-          </button>
+          </Button>
         </div>
       </div>
     </aside>

@@ -1,13 +1,11 @@
 "use client"
 
 import { useState } from "react"
-import type { ConnectionDetail } from "@shared/api"
 import { Button } from "@/components/button"
 import { PaneHeader } from "@/components/pane-header"
 import { PaneSection } from "@/components/pane-section"
 import { ServiceIcon } from "@/components/service-icon"
-import { fetchConnection } from "@/lib/api"
-import { useAsyncResource } from "@/hooks/use-async-resource"
+import { useConnection } from "@/lib/swr"
 
 export function ConnectionPane({ name, onClose, onJigClick, standalone = false }: {
   name: string
@@ -16,10 +14,7 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
   standalone?: boolean
 }) {
   const [search, setSearch] = useState("")
-  const { data: conn, loading, error, reload } = useAsyncResource<ConnectionDetail>(
-    () => fetchConnection(name),
-    [name]
-  )
+  const { data: conn, isLoading: loading, error, mutate: reload } = useConnection(name)
 
   function prettifyUsedByLabel(jigId: string): string {
     return jigId
@@ -59,8 +54,8 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
 
         {!loading && error && !conn && (
           <div className="rounded-lg border border-[#1f1f23] bg-[#111113] px-4 py-4 space-y-3">
-            <p className="text-[12px] text-[#888]">{error}</p>
-            <Button onClick={reload} variant="subtle" size="xs">Retry</Button>
+            <p className="text-[12px] text-[#888]">{error?.message ?? "Failed to load"}</p>
+            <Button onClick={() => reload()} variant="subtle" size="xs">Retry</Button>
           </div>
         )}
 

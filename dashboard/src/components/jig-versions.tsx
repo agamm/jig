@@ -5,9 +5,9 @@ import type { JigVersion, JigVersionDetail } from "@shared/api"
 import { Button } from "@/components/button"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { toast } from "@/components/toast"
-import { fetchJigVersionDetail, fetchJigVersions, restoreJigVersion } from "@/lib/api"
+import { fetchJigVersionDetail, restoreJigVersion } from "@/lib/api"
 import { trimGitDiffHeaders } from "@/lib/git-diff"
-import { useAsyncResource } from "@/hooks/use-async-resource"
+import { useJigVersions } from "@/lib/swr"
 
 const DEFAULT_VISIBLE_HISTORY_ROWS = 2
 
@@ -57,10 +57,7 @@ export function JigVersions({
   const [restoring, setRestoring] = useState(false)
   const [showAll, setShowAll] = useState(false)
 
-  const { data: versions, loading, error, reload } = useAsyncResource<JigVersion[]>(
-    () => fetchJigVersions(jigId),
-    [jigId]
-  )
+  const { data: versions, isLoading: loading, error, mutate: reloadVersions } = useJigVersions(jigId)
 
   useEffect(() => {
     setSelectedSha(null)
@@ -118,7 +115,7 @@ export function JigVersions({
     try {
       await restoreJigVersion(jigId, confirmRestoreSha)
       setConfirmRestoreSha(null)
-      await reload()
+      await reloadVersions()
       await onRestored?.()
       if (selectedSha === confirmRestoreSha) {
         await loadVersionDetail(confirmRestoreSha)
@@ -135,8 +132,8 @@ export function JigVersions({
   if (error && !versions) {
     return (
       <div className="space-y-2 py-2">
-        <p className="text-[10px] text-[#555]">{error}</p>
-        <Button onClick={reload} variant="subtle" size="xs">Retry</Button>
+        <p className="text-[10px] text-[#555]">{error?.message ?? "Failed to load"}</p>
+        <Button onClick={() => reloadVersions()} variant="subtle" size="xs">Retry</Button>
       </div>
     )
   }

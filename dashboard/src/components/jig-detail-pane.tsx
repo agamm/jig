@@ -21,7 +21,8 @@ import { MarkdownOutput } from "@/components/markdown-output";
 import { useElapsed } from "@/hooks/use-elapsed";
 import { useJigToolApproval } from "@/lib/jig-tool-approval";
 import { formatElapsed } from "@/lib/format";
-import { deleteJig, fetchJigSteps } from "@/lib/api";
+import { deleteJig } from "@/lib/api";
+import { useJigSteps } from "@/lib/swr";
 import { PaneHeader } from "@/components/pane-header";
 import { PaneSection } from "@/components/pane-section";
 import { SegmentedControl } from "@/components/segmented-control";
@@ -54,17 +55,8 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
   const { mode, liveSteps, completedTools, activeTools, toolReadOnly, startRun, dismiss, cancelRun, isRunning } = useJigRun(jigId);
 
   const agent = useAgent(async () => {
-    // Update parent state (code, trigger, connections, runs)
     await onRefresh?.();
-    // Derive fresh steps directly (step cache was cleared by write_jig_file)
-    setDerivingSteps(true);
-    try {
-      const data = await fetchJigSteps(jigId);
-      if (data.steps?.length) {
-        setDerivedSteps(data.steps.map((s) => ({ num: s.num, name: s.name, connections: s.connections, tools: s.tools })));
-      }
-    } catch {}
-    setDerivingSteps(false);
+    revalidateSteps();
   });
 
   const handleAgentSend = () => {
@@ -83,46 +75,14 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
     Object.fromEntries(Object.entries(jig.params ?? {}).map(([k, v]) => [k, ""]))
   );
 
-  // Fetch derived steps — always from /steps endpoint (cached server-side by code hash)
-  const [derivedSteps, setDerivedSteps] = useState<RunStep[]>(
-    jig.steps.map(s => ({ num: s.num, name: s.name, connections: s.connections, tools: s.tools }))
-  );
-  const [derivingSteps, setDerivingSteps] = useState(false);
-  const [deriveError, setDeriveError] = useState<string | null>(null);
+  // Fetch derived steps via SWR (cached server-side by code hash)
+  const { data: stepsData, isValidating: derivingSteps, error: stepsError, mutate: revalidateSteps } = useJigSteps(jigId);
+  const derivedSteps: RunStep[] = useMemo(() => {
+    const raw = stepsData?.steps ?? jig.steps;
+    return raw.map(s => ({ num: s.num, name: s.name, connections: s.connections, tools: s.tools }));
+  }, [stepsData, jig.steps]);
+  const deriveError = stepsError?.message ?? (stepsData && !stepsData.steps?.length ? "Steps could not be derived from this jig yet." : null);
   const derivingElapsed = useElapsed(derivingSteps);
-
-  const loadDerivedSteps = async (cancelled?: () => boolean) => {
-    setDerivingSteps(true);
-    setDeriveError(null);
-    try {
-      const data = await fetchJigSteps(jigId);
-      if (cancelled?.()) return;
-      if (data.steps?.length) {
-        setDerivedSteps(data.steps.map((s) => ({ num: s.num, name: s.name, connections: s.connections, tools: s.tools })));
-        setDeriveError(null);
-      } else {
-        setDerivedSteps([]);
-        setDeriveError("Steps could not be derived from this jig yet.");
-      }
-    } catch (error: any) {
-      if (cancelled?.()) return;
-      setDerivedSteps([]);
-      setDeriveError(error?.message ?? "Steps could not be derived from this jig yet.");
-    } finally {
-      if (!cancelled?.()) setDerivingSteps(false);
-    }
-  };
-
-  useEffect(() => {
-    // Use pre-loaded steps as initial value while fetching fresh ones
-    if (jig.steps.length > 0) {
-      setDerivedSteps(jig.steps.map(s => ({ num: s.num, name: s.name, connections: s.connections, tools: s.tools })));
-      setDeriveError(null);
-    }
-    let isCancelled = false;
-    void loadDerivedSteps(() => isCancelled);
-    return () => { isCancelled = true; };
-  }, [jig.id, jig.steps.length, jigId]);
 
   // Steps: live steps during/after run (with humanized names from derived), derived when idle
   const runSteps: RunStep[] = useMemo(() => {
@@ -175,14 +135,12 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
     startRun(dryRun, hasParams ? paramValues : undefined);
   };
 
-  const retryDerivation = () => {
-    void loadDerivedSteps();
-  };
+  const retryDerivation = () => { revalidateSteps(); };
 
   const handleVersionRestored = async () => {
     await onRefresh?.()
     setDetailTab("code")
-    void loadDerivedSteps()
+    revalidateSteps()
   }
 
   const handleDelete = async () => {

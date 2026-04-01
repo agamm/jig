@@ -9,13 +9,11 @@ type CreatorPromptInput = {
     exampleJig: string
     serverDescriptions: string
   }
-  importPrefix: string
   existingCode?: string
 }
 
 type AgentPromptInput = {
   jigId?: string
-  entity?: string
   skillMd: string
   typeDefs: string
   toolCatalog: string
@@ -60,16 +58,17 @@ The available tools and probe results show what's available. Use multiple releva
 - Only change the toolset when the current tools are insufficient or invalid for the requested behavior`
 }
 
-function creatorOutputRules(importPrefix: string) {
+function codeFormatRules() {
   return `### 5. Code format
 - Output ONLY TypeScript code. No explanation, no markdown fences.
-- Import SDK from "${importPrefix}/src/index.js" (jig, llm, agent)
-- Import connections from "${importPrefix}/.jig/connections/{server}.js"
+- Import SDK: import { jig, llm, agent } from "jig"
+- Import connections: import { serverName } from "jig/connections/serverName.js"
 - Use exact param names and types from the type definitions and schemas above
 - Use ctx.output() for output, NEVER console.log()
 - End the file with: export default myJig
 - Do NOT call run() or process.exit()
 - Do NOT use require() or CommonJS imports
+- Do NOT use relative imports (../) — always use the "jig" and "jig/connections/" aliases
 - Do NOT add markdown fences around the code`
 }
 
@@ -78,9 +77,10 @@ function agentExecutionRules() {
 - Act immediately. Do NOT describe a plan first.
 - If creating a new jig, choose a short valid jigId first and include it in your first write_jig_file call
 - Prefer concise concept names over literal sentence fragments. Good: forgotten-emails, weekly-update, morning-briefing, meeting-prep. Bad: check-my-email-for-emails-i-forgot
-- Valid jigId and entity names use only lowercase letters, numbers, dashes, and underscores
-- Import SDK from "../src/index.js" (jig, llm, agent) for top-level jigs, "../../src/index.js" for grouped jigs
-- Import connections from "../.jig/connections/{server}.js" (or "../../.jig/connections/{server}.js" for grouped jigs)
+- Valid jigId names use only lowercase letters, numbers, dashes, and underscores
+- Import SDK: import { jig, llm, agent } from "jig"
+- Import connections: import { serverName } from "jig/connections/serverName.js"
+- Do NOT use relative imports (../) — always use the "jig" and "jig/connections/" aliases
 - Use ctx.output() for output, NEVER console.log()
 - End the file with: export default myJig
 - Do NOT use require() or CommonJS
@@ -95,7 +95,6 @@ export function buildCreatorJigPrompt({
   description,
   probeResults,
   context,
-  importPrefix,
   existingCode,
 }: CreatorPromptInput): string {
   return joinSections([
@@ -114,7 +113,7 @@ export function buildCreatorJigPrompt({
           `${description}\n\nModify the existing jig code according to the instruction. Preserve the existing structure and only change what's needed.`
         )
       : section("Task", `Create a new jig that does the following:\n${description}`),
-    `## Rules (in priority order)\n${sharedJigWritingPolicy()}\n\n${creatorOutputRules(importPrefix)}`,
+    `## Rules (in priority order)\n${sharedJigWritingPolicy()}\n\n${codeFormatRules()}`,
   ])
 }
 

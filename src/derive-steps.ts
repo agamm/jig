@@ -90,7 +90,6 @@ function fallbackStepName(step: {
 export async function deriveSteps(
   def: JigDefinition,
   jigId: string,
-  entity: string | null,
   code: string,
 ): Promise<CachedStep[]> {
   const { getStepCache, setStepCache } = await import("./db.js")
@@ -100,7 +99,7 @@ export async function deriveSteps(
   const codeHash = hasher.digest("hex")
 
   // Check cache — reject if any label looks unhumanized (raw prompt text)
-  const cached = getStepCache(jigId, entity, codeHash)
+  const cached = getStepCache(jigId, codeHash)
   if (cached && isUsableCachedSteps(cached)) return cached
 
   // Scan handler for raw steps
@@ -128,7 +127,7 @@ export async function deriveSteps(
   }
 
   // Only cache successfully humanized steps
-  try { setStepCache(jigId, entity, codeHash, steps!) } catch {}
+  try { setStepCache(jigId, codeHash, steps!) } catch {}
 
   return steps!
 }

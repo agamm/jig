@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQueryState, parseAsString, parseAsBoolean } from "nuqs";
+import { mutate } from "swr";
 import type { Phase, Jig } from "@/types/jig";
 import { OnboardingView } from "@/components/onboarding-view";
 import { JigList } from "@/components/jig-list";
@@ -11,8 +12,7 @@ import { ReviewPane } from "@/components/review-pane";
 import { ConnectionPane } from "@/components/connection-pane";
 import { ServiceIcon } from "@/components/service-icon";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/resizable";
-import { fetchJig, fetchJigs, fetchModels } from "@/lib/api";
-import type { ModelCatalog } from "@shared/api";
+import { useModels } from "@/lib/swr";
 
 function useLocalStorage(key: string, initial: boolean): [boolean, (v: boolean) => void, boolean] {
   const [value, setValue] = useState(initial);
@@ -44,7 +44,7 @@ export function DashboardShell({
   const [selectedJig, setSelectedJig] = useQueryState("jig", parseAsString);
   const [selectedConnection, setSelectedConnection] = useQueryState("connection", parseAsString);
   const [reviewMode, setReviewMode] = useQueryState("review", parseAsBoolean.withDefault(false));
-  const [jigs, setJigs] = useState<Jig[]>(initialJigs);
+  const jigs = initialJigs;
   const [sidebarSlim, setSidebarSlim, sidebarMounted] = useLocalStorage("jig-sidebar-slim", false);
   const [view, setView] = useQueryState("view", parseAsString);
   const [createOpen, setCreateOpen] = useState(false);
@@ -52,20 +52,13 @@ export function DashboardShell({
   const [createStartToken, setCreateStartToken] = useState(0);
   const [commandInput, setCommandInput] = useState("");
 
-  useEffect(() => {
-    setJigs(initialJigs);
-  }, [initialJigs]);
-
-  const [models, setModels] = useState<ModelCatalog | null>(null);
-  useEffect(() => {
-    fetchModels().then(setModels).catch(() => {});
-  }, []);
+  const { data: models } = useModels();
 
   const currentJig = jigs.find((j) => j.id === selectedJig) ?? null;
   const showOnboarding = phaseToggle ? phase === "day1" : jigs.length === 0 && !loading;
   const hasDetail = createOpen || (selectedJig && currentJig) || selectedConnection;
   const collapsed = sidebarMounted ? sidebarSlim : false;
-  const allConnections = [...new Set(jigs.flatMap((j) => j.settings.connections))];
+  const allConnections = useMemo(() => [...new Set(jigs.flatMap((j) => j.settings.connections))], [jigs]);
 
   function handleJigClick(jig: Jig) {
     setSelectedJig(jig.id);
@@ -93,27 +86,11 @@ export function DashboardShell({
   }
 
   async function refreshJigs(openJigId?: string) {
-    const nextJigs = await fetchJigs().catch(() => null);
-    if (!nextJigs) return;
-
-    let mergedJigs = nextJigs;
-    if (openJigId && !nextJigs.some((j) => j.id === openJigId)) {
-      const createdJig = await fetchJig(openJigId).catch(() => null);
-      if (createdJig && !nextJigs.some((j) => j.id === createdJig.id)) {
-        mergedJigs = [createdJig, ...nextJigs];
-      }
+    await mutate("jigs")
+    if (openJigId) {
+      setCreateOpen(false)
+      setSelectedJig(openJigId)
     }
-
-    setJigs(mergedJigs);
-
-    if (openJigId && mergedJigs.some((j) => j.id === openJigId)) {
-      setCreateOpen(false);
-      setSelectedJig(openJigId);
-    }
-  }
-
-  function removeJigFromState(jigId: string) {
-    setJigs((prev) => prev.filter((jig) => jig.id !== jigId));
   }
 
   function handlePhaseChange(p: Phase) {
@@ -154,7 +131,7 @@ export function DashboardShell({
             jigs={jigs}
             selectedJigId={selectedJig}
             onJigClick={handleJigClick}
-            onReorder={setJigs}
+            onReorder={(reordered) => mutate("jigs", reordered, false)}
             onCreate={() => openCreatePane()}
           />
         )}
@@ -210,15 +187,10 @@ export function DashboardShell({
         onConnectionClick={(name) => {
           setSelectedConnection(name);
         }}
-        onRefresh={async () => {
-          const updated = await fetchJig(currentJig.sourceId ?? currentJig.id, currentJig.entity ?? undefined).catch(() => null);
-          if (!updated) return;
-          setJigs((prev) => prev.map((j) => (j.id === updated.id ? updated : j)));
-        }}
+        onRefresh={() => mutate("jigs")}
         onDelete={async () => {
-          removeJigFromState(selectedJig);
-          await refreshJigs();
-          closeDetail();
+          await mutate("jigs")
+          closeDetail()
         }}
       />
     ) : selectedConnection ? (

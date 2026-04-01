@@ -1,7 +1,7 @@
 /**
  * Jig file validator — checks that jig files export a valid JigDefinition.
  *
- * Used by the creator pipeline after generating/editing jigs,
+ * Used by jig-gen after generating/editing jigs,
  * and can be run standalone: bun run src/validate.ts jigs/weekly-update.ts
  */
 import { existsSync } from "fs"

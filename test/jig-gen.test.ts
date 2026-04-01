@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { stripCodeFences, extractImportedServers } from "../src/creator.js"
+import { stripCodeFences, extractImportedServers } from "../src/jig-gen.js"
 import { Context } from "../src/sdk/context.js"
 import { jig, run } from "../src/sdk/jig.js"
 

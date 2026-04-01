@@ -38,6 +38,7 @@ export class Spinner {
   private currentBatch: ToolBatch | null = null
   private _onTool: ToolCallback | null = null
   private _abort: AbortController | null = null
+  private _externalSignal?: AbortSignal
 
   /** Set a callback that fires whenever a tool is called. Used by the API server for real-time progress. */
   setToolCallback(cb: ToolCallback | null) { this._onTool = cb }
@@ -52,8 +53,12 @@ export class Spinner {
   get aborted() { return this._abort?.signal.aborted ?? false }
 
   /** Reset tool tracking state. Called at the start of each run. */
-  reset() {
+  reset(externalSignal?: AbortSignal) {
     this._abort = new AbortController()
+    if (externalSignal) this._externalSignal = externalSignal
+    if (this._externalSignal) {
+      this._externalSignal.addEventListener("abort", () => this._abort?.abort(), { once: true })
+    }
     this.batches = []
     this.currentBatch = null
   }

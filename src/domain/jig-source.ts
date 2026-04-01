@@ -1,7 +1,6 @@
 import { existsSync } from "fs"
 import { join } from "path"
 import { JIGS_DIR } from "../config/paths.js"
-import { discoverJigs } from "../discover.js"
 import { cronToText } from "./triggers.js"
 import { isValidJigId } from "./jig-id.js"
 
@@ -44,71 +43,17 @@ export function extractTrigger(code: string): string {
   return ""
 }
 
-type JigEntitySelectionOptions = {
-  defaultToFirstGrouped?: boolean
-}
-
-export type JigEntitySelection =
-  | { ok: true; entity?: string }
-  | { ok: false; reason: "invalid" | "missing" | "not-found" | "unexpected"; available?: string[] }
-
-export function selectJigEntity(
-  entities: string[],
-  requestedEntity?: string | null,
-  options: JigEntitySelectionOptions = {}
-): JigEntitySelection {
-  if (requestedEntity && !isValidJigId(requestedEntity)) {
-    return { ok: false, reason: "invalid" }
-  }
-
-  if (entities.length === 0) {
-    return requestedEntity
-      ? { ok: false, reason: "unexpected" }
-      : { ok: true }
-  }
-
-  if (requestedEntity) {
-    return entities.includes(requestedEntity)
-      ? { ok: true, entity: requestedEntity }
-      : { ok: false, reason: "not-found", available: entities }
-  }
-
-  if (options.defaultToFirstGrouped) {
-    return { ok: true, entity: entities[0] }
-  }
-
-  return { ok: false, reason: "missing", available: entities }
-}
-
-export function getJigRelativePath(jigId: string, entity?: string | null): string | null {
+export function getJigRelativePath(jigId: string): string | null {
   if (!isValidJigId(jigId)) return null
-  if (entity && !isValidJigId(entity)) return null
-  return entity ? `${jigId}/${entity}.ts` : `${jigId}.ts`
+  return `${jigId}.ts`
 }
 
-export function resolveJigPath(jigId: string, entity?: string): string {
-  if (entity) return join(JIGS_DIR, jigId, `${entity}.ts`)
+export function resolveJigPath(jigId: string): string {
   return join(JIGS_DIR, `${jigId}.ts`)
 }
 
-export function getJigFilePath(id: string, entity?: string): string | null {
-  if (entity) {
-    const relPath = getJigRelativePath(id, entity)
-    if (!relPath) return null
-    const p = join(JIGS_DIR, relPath)
-    return existsSync(p) ? p : null
-  }
-  const relPath = getJigRelativePath(id)
-  if (!relPath) return null
-  const single = join(JIGS_DIR, relPath)
-  if (existsSync(single)) return single
-  const dir = join(JIGS_DIR, id)
-  if (existsSync(dir)) {
-    const jigs = discoverJigs(JIGS_DIR)
-    const entities = jigs.get(id)
-    if (entities && entities.length > 0) {
-      return join(dir, `${entities[0]}.ts`)
-    }
-  }
-  return null
+export function getJigFilePath(id: string): string | null {
+  if (!isValidJigId(id)) return null
+  const p = join(JIGS_DIR, `${id}.ts`)
+  return existsSync(p) ? p : null
 }

@@ -97,7 +97,15 @@ const MIGRATIONS: string[] = [
 function runMigrations(db: Database) {
   const current = (db.prepare("PRAGMA user_version").get() as any)?.user_version ?? 0
   for (let i = current; i < MIGRATIONS.length; i++) {
-    try { db.exec(MIGRATIONS[i]) } catch {}
+    try {
+      db.exec(MIGRATIONS[i])
+    } catch (e: any) {
+      // Expected: column/table already exists from a partial prior run
+      const msg = e?.message ?? ""
+      if (!msg.includes("duplicate column") && !msg.includes("already exists")) {
+        throw e
+      }
+    }
   }
   if (MIGRATIONS.length > current) {
     db.exec(`PRAGMA user_version = ${MIGRATIONS.length}`)
@@ -147,14 +155,13 @@ export function closeDb(): void {
 
 export function insertRun(
   jigId: string,
-  entity?: string,
   params?: Record<string, string>
 ): number {
   const db = openDb()
   const stmt = db.prepare(
     `INSERT INTO runs (jig_id, entity, params) VALUES (?, ?, ?)`
   )
-  const result = stmt.run(jigId, entity ?? null, params ? JSON.stringify(params) : null)
+  const result = stmt.run(jigId, null, params ? JSON.stringify(params) : null)
   return Number(result.lastInsertRowid)
 }
 
@@ -194,36 +201,30 @@ export function getRun(runId: number): (RunRow & { steps: StepRow[] }) | null {
 
 export function getJigRuns(
   jigId: string,
-  entity?: string,
   limit = 10
 ): (RunRow & { steps: StepRow[] })[] {
   const db = openDb()
-  let runs: RunRow[]
-  if (entity) {
-    runs = db
-      .prepare(`SELECT * FROM runs WHERE jig_id = ? AND entity = ? ORDER BY id DESC LIMIT ?`)
-      .all(jigId, entity, limit) as RunRow[]
-  } else {
-    runs = db
-      .prepare(`SELECT * FROM runs WHERE jig_id = ? ORDER BY id DESC LIMIT ?`)
-      .all(jigId, limit) as RunRow[]
+  const runs = db
+    .prepare(`SELECT * FROM runs WHERE jig_id = ? ORDER BY id DESC LIMIT ?`)
+    .all(jigId, limit) as RunRow[]
+  if (runs.length === 0) return []
+  const ids = runs.map((r) => r.id)
+  const placeholders = ids.map(() => "?").join(",")
+  const allSteps = db
+    .prepare(`SELECT * FROM run_steps WHERE run_id IN (${placeholders}) ORDER BY run_id, seq`)
+    .all(...ids) as StepRow[]
+  const stepsByRun = new Map<number, StepRow[]>()
+  for (const step of allSteps) {
+    const arr = stepsByRun.get(step.run_id)
+    if (arr) arr.push(step)
+    else stepsByRun.set(step.run_id, [step])
   }
-  return runs.map((run) => {
-    const steps = db
-      .prepare(`SELECT * FROM run_steps WHERE run_id = ? ORDER BY seq`)
-      .all(run.id) as StepRow[]
-    return { ...run, steps }
-  })
+  return runs.map((run) => ({ ...run, steps: stepsByRun.get(run.id) ?? [] }))
 }
 
-/** Get the most recent run for a jig (optionally per entity) */
-export function getLastRun(jigId: string, entity?: string): RunRow | null {
+/** Get the most recent run for a jig */
+export function getLastRun(jigId: string): RunRow | null {
   const db = openDb()
-  if (entity) {
-    return db
-      .prepare(`SELECT * FROM runs WHERE jig_id = ? AND entity = ? ORDER BY id DESC LIMIT 1`)
-      .get(jigId, entity) as RunRow | null
-  }
   return db
     .prepare(`SELECT * FROM runs WHERE jig_id = ? ORDER BY id DESC LIMIT 1`)
     .get(jigId) as RunRow | null
@@ -262,22 +263,22 @@ export function completeStep(
 export interface CachedStepTool { connection: string; name: string; readOnly: boolean }
 export interface CachedStep { num: number; name: string; connections: string[]; tools?: CachedStepTool[] }
 
-export function getStepCache(jigId: string, entity: string | null, codeHash: string): CachedStep[] | null {
+export function getStepCache(jigId: string, codeHash: string): CachedStep[] | null {
   const db = openDb()
   const row = db.prepare(
-    `SELECT steps FROM step_cache WHERE jig_id = ? AND entity IS ? AND code_hash = ?`
-  ).get(jigId, entity, codeHash) as { steps: string } | null
+    `SELECT steps FROM step_cache WHERE jig_id = ? AND code_hash = ?`
+  ).get(jigId, codeHash) as { steps: string } | null
   return row ? JSON.parse(row.steps) : null
 }
 
-export function setStepCache(jigId: string, entity: string | null, codeHash: string, steps: CachedStep[]): void {
+export function setStepCache(jigId: string, codeHash: string, steps: CachedStep[]): void {
   const db = openDb()
   db.prepare(
     `INSERT OR REPLACE INTO step_cache (jig_id, entity, code_hash, steps) VALUES (?, ?, ?, ?)`
-  ).run(jigId, entity, codeHash, JSON.stringify(steps))
+  ).run(jigId, null, codeHash, JSON.stringify(steps))
 }
 
-export function clearStepCache(jigId: string, entity: string | null): void {
+export function clearStepCache(jigId: string): void {
   const db = openDb()
-  db.prepare(`DELETE FROM step_cache WHERE jig_id = ? AND entity IS ?`).run(jigId, entity)
+  db.prepare(`DELETE FROM step_cache WHERE jig_id = ?`).run(jigId)
 }

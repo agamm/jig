@@ -17,13 +17,13 @@ afterEach(() => {
 
 describe("runs", () => {
   it("inserts and retrieves a run", () => {
-    const runId = insertRun("weekly-update", "acme", { week: "2026-03-20" })
+    const runId = insertRun("weekly-update", { week: "2026-03-20" })
     expect(runId).toBeGreaterThan(0)
 
     const run = getRun(runId)
     expect(run).not.toBeNull()
     expect(run!.jig_id).toBe("weekly-update")
-    expect(run!.entity).toBe("acme")
+    expect(run!.entity).toBeNull()
     expect(run!.status).toBe("running")
     expect(run!.params).toBe('{"week":"2026-03-20"}')
     expect(run!.steps).toEqual([])
@@ -66,14 +66,13 @@ describe("runs", () => {
     expect(runs).toHaveLength(3)
   })
 
-  it("gets jig runs with entity filter", () => {
-    insertRun("weekly-update", "acme")
-    insertRun("weekly-update", "globex")
-    insertRun("weekly-update", "acme")
+  it("gets jig runs", () => {
+    insertRun("weekly-update")
+    insertRun("weekly-update")
+    insertRun("weekly-update")
 
-    const acmeRuns = getJigRuns("weekly-update", "acme")
-    expect(acmeRuns).toHaveLength(2)
-    expect(acmeRuns[0].entity).toBe("acme")
+    const runs = getJigRuns("weekly-update")
+    expect(runs).toHaveLength(3)
   })
 
   it("gets last run", () => {

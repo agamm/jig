@@ -2,13 +2,13 @@
  * Weekly Client Update — Example
  *
  * Gathers meetings, emails, commits, and writes a weekly update draft.
- * Copy this file into a grouped jig folder and customize per client.
+ * Duplicate this file and customize per client.
  */
 import { join } from "path"
-import { jig, agent } from "../src/index.js"
-import { granola } from "../.jig/connections/granola.js"
-import { workspace } from "../.jig/connections/workspace.js"
-import { github } from "../.jig/connections/github.js"
+import { jig, agent } from "jig"
+import { granola } from "jig/connections/granola.js"
+import { workspace } from "jig/connections/workspace.js"
+import { github } from "jig/connections/github.js"
 
 const template = await Bun.file(join(import.meta.dir, "../templates/weekly-update.md")).text()
 

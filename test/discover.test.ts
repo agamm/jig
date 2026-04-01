@@ -18,7 +18,7 @@ function touch(...paths: string[]) {
 }
 
 describe("discoverJigs", () => {
-  it("finds single-instance jigs", () => {
+  it("finds flat jigs", () => {
     touch("email-triage.ts", "meeting-prep.ts")
     const jigs = discoverJigs(TMP)
     expect(jigs.get("email-triage")).toEqual([])
@@ -26,26 +26,20 @@ describe("discoverJigs", () => {
     expect(jigs.size).toBe(2)
   })
 
-  it("finds grouped jigs with entities", () => {
-    touch("weekly-update/acme.ts", "weekly-update/globex.ts")
-    const jigs = discoverJigs(TMP)
-    expect(jigs.get("weekly-update")).toEqual(expect.arrayContaining(["acme", "globex"]))
-    expect(jigs.get("weekly-update")!.length).toBe(2)
-  })
-
   it("skips _ prefixed files", () => {
-    touch("weekly-update/acme.ts", "weekly-update/_helpers.ts")
-    const jigs = discoverJigs(TMP)
-    expect(jigs.get("weekly-update")).toEqual(["acme"])
-  })
-
-  it("handles mixed single and grouped", () => {
-    touch("email-triage.ts", "weekly-update/acme.ts", "invoice/acme.ts", "invoice/globex.ts")
+    touch("email-triage.ts", "_helpers.ts")
     const jigs = discoverJigs(TMP)
     expect(jigs.get("email-triage")).toEqual([])
-    expect(jigs.get("weekly-update")).toEqual(["acme"])
-    expect(jigs.get("invoice")).toEqual(expect.arrayContaining(["acme", "globex"]))
-    expect(jigs.size).toBe(3)
+    expect(jigs.has("_helpers")).toBe(false)
+    expect(jigs.size).toBe(1)
+  })
+
+  it("ignores subdirectory .ts files", () => {
+    touch("email-triage.ts", "weekly-update/acme.ts")
+    const jigs = discoverJigs(TMP)
+    expect(jigs.get("email-triage")).toEqual([])
+    expect(jigs.has("weekly-update")).toBe(false)
+    expect(jigs.size).toBe(1)
   })
 
   it("returns empty map for empty directory", () => {

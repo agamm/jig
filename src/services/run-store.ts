@@ -4,7 +4,6 @@ import type { RunEvent } from "../run-events.js"
 type RunRecord = {
   runId: number
   jigId: string
-  entity: string | null
   dryRun: boolean
   completedTools: string[]
   activeTools: string[]
@@ -19,6 +18,7 @@ type RunRecord = {
 const RECENT_RESULT_TTL_MS = 60_000
 
 let activeRunId: number | null = null
+let activeAbort: AbortController | null = null
 const runs = new Map<number, RunRecord>()
 const recentResults = new Map<number, RunRecord>()
 
@@ -30,12 +30,20 @@ export function getActiveRunId(): number | null {
   return activeRunId
 }
 
-export function startTrackedRun(runId: number, jigId: string, entity: string | null, dryRun: boolean): void {
+export function abortActiveRun(): void {
+  activeAbort?.abort()
+}
+
+export function getActiveSignal(): AbortSignal | undefined {
+  return activeAbort?.signal
+}
+
+export function startTrackedRun(runId: number, jigId: string, dryRun: boolean): void {
   activeRunId = runId
+  activeAbort = new AbortController()
   runs.set(runId, {
     runId,
     jigId,
-    entity,
     dryRun,
     completedTools: [],
     activeTools: [],
@@ -91,7 +99,10 @@ export function finishTrackedRun(runId: number): void {
   run.finishedAt = Date.now()
   recentResults.set(runId, run)
   runs.delete(runId)
-  if (activeRunId === runId) activeRunId = null
+  if (activeRunId === runId) {
+    activeRunId = null
+    activeAbort = null
+  }
   pruneRecentResults()
 }
 
@@ -128,7 +139,6 @@ function toRunStatus(run: RunRecord, active: boolean): RunStatus {
     active,
     runId: run.runId,
     jigId: run.jigId,
-    entity: run.entity,
     dryRun: run.dryRun,
     completedTools: run.completedTools,
     activeTools: run.activeTools,

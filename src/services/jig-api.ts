@@ -8,9 +8,9 @@ import { formatDuration } from "../utils.js"
 import { extractConnections, extractParams, extractTrigger, getJigFilePath, prettifyId } from "../domain/jig-source.js"
 import { getActiveRunStatus } from "./run-store.js"
 
-function deriveStatus(jigId: string, entity?: string): "healthy" | "attention" | "failed" {
+function deriveStatus(jigId: string): "healthy" | "attention" | "failed" {
   try {
-    const lastRun = getLastRun(jigId, entity)
+    const lastRun = getLastRun(jigId)
     if (!lastRun) return "attention"
     return lastRun.status === "success" ? "healthy" : lastRun.status === "fail" ? "failed" : "attention"
   } catch {
@@ -41,13 +41,10 @@ function dedupeTools(tools: JigTool[]): JigTool[] {
 
 export async function buildJigResponse(
   id: string,
-  entities: string[],
   runLimit: number,
   includeSteps = false,
-  selectedEntity?: string
 ): Promise<JigData> {
-  const entity = selectedEntity ?? null
-  const filePath = getJigFilePath(id, entity ?? undefined)
+  const filePath = getJigFilePath(id)
   let code = ""
   try {
     if (filePath) code = readFileSync(filePath, "utf-8")
@@ -55,7 +52,7 @@ export async function buildJigResponse(
 
   let runs: ReturnType<typeof getJigRuns> = []
   try {
-    runs = getJigRuns(id, entity ?? undefined, runLimit)
+    runs = getJigRuns(id, runLimit)
   } catch {}
 
   const recentDurations = runs.slice(0, 7).map((r) => r.duration_ms ?? 0).reverse()
@@ -81,7 +78,7 @@ export async function buildJigResponse(
       if (includeSteps && def?.handler && code) {
         const hasher = new Bun.CryptoHasher("sha256")
         hasher.update(code)
-        const cached = getStepCache(id, entity, hasher.digest("hex"))
+        const cached = getStepCache(id, hasher.digest("hex"))
         if (cached && isUsableCachedSteps(cached)) steps = cached
       }
     } catch {
@@ -94,23 +91,13 @@ export async function buildJigResponse(
   const connections = tools.length > 0
     ? [...new Set(tools.map((tool) => tool.connection))]
     : extractConnections(code)
-  const isGroupedChild = entity !== null
-  const uiId = isGroupedChild ? `${id}::${entity}` : id
 
   return {
-    id: uiId,
-    sourceId: id,
-    entity,
-    groupId: isGroupedChild ? id : null,
-    groupName: isGroupedChild ? prettifyId(id) : null,
-    name: prettifyId(entity ?? id),
+    id,
+    name: prettifyId(id),
     trigger,
-    status: deriveStatus(id, entity ?? undefined),
-    running:
-      activeRun.active &&
-      activeRun.jigId === id &&
-      (activeRun.entity ?? null) === entity &&
-      !activeRun.dryRun,
+    status: deriveStatus(id),
+    running: activeRun.active && activeRun.jigId === id && !activeRun.dryRun,
     sparkline,
     steps,
     code,

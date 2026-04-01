@@ -25,7 +25,7 @@ export function JigList({ jigs, selectedJigId, onJigClick, onReorder, onCreate }
   const filteredJigs = jigSearch
     ? jigs.filter((j) => {
         const query = jigSearch.toLowerCase();
-        return j.name.toLowerCase().includes(query) || (j.groupName?.toLowerCase().includes(query) ?? false);
+        return j.name.toLowerCase().includes(query);
       })
     : jigs;
   const jigIndexById = new Map(filteredJigs.map((jig, idx) => [jig.id, idx]));
@@ -70,12 +70,6 @@ export function JigList({ jigs, selectedJigId, onJigClick, onReorder, onCreate }
           )}
 
           <span className={`flex min-w-0 items-baseline gap-1.5 text-[13px] font-medium ${isSelected ? "text-[#ededed]" : "text-[#ccc]"}`}>
-            {jig.groupName && (
-              <span className="shrink-0 text-[11px] font-medium uppercase tracking-wide text-[#5a5a61]">
-                {jig.groupName}
-              </span>
-            )}
-            {jig.groupName && <span className="shrink-0 text-[#4b4b51]">/</span>}
             <span className="truncate">{jig.name}</span>
           </span>
 

@@ -59,9 +59,9 @@ async function readVersionPrompt(sha: string): Promise<string | null> {
   return extractPromptFromCommitBody(stdout)
 }
 
-export async function listJigVersions(jigId: string, entity?: string): Promise<JigVersion[]> {
+export async function listJigVersions(jigId: string): Promise<JigVersion[]> {
   ensureGitHistory()
-  const relPath = getJigRelativePath(jigId, entity)
+  const relPath = getJigRelativePath(jigId)
   if (!relPath) throw new ApiError(400, "Invalid jig path")
 
   const { stdout } = await runGit(["git", "log", "--format=%H|%aI|%s", "--", relPath])
@@ -75,16 +75,16 @@ export async function listJigVersions(jigId: string, entity?: string): Promise<J
     })
 }
 
-export async function getJigVersionDetail(jigId: string, sha: string, entity?: string): Promise<JigVersionDetail> {
+export async function getJigVersionDetail(jigId: string, sha: string): Promise<JigVersionDetail> {
   ensureGitHistory()
   ensureSha(sha)
 
-  const relPath = getJigRelativePath(jigId, entity)
+  const relPath = getJigRelativePath(jigId)
   if (!relPath) throw new ApiError(400, "Invalid jig path")
 
   const code = await readVersionCode(relPath, sha)
   const prompt = await readVersionPrompt(sha)
-  const filePath = getJigFilePath(jigId, entity ?? undefined) ?? resolveJigPath(jigId, entity ?? undefined)
+  const filePath = getJigFilePath(jigId) ?? resolveJigPath(jigId)
   const currentCode = existsSync(filePath) ? readFileSync(filePath, "utf-8") : ""
   const hasChanges = currentCode !== code
 
@@ -96,15 +96,15 @@ export async function getJigVersionDetail(jigId: string, sha: string, entity?: s
   return { sha, code, diff: stdout, hasChanges: true, prompt }
 }
 
-export async function restoreJigVersion(jigId: string, sha: string, entity?: string): Promise<RestoreJigVersionResult> {
+export async function restoreJigVersion(jigId: string, sha: string): Promise<RestoreJigVersionResult> {
   ensureGitHistory()
   ensureSha(sha)
 
-  const relPath = getJigRelativePath(jigId, entity)
+  const relPath = getJigRelativePath(jigId)
   if (!relPath) throw new ApiError(400, "Invalid jig path")
 
   const code = await readVersionCode(relPath, sha)
-  const filePath = getJigFilePath(jigId, entity ?? undefined) ?? resolveJigPath(jigId, entity ?? undefined)
+  const filePath = getJigFilePath(jigId) ?? resolveJigPath(jigId)
   const currentCode = existsSync(filePath) ? readFileSync(filePath, "utf-8") : ""
 
   if (currentCode === code) {
@@ -113,9 +113,8 @@ export async function restoreJigVersion(jigId: string, sha: string, entity?: str
 
   await writeJigSource(filePath, code, {
     jigId,
-    entity: entity ?? null,
     commit: true,
-    commitMessage: `jig: ${entity ? `${jigId}/${entity}` : jigId} — restore ${sha.slice(0, 7)}`,
+    commitMessage: `jig: ${jigId} — restore ${sha.slice(0, 7)}`,
   })
 
   invalidateJigsCache()

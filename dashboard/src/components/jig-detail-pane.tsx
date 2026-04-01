@@ -37,10 +37,9 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
   onDelete?: () => Promise<void> | void;
   onConnectionClick?: (name: string) => void;
 }) {
-  const jigId = jig.sourceId ?? jig.id;
-  const entity = jig.entity ?? null;
+  const jigId = jig.id;
   const [detailTab, setDetailTab] = useState<"steps" | "code">("steps");
-  const trigger = useTriggerSave(jigId, jig.settings.trigger, entity);
+  const trigger = useTriggerSave(jigId, jig.settings.trigger);
   const [expandedRun, setExpandedRun] = useState<number | null>(null);
   const [agentInput, setAgentInput] = useState("");
   const [deleting, setDeleting] = useState(false);
@@ -49,10 +48,10 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
   const [reviewedToolKeys, setReviewedToolKeys] = useState<Set<string>>(new Set());
   const [queuedRemovalTools, setQueuedRemovalTools] = useState<JigStepTool[]>([]);
   const tools = jig.settings.tools ?? [];
-  const toolApproval = useJigToolApproval(jigId, entity, tools);
+  const toolApproval = useJigToolApproval(jigId, tools);
   const previousAutoRemovalRef = useRef("");
 
-  const { mode, liveSteps, completedTools, activeTools, toolReadOnly, startRun, dismiss, cancelRun, isRunning } = useJigRun(jigId, entity);
+  const { mode, liveSteps, completedTools, activeTools, toolReadOnly, startRun, dismiss, cancelRun, isRunning } = useJigRun(jigId);
 
   const agent = useAgent(async () => {
     // Update parent state (code, trigger, connections, runs)
@@ -60,7 +59,7 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
     // Derive fresh steps directly (step cache was cleared by write_jig_file)
     setDerivingSteps(true);
     try {
-      const data = await fetchJigSteps(jigId, entity);
+      const data = await fetchJigSteps(jigId);
       if (data.steps?.length) {
         setDerivedSteps(data.steps.map((s) => ({ num: s.num, name: s.name, connections: s.connections, tools: s.tools })));
       }
@@ -73,7 +72,7 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
     if (agent.sessionId && (agent.status === "done" || agent.status === "error")) {
       agent.sendMessage(agentInput.trim());
     } else {
-      agent.startSession(agentInput.trim(), jigId, entity ?? undefined);
+      agent.startSession(agentInput.trim(), jigId);
     }
     setQueuedRemovalTools([]);
     previousAutoRemovalRef.current = "";
@@ -96,7 +95,7 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
     setDerivingSteps(true);
     setDeriveError(null);
     try {
-      const data = await fetchJigSteps(jigId, entity);
+      const data = await fetchJigSteps(jigId);
       if (cancelled?.()) return;
       if (data.steps?.length) {
         setDerivedSteps(data.steps.map((s) => ({ num: s.num, name: s.name, connections: s.connections, tools: s.tools })));
@@ -123,7 +122,7 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
     let isCancelled = false;
     void loadDerivedSteps(() => isCancelled);
     return () => { isCancelled = true; };
-  }, [entity, jig.id, jig.steps, jigId]);
+  }, [jig.id, jig.steps.length, jigId]);
 
   // Steps: live steps during/after run (with humanized names from derived), derived when idle
   const runSteps: RunStep[] = useMemo(() => {
@@ -189,7 +188,7 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
   const handleDelete = async () => {
     setDeleting(true)
     try {
-      await deleteJig(jigId, entity)
+      await deleteJig(jigId)
       setConfirmDeleteOpen(false)
       await onDelete?.()
     } catch (error: any) {
@@ -206,9 +205,7 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
       <ConfirmDialog
         open={confirmDeleteOpen}
         title="Delete jig?"
-        message={entity
-          ? `This will remove ${jig.groupName} — ${jig.name} from the workspace.`
-          : `This will remove ${jig.name} from the workspace.`}
+        message={`This will remove ${jig.name} from the workspace.`}
         confirmLabel="Delete Jig"
         destructive
         loading={deleting}
@@ -217,7 +214,7 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
       />
 
       <PaneHeader
-        title={jig.groupName ? `${jig.groupName} — ${jig.name}` : jig.name}
+        title={jig.name}
         statusDotClass={statusDot(jig.status)}
         actions={
           <>
@@ -523,7 +520,6 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
         <PaneSection title="History">
           <JigVersions
             jigId={jigId}
-            entity={entity}
             onRestored={handleVersionRestored}
           />
         </PaneSection>

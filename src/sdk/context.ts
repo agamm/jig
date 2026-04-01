@@ -45,6 +45,7 @@ export class Context {
   private _stepOutput: string[] = []
   private _stepConnections = new Set<string>()
   private _stepTools = new Map<string, StepTool>()
+  private _stepFinalized = true
 
   /** True while inside an agent() call — tool calls won't auto-create steps. */
   private _inAgent = false
@@ -64,10 +65,11 @@ export class Context {
   /** Mark the start of a named step. */
   step(label: string) {
     // Finish previous step if one was active.
-    if (this._stepSeq > 0) {
+    if (this._stepSeq > 0 && !this._stepFinalized) {
       this.finalize()
     }
     this._stepSeq++
+    this._stepFinalized = false
     this._stepStart = Date.now()
     this._stepOutput = []
     this._stepConnections = new Set()
@@ -109,7 +111,8 @@ export class Context {
 
   /** Finish the last step (called at end of handler or on error). */
   finalize(error?: unknown) {
-    if (this._stepSeq > 0) {
+    if (this._stepSeq > 0 && !this._stepFinalized) {
+      this._stepFinalized = true
       const status = error ? "fail" : "success"
       const errMsg = error instanceof Error ? error.message : error ? String(error) : undefined
       const durationMs = Date.now() - this._stepStart

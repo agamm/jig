@@ -4,12 +4,6 @@ import type { Jig } from "@/types/jig";
 export const JIGS_WEEK2: Jig[] = [
   {
     id: "weekly-update", name: "Weekly Update", trigger: "Fri 9am", status: "healthy", costMonth: "$0.15", costLifetime: "$0.30",
-    grouped: true, entityCount: 3,
-    entities: [
-      { name: "Acme", lastRun: "3d ago", status: "success" },
-      { name: "Globex", lastRun: "3d ago", status: "fail" },
-      { name: "Initech", lastRun: "3d ago", status: "success" },
-    ],
     sparkline: [4, 6, 5, 7, 3, 6, 5],
     steps: [
       { num: 1, name: "Read calendar events" },
@@ -60,11 +54,6 @@ export const JIGS_WEEK2: Jig[] = [
   },
   {
     id: "invoice", name: "Invoice", trigger: "1st of month", status: "attention", costMonth: "$0.08", costLifetime: "$0.42",
-    grouped: true, entityCount: 2,
-    entities: [
-      { name: "Acme", lastRun: "2d ago", status: "success" },
-      { name: "Globex", lastRun: "2d ago", status: "success" },
-    ],
     sparkline: [3, 2, 4, 3, 5, 2, 4],
     steps: [
       { num: 1, name: "Read timesheet" },
@@ -251,7 +240,6 @@ export const JIGS_MONTH3: Jig[] = [
 /* ── Approval data ── */
 export const APPROVAL_DATA: Record<string, {
   jigName: string;
-  entity: string;
   connections: string[];
   steps: { name: string; time?: string; status: "done" | "pending" | "future"; tool?: string; cost?: string; input?: string; output?: string }[];
   artifacts: { name: string; desc: string; iconColor: string; svgPaths: string }[];
@@ -259,7 +247,6 @@ export const APPROVAL_DATA: Record<string, {
 }> = {
   "invoice-acme": {
     jigName: "Invoice",
-    entity: "Acme",
     connections: ["Gmail", "Drive"],
     steps: [
       { name: "Read timesheet from Drive", time: "0.8s", status: "done", tool: "drive.read", input: "Clients/Acme/timesheet-2026.xlsx", output: "168 hours logged across 22 working days" },

@@ -16,7 +16,8 @@
     "types": ["bun-types"],
     "paths": {
       "jig": ["./src/index.ts"],
-      "jig/*": ["./src/*"]
+      "jig/*": ["./src/*"],
+      "jig/connections/*": ["./.jig/connections/*"]
     }
   },
   "include": ["src/**/*.ts", "shared/**/*.ts", "jigs/**/*.ts", ".jig/types/**/*.ts", ".jig/connections/**/*.ts"],

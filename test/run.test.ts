@@ -28,7 +28,7 @@ describe("run lifecycle events", () => {
   it("emits step-start, step-done, done for a simple jig", async () => {
     const { runJig } = await import("../src/runner.js")
     writeFileSync(testJigPath, `
-import { jig } from "../src/index.js"
+import { jig } from "jig"
 
 export default jig("test-events", {
   trigger: { type: "manual" },
@@ -56,7 +56,7 @@ export default jig("test-events", {
   it("emits multiple step events in order", async () => {
     const { runJig } = await import("../src/runner.js")
     writeFileSync(testJigPath, `
-import { jig } from "../src/index.js"
+import { jig } from "jig"
 
 export default jig("test-multi-step", {
   trigger: { type: "manual" },
@@ -84,7 +84,7 @@ export default jig("test-multi-step", {
     // Use unique filename to avoid Bun import cache collisions across test files
     const throwJigPath = join(JIGS_DIR, "_test_run_throw.ts")
     writeFileSync(throwJigPath, `
-import { jig } from "../src/index.js"
+import { jig } from "jig"
 
 export default jig("test-throw", {
   trigger: { type: "manual" },
@@ -120,7 +120,7 @@ describe("run validation guards", () => {
   it("rejects jig with missing required params", async () => {
     const { runJig } = await import("../src/runner.js")
     writeFileSync(testJigPath, `
-import { jig } from "../src/index.js"
+import { jig } from "jig"
 
 export default jig("test-params", {
   trigger: { type: "manual" },
@@ -140,7 +140,7 @@ export default jig("test-params", {
   it("passes when required params are provided", async () => {
     const { runJig } = await import("../src/runner.js")
     writeFileSync(testJigPath, `
-import { jig } from "../src/index.js"
+import { jig } from "jig"
 
 export default jig("test-params-ok", {
   trigger: { type: "manual" },
@@ -187,8 +187,8 @@ describe("dry-run flag propagation", () => {
       await ensureDb()
 
       writeFileSync(testJigPath, `
-import { jig } from "../src/index.js"
-import { isDryRun } from "../src/sdk/dryrun.js"
+import { jig } from "jig"
+import { isDryRun } from "jig/sdk/dryrun.js"
 
 export default jig("test-dryrun", {
   trigger: { type: "manual" },

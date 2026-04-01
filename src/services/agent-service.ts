@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, readdirSync } from "fs"
+import { join } from "path"
 import OpenAI from "openai"
 import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions"
 import type { AgentEvent, AgentStatusResponse, StartAgentResponse } from "../../shared/api.js"
@@ -18,7 +19,6 @@ const AGENT_SESSION_TTL = 30 * 60 * 1000
 type AgentSession = {
   sessionId: string
   jigId?: string
-  entity?: string
   currentPrompt: string
   messages: ChatCompletionMessageParam[]
   events: AgentEvent[]
@@ -61,7 +61,6 @@ const AGENT_TOOL_DEFS: ChatCompletionTool[] = [
         type: "object",
         properties: {
           jigId: { type: "string", description: "Jig ID to read (optional, defaults to session jig)" },
-          entity: { type: "string", description: "Entity name for grouped jigs" },
         },
       },
     },
@@ -76,7 +75,6 @@ const AGENT_TOOL_DEFS: ChatCompletionTool[] = [
         properties: {
           code: { type: "string", description: "The complete TypeScript source code" },
           jigId: { type: "string", description: "Jig ID (required for creation, optional for editing)" },
-          entity: { type: "string", description: "Entity name for grouped jigs" },
           message: { type: "string", description: "Short description of the change for the commit message" },
         },
         required: ["code"],
@@ -92,7 +90,6 @@ const AGENT_TOOL_DEFS: ChatCompletionTool[] = [
         type: "object",
         properties: {
           jigId: { type: "string", description: "Jig ID to check (optional, defaults to session jig)" },
-          entity: { type: "string", description: "Entity name for grouped jigs" },
         },
       },
     },
@@ -127,16 +124,15 @@ const AGENT_TOOL_DEFS: ChatCompletionTool[] = [
   },
 ]
 
-async function toolReadJigFile(args: { jigId?: string; entity?: string }, session: AgentSession): Promise<string> {
+async function toolReadJigFile(args: { jigId?: string }, session: AgentSession): Promise<string> {
   const jigId = session.jigId ?? args.jigId
   if (!jigId) return JSON.stringify({ error: "No jigId specified and no session jig" })
-  const entity = session.entity ?? args.entity
-  const filePath = resolveJigPath(jigId, entity)
+  const filePath = resolveJigPath(jigId)
   if (!existsSync(filePath)) return JSON.stringify({ error: `File not found: ${filePath}` })
   return readFileSync(filePath, "utf-8")
 }
 
-async function toolWriteJigFile(args: { code: string; jigId?: string; entity?: string; message?: string }, session: AgentSession): Promise<string> {
+async function toolWriteJigFile(args: { code: string; jigId?: string; message?: string }, session: AgentSession): Promise<string> {
   const jigId = session.jigId ?? args.jigId
   if (!jigId) return JSON.stringify({ error: "No jigId specified — provide jigId for new jigs" })
   if (!isValidJigId(jigId)) return JSON.stringify({ error: "Invalid jigId. Use lowercase letters, numbers, dashes, or underscores." })
@@ -147,12 +143,9 @@ async function toolWriteJigFile(args: { code: string; jigId?: string; entity?: s
     activeAgentJigs.add(jigId)
   }
 
-  const entity = session.entity ?? args.entity
-  if (entity && !isValidJigId(entity)) return JSON.stringify({ error: "Invalid entity. Use lowercase letters, numbers, dashes, or underscores." })
-  const filePath = resolveJigPath(jigId, entity)
+  const filePath = resolveJigPath(jigId)
   await writeJigSource(filePath, args.code, {
     jigId,
-    entity: entity ?? null,
     commit: true,
     commitMessage: args.message ? `jig: ${jigId} — ${args.message}` : `jig: ${jigId} — update`,
     commitPrompt: session.currentPrompt,
@@ -161,11 +154,10 @@ async function toolWriteJigFile(args: { code: string; jigId?: string; entity?: s
   return JSON.stringify({ ok: true, path: filePath })
 }
 
-async function toolCheckJig(args: { jigId?: string; entity?: string }, session: AgentSession): Promise<string> {
+async function toolCheckJig(args: { jigId?: string }, session: AgentSession): Promise<string> {
   const jigId = session.jigId ?? args.jigId
   if (!jigId) return JSON.stringify({ error: "No jigId specified" })
-  const entity = session.entity ?? args.entity
-  const filePath = resolveJigPath(jigId, entity)
+  const filePath = resolveJigPath(jigId)
   if (!existsSync(filePath)) return JSON.stringify({ error: `File not found: ${filePath}` })
   return checkJigFile(filePath)
 }
@@ -205,21 +197,22 @@ async function executeAgentTool(name: string, args: Record<string, any>, session
   }
 }
 
-async function buildAgentSystemPrompt(jigId?: string, entity?: string): Promise<string> {
+async function buildAgentSystemPrompt(jigId?: string): Promise<string> {
   const skillPath = `${PROJECT_ROOT}/SKILL.md`
   const skillMd = existsSync(skillPath) ? readFileSync(skillPath, "utf-8") : ""
 
-  const typeFiles = existsSync(TYPES_DIR) ? readdirSync(TYPES_DIR).filter((f) => f.endsWith(".d.ts")) : []
+  const isSafeFilename = (f: string) => /^[a-zA-Z0-9._-]+$/.test(f)
+  const typeFiles = existsSync(TYPES_DIR) ? readdirSync(TYPES_DIR).filter((f) => f.endsWith(".d.ts") && isSafeFilename(f)) : []
   const typeSections: string[] = []
   for (const file of typeFiles) {
-    typeSections.push(`## Type: ${file}\n${readFileSync(`${TYPES_DIR}/${file}`, "utf-8")}`)
+    typeSections.push(`## Type: ${file}\n${readFileSync(join(TYPES_DIR, file), "utf-8")}`)
   }
 
-  const schemaFiles = existsSync(SCHEMAS_DIR) ? readdirSync(SCHEMAS_DIR).filter((f) => f.endsWith(".json")) : []
+  const schemaFiles = existsSync(SCHEMAS_DIR) ? readdirSync(SCHEMAS_DIR).filter((f) => f.endsWith(".json") && isSafeFilename(f)) : []
   const toolCatalogSections: string[] = []
   for (const file of schemaFiles) {
     const serverName = file.replace(".json", "")
-    const schemas = JSON.parse(readFileSync(`${SCHEMAS_DIR}/${file}`, "utf-8"))
+    const schemas = JSON.parse(readFileSync(join(SCHEMAS_DIR, file), "utf-8"))
     toolCatalogSections.push(`## ${serverName} tools\n${schemas.map((t: any) => `  ${t.name}: ${t.description?.split("\n")[0] ?? ""}`).join("\n")}`)
   }
 
@@ -231,7 +224,7 @@ async function buildAgentSystemPrompt(jigId?: string, entity?: string): Promise<
 
   let currentCode: string | undefined
   if (jigId) {
-    const filePath = resolveJigPath(jigId, entity)
+    const filePath = resolveJigPath(jigId)
     if (existsSync(filePath)) {
       currentCode = readFileSync(filePath, "utf-8")
     }
@@ -242,7 +235,6 @@ async function buildAgentSystemPrompt(jigId?: string, entity?: string): Promise<
 
   return buildAgentJigSystemPrompt({
     jigId,
-    entity,
     skillMd,
     typeDefs: typeSections.join("\n\n"),
     toolCatalog: toolCatalogSections.join("\n\n"),
@@ -335,21 +327,18 @@ export async function startAgentSession(body: any): Promise<StartAgentResponse> 
   if (!instruction) throw new ApiError(400, "instruction is required")
 
   const jigId = body?.jigId as string | undefined
-  const entity = body?.entity as string | undefined
 
   if (jigId && !isValidJigId(jigId)) throw new ApiError(400, "Invalid jig ID")
-  if (entity && !isValidJigId(entity)) throw new ApiError(400, "Invalid entity")
   if (jigId && activeAgentJigs.has(jigId)) {
     throw new ApiError(409, "An agent session is already editing this jig")
   }
 
   const sessionId = crypto.randomUUID()
-  const systemPrompt = await buildAgentSystemPrompt(jigId, entity)
+  const systemPrompt = await buildAgentSystemPrompt(jigId)
 
   const session: AgentSession = {
     sessionId,
     jigId,
-    entity,
     currentPrompt: instruction,
     messages: [
       { role: "system", content: systemPrompt },
@@ -389,6 +378,9 @@ export function getAgentSessionStatus(sessionId: string, sinceIndex: number): Ag
 export async function pushAgentMessage(sessionId: string, body: any): Promise<{ ok: true }> {
   const session = agentSessions.get(sessionId)
   if (!session) throw new ApiError(404, "Session not found")
+  if (session.status === "thinking" || session.status === "tool-calling") {
+    throw new ApiError(409, "Agent is still processing")
+  }
 
   const message = body?.message as string
   if (!message) throw new ApiError(400, "message is required")
@@ -400,6 +392,8 @@ export async function pushAgentMessage(sessionId: string, body: any): Promise<{ 
   runAgentLoop(session).catch((error) => {
     session.status = "error"
     session.events.push({ type: "text", content: error?.message ?? String(error) })
+  }).finally(() => {
+    if (session.jigId) activeAgentJigs.delete(session.jigId)
   })
 
   return { ok: true }

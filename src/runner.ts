@@ -10,7 +10,6 @@ import type { RunRecorder } from "./sdk/context.js"
 import type { RunEvent } from "./run-events.js"
 import { insertStep, completeStep, completeRun } from "./db.js"
 import { dryRunContext } from "./sdk/dryrun.js"
-import { isValidJigId } from "./domain/jig-id.js"
 
 // --- Debug log (async, queued) ---
 const LOG_PATH = join(import.meta.dir, "../jig_debug.log")
@@ -52,14 +51,15 @@ export async function runJig(
   jigPath: string,
   params: Record<string, string>,
   onEvent: (e: RunEvent) => void,
-  options?: { dryRun?: boolean; silent?: boolean }
+  options?: { dryRun?: boolean; silent?: boolean; signal?: AbortSignal }
 ): Promise<RunResult> {
   const { dryRun, silent } = options ?? {}
 
   // Wrap entire execution in dryRun context (AsyncLocalStorage)
   // Generated tool functions read isDryRun() which checks this context
+  const signal = options?.signal
   return dryRunContext.run(dryRun ?? false, () =>
-    _runJig(jigPath, params, onEvent, { dryRun: dryRun ?? false, silent: silent ?? false })
+    _runJig(jigPath, params, onEvent, { dryRun: dryRun ?? false, silent: silent ?? false, signal })
   )
 }
 
@@ -67,9 +67,9 @@ async function _runJig(
   jigPath: string,
   params: Record<string, string>,
   onEvent: (e: RunEvent) => void,
-  opts: { dryRun: boolean; silent: boolean }
+  opts: { dryRun: boolean; silent: boolean; signal?: AbortSignal }
 ): Promise<RunResult> {
-  const { dryRun, silent } = opts
+  const { dryRun, silent, signal } = opts
   const start = Date.now()
   const tag = dryRun ? "[dry-run]" : "[run]"
   const log = (msg: string) => debug(`${tag} ${msg}`)
@@ -78,7 +78,7 @@ async function _runJig(
 
   // Wire spinner → onEvent for tool progress
   const { spinner } = await import("./sdk/spinner.js")
-  spinner.reset()
+  spinner.reset(signal)
   let toolReadOnly: Record<string, boolean> | undefined
   spinner.setToolCallback((chain, current) => {
     onEvent({ type: "tool", completed: chain.slice(0, -1).flat(), active: [...current], ...(dryRun && toolReadOnly && { readOnly: toolReadOnly }) })
@@ -108,6 +108,8 @@ async function _runJig(
         problems.push("Jig calls process.exit() at module level — remove it.")
       if (/console\.log\s*\(/.test(stripped))
         problems.push("Use ctx.output() instead of console.log() — console.log bypasses the event stream.")
+      if (/from\s+["'][.]{2}/.test(stripped))
+        problems.push('Jig uses relative imports (../) — use "jig" and "jig/connections/" aliases instead.')
       if (!/export\s+default/.test(stripped))
         problems.push('Jig must have an export default — add "export default <jigName>".')
 

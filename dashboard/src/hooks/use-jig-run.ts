@@ -21,11 +21,11 @@ function toRunSteps(data: Pick<RunDetail, "steps">): RunStep[] {
   }))
 }
 
-function matchesTarget(data: { jigId?: string; entity?: string | null }, jigId: string, entity?: string | null): boolean {
-  return data.jigId === jigId && (data.entity ?? null) === (entity ?? null)
+function matchesTarget(data: { jigId?: string }, jigId: string): boolean {
+  return data.jigId === jigId
 }
 
-export function useJigRun(jigId: string, entity?: string | null) {
+export function useJigRun(jigId: string) {
   const [mode, setMode] = useState<RunStepsMode>({ type: "idle" });
   const [liveSteps, setLiveSteps] = useState<RunStep[]>([]);
   const [completedTools, setCompletedTools] = useState<string[]>([]);
@@ -100,7 +100,7 @@ export function useJigRun(jigId: string, entity?: string | null) {
     (async () => {
       try {
         const data: RunStatus = await fetchActiveRun();
-        if (data.active && data.runId && matchesTarget(data, jigId, entity)) {
+        if (data.active && data.runId && matchesTarget(data, jigId)) {
           const abort = new AbortController();
           abortRef.current = abort;
           runIdRef.current = data.runId;
@@ -112,7 +112,7 @@ export function useJigRun(jigId: string, entity?: string | null) {
         }
       } catch {}
     })();
-  }, [entity, jigId, pollUntilDone]);
+  }, [jigId, pollUntilDone]);
 
   const startRun = useCallback(async (dryRun: boolean, params?: Record<string, string>) => {
     cleanup();
@@ -127,14 +127,14 @@ export function useJigRun(jigId: string, entity?: string | null) {
     const startTime = Date.now();
 
     try {
-      const data = await startJigRun(jigId, { entity: entity ?? undefined, dryRun, params });
+      const data = await startJigRun(jigId, { dryRun, params });
       runIdRef.current = data.runId;
       await pollUntilDone(data.runId, abort, startTime, dryRun);
     } catch (e: any) {
       if (abort.signal.aborted) return;
       setMode({ type: "done", elapsed: Math.round((Date.now() - startTime) / 1000), dryRun, status: "fail", error: e?.message ?? "Unknown error" });
     }
-  }, [jigId, entity, cleanup, pollUntilDone]);
+  }, [jigId, cleanup, pollUntilDone]);
 
   const dismiss = useCallback(() => {
     runIdRef.current = null;

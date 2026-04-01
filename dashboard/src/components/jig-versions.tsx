@@ -44,11 +44,9 @@ function PromptOutput({ prompt }: { prompt: string }) {
 
 export function JigVersions({
   jigId,
-  entity,
   onRestored,
 }: {
   jigId: string
-  entity?: string | null
   onRestored?: () => Promise<void> | void
 }) {
   const [selectedSha, setSelectedSha] = useState<string | null>(null)
@@ -60,8 +58,8 @@ export function JigVersions({
   const [showAll, setShowAll] = useState(false)
 
   const { data: versions, loading, error, reload } = useAsyncResource<JigVersion[]>(
-    () => fetchJigVersions(jigId, entity),
-    [jigId, entity]
+    () => fetchJigVersions(jigId),
+    [jigId]
   )
 
   useEffect(() => {
@@ -72,7 +70,7 @@ export function JigVersions({
     setConfirmRestoreSha(null)
     setRestoring(false)
     setShowAll(false)
-  }, [entity, jigId])
+  }, [jigId])
 
   const currentVersion = versions?.[0] ?? null
   const historicalVersions = useMemo(() => {
@@ -89,7 +87,7 @@ export function JigVersions({
     setDetailErrorsBySha((current) => ({ ...current, [sha]: undefined }))
     setLoadingSha(sha)
     try {
-      const nextDetail = await fetchJigVersionDetail(jigId, sha, entity)
+      const nextDetail = await fetchJigVersionDetail(jigId, sha)
       setDetailsBySha((current) => ({ ...current, [sha]: nextDetail }))
     } catch (nextError: any) {
       const message = nextError?.message ?? "Failed to load version"
@@ -118,7 +116,7 @@ export function JigVersions({
     if (!confirmRestoreSha) return
     setRestoring(true)
     try {
-      await restoreJigVersion(jigId, confirmRestoreSha, entity)
+      await restoreJigVersion(jigId, confirmRestoreSha)
       setConfirmRestoreSha(null)
       await reload()
       await onRestored?.()

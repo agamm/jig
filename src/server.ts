@@ -4,12 +4,12 @@
  * Route parsing and side-effect orchestration live here; domain logic lives in
  * dedicated services under src/services and src/domain.
  */
-import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs"
+import { existsSync, readFileSync, rmSync, writeFileSync } from "fs"
 import { join } from "path"
 import { openDb } from "./db.js"
 import { getModelCatalog } from "./config/models.js"
 import { JIGS_DIR, PROJECT_ROOT, SCHEMAS_DIR } from "./config/paths.js"
-import { extractConnections, getJigFilePath, getJigRelativePath, selectJigEntity } from "./domain/jig-source.js"
+import { extractConnections, getJigFilePath, resolveJigPath } from "./domain/jig-source.js"
 import { invalidateJigsCache } from "./discover.js"
 import {
   cronToText,
@@ -26,35 +26,14 @@ import { getJigVersionDetail, listJigVersions, restoreJigVersion } from "./servi
 import { ApiError, json } from "./server/http.js"
 import { matchRoute } from "./server/router.js"
 
-function resolveJigRequest(id: string, requestedEntity?: string | null, options: { defaultToFirstGrouped?: boolean } = {}) {
-  const discovered = discoverAllJigs()
-  if (!discovered.has(id)) throw new ApiError(404, `Jig not found: ${id}`)
-
-  const entities = discovered.get(id)!
-  const selection = selectJigEntity(entities, requestedEntity, options)
-  if (!selection.ok) {
-    switch (selection.reason) {
-      case "invalid":
-        throw new ApiError(400, "Invalid entity")
-      case "unexpected":
-        throw new ApiError(400, "Entity is only valid for grouped jigs")
-      case "missing":
-        throw new ApiError(400, `Grouped jig requires entity. Available: ${selection.available?.join(", ") ?? ""}`)
-      case "not-found":
-        throw new ApiError(404, `Entity not found: ${requestedEntity}`)
-    }
-  }
-
-  return {
-    entities,
-    entity: selection.entity,
-  }
+function ensureJigExists(id: string): void {
+  if (!discoverAllJigs().has(id)) throw new ApiError(404, `Jig not found: ${id}`)
 }
 
-async function handleGetVersions(jigId: string, entity?: string): Promise<Response> {
-  const target = resolveJigRequest(jigId, entity)
+async function handleGetVersions(jigId: string): Promise<Response> {
+  ensureJigExists(jigId)
   try {
-    return json(await listJigVersions(jigId, target.entity))
+    return json(await listJigVersions(jigId))
   } catch (error) {
     if (error instanceof ApiError && error.status === 404 && error.message === "No version history") {
       return json([])
@@ -63,29 +42,27 @@ async function handleGetVersions(jigId: string, entity?: string): Promise<Respon
   }
 }
 
-async function handleGetVersionCode(jigId: string, sha: string, entity?: string): Promise<Response> {
-  const target = resolveJigRequest(jigId, entity)
-  return json(await getJigVersionDetail(jigId, sha, target.entity))
+async function handleGetVersionCode(jigId: string, sha: string): Promise<Response> {
+  ensureJigExists(jigId)
+  return json(await getJigVersionDetail(jigId, sha))
 }
 
-async function handleRestoreVersion(jigId: string, sha: string, entity?: string): Promise<Response> {
-  const target = resolveJigRequest(jigId, entity)
+async function handleRestoreVersion(jigId: string, sha: string): Promise<Response> {
+  ensureJigExists(jigId)
   const activeRun = getActiveRunSnapshot()
-  if (activeRun.active && activeRun.jigId === jigId && ((activeRun.entity ?? null) === (target.entity ?? null))) {
+  if (activeRun.active && activeRun.jigId === jigId) {
     throw new ApiError(409, "Cannot restore a jig version while it is running")
   }
-  return json(await restoreJigVersion(jigId, sha, target.entity))
+  return json(await restoreJigVersion(jigId, sha))
 }
 
-async function handleGetSteps(id: string, body: any): Promise<Response> {
-  const target = resolveJigRequest(id, body?.entity as string | undefined, { defaultToFirstGrouped: true })
-  const entity = target.entity
-  const filePath = getJigFilePath(id, entity)
+async function handleGetSteps(id: string): Promise<Response> {
+  ensureJigExists(id)
+  const filePath = getJigFilePath(id)
   if (!filePath) throw new ApiError(404, "Jig file not found")
 
   const safePath = JSON.stringify(filePath)
   const safeId = JSON.stringify(id)
-  const safeEntity = entity ? JSON.stringify(entity) : "null"
 
   const script = `
     import { readFileSync } from "fs";
@@ -93,7 +70,7 @@ async function handleGetSteps(id: string, body: any): Promise<Response> {
     const mod = await import(${safePath} + "?_t=" + Date.now());
     if (!mod.default?.handler) { console.log("[]"); process.exit(0); }
     const code = readFileSync(${safePath}, "utf-8");
-    const steps = await deriveSteps(mod.default, ${safeId}, ${safeEntity}, code);
+    const steps = await deriveSteps(mod.default, ${safeId}, code);
     console.log(JSON.stringify(steps));
   `
 
@@ -119,9 +96,8 @@ async function handleUpdateTrigger(id: string, body: any): Promise<Response> {
   const triggerText = body?.trigger as string
   if (!triggerText) throw new ApiError(400, "Missing trigger text")
 
-  const target = resolveJigRequest(id, body?.entity as string | undefined, { defaultToFirstGrouped: true })
-  const entity = target.entity
-  const filePath = getJigFilePath(id, entity)
+  ensureJigExists(id)
+  const filePath = getJigFilePath(id)
   if (!filePath) throw new ApiError(404, "Jig file not found")
 
   const trigger = textToTrigger(triggerText) ?? await textToTriggerLLM(triggerText)
@@ -177,11 +153,12 @@ async function handleGetConnections(): Promise<Response> {
 }
 
 async function handleGetConnection(name: string): Promise<Response> {
+  if (!/^[a-zA-Z0-9_-]+$/.test(name)) throw new ApiError(400, "Invalid connection name")
   const configs = await loadServerConfigs()
   const config = (configs as Record<string, any>)[name]
   if (!config) throw new ApiError(404, `Connection not found: ${name}`)
 
-  const schemaPath = `${SCHEMAS_DIR}/${name}.json`
+  const schemaPath = join(SCHEMAS_DIR, `${name}.json`)
   const connected = existsSync(schemaPath)
   let tools: { name: string; description: string; readOnly: boolean }[] = []
 
@@ -196,27 +173,14 @@ async function handleGetConnection(name: string): Promise<Response> {
     } catch {}
   }
 
-  const discovered = discoverAllJigs()
   const usedBy: string[] = []
-  for (const [id, entities] of discovered) {
-    if (entities.length === 0) {
-      const filePath = getJigFilePath(id)
-      if (!filePath) continue
-      try {
-        const code = readFileSync(filePath, "utf-8")
-        if (extractConnections(code).includes(name)) usedBy.push(id)
-      } catch {}
-      continue
-    }
-
-    for (const entity of entities) {
-      const filePath = getJigFilePath(id, entity)
-      if (!filePath) continue
-      try {
-        const code = readFileSync(filePath, "utf-8")
-        if (extractConnections(code).includes(name)) usedBy.push(`${id}::${entity}`)
-      } catch {}
-    }
+  for (const id of discoverAllJigs().keys()) {
+    const filePath = getJigFilePath(id)
+    if (!filePath) continue
+    try {
+      const code = readFileSync(filePath, "utf-8")
+      if (extractConnections(code).includes(name)) usedBy.push(id)
+    } catch {}
   }
 
   return json({
@@ -229,45 +193,20 @@ async function handleGetConnection(name: string): Promise<Response> {
   })
 }
 
-async function handleDeleteJig(id: string, entity?: string): Promise<Response> {
-  const discovered = discoverAllJigs()
-  if (!discovered.has(id)) throw new ApiError(404, `Jig not found: ${id}`)
+async function handleDeleteJig(id: string): Promise<Response> {
+  ensureJigExists(id)
 
   const activeRun = getActiveRunSnapshot()
-  if (activeRun.active && activeRun.jigId === id && (!entity || (activeRun.entity ?? null) === entity)) {
+  if (activeRun.active && activeRun.jigId === id) {
     throw new ApiError(409, "Cannot delete a jig while it is running")
   }
 
-  const entities = discovered.get(id)!
-  if (entity) {
-    const target = resolveJigRequest(id, entity)
-    const filePath = getJigFilePath(id, target.entity)
-    if (!filePath) throw new ApiError(404, "Jig file not found")
-
-    rmSync(filePath, { force: true })
-
-    const dir = join(JIGS_DIR, id)
-    const remainingEntities = existsSync(dir)
-      ? readdirSync(dir).filter((name) => name.endsWith(".ts") && !name.startsWith("_"))
-      : []
-    if (remainingEntities.length === 0 && existsSync(dir)) {
-      rmSync(dir, { recursive: true, force: true })
-    }
-
-    invalidateJigsCache()
-    return json({ ok: true, deleted: "entity", jigId: id, entity: target.entity ?? null })
-  }
-
-  if (entities.length === 0) {
-    const filePath = getJigFilePath(id)
-    if (!filePath) throw new ApiError(404, "Jig file not found")
-    rmSync(filePath, { force: true })
-  } else {
-    rmSync(join(JIGS_DIR, id), { recursive: true, force: true })
-  }
+  const filePath = getJigFilePath(id)
+  if (!filePath) throw new ApiError(404, "Jig file not found")
+  rmSync(filePath, { force: true })
 
   invalidateJigsCache()
-  return json({ ok: true, deleted: "jig", jigId: id, entity: null })
+  return json({ ok: true, jigId: id })
 }
 
 export function createApiServer(port: number) {
@@ -286,23 +225,14 @@ export function createApiServer(port: number) {
             return json(getModelCatalog())
           case "listJigs": {
             const jigs = await Promise.all(
-              [...discoverAllJigs().entries()].flatMap(([id, entities]) =>
-                entities.length === 0
-                  ? [buildJigResponse(id, entities, 10, true)]
-                  : entities.map((entity) => buildJigResponse(id, entities, 10, true, entity))
-              )
+              [...discoverAllJigs().keys()].map((id) => buildJigResponse(id, 10, true))
             )
             return json(jigs)
           }
           case "getJig": {
-            if (req.method === "DELETE") {
-              const entity = url.searchParams.get("entity") ?? undefined
-              return handleDeleteJig(route.params.id, entity)
-            }
-            const discovered = discoverAllJigs()
-            if (!discovered.has(route.params.id)) throw new ApiError(404, `Jig not found: ${route.params.id}`)
-            const entity = url.searchParams.get("entity") ?? undefined
-            return json(await buildJigResponse(route.params.id, discovered.get(route.params.id)!, 20, true, entity))
+            if (req.method === "DELETE") return handleDeleteJig(route.params.id)
+            ensureJigExists(route.params.id)
+            return json(await buildJigResponse(route.params.id, 20, true))
           }
           case "runJig": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
@@ -322,8 +252,7 @@ export function createApiServer(port: number) {
           case "getConnection":
             return handleGetConnection(route.params.name)
           case "getSteps": {
-            const body = req.method === "POST" ? await req.json().catch(() => ({})) : {}
-            return handleGetSteps(route.params.id, body)
+            return handleGetSteps(route.params.id)
           }
           case "updateTrigger": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
@@ -344,18 +273,13 @@ export function createApiServer(port: number) {
             const body = await req.json().catch(() => ({}))
             return json(await pushAgentMessage(route.params.sessionId, body))
           }
-          case "getVersions": {
-            const entity = url.searchParams.get("entity") ?? undefined
-            return handleGetVersions(route.params.id, entity)
-          }
-          case "getVersionCode": {
-            const entity = url.searchParams.get("entity") ?? undefined
-            return handleGetVersionCode(route.params.id, route.params.sha, entity)
-          }
+          case "getVersions":
+            return handleGetVersions(route.params.id)
+          case "getVersionCode":
+            return handleGetVersionCode(route.params.id, route.params.sha)
           case "restoreVersion": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
-            const entity = url.searchParams.get("entity") ?? undefined
-            return handleRestoreVersion(route.params.id, route.params.sha, entity)
+            return handleRestoreVersion(route.params.id, route.params.sha)
           }
           default:
             return json({ error: "Unknown handler" }, 404)
@@ -379,11 +303,4 @@ if (import.meta.main) {
   const port = parseInt(process.env.PORT ?? "3141")
   const server = createApiServer(port)
   console.log(`API server on http://localhost:${server.port}`)
-}
-
-export {
-  cronToText,
-  textToTrigger,
-  triggerToSource,
-  replaceTriggerInSource,
 }

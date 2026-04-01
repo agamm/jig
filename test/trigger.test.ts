@@ -7,7 +7,7 @@
 import { describe, it, expect, afterEach } from "bun:test"
 import { writeFileSync, readFileSync, rmSync } from "fs"
 import { join } from "path"
-import { cronToText, textToTrigger, triggerToSource, replaceTriggerInSource } from "../src/server.js"
+import { cronToText, textToTrigger, triggerToSource, replaceTriggerInSource } from "../src/domain/triggers.js"
 
 const JIGS_DIR = join(import.meta.dir, "..", "jigs")
 

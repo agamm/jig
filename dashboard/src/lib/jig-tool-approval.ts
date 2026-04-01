@@ -18,8 +18,8 @@ export function getToolsetSignature(tools: JigTool[]): string {
     .join("|")
 }
 
-function getApprovalKey(jigId: string, entity: string | null | undefined, signature: string): string {
-  return `${jigId}::${entity ?? ""}::${signature}`
+function getApprovalKey(jigId: string, signature: string): string {
+  return `${jigId}::${signature}`
 }
 
 function readApprovalStore(): Record<string, true> {
@@ -39,36 +39,36 @@ function writeApprovalStore(store: Record<string, true>) {
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(store))
 }
 
-export function isToolsetApproved(jigId: string, entity: string | null | undefined, tools: JigTool[]): boolean {
+export function isToolsetApproved(jigId: string, tools: JigTool[]): boolean {
   if (tools.length === 0) return true
   const signature = getToolsetSignature(tools)
   if (!signature) return true
   const store = readApprovalStore()
-  return store[getApprovalKey(jigId, entity, signature)] === true
+  return store[getApprovalKey(jigId, signature)] === true
 }
 
-export function approveToolset(jigId: string, entity: string | null | undefined, tools: JigTool[]) {
+export function approveToolset(jigId: string, tools: JigTool[]) {
   if (tools.length === 0) return
   const signature = getToolsetSignature(tools)
   if (!signature) return
   const store = readApprovalStore()
-  store[getApprovalKey(jigId, entity, signature)] = true
+  store[getApprovalKey(jigId, signature)] = true
   writeApprovalStore(store)
 }
 
-export function useJigToolApproval(jigId: string, entity: string | null | undefined, tools: JigTool[]) {
+export function useJigToolApproval(jigId: string, tools: JigTool[]) {
   const signature = useMemo(() => getToolsetSignature(tools), [tools])
   const stableTools = useMemo(() => normalizeTools(tools), [signature])
-  const [approved, setApproved] = useState<boolean>(() => isToolsetApproved(jigId, entity, stableTools))
+  const [approved, setApproved] = useState<boolean>(() => isToolsetApproved(jigId, stableTools))
 
   useEffect(() => {
-    setApproved(isToolsetApproved(jigId, entity, stableTools))
-  }, [entity, jigId, signature, stableTools])
+    setApproved(isToolsetApproved(jigId, stableTools))
+  }, [jigId, signature, stableTools])
 
   const approve = useCallback(() => {
-    approveToolset(jigId, entity, stableTools)
+    approveToolset(jigId, stableTools)
     setApproved(true)
-  }, [entity, jigId, stableTools])
+  }, [jigId, stableTools])
 
   return {
     approved,

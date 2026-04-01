@@ -1,36 +1,17 @@
 "use client";
 
-import { Suspense, useState, useEffect } from "react";
-import type { Jig } from "@/types/jig";
+import { Suspense } from "react";
 import { DashboardShell } from "@/components/dashboard-shell";
-import { fetchJigs } from "@/lib/api";
+import { useJigs } from "@/lib/swr";
 
 function Dashboard() {
-  const [jigs, setJigs] = useState<Jig[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data: jigs, isLoading } = useJigs({
+    // Backend may still be starting — retry aggressively on error
+    errorRetryInterval: 1000,
+    errorRetryCount: 10,
+  });
 
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      for (let attempt = 0; attempt < 10; attempt++) {
-        try {
-          const data = await fetchJigs();
-          if (!cancelled) {
-            setJigs(data);
-            setLoading(false);
-            return;
-          }
-        } catch {}
-        // Backend may still be starting — wait and retry
-        await new Promise(r => setTimeout(r, 1000));
-      }
-      if (!cancelled) setLoading(false);
-    }
-    load();
-    return () => { cancelled = true; };
-  }, []);
-
-  return <DashboardShell jigs={jigs} loading={loading} />;
+  return <DashboardShell jigs={jigs ?? []} loading={isLoading} />;
 }
 
 export default function Page() {

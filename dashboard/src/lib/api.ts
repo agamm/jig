@@ -28,16 +28,12 @@ export function fetchJigs(): Promise<JigData[]> {
   return fetchJson("/api/jigs")
 }
 
-export function fetchJig(jigId: string, entity?: string | null): Promise<JigData> {
-  const search = entity ? `?entity=${encodeURIComponent(entity)}` : ""
-  return fetchJson(`/api/jigs/${encodeURIComponent(jigId)}${search}`)
+export function fetchJig(jigId: string): Promise<JigData> {
+  return fetchJson(`/api/jigs/${encodeURIComponent(jigId)}`)
 }
 
-export function deleteJig(jigId: string, entity?: string | null): Promise<{ ok: true }> {
-  const search = entity ? `?entity=${encodeURIComponent(entity)}` : ""
-  return fetchJson(`/api/jigs/${encodeURIComponent(jigId)}${search}`, {
-    method: "DELETE",
-  })
+export function deleteJig(jigId: string): Promise<{ ok: true }> {
+  return fetchJson(`/api/jigs/${encodeURIComponent(jigId)}`, { method: "DELETE" })
 }
 
 export function fetchModels(): Promise<ModelCatalog> {
@@ -52,27 +48,27 @@ export function fetchConnection(name: string): Promise<ConnectionDetail> {
   return fetchJson(`/api/connections/${encodeURIComponent(name)}`)
 }
 
-export function fetchJigSteps(jigId: string, entity?: string | null): Promise<StepList> {
+export function fetchJigSteps(jigId: string): Promise<StepList> {
   return fetchJson(`/api/jigs/${encodeURIComponent(jigId)}/steps`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ entity: entity ?? undefined }),
+    body: "{}",
   })
 }
 
-export function updateJigTrigger(jigId: string, trigger: string, entity?: string | null): Promise<TriggerUpdateResponse> {
+export function updateJigTrigger(jigId: string, trigger: string): Promise<TriggerUpdateResponse> {
   return fetchJson(`/api/jigs/${encodeURIComponent(jigId)}/trigger`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ trigger, entity: entity ?? undefined }),
+    body: JSON.stringify({ trigger }),
   })
 }
 
-export function startAgentSession(instruction: string, jigId?: string, entity?: string): Promise<StartAgentResponse> {
+export function startAgentSession(instruction: string, jigId?: string): Promise<StartAgentResponse> {
   return fetchJson("/api/agent", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ instruction, jigId, entity }),
+    body: JSON.stringify({ instruction, jigId }),
   })
 }
 
@@ -89,7 +85,6 @@ export function sendAgentMessage(sessionId: string, message: string): Promise<{ 
 }
 
 export function startJigRun(jigId: string, payload: {
-  entity?: string
   dryRun: boolean
   params?: Record<string, string>
 }): Promise<StartRunResponse> {
@@ -112,19 +107,16 @@ export function cancelActiveRun(): Promise<{ ok: true; runId: number }> {
   return fetchJson("/api/runs/cancel", { method: "POST" })
 }
 
-export function fetchJigVersions(jigId: string, entity?: string | null): Promise<JigVersion[]> {
-  const search = entity ? `?entity=${encodeURIComponent(entity)}` : ""
-  return fetchJson(`/api/jigs/${encodeURIComponent(jigId)}/versions${search}`)
+export function fetchJigVersions(jigId: string): Promise<JigVersion[]> {
+  return fetchJson(`/api/jigs/${encodeURIComponent(jigId)}/versions`)
 }
 
-export function fetchJigVersionDetail(jigId: string, sha: string, entity?: string | null): Promise<JigVersionDetail> {
-  const search = entity ? `?entity=${encodeURIComponent(entity)}` : ""
-  return fetchJson(`/api/jigs/${encodeURIComponent(jigId)}/versions/${sha}${search}`)
+export function fetchJigVersionDetail(jigId: string, sha: string): Promise<JigVersionDetail> {
+  return fetchJson(`/api/jigs/${encodeURIComponent(jigId)}/versions/${sha}`)
 }
 
-export function restoreJigVersion(jigId: string, sha: string, entity?: string | null): Promise<RestoreJigVersionResult> {
-  const search = entity ? `?entity=${encodeURIComponent(entity)}` : ""
-  return fetchJson(`/api/jigs/${encodeURIComponent(jigId)}/versions/${sha}/restore${search}`, {
+export function restoreJigVersion(jigId: string, sha: string): Promise<RestoreJigVersionResult> {
+  return fetchJson(`/api/jigs/${encodeURIComponent(jigId)}/versions/${sha}/restore`, {
     method: "POST",
   })
 }

@@ -32,12 +32,6 @@ export interface JigRun {
   steps?: JigRunStep[]
 }
 
-export interface JigEntity {
-  name: string
-  lastRun: string
-  status: RunOutcomeStatus
-}
-
 export interface JigTool {
   connection: string
   name: string
@@ -46,17 +40,10 @@ export interface JigTool {
 
 export interface JigData {
   id: string
-  sourceId?: string
-  entity?: string | null
-  groupId?: string | null
-  groupName?: string | null
   name: string
   trigger: string
   status: JigHealth
   running?: boolean
-  grouped?: boolean
-  entityCount?: number
-  entities?: JigEntity[]
   sparkline: number[]
   steps: JigStep[]
   params?: Record<string, string>
@@ -142,7 +129,6 @@ export interface RunStatus {
   active: boolean
   runId?: number
   jigId?: string
-  entity?: string | null
   dryRun?: boolean
   completedTools: string[]
   activeTools: string[]
@@ -156,7 +142,6 @@ export interface RunStatus {
 export interface StartRunResponse {
   runId: number
   jigId: string
-  entity?: string | null
   dryRun: boolean
 }
 
@@ -173,7 +158,6 @@ export interface RunDetailStep {
 export interface RunDetail {
   id: number
   jigId: string
-  entity: string | null
   startedAt: string | null
   finishedAt: string | null
   status: "running" | "success" | "fail"

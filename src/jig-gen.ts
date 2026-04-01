@@ -1,5 +1,5 @@
 /**
- * Jig Creator — AI-powered jig generation and editing.
+ * Jig Gen — AI-powered jig generation and editing.
  *
  * Abstract module with no CLI coupling. All I/O goes through JigIO.emit()
  * with structured events — the presentation layer decides how to render.
@@ -11,6 +11,7 @@ import { discoverJigs } from "./discover.js"
 import { loadServerConfigs } from "./mcp/config.js"
 import type { JigTool } from "./sdk/jig.js"
 import { JIGS_DIR, PROJECT_ROOT, SCHEMAS_DIR, TYPES_DIR } from "./config/paths.js"
+import { resolveJigPath } from "./domain/jig-source.js"
 import { validateTsFile } from "./services/jig-checker.js"
 import { writeJigSource } from "./services/jig-writer.js"
 import { buildCreatorJigPrompt } from "./services/jig-writing-prompt.js"
@@ -43,8 +44,7 @@ export type JigEvent =
   | { type: "tools-discovered"; server: string; count: number; tools: string[] }
   | { type: "server-ready"; server: string }
   // Run events
-  | { type: "jig-list"; jigs: { name: string; entities: string[] }[] }
-  | { type: "entity-list"; name: string; entities: string[] }
+  | { type: "jig-list"; jigs: string[] }
   | { type: "run-start"; name: string }
 
 export interface JigIO {
@@ -106,7 +106,7 @@ export async function createJig(description: string, io: JigIO): Promise<CreateR
 
   // 7. Generate
   io.emit({ type: "generate-start" })
-  let code = await generateJigCode(description, probeResults, context, { importPrefix: ".." })
+  let code = await generateJigCode(description, probeResults, context)
   code = stripCodeFences(code)
 
   // 8. Write + validate + fix loop
@@ -140,7 +140,6 @@ export async function createJig(description: string, io: JigIO): Promise<CreateR
 
 export async function editJig(
   name: string,
-  entity: string | undefined,
   instruction: string,
   io: JigIO
 ): Promise<CreateResult> {
@@ -150,23 +149,7 @@ export async function editJig(
     throw new CreatorError("jig-not-found", `Jig not found: ${name}`)
   }
 
-  const entities = jigs.get(name)!
-  let targetPath: string
-  let importPrefix: string
-
-  if (entities.length === 0) {
-    targetPath = join(JIGS_DIR, `${name}.ts`)
-    importPrefix = ".."
-  } else if (!entity) {
-    io.emit({ type: "error", code: "entity-required", message: `"${name}" is a grouped jig`, details: { entities, commands: entities.map(e => `jig edit ${name} ${e}`) } })
-    throw new CreatorError("entity-required", `"${name}" is a grouped jig — specify an entity`)
-  } else if (!entities.includes(entity)) {
-    io.emit({ type: "error", code: "entity-not-found", message: `Entity not found: ${name}/${entity}`, details: { available: entities } })
-    throw new CreatorError("entity-not-found", `Entity not found: ${name}/${entity}`)
-  } else {
-    targetPath = join(JIGS_DIR, name, `${entity}.ts`)
-    importPrefix = "../.."
-  }
+  const targetPath = resolveJigPath(name)
 
   const existingCode = await Bun.file(targetPath).text()
 
@@ -195,14 +178,13 @@ export async function editJig(
 
   io.emit({ type: "generate-start" })
   let code = await generateJigCode(instruction, probeResults, context, {
-    importPrefix,
     edit: { existingCode },
   })
   code = stripCodeFences(code)
 
-  await writeJigSource(targetPath, code, { jigId: name, entity: entity ?? null })
+  await writeJigSource(targetPath, code, { jigId: name })
   code = await validateAndFix(targetPath, code, context, io)
-  code = await dryRunAndReview(instruction, code, context, name, entity, io)
+  code = await dryRunAndReview(instruction, code, context, name, io)
 
   // Ensure trigger is present (default to manual if LLM omitted it)
   if (!/trigger\s*:/.test(code)) {
@@ -212,12 +194,11 @@ export async function editJig(
     )
   }
 
-  await writeJigSource(targetPath, code, { jigId: name, entity: entity ?? null })
+  await writeJigSource(targetPath, code, { jigId: name })
 
-  const displayName = entity ? `${name} ${entity}` : name
   const relFile = relative(PROJECT_ROOT, targetPath)
-  io.emit({ type: "updated", name: displayName, file: relFile })
-  return { path: targetPath, name: displayName, code }
+  io.emit({ type: "updated", name, file: relFile })
+  return { path: targetPath, name, code }
 }
 
 // ---------------------------------------------------------------------------
@@ -473,14 +454,13 @@ async function generateJigCode(
   description: string,
   probeResults: string,
   context: CreatorContext,
-  options: { importPrefix: string; edit?: { existingCode: string } }
+  options?: { edit?: { existingCode: string } }
 ): Promise<string> {
   const prompt = buildCreatorJigPrompt({
     description,
     probeResults,
     context,
-    importPrefix: options.importPrefix,
-    existingCode: options.edit?.existingCode,
+    existingCode: options?.edit?.existingCode,
   })
 
   const result = await llm(prompt, {}, { maxTokens: 16384 })
@@ -557,22 +537,18 @@ async function dryRunAndReview(
   code: string,
   context: CreatorContext,
   name: string,
-  entity: string | undefined,
   io: JigIO
 ): Promise<string> {
   io.emit({ type: "dry-run-start" })
-  const dryRunOutput = await dryRunJig(name, entity)
+  const dryRunOutput = await dryRunJig(name)
   if (!dryRunOutput) return code
 
   const review = await reviewDryRun(description, code, dryRunOutput)
   if (review.issues) {
     io.emit({ type: "dry-run-review", ok: false, issues: review.issues })
     code = stripCodeFences(await fixFromReview(code, review.issues, context.typeDefs, dryRunOutput))
-    // Write + re-validate after review fix
-    const filePath = entity
-      ? join(JIGS_DIR, name, `${entity}.ts`)
-      : join(JIGS_DIR, `${name}.ts`)
-    await writeJigSource(filePath, code, { jigId: name, entity: entity ?? null })
+    const filePath = resolveJigPath(name)
+    await writeJigSource(filePath, code, { jigId: name })
     const recheck = await validate(filePath)
     io.emit({ type: "validate", ok: recheck.ok, errors: recheck.errors })
   } else {
@@ -585,11 +561,9 @@ async function dryRunAndReview(
 // dryRunJig — imports the jig definition and runs with dry-run enabled
 // ---------------------------------------------------------------------------
 
-async function dryRunJig(name: string, entity?: string): Promise<string | null> {
+async function dryRunJig(name: string): Promise<string | null> {
   const { runJig } = await import("./runner.js")
-  const jigPath = entity
-    ? join(JIGS_DIR, name, `${entity}.ts`)
-    : join(JIGS_DIR, `${name}.ts`)
+  const jigPath = resolveJigPath(name)
   if (!existsSync(jigPath)) return null
   const result = await runJig(jigPath, {}, () => {}, { dryRun: true, silent: true })
   return result.error ? null : (result.output.trim() || null)
@@ -675,6 +649,6 @@ export function stripCodeFences(code: string): string {
 }
 
 export function extractImportedServers(code: string): string[] {
-  const matches = code.matchAll(/from\s+["'].*\.jig\/connections\/(\w+)\.js["']/g)
+  const matches = code.matchAll(/from\s+["'](?:.*\.jig|jig)\/connections\/(\w+)\.js["']/g)
   return [...matches].map(m => m[1])
 }

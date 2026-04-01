@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react"
 import { toast } from "@/components/toast"
 import { updateJigTrigger } from "@/lib/api"
 
-export function useTriggerSave(jigId: string, serverTrigger: string, entity?: string | null) {
+export function useTriggerSave(jigId: string, serverTrigger: string) {
   const [editing, setEditing] = useState(false)
   const [value, setValue] = useState(serverTrigger)
   const [display, setDisplay] = useState(serverTrigger)
@@ -22,7 +22,7 @@ export function useTriggerSave(jigId: string, serverTrigger: string, entity?: st
   const save = async () => {
     setSaving(true)
     try {
-      const data = await updateJigTrigger(jigId, value, entity)
+      const data = await updateJigTrigger(jigId, value)
       savedLocally.current = true
       setDisplay(data.trigger)
       setValue(data.trigger)

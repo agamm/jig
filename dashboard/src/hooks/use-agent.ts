@@ -57,7 +57,7 @@ export function useAgent(onComplete?: (jigId?: string) => void | Promise<void>) 
     void tick()
   }, [])
 
-  const startSession = useCallback(async (instruction: string, targetJigId?: string, entity?: string) => {
+  const startSession = useCallback(async (instruction: string, targetJigId?: string) => {
     cleanup()
     const generation = generationRef.current
 
@@ -67,7 +67,7 @@ export function useAgent(onComplete?: (jigId?: string) => void | Promise<void>) 
     sinceRef.current = 0
 
     try {
-      const data = await startAgentSession(instruction, targetJigId, entity)
+      const data = await startAgentSession(instruction, targetJigId)
       if (generationRef.current !== generation) return
       setSessionId(data.sessionId)
       setJigId(data.jigId ?? null)

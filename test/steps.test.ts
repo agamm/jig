@@ -135,7 +135,7 @@ describe("step_cache", () => {
   })
 
   it("returns null on cache miss", () => {
-    expect(getStepCache("test-jig", null, "abc123")).toBeNull()
+    expect(getStepCache("test-jig", "abc123")).toBeNull()
   })
 
   it("round-trips cache data", () => {
@@ -143,28 +143,20 @@ describe("step_cache", () => {
       { num: 1, name: "Gather data", connections: ["granola", "workspace"] },
       { num: 2, name: "Create draft", connections: ["workspace"] },
     ]
-    setStepCache("test-jig", null, "abc123", steps)
-    const result = getStepCache("test-jig", null, "abc123")
+    setStepCache("test-jig", "abc123", steps)
+    const result = getStepCache("test-jig", "abc123")
     expect(result).toEqual(steps)
   })
 
   it("returns null on hash mismatch", () => {
-    setStepCache("test-jig", null, "hash1", [{ num: 1, name: "A", connections: [] }])
-    expect(getStepCache("test-jig", null, "hash2")).toBeNull()
+    setStepCache("test-jig", "hash1", [{ num: 1, name: "A", connections: [] }])
+    expect(getStepCache("test-jig", "hash2")).toBeNull()
   })
 
   it("replaces cache on new hash for same jig", () => {
-    setStepCache("test-jig", null, "hash1", [{ num: 1, name: "Old", connections: [] }])
-    setStepCache("test-jig", null, "hash2", [{ num: 1, name: "New", connections: [] }])
-    expect(getStepCache("test-jig", null, "hash1")).toBeNull()
-    expect(getStepCache("test-jig", null, "hash2")![0].name).toBe("New")
-  })
-
-  it("handles entity-scoped caching", () => {
-    setStepCache("invoice", "acme", "h1", [{ num: 1, name: "A", connections: [] }])
-    setStepCache("invoice", "globex", "h2", [{ num: 1, name: "B", connections: [] }])
-    expect(getStepCache("invoice", "acme", "h1")![0].name).toBe("A")
-    expect(getStepCache("invoice", "globex", "h2")![0].name).toBe("B")
-    expect(getStepCache("invoice", null, "h1")).toBeNull()
+    setStepCache("test-jig", "hash1", [{ num: 1, name: "Old", connections: [] }])
+    setStepCache("test-jig", "hash2", [{ num: 1, name: "New", connections: [] }])
+    expect(getStepCache("test-jig", "hash1")).toBeNull()
+    expect(getStepCache("test-jig", "hash2")![0].name).toBe("New")
   })
 })

@@ -10,7 +10,7 @@ import { discoverJigs } from "./discover.js"
 import { existsSync } from "fs"
 import { join, relative } from "path"
 import { createInterface } from "node:readline/promises"
-import type { JigIO, JigEvent } from "./creator.js"
+import type { JigIO, JigEvent } from "./jig-gen.js"
 import { CONNECTIONS_DIR, PROJECT_ROOT, SCHEMAS_DIR } from "./config/paths.js"
 
 const API_PORT = parseInt(process.env.PORT ?? "3141")
@@ -177,14 +177,10 @@ function renderEvent(event: JigEvent): void {
     // Run events
     case "jig-list":
       console.log("Available jigs:\n")
-      for (const j of event.jigs) {
-        console.log(j.entities.length ? `  ${j.name}  [${j.entities.join(", ")}]` : `  ${j.name}`)
+      for (const name of event.jigs) {
+        console.log(`  ${name}`)
       }
-      console.log(`\nRun "jig run <name>" or "jig run <name> <entity>"`)
-      break
-    case "entity-list":
-      console.log(`${event.name} entities: ${event.entities.join(", ")}`)
-      console.log(`\nRun "jig run ${event.name} <entity>" or "jig run ${event.name} all"`)
+      console.log(`\nRun "jig run <name>"`)
       break
     case "run-start":
       console.log(`\n--- ${event.name} ---`)
@@ -243,14 +239,14 @@ async function ensureServer(): Promise<void> {
   throw new Error("Failed to start server")
 }
 
-async function agentCommand(instruction: string, jigId?: string, entity?: string): Promise<void> {
+async function agentCommand(instruction: string, jigId?: string): Promise<void> {
   await ensureServer()
 
   // Start agent session
   const startRes = await fetch(`${API_BASE}/api/agent`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ instruction, jigId, entity }),
+    body: JSON.stringify({ instruction, jigId }),
   })
   if (!startRes.ok) {
     const err = await startRes.json().catch(() => ({ error: "Failed" }))
@@ -312,7 +308,7 @@ try {
       break
 
     case "run":
-      await handleRun(rest[0], rest[1], io)
+      await handleRun(rest[0], io)
       break
 
     case "new": {
@@ -324,11 +320,11 @@ try {
     }
 
     case "edit": {
-      const [name, entity] = rest
-      if (!name) { io.emit({ type: "error", code: "usage", message: "Usage: jig edit <name> [entity]" }); process.exit(1) }
+      const [name] = rest
+      if (!name) { io.emit({ type: "error", code: "usage", message: "Usage: jig edit <name>" }); process.exit(1) }
       const instruction = await io.ask("What should change?")
       console.log("")
-      await agentCommand(instruction, name, entity ?? undefined)
+      await agentCommand(instruction, name)
       process.exit(0)
       break
     }
@@ -518,7 +514,7 @@ function checkConnections(io: JigIO) {
   }
 }
 
-async function runJigFile(path: string, io: JigIO, jigId: string, entity?: string) {
+async function runJigFile(path: string, io: JigIO, jigId: string) {
   const { runJig, persist } = await import("./runner.js")
   const { openDb, insertRun } = await import("./db.js")
 
@@ -539,7 +535,7 @@ async function runJigFile(path: string, io: JigIO, jigId: string, entity?: strin
   }
 
   const isDry = dryRun
-  const runId = isDry ? -1 : insertRun(jigId, entity, Object.keys(params).length > 0 ? params : undefined)
+  const runId = isDry ? -1 : insertRun(jigId, Object.keys(params).length > 0 ? params : undefined)
   const start = Date.now()
   const persistHandler = !isDry ? persist(runId, start) : null
 
@@ -551,15 +547,12 @@ async function runJigFile(path: string, io: JigIO, jigId: string, entity?: strin
   if (result.error) process.exit(1)
 }
 
-async function handleRun(name: string | undefined, entity: string | undefined, io: JigIO) {
+async function handleRun(name: string | undefined, io: JigIO) {
   const jigsDir = join(PROJECT_ROOT, "jigs")
   const jigs = discoverJigs(jigsDir)
 
   if (!name) {
-    io.emit({
-      type: "jig-list",
-      jigs: [...jigs.entries()].map(([name, entities]) => ({ name, entities })),
-    })
+    io.emit({ type: "jig-list", jigs: [...jigs.keys()] })
     return
   }
 
@@ -568,29 +561,5 @@ async function handleRun(name: string | undefined, entity: string | undefined, i
     process.exit(1)
   }
   checkConnections(io)
-  const entities = jigs.get(name)!
-
-  if (entities.length === 0) {
-    await runJigFile(join(jigsDir, `${name}.ts`), io, name)
-    return
-  }
-
-  if (!entity) {
-    io.emit({ type: "entity-list", name, entities })
-    return
-  }
-
-  if (entity === "all") {
-    for (const e of entities) {
-      io.emit({ type: "run-start", name: `${name}/${e}` })
-      await runJigFile(join(jigsDir, name, `${e}.ts`), io, name, e)
-    }
-    return
-  }
-
-  if (!entities.includes(entity)) {
-    io.emit({ type: "error", code: "entity-not-found", message: `Entity not found: ${name}/${entity}` })
-    process.exit(1)
-  }
-  await runJigFile(join(jigsDir, name, `${entity}.ts`), io, name, entity)
+  await runJigFile(join(jigsDir, `${name}.ts`), io, name)
 }

@@ -8,33 +8,24 @@ export async function writeJigSource(
   code: string,
   options?: {
     jigId?: string
-    entity?: string | null
     commitMessage?: string
     commitPrompt?: string | null
     commit?: boolean
   }
 ): Promise<void> {
   const jigId = options?.jigId
-  const entity = options?.entity ?? null
-
-  if (entity) {
-    const dir = join(JIGS_DIR, jigId ?? "")
-    if (!existsSync(dir)) {
-      await Bun.spawn(["mkdir", "-p", dir]).exited
-    }
-  }
 
   await Bun.write(filePath, code)
 
   if (jigId) {
     try {
-      clearStepCache(jigId, entity)
+      clearStepCache(jigId)
     } catch {}
   }
 
   if (!options?.commit || !jigId || !existsSync(join(JIGS_DIR, ".git"))) return
 
-  const relPath = entity ? join(jigId, `${entity}.ts`) : `${jigId}.ts`
+  const relPath = `${jigId}.ts`
   const msg = options.commitMessage ?? `jig: ${jigId} — update`
   const addProc = Bun.spawn(["git", "add", relPath], {
     cwd: JIGS_DIR,

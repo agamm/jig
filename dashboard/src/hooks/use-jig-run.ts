@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import type { RunStep, RunStepsMode } from "@/components/run-steps";
-import { cancelActiveRun, fetchActiveRun, fetchRunStatus, startJigRun } from "@/lib/api";
+import { cancelActiveRun, fetchActiveRunForJig, fetchRunStatus, startJigRun } from "@/lib/api";
 import type { RunDetail, RunStatus } from "@shared/api";
 
 function formatDuration(ms: number): string {
@@ -99,8 +99,8 @@ export function useJigRun(jigId: string) {
   useEffect(() => {
     (async () => {
       try {
-        const data: RunStatus = await fetchActiveRun();
-        if (data.active && data.runId && matchesTarget(data, jigId)) {
+        const data: RunStatus = await fetchActiveRunForJig(jigId);
+        if (data.active && data.runId) {
           const abort = new AbortController();
           abortRef.current = abort;
           runIdRef.current = data.runId;
@@ -147,14 +147,14 @@ export function useJigRun(jigId: string) {
 
   const cancelRun = useCallback(async () => {
     cleanup();
-    try { await cancelActiveRun(); } catch {}
+    try { await cancelActiveRun(jigId); } catch {}
     setMode(prev => prev.type === "running"
       ? { type: "done", elapsed: prev.elapsed, dryRun: prev.dryRun, status: "fail" }
       : prev
     );
     setLiveSteps(prev => prev.map(s => s.status === "running" ? { ...s, status: "fail" } : s));
     setActiveTools([]);
-}, [cleanup]);
+}, [cleanup, jigId]);
 
   return { mode, liveSteps, completedTools, activeTools, toolReadOnly, startRun, dismiss, cancelRun, isRunning: mode.type === "running" };
 }

@@ -41,12 +41,33 @@ function ToolCallCard({ event }: { event: AgentEvent & { type: "tool-call" } }) 
   )
 }
 
+function QuestionBubble({ question }: { question: string }) {
+  return (
+    <div className="py-2" style={{ animation: "fade-up 0.15s ease" }}>
+      <div className="rounded-lg border border-blue-500/20 bg-blue-500/[0.04] px-3 py-2.5">
+        <p className="text-[9px] font-medium uppercase tracking-wider text-blue-400 mb-1">Question</p>
+        <p className="text-[11px] text-[#ddd] leading-relaxed">{question}</p>
+      </div>
+    </div>
+  )
+}
+
 function TextMessage({ content }: { content: string }) {
   const short = content.length > 200 ? content.slice(0, 200).trim() + "..." : content
   return (
     <div className="py-1.5 text-[11px] text-[#aaa] leading-relaxed break-words max-h-24 overflow-y-auto">
       {short}
     </div>
+  )
+}
+
+function isAskUserDuplicateText(events: AgentEvent[], index: number): boolean {
+  // Text messages that duplicate an ask_user question — skip them
+  const event = events[index]
+  if (event.type !== "text") return false
+  // Check if any ask_user tool call has this same text as its result
+  return events.some(
+    (e) => e.type === "tool-call" && e.tool === "ask_user" && e.status === "done" && e.result === event.content
   )
 }
 
@@ -102,12 +123,21 @@ export function AgentActivity({ events, status }: { events: AgentEvent[]; status
 
   return (
     <div className="divide-y divide-[#1a1a1d]">
-      {events.map((event, i) => (
-        <div key={i}>
-          {event.type === "tool-call" && <ToolCallCard event={event} />}
-          {event.type === "text" && <TextMessage content={event.content} />}
-        </div>
-      ))}
+      {events.map((event, i) => {
+        // ask_user tool call → render as question bubble instead of tool card
+        if (event.type === "tool-call" && event.tool === "ask_user") {
+          const question = event.status === "done" && event.result ? event.result : (event.args as any).question ?? ""
+          return <QuestionBubble key={i} question={question} />
+        }
+        // Skip the text message that duplicates the ask_user question
+        if (isAskUserDuplicateText(events, i)) return null
+        return (
+          <div key={i}>
+            {event.type === "tool-call" && <ToolCallCard event={event} />}
+            {event.type === "text" && <TextMessage content={event.content} />}
+          </div>
+        )
+      })}
       {active && (
         <div className="flex items-center gap-2 py-2">
           <Spinner size={10} />

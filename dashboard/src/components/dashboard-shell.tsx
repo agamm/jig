@@ -60,8 +60,10 @@ export function DashboardShell({
   const collapsed = sidebarMounted ? sidebarSlim : false;
   const allConnections = useMemo(() => [...new Set(jigs.flatMap((j) => j.settings.connections))], [jigs]);
 
+  const [jigClickToken, setJigClickToken] = useState(0);
   function handleJigClick(jig: Jig) {
     setSelectedJig(jig.id);
+    setJigClickToken(t => t + 1);
     setReviewMode(null);
     setSelectedConnection(null);
   }
@@ -182,6 +184,7 @@ export function DashboardShell({
       />
     ) : selectedJig && currentJig && !reviewMode && !selectedConnection ? (
       <JigDetailPane
+        key={jigClickToken}
         jig={currentJig}
         onClose={closeDetail}
         onConnectionClick={(name) => {

@@ -1,9 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import type { JigData } from "@shared/api";
+import { AgentInput } from "@/components/agent-input";
 import { AgentPanel } from "@/components/agent-panel";
 import { Button } from "@/components/button";
+import { ConnectionTag } from "@/components/connection-tag";
+import { HighlightedCode } from "@/components/highlighted-code";
+import { RunSteps, type RunStep } from "@/components/run-steps";
 import { useAgent } from "@/hooks/use-agent";
+import { fetchJig } from "@/lib/api";
 import { PaneHeader } from "@/components/pane-header";
 import { PaneSection } from "@/components/pane-section";
 import { SegmentedControl } from "@/components/segmented-control";
@@ -21,6 +27,31 @@ function SkeletonLine({ width, className = "" }: { width: string; className?: st
   );
 }
 
+function SkeletonSteps() {
+  return (
+    <div className="rounded-lg border border-[#1f1f23] bg-[#111113]">
+      {[0, 1].map((step, idx, all) => (
+        <div
+          key={step}
+          className={`flex items-start gap-3 px-4 py-3 ${idx < all.length - 1 ? "border-b border-dashed border-[#1a1a1d]" : ""}`}
+        >
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#1a1a1d] text-[10px] font-mono text-[#444] mt-0.5">
+            {idx + 1}
+          </span>
+          <div className="flex-1 min-w-0">
+            <SkeletonLine width={idx % 2 === 0 ? "55%" : "42%"} />
+            <div className="mt-2 space-y-1.5">
+              <SkeletonLine width="30%" className="h-2" />
+              <SkeletonLine width="22%" className="h-2" />
+            </div>
+          </div>
+          <SkeletonLine width="18px" className="h-2 shrink-0 mt-1" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function CreateJigPane({
   initialInstruction = "",
   startToken = 0,
@@ -33,11 +64,29 @@ export function CreateJigPane({
   onCreated?: (jigId?: string) => Promise<void> | void;
 }) {
   const [input, setInput] = useState(initialInstruction);
+  const [detailTab, setDetailTab] = useState<"steps" | "code">("steps");
+  const [jigData, setJigData] = useState<JigData | null>(null);
   const startedTokenRef = useRef(0);
+  const lastWriteCountRef = useRef(0);
   const agent = useAgent(async (jigId) => {
     await onCreated?.(jigId);
   });
   const displayName = agent.jigId ? prettifyJigName(agent.jigId) : "Create New Jig";
+
+  // Fetch jig data whenever agent completes a write_jig_file call
+  useEffect(() => {
+    const writeCount = agent.events.filter(
+      (e) => e.type === "tool-call" && e.tool === "write_jig_file" && e.status === "done"
+    ).length;
+    if (writeCount > lastWriteCountRef.current && agent.jigId) {
+      lastWriteCountRef.current = writeCount;
+      // Small delay to let the server process the file write
+      const timer = setTimeout(() => {
+        fetchJig(agent.jigId!).then(setJigData).catch(() => {});
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [agent.events, agent.jigId]);
 
   useEffect(() => {
     setInput(initialInstruction);
@@ -45,21 +94,17 @@ export function CreateJigPane({
 
   useEffect(() => {
     if (!startToken || startedTokenRef.current === startToken) return;
-    const trimmed = initialInstruction.trim();
     startedTokenRef.current = startToken;
     setInput(initialInstruction);
   }, [agent, initialInstruction, startToken]);
 
-  function handleSend() {
-    const instruction = input.trim();
-    if (!instruction || agent.isActive) return;
-
-    if (agent.sessionId && (agent.status === "done" || agent.status === "error")) {
-      agent.sendMessage(instruction);
-    } else {
-      agent.startSession(instruction);
-    }
-  }
+  const steps: RunStep[] = jigData?.steps?.map((s) => ({
+    num: s.num,
+    name: s.name,
+    connections: s.connections,
+    tools: s.tools,
+  })) ?? [];
+  const hasData = jigData !== null;
 
   return (
     <aside
@@ -87,10 +132,11 @@ export function CreateJigPane({
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
         <div className="flex items-center justify-between">
           <SegmentedControl
-            value="steps"
+            value={detailTab}
+            onChange={hasData ? setDetailTab : undefined}
             options={[
               { value: "steps", label: "Steps" },
-              { value: "code", label: "Code", disabled: true },
+              { value: "code", label: "Code", disabled: !hasData },
             ]}
           />
           <div className="flex items-center gap-1.5">
@@ -103,88 +149,59 @@ export function CreateJigPane({
           </div>
         </div>
 
-        <div className="rounded-lg border border-[#1f1f23] bg-[#111113]">
-          {[0, 1].map((step, idx, all) => (
-            <div
-              key={step}
-              className={`flex items-start gap-3 px-4 py-3 ${idx < all.length - 1 ? "border-b border-dashed border-[#1a1a1d]" : ""}`}
-            >
-              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#1a1a1d] text-[10px] font-mono text-[#444] mt-0.5">
-                {idx + 1}
-              </span>
-              <div className="flex-1 min-w-0">
-                <SkeletonLine width={idx % 2 === 0 ? "55%" : "42%"} />
-                <div className="mt-2 space-y-1.5">
-                  <SkeletonLine width="30%" className="h-2" />
-                  <SkeletonLine width="22%" className="h-2" />
-                </div>
-              </div>
-              <SkeletonLine width="18px" className="h-2 shrink-0 mt-1" />
+        {detailTab === "steps" ? (
+          hasData && steps.length > 0 ? (
+            <div style={{ animation: "fade-up 0.2s ease" }}>
+              <RunSteps steps={steps} mode={{ type: "idle" }} />
             </div>
-          ))}
-        </div>
+          ) : (
+            <SkeletonSteps />
+          )
+        ) : hasData ? (
+          <div className="rounded-lg border border-[#1f1f23] bg-[#111113] p-4 font-mono overflow-x-auto" style={{ animation: "fade-up 0.15s ease" }}>
+            <HighlightedCode code={jigData!.code} connections={jigData!.settings.connections} />
+          </div>
+        ) : null}
 
         <PaneSection title="Trigger">
-          <div className="rounded-lg border border-[#1f1f23] bg-[#111113] px-4 py-3">
-            <SkeletonLine width="120px" />
-          </div>
+          {hasData && jigData!.trigger ? (
+            <span className="inline-flex items-center rounded-lg border border-[#2a2a2e] bg-[#1a1a1d] px-3 py-2 text-[12px] font-mono text-[#ccc]" style={{ animation: "fade-up 0.15s ease" }}>
+              {jigData!.trigger}
+            </span>
+          ) : (
+            <div className="rounded-lg border border-[#1f1f23] bg-[#111113] px-4 py-3">
+              <SkeletonLine width="120px" />
+            </div>
+          )}
         </PaneSection>
 
         <PaneSection title="Connections">
-          <div className="flex flex-wrap gap-2">
-            <span className="rounded-full border border-[#1f1f23] bg-[#111113] px-2.5 py-1.5 text-[10px] text-[#444]">connection</span>
-            <span className="rounded-full border border-[#1f1f23] bg-[#111113] px-2.5 py-1.5 text-[10px] text-[#444]">connection</span>
-            <span className="rounded-full border border-[#1f1f23] bg-[#111113] px-2.5 py-1.5 text-[10px] text-[#444]">connection</span>
-          </div>
+          {hasData && jigData!.settings.connections.length > 0 ? (
+            <div className="flex flex-wrap gap-2" style={{ animation: "fade-up 0.15s ease" }}>
+              {jigData!.settings.connections.map((c) => (
+                <ConnectionTag key={c} name={c} />
+              ))}
+            </div>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              <span className="rounded-full border border-[#1f1f23] bg-[#111113] px-2.5 py-1.5 text-[10px] text-[#444]">connection</span>
+              <span className="rounded-full border border-[#1f1f23] bg-[#111113] px-2.5 py-1.5 text-[10px] text-[#444]">connection</span>
+              <span className="rounded-full border border-[#1f1f23] bg-[#111113] px-2.5 py-1.5 text-[10px] text-[#444]">connection</span>
+            </div>
+          )}
         </PaneSection>
 
       </div>
 
-      <AgentPanel events={agent.events} status={agent.status} />
+      <AgentPanel events={agent.events} status={agent.status} onRetry={() => agent.sendMessage("Continue — retry the last step.")} />
 
       <div className="border-t border-[#1f1f23] p-3">
-        <div className="rounded-lg border border-amber-500/25 bg-amber-500/[0.04] px-3 py-2 shadow-[0_0_0_1px_rgba(245,158,11,0.06)]">
-          <div className="mb-2 flex items-center gap-2">
-            <span className="flex h-4 w-4 items-center justify-center rounded-full bg-amber-500/10 text-[9px] font-medium text-amber-400">1</span>
-            <span className="text-[10px] font-medium uppercase tracking-wider text-amber-400/80">Describe The Workflow</span>
-          </div>
-          {agent.sessionId && (
-            <div className="mb-2 flex items-center justify-end">
-              <span className="text-[10px] text-amber-400/50">
-                {agent.jigId ? `Creating ${agent.jigId}` : "Choosing a name and shaping the draft"}
-              </span>
-            </div>
-          )}
-          <div className="flex items-center gap-2">
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") handleSend(); }}
-            placeholder={agent.sessionId ? "Follow up..." : "Describe a jig to create..."}
-            disabled={agent.isActive}
-            className="flex-1 bg-transparent text-[12px] text-[#f2ead6] outline-none placeholder:text-[#9a8452] disabled:opacity-50"
-          />
-          {(agent.status === "done" || agent.status === "error") && (
-            <Button
-              onClick={agent.reset}
-              variant="subtle"
-              size="xs"
-              className="border-amber-500/15 bg-transparent text-[#8d7a52] hover:border-amber-500/30 hover:bg-transparent hover:text-[#f0ddb3]"
-            >
-              Clear
-            </Button>
-          )}
-          <Button
-            onClick={handleSend}
-            disabled={!input.trim() || agent.isActive}
-            variant="success"
-            size="xs"
-          >
-            {agent.sessionId ? "Send" : "Create"}
-          </Button>
-        </div>
-        </div>
+        <AgentInput
+          agent={agent}
+          idlePlaceholder="Describe a jig to create..."
+          variant="create"
+          externalValue={input}
+        />
       </div>
     </aside>
   );

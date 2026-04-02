@@ -1,13 +1,14 @@
 "use client";
 
 import { useState, useMemo, useEffect, useRef } from "react";
-import type { JigStepTool } from "@shared/api";
+import type { JigStepTool, ScheduleInfo } from "@shared/api";
 import type { Jig } from "@/types/jig";
 import { ConnectionTag } from "@/components/connection-tag";
 import { HighlightedCode } from "@/components/highlighted-code";
 import { RunSteps, type RunStep } from "@/components/run-steps";
 import { useJigRun } from "@/hooks/use-jig-run";
 import { useAgent } from "@/hooks/use-agent";
+import { AgentInput } from "@/components/agent-input";
 import { AgentPanel } from "@/components/agent-panel";
 import { Button } from "@/components/button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -31,6 +32,85 @@ import { buildRemovalInstruction, getReviewableToolKeys, sameTool, toolKey } fro
 const statusDot = (s: string) =>
   s === "healthy" ? "bg-emerald-400" : s === "attention" ? "bg-amber-400" : "bg-rose-400";
 
+function formatScheduleTime(iso: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  const now = new Date();
+  const isToday = now.toDateString() === d.toDateString();
+  const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+  if (isToday) return `Today ${time}`;
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) + ` ${time}`;
+}
+
+function ScheduleSection({ schedule, jigId, onRefresh }: { schedule: ScheduleInfo; jigId: string; onRefresh?: () => Promise<void> | void }) {
+  const [toggling, setToggling] = useState(false);
+
+  const handleToggle = async () => {
+    setToggling(true);
+    try {
+      const res = await fetch(`/api/schedules/${encodeURIComponent(jigId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: !schedule.enabled }),
+      });
+      if (!res.ok) throw new Error("Failed to update schedule");
+      await onRefresh?.();
+    } catch {
+      toast.error("Failed to update schedule");
+    }
+    setToggling(false);
+  };
+
+  return (
+    <PaneSection title="Schedule">
+      <div className="rounded-lg border border-[#1f1f23] bg-[#111113] divide-y divide-[#1a1a1d]">
+        <div className="flex items-center justify-between px-3 py-2">
+          <div className="flex items-center gap-2">
+            <span className={`h-1.5 w-1.5 rounded-full ${schedule.error ? "bg-rose-400" : schedule.enabled ? "bg-emerald-400" : "bg-[#333]"}`} />
+            <span className="text-[11px] text-[#ccc]">
+              {schedule.error ? "Error" : schedule.enabled ? "Active" : "Paused"}
+            </span>
+          </div>
+          <button
+            onClick={handleToggle}
+            disabled={toggling}
+            className="text-[10px] text-[#666] hover:text-[#ededed] transition-colors disabled:opacity-50"
+          >
+            {toggling ? "…" : schedule.enabled ? "Pause" : "Resume"}
+          </button>
+        </div>
+        {schedule.error && (
+          <div className="px-3 py-2 text-[11px] text-rose-300 bg-rose-950/20 border-y border-rose-950/30">
+            {schedule.error}
+          </div>
+        )}
+        <div className="grid grid-cols-2 gap-px">
+          <div className="px-3 py-2">
+            <p className="text-[9px] text-[#444] uppercase tracking-wider">Next Run</p>
+            <p className="text-[11px] text-[#ccc] mt-0.5">{formatScheduleTime(schedule.nextRunAt)}</p>
+          </div>
+          <div className="px-3 py-2">
+            <p className="text-[9px] text-[#444] uppercase tracking-wider">Last Run</p>
+            <p className="text-[11px] text-[#ccc] mt-0.5">{formatScheduleTime(schedule.lastRunAt)}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3 px-3 py-2">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[9px] text-[#444] uppercase tracking-wider">Type</span>
+            <span className="text-[10px] font-mono text-[#888]">{schedule.triggerType}</span>
+          </div>
+          {schedule.triggerType === "cron" && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-[9px] text-[#444] uppercase tracking-wider">If Missed</span>
+              <span className="text-[10px] font-mono text-[#888]">{schedule.missedStrategy}</span>
+            </div>
+          )}
+        </div>
+      </div>
+    </PaneSection>
+  );
+}
+
 export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionClick }: {
   jig: Jig;
   onClose: () => void;
@@ -42,8 +122,8 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
   const [detailTab, setDetailTab] = useState<"steps" | "code">("steps");
   const trigger = useTriggerSave(jigId, jig.settings.trigger);
   const [expandedRun, setExpandedRun] = useState<number | null>(null);
-  const [agentInput, setAgentInput] = useState("");
   const [deleting, setDeleting] = useState(false);
+  const [upgradeRequested, setUpgradeRequested] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [paramsExpanded, setParamsExpanded] = useState(false);
   const [reviewedToolKeys, setReviewedToolKeys] = useState<Set<string>>(new Set());
@@ -56,20 +136,10 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
 
   const agent = useAgent(async () => {
     await onRefresh?.();
-    revalidateSteps();
+    // Revalidate steps after jig data refreshes — ensures new code hash is used
+    await revalidateSteps();
   });
 
-  const handleAgentSend = () => {
-    if (!agentInput.trim() || agent.isActive) return;
-    if (agent.sessionId && (agent.status === "done" || agent.status === "error")) {
-      agent.sendMessage(agentInput.trim());
-    } else {
-      agent.startSession(agentInput.trim(), jigId);
-    }
-    setQueuedRemovalTools([]);
-    previousAutoRemovalRef.current = "";
-    setAgentInput("");
-  };
   const hasParams = jig.params && Object.keys(jig.params).length > 0;
   const [paramValues, setParamValues] = useState<Record<string, string>>(() =>
     Object.fromEntries(Object.entries(jig.params ?? {}).map(([k, v]) => [k, ""]))
@@ -111,22 +181,6 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
     previousAutoRemovalRef.current = "";
   }, [toolApproval.signature]);
   useEffect(() => {
-    const previousAuto = previousAutoRemovalRef.current;
-    setAgentInput((current) => {
-      const trimmed = current.trim();
-      if (!removalInstruction) {
-        if (trimmed === previousAuto) return "";
-        if (previousAuto && current.includes(previousAuto)) {
-          return current.replace(previousAuto, "").replace(/\n{3,}/g, "\n\n").trim();
-        }
-        return current;
-      }
-      if (!trimmed || trimmed === previousAuto) return removalInstruction;
-      if (previousAuto && current.includes(previousAuto)) {
-        return current.replace(previousAuto, removalInstruction);
-      }
-      return `${current.trim()}\n\n${removalInstruction}`;
-    });
     previousAutoRemovalRef.current = removalInstruction;
   }, [removalInstruction]);
 
@@ -292,6 +346,27 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
           )}
         </div>
 
+        {/* Upgrade banner for legacy jigs */}
+        {jig.needsUpgrade && mode.type === "idle" && (
+          <div className="rounded-lg border border-blue-500/20 bg-blue-500/[0.04] p-3" style={{ animation: "fade-up 0.15s ease" }}>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-[10px] font-medium uppercase tracking-wider text-blue-400">Upgrade Available</p>
+                <p className="mt-1 text-[11px] text-blue-100/70">
+                  This jig uses the old format. Upgrade to declarative steps for tool enforcement and better visibility.
+                </p>
+              </div>
+              <Button
+                onClick={() => setUpgradeRequested(true)}
+                variant="accent"
+                size="xs"
+              >
+                Upgrade
+              </Button>
+            </div>
+          </div>
+        )}
+
         {/* Steps or Code */}
         {detailTab === "steps" ? (
           <div key="steps" className="flip-enter">
@@ -425,6 +500,10 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
           )}
         </PaneSection>
 
+        {jig.schedule && (
+          <ScheduleSection schedule={jig.schedule} jigId={jigId} onRefresh={onRefresh} />
+        )}
+
         <PaneSection
           title="Runs"
           meta={<span className="text-[10px] text-[#444]">{jig.runs.length} total</span>}
@@ -519,32 +598,19 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
       </div>
 
       {/* Agent activity stream (shown when active) */}
-      <AgentPanel events={agent.events} status={agent.status} />
+      <AgentPanel events={agent.events} status={agent.status} onRetry={() => agent.sendMessage("Continue — retry the last step.")} />
 
       {/* Agent input bar */}
       <div className="border-t border-[#1f1f23] p-3">
-        <div className="flex items-center gap-2 rounded-lg border border-[#1f1f23] bg-[#111113] px-3 py-2">
-          <input
-            type="text"
-            value={agentInput}
-            onChange={(e) => setAgentInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") handleAgentSend() }}
-            placeholder={agent.sessionId ? "Follow up..." : "Describe a change..."}
-            disabled={agent.isActive}
-            className="flex-1 bg-transparent text-[12px] text-[#ededed] outline-none placeholder:text-[#555] disabled:opacity-50"
-          />
-          {(agent.status === "done" || agent.status === "error") && (
-            <Button onClick={agent.reset} variant="subtle" size="xs">Clear</Button>
-          )}
-          <Button
-            onClick={handleAgentSend}
-            disabled={!agentInput.trim() || agent.isActive}
-            variant="success"
-            size="xs"
-          >
-            &#8593;
-          </Button>
-        </div>
+        <AgentInput
+          agent={agent}
+          jigId={jigId}
+          externalValue={
+            upgradeRequested
+              ? 'Upgrade this jig to use declarative ctx.step("label", [tools], async () => {...}) syntax for each step. Keep the same behavior.'
+              : removalInstruction || undefined
+          }
+        />
       </div>
     </aside>
   );

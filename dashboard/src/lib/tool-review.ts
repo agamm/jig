@@ -30,8 +30,7 @@ export function getReviewableToolKeys(steps: { tools?: JigStepTool[] }[], tools:
   for (const step of steps) {
     for (const tool of step.tools ?? []) keys.add(toolKey(tool))
   }
-  if (keys.size === 0) {
-    for (const tool of tools) keys.add(toolKey(tool))
-  }
+  // Always include declared tools — step scan may not reach all code paths
+  for (const tool of tools) keys.add(toolKey(tool))
   return keys
 }

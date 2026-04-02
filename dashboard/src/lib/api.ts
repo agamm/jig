@@ -103,8 +103,16 @@ export function fetchActiveRun(): Promise<RunStatus> {
   return fetchJson("/api/runs/active")
 }
 
-export function cancelActiveRun(): Promise<{ ok: true; runId: number }> {
-  return fetchJson("/api/runs/cancel", { method: "POST" })
+export function fetchActiveRunForJig(jigId: string): Promise<RunStatus> {
+  return fetchJson(`/api/runs/active?jigId=${encodeURIComponent(jigId)}`)
+}
+
+export function cancelActiveRun(jigId?: string): Promise<{ ok: true; jigId: string }> {
+  return fetchJson("/api/runs/cancel", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(jigId ? { jigId } : {}),
+  })
 }
 
 export function fetchJigVersions(jigId: string): Promise<JigVersion[]> {

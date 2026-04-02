@@ -9,7 +9,7 @@ import { fetchJigVersionDetail, restoreJigVersion } from "@/lib/api"
 import { trimGitDiffHeaders } from "@/lib/git-diff"
 import { useJigVersions } from "@/lib/swr"
 
-const DEFAULT_VISIBLE_HISTORY_ROWS = 2
+const DEFAULT_VISIBLE_HISTORY_ROWS = 0
 
 function DiffOutput({ diff }: { diff: string }) {
   const normalizedDiff = trimGitDiffHeaders(diff)
@@ -163,7 +163,7 @@ export function JigVersions({
             </div>
           </div>
         )}
-        <div className="rounded-lg border border-[#1f1f23] bg-[#111113] divide-y divide-[#1a1a1d]">
+        {visibleVersions.length > 0 && <div className="rounded-lg border border-[#1f1f23] bg-[#111113] divide-y divide-[#1a1a1d]">
         {visibleVersions.map((version) => {
           const date = new Date(version.date)
           const dateStr = date.toLocaleDateString("en-US", { month: "short", day: "numeric" })
@@ -237,11 +237,11 @@ export function JigVersions({
             </div>
           )
         })}
-        </div>
-        {historicalVersions.length > DEFAULT_VISIBLE_HISTORY_ROWS && (
+        </div>}
+        {historicalVersions.length > 0 && (
           <div className="flex justify-center">
             <Button onClick={() => setShowAll((value) => !value)} variant="subtle" size="xs">
-              {showAll ? "Show fewer versions" : `Show ${historicalVersions.length - DEFAULT_VISIBLE_HISTORY_ROWS} more`}
+              {showAll ? "Hide history" : `Show ${historicalVersions.length} more`}
             </Button>
           </div>
         )}

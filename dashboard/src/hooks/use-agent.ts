@@ -101,12 +101,18 @@ export function useAgent(onComplete?: (jigId?: string) => void | Promise<void>) 
     setJigId(null)
   }, [cleanup])
 
+  const isActive = status === "thinking" || status === "tool-calling"
+  const isWaiting = status === "waiting"
+  const canSend = !isActive || isWaiting
+
   return {
     events,
     status,
     sessionId,
     jigId,
-    isActive: status === "thinking" || status === "tool-calling",
+    isActive,
+    isWaiting,
+    canSend,
     startSession,
     sendMessage,
     reset,

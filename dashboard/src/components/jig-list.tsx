@@ -9,6 +9,19 @@ import { useDragReorder } from "@/hooks/use-drag-reorder";
 const statusColor = (s: string) =>
   s === "healthy" ? "#34d399" : s === "attention" ? "#f59e0b" : "#f43f5e";
 
+function formatNextRun(iso: string): string {
+  const d = new Date(iso);
+  const now = Date.now();
+  const diffMs = d.getTime() - now;
+  if (diffMs < 0) return "due";
+  const mins = Math.floor(diffMs / 60_000);
+  if (mins < 60) return `in ${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `in ${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `in ${days}d`;
+}
+
 const statusDot = (s: string) =>
   s === "healthy" ? "bg-emerald-400" : s === "attention" ? "bg-amber-400" : "bg-rose-400";
 
@@ -71,6 +84,7 @@ export function JigList({ jigs, selectedJigId, onJigClick, onReorder, onCreate }
 
           <span className={`flex min-w-0 items-baseline gap-1.5 text-[13px] font-medium ${isSelected ? "text-[#ededed]" : "text-[#ccc]"}`}>
             <span className="truncate">{jig.name}</span>
+            {jig.running && <span className="text-[9px] font-normal text-blue-400 shrink-0">Running</span>}
           </span>
 
           <span className="flex shrink-0 -space-x-1.5 hover:-space-x-0.5 transition-all duration-500 ease-out">
@@ -84,6 +98,11 @@ export function JigList({ jigs, selectedJigId, onJigClick, onReorder, onCreate }
           <span className="rounded-md bg-[#111113] border border-[#1f1f23] px-2 py-0.5 font-mono text-[10px] text-[#888] shrink-0">
             {jig.trigger}
           </span>
+          {jig.schedule?.nextRunAt && (
+            <span className="text-[9px] text-[#444] shrink-0" title={`Next: ${new Date(jig.schedule.nextRunAt).toLocaleString()}`}>
+              {formatNextRun(jig.schedule.nextRunAt)}
+            </span>
+          )}
 
           <span className="flex-1" />
 

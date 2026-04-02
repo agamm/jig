@@ -1,12 +1,13 @@
 import { readFileSync } from "fs"
 import type { JigData, JigRun, JigTool } from "../../shared/api.js"
 import { JIGS_DIR } from "../config/paths.js"
-import { getJigRuns, getLastRun, getStepCache } from "../db.js"
+import { getJigRuns, getLastRun, getSchedule } from "../db.js"
 import { discoverJigs } from "../discover.js"
-import { isUsableCachedSteps } from "../derive-steps.js"
+import { parseStepsFromSource } from "../derive-steps.js"
 import { formatDuration } from "../utils.js"
 import { extractConnections, extractParams, extractTrigger, getJigFilePath, prettifyId } from "../domain/jig-source.js"
-import { getActiveRunStatus } from "./run-store.js"
+import { getActiveRunStatusForJig } from "./run-store.js"
+import { webhookToken } from "../scheduler/webhook-auth.js"
 
 function deriveStatus(jigId: string): "healthy" | "attention" | "failed" {
   try {
@@ -65,7 +66,7 @@ export async function buildJigResponse(
   let steps: JigData["steps"] = []
   if (filePath) {
     try {
-      const mod = await import(`${filePath}?_t=${Date.now()}`)
+      const mod = await import(`${filePath}?_t=${Date.now()}_${Math.random().toString(36).slice(2)}`)
       const def = mod.default
       if (def?.options) params = def.options.params ?? {}
       if (def?.options?.tools?.length) {
@@ -75,11 +76,9 @@ export async function buildJigResponse(
           readOnly: tool._readOnly === true,
         })))
       }
-      if (includeSteps && def?.handler && code) {
-        const hasher = new Bun.CryptoHasher("sha256")
-        hasher.update(code)
-        const cached = getStepCache(id, hasher.digest("hex"))
-        if (cached && isUsableCachedSteps(cached)) steps = cached
+      if (includeSteps && code) {
+        const { deriveSteps } = await import("../derive-steps.js")
+        steps = await deriveSteps(id, code)
       }
     } catch {
       params = extractParams(code)
@@ -87,22 +86,46 @@ export async function buildJigResponse(
     }
   }
 
-  const activeRun = getActiveRunStatus()
+  const scheduleRow = getSchedule(id)
+  const schedule = scheduleRow ? (() => {
+    const port = parseInt(process.env.JIG_API_PORT ?? process.env.PORT ?? "3141")
+    const webhookUrl = scheduleRow.trigger_type === "webhook"
+      ? `http://localhost:${port}/api/webhooks/${id}?token=${webhookToken(id)}`
+      : undefined
+    return {
+      triggerType: scheduleRow.trigger_type,
+      cronExpr: scheduleRow.cron_expr,
+      missedStrategy: scheduleRow.missed_strategy,
+      nextRunAt: scheduleRow.next_run_at ? new Date(scheduleRow.next_run_at * 1000).toISOString() : null,
+      lastRunAt: scheduleRow.last_run_at ? new Date(scheduleRow.last_run_at * 1000).toISOString() : null,
+      enabled: scheduleRow.enabled === 1,
+      error: scheduleRow.error,
+      webhookUrl,
+    }
+  })() : undefined
+
+  const activeRun = getActiveRunStatusForJig(id)
   const connections = tools.length > 0
     ? [...new Set(tools.map((tool) => tool.connection))]
     : extractConnections(code)
+
+  // Detect legacy jigs (have a handler but no block-scoped ctx.step calls)
+  const needsUpgrade = code && /export\s+default/.test(code) && parseStepsFromSource(code).length === 0
+    ? true : undefined
 
   return {
     id,
     name: prettifyId(id),
     trigger,
     status: deriveStatus(id),
-    running: activeRun.active && activeRun.jigId === id && !activeRun.dryRun,
+    running: activeRun.active && !activeRun.dryRun,
     sparkline,
     steps,
     code,
     runs: formatRuns(runs),
     params,
+    needsUpgrade,
+    schedule,
     settings: {
       trigger,
       connections,

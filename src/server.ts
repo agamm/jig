@@ -22,6 +22,10 @@ import { loadServerConfigs } from "./mcp/config.js"
 import { buildJigResponse, discoverAllJigs } from "./services/jig-api.js"
 import { getAgentSessionStatus, pushAgentMessage, startAgentSession } from "./services/agent-service.js"
 import { cancelActiveRun, getActiveRunSnapshot, getRunDetail, startJigRun } from "./services/run-api.js"
+import { handleWebhook } from "./scheduler/webhooks.js"
+import { getSchedule, listAllSchedules, setScheduleEnabled } from "./db.js"
+import { startScheduler } from "./scheduler/index.js"
+import { syncSchedules } from "./scheduler/sync.js"
 import { getJigVersionDetail, listJigVersions, restoreJigVersion } from "./services/jig-versioning.js"
 import { ApiError, json } from "./server/http.js"
 import { matchRoute } from "./server/router.js"
@@ -49,8 +53,8 @@ async function handleGetVersionCode(jigId: string, sha: string): Promise<Respons
 
 async function handleRestoreVersion(jigId: string, sha: string): Promise<Response> {
   ensureJigExists(jigId)
-  const activeRun = getActiveRunSnapshot()
-  if (activeRun.active && activeRun.jigId === jigId) {
+  const { hasActiveRunForJig } = await import("./services/run-store.js")
+  if (hasActiveRunForJig(jigId)) {
     throw new ApiError(409, "Cannot restore a jig version while it is running")
   }
   return json(await restoreJigVersion(jigId, sha))
@@ -60,36 +64,10 @@ async function handleGetSteps(id: string): Promise<Response> {
   ensureJigExists(id)
   const filePath = getJigFilePath(id)
   if (!filePath) throw new ApiError(404, "Jig file not found")
-
-  const safePath = JSON.stringify(filePath)
-  const safeId = JSON.stringify(id)
-
-  const script = `
-    import { readFileSync } from "fs";
-    const { deriveSteps } = await import("./src/derive-steps.js");
-    const mod = await import(${safePath} + "?_t=" + Date.now());
-    if (!mod.default?.handler) { console.log("[]"); process.exit(0); }
-    const code = readFileSync(${safePath}, "utf-8");
-    const steps = await deriveSteps(mod.default, ${safeId}, code);
-    console.log(JSON.stringify(steps));
-  `
-
-  const proc = Bun.spawn(["bun", "-e", script], {
-    cwd: PROJECT_ROOT,
-    stdout: "pipe",
-    stderr: "pipe",
-    timeout: 30_000,
-  })
-  const stdout = await new Response(proc.stdout).text()
-  const exitCode = await proc.exited
-
-  if (exitCode !== 0) return json({ steps: [] })
-
-  try {
-    return json({ steps: JSON.parse(stdout) })
-  } catch {
-    return json({ steps: [] })
-  }
+  const code = readFileSync(filePath, "utf-8")
+  const { deriveSteps } = await import("./derive-steps.js")
+  const steps = await deriveSteps(id, code)
+  return json({ steps })
 }
 
 async function handleUpdateTrigger(id: string, body: any): Promise<Response> {
@@ -102,6 +80,9 @@ async function handleUpdateTrigger(id: string, body: any): Promise<Response> {
 
   const trigger = textToTrigger(triggerText) ?? await textToTriggerLLM(triggerText)
   if (!trigger) throw new ApiError(400, `Could not parse trigger: "${triggerText}"`)
+  if (trigger.type === "interval" && typeof trigger.minutes === "number" && trigger.minutes > 59) {
+    throw new ApiError(400, "Interval triggers above 59 minutes are not supported by the built-in scheduler. Use cron for multi-hour schedules.")
+  }
 
   let code: string
   try {
@@ -130,6 +111,7 @@ async function handleUpdateTrigger(id: string, body: any): Promise<Response> {
   if ("approximate" in trigger && trigger.approximate) {
     result.warning = ("note" in trigger && trigger.note) || "This is an approximation — cron cannot express the exact schedule"
   }
+  await syncSchedules()
   return json(result)
 }
 
@@ -196,8 +178,8 @@ async function handleGetConnection(name: string): Promise<Response> {
 async function handleDeleteJig(id: string): Promise<Response> {
   ensureJigExists(id)
 
-  const activeRun = getActiveRunSnapshot()
-  if (activeRun.active && activeRun.jigId === id) {
+  const { hasActiveRunForJig } = await import("./services/run-store.js")
+  if (hasActiveRunForJig(id)) {
     throw new ApiError(409, "Cannot delete a jig while it is running")
   }
 
@@ -211,6 +193,10 @@ async function handleDeleteJig(id: string): Promise<Response> {
 
 export function createApiServer(port: number) {
   openDb()
+  // Clear step cache on startup — ensures stale derivations from old SDK versions don't persist
+  const { clearAllStepCache } = require("./db.js")
+  clearAllStepCache()
+  startScheduler().catch((e) => console.error("[scheduler] failed to start:", e))
 
   return Bun.serve({
     port,
@@ -242,10 +228,11 @@ export function createApiServer(port: number) {
           case "getRun":
             return json(getRunDetail(parseInt(route.params.id)))
           case "activeRun":
-            return json(getActiveRunSnapshot())
+            return json(getActiveRunSnapshot(url.searchParams.get("jigId") ?? undefined))
           case "cancelRun": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
-            return json(await cancelActiveRun())
+            const body = await req.json().catch(() => ({}))
+            return json(await cancelActiveRun(body?.jigId))
           }
           case "connections":
             return handleGetConnections()
@@ -280,6 +267,32 @@ export function createApiServer(port: number) {
           case "restoreVersion": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
             return handleRestoreVersion(route.params.id, route.params.sha)
+          }
+          case "listSchedules":
+            return json(listAllSchedules().map(s => ({
+              jigId: s.jig_id,
+              triggerType: s.trigger_type,
+              cronExpr: s.cron_expr,
+              missedStrategy: s.missed_strategy,
+              nextRunAt: s.next_run_at ? new Date(s.next_run_at * 1000).toISOString() : null,
+              lastRunAt: s.last_run_at ? new Date(s.last_run_at * 1000).toISOString() : null,
+              enabled: s.enabled === 1,
+              error: s.error,
+            })))
+          case "updateSchedule": {
+            if (req.method !== "PATCH") return json({ error: "Method not allowed" }, 405)
+            ensureJigExists(route.params.jigId)
+            if (!getSchedule(route.params.jigId)) throw new ApiError(404, `No schedule found for jig: ${route.params.jigId}`)
+            const body = await req.json().catch(() => ({}))
+            if (typeof body?.enabled !== "boolean") throw new ApiError(400, "Missing 'enabled' boolean")
+            setScheduleEnabled(route.params.jigId, body.enabled)
+            return json({ ok: true })
+          }
+          case "webhook": {
+            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+            const token = url.searchParams.get("token")
+            const result = handleWebhook(route.params.jigId, token)
+            return json(result.body, result.status)
           }
           default:
             return json({ error: "Unknown handler" }, 404)

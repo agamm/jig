@@ -38,6 +38,17 @@ export interface JigTool {
   readOnly: boolean
 }
 
+export interface ScheduleInfo {
+  triggerType: "cron" | "webhook"
+  cronExpr: string | null
+  missedStrategy: "catch-up" | "skip"
+  nextRunAt: string | null
+  lastRunAt: string | null
+  enabled: boolean
+  error: string | null
+  webhookUrl?: string
+}
+
 export interface JigData {
   id: string
   name: string
@@ -49,6 +60,8 @@ export interface JigData {
   params?: Record<string, string>
   code: string
   runs: JigRun[]
+  schedule?: ScheduleInfo
+  needsUpgrade?: boolean
   settings: {
     trigger: string
     connections: string[]

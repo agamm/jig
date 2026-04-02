@@ -8,4 +8,5 @@ export type RunEvent =
   | { type: "tool"; completed: string[]; active: string[]; readOnly?: Record<string, boolean> }
   | { type: "output"; text: string }
   | { type: "done"; tools: string[]; output: string; durationMs: number }
+  | { type: "skipped"; reason: string }
   | { type: "error"; message: string }

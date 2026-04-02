@@ -64,5 +64,20 @@ export function matchRoute(pathname: string): { handler: string; params: Record<
   if (pathname === "/api/runs/active") return { handler: "activeRun", params: {} }
   if (pathname === "/api/runs/cancel") return { handler: "cancelRun", params: {} }
 
+  // Scheduler routes
+  if (pathname === "/api/schedules") return { handler: "listSchedules", params: {} }
+
+  const scheduleMatch = pathname.match(/^\/api\/schedules\/([^/]+)$/)
+  if (scheduleMatch) {
+    if (!isValidJigId(decodeURIComponent(scheduleMatch[1]))) return null
+    return { handler: "updateSchedule", params: { jigId: decodeURIComponent(scheduleMatch[1]) } }
+  }
+
+  const webhookMatch = pathname.match(/^\/api\/webhooks\/([^/]+)$/)
+  if (webhookMatch) {
+    if (!isValidJigId(decodeURIComponent(webhookMatch[1]))) return null
+    return { handler: "webhook", params: { jigId: decodeURIComponent(webhookMatch[1]) } }
+  }
+
   return null
 }

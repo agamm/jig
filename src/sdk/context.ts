@@ -1,14 +1,16 @@
 import { AsyncLocalStorage } from "node:async_hooks"
+import type { JigTool } from "./jig.js"
+
+/** Thrown by ctx.skip() to short-circuit a handler. Run is NOT persisted. */
+export class SkipError extends Error {
+  constructor(reason?: string) {
+    super(reason ?? "skipped")
+    this.name = "SkipError"
+  }
+}
 
 /** Per-run context — lets tool wrappers and SDK functions find the active Context. */
 export const runContext = new AsyncLocalStorage<Context>()
-
-/** Step scan mode — runs handler to collect step labels without executing anything. */
-export const stepScanContext = new AsyncLocalStorage<boolean>()
-
-export function isStepScan(): boolean {
-  return stepScanContext.getStore() ?? false
-}
 
 /** Truncate a label to max length (no ellipsis — humanize makes it readable). */
 export function truncLabel(s: string, max = 60): string {
@@ -50,9 +52,24 @@ export class Context {
   /** True while inside an agent() call — tool calls won't auto-create steps. */
   private _inAgent = false
 
+  /** Tool names allowed in the current block-scoped step (empty = no active scoped step). */
+  private _currentStepToolNames: string[] = []
+
+  /** Label of the current block-scoped step (null between steps). */
+  private _currentStepLabel: string | null = null
+
   get inAgent() { return this._inAgent }
   enterAgent() { this._inAgent = true }
   leaveAgent() { this._inAgent = false }
+
+  get currentStepLabel(): string | null { return this._currentStepLabel }
+  get currentStepToolNames(): string[] { return this._currentStepToolNames }
+
+  /** Returns true only if a step is active and the tool is in its allowed list. */
+  isToolAllowedInCurrentStep(toolName: string): boolean {
+    if (this._currentStepLabel === null) return false
+    return this._currentStepToolNames.includes(toolName)
+  }
 
   constructor(
     public readonly params: Record<string, string>,
@@ -62,8 +79,8 @@ export class Context {
   /** Attach a recorder for step-level tracking (used by API server). */
   setRecorder(recorder: RunRecorder) { this._recorder = recorder }
 
-  /** Mark the start of a named step. */
-  step(label: string) {
+  /** Block-scoped step: sets allowed tools, runs fn, clears tools on exit. */
+  async step<T>(label: string, tools: JigTool[], fn: () => Promise<T>): Promise<T> {
     // Finish previous step if one was active.
     if (this._stepSeq > 0 && !this._stepFinalized) {
       this.finalize()
@@ -74,7 +91,24 @@ export class Context {
     this._stepOutput = []
     this._stepConnections = new Set()
     this._stepTools = new Map()
+    this._currentStepLabel = label
+    this._currentStepToolNames = tools.map(t => t._toolName)
+    for (const tool of tools) {
+      this.addTool(tool._serverName, tool._toolName, tool._readOnly ?? true)
+    }
     this._recorder?.onStepStart(this._stepSeq, label)
+
+    try {
+      const result = await fn()
+      this.finalize()
+      return result
+    } catch (e) {
+      this.finalize(e)
+      throw e
+    } finally {
+      this._currentStepLabel = null
+      this._currentStepToolNames = []
+    }
   }
 
   /** Record a connection used in the current step. */
@@ -119,6 +153,11 @@ export class Context {
       const output = this._stepOutput.join("\n")
       this._recorder?.onStepDone(this._stepSeq, output, status, durationMs, Array.from(this._stepConnections), errMsg)
     }
+  }
+
+  /** Short-circuit the handler. The run is NOT persisted or shown in dashboard. */
+  skip(reason?: string): never {
+    throw new SkipError(reason)
   }
 
   /**

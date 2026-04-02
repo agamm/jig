@@ -88,6 +88,17 @@ const MIGRATIONS: string[] = [
   `DROP TABLE IF EXISTS jig_steps;
    DROP TABLE IF EXISTS jig_meta;
    ALTER TABLE run_steps ADD COLUMN connections TEXT;`,
+  // v2: durable scheduler — schedules table (error column included)
+  `CREATE TABLE IF NOT EXISTS schedules (
+     jig_id TEXT PRIMARY KEY,
+     trigger_type TEXT NOT NULL,
+     cron_expr TEXT,
+     missed_strategy TEXT NOT NULL DEFAULT 'catch-up',
+     next_run_at INTEGER,
+     last_run_at INTEGER,
+     enabled INTEGER NOT NULL DEFAULT 1,
+     error TEXT
+   );`,
 ]
 
 // ---------------------------------------------------------------------------
@@ -278,7 +289,124 @@ export function setStepCache(jigId: string, codeHash: string, steps: CachedStep[
   ).run(jigId, null, codeHash, JSON.stringify(steps))
 }
 
+export function clearAllStepCache(): void {
+  const db = openDb()
+  db.prepare(`DELETE FROM step_cache`).run()
+}
+
 export function clearStepCache(jigId: string): void {
   const db = openDb()
   db.prepare(`DELETE FROM step_cache WHERE jig_id = ?`).run(jigId)
+}
+
+// ---------------------------------------------------------------------------
+// Schedules
+// ---------------------------------------------------------------------------
+
+export interface ScheduleRow {
+  jig_id: string
+  trigger_type: "cron" | "webhook"
+  cron_expr: string | null
+  missed_strategy: "catch-up" | "skip"
+  next_run_at: number | null
+  last_run_at: number | null
+  enabled: number // 1 or 0
+  error: string | null
+}
+
+export function getSchedule(jigId: string): ScheduleRow | null {
+  const db = openDb()
+  return db.prepare(`SELECT * FROM schedules WHERE jig_id = ?`).get(jigId) as ScheduleRow | null
+}
+
+export function upsertSchedule(
+  jigId: string,
+  triggerType: "cron" | "webhook",
+  cronExpr: string | null,
+  missedStrategy: "catch-up" | "skip",
+  nextRunAt: number | null,
+  error: string | null,
+): void {
+  const db = openDb()
+  db.prepare(
+    `INSERT INTO schedules (jig_id, trigger_type, cron_expr, missed_strategy, next_run_at, error)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(jig_id) DO UPDATE SET
+       trigger_type = excluded.trigger_type,
+       cron_expr = excluded.cron_expr,
+       missed_strategy = excluded.missed_strategy,
+       next_run_at = excluded.next_run_at,
+       error = excluded.error`
+  ).run(jigId, triggerType, cronExpr, missedStrategy, nextRunAt, error)
+}
+
+export function deleteSchedule(jigId: string): void {
+  const db = openDb()
+  db.prepare(`DELETE FROM schedules WHERE jig_id = ?`).run(jigId)
+}
+
+export function listDueSchedules(nowUnix: number): ScheduleRow[] {
+  const db = openDb()
+  return db.prepare(
+    `SELECT * FROM schedules WHERE trigger_type = 'cron' AND enabled = 1 AND next_run_at <= ?`
+  ).all(nowUnix) as ScheduleRow[]
+}
+
+export function listAllSchedules(): ScheduleRow[] {
+  const db = openDb()
+  return db.prepare(`SELECT * FROM schedules`).all() as ScheduleRow[]
+}
+
+/**
+ * Compare-and-swap: only advances if next_run_at still matches expectedNextRunAt.
+ * Uses `IS ?` instead of `= ?` because next_run_at can be NULL and
+ * SQLite's `IS` handles NULL equality correctly (NULL IS NULL → true).
+ */
+export function advanceSchedule(
+  jigId: string,
+  expectedNextRunAt: number | null,
+  nextRunAt: number | null,
+): boolean {
+  const db = openDb()
+  const result = db.prepare(
+    `UPDATE schedules
+     SET next_run_at = ?
+     WHERE jig_id = ?
+       AND next_run_at IS ?
+       AND enabled = 1`
+  ).run(nextRunAt, jigId, expectedNextRunAt)
+  return result.changes > 0
+}
+
+export function markScheduleTriggered(jigId: string, lastRunAt: number): void {
+  const db = openDb()
+  db.prepare(
+    `UPDATE schedules SET last_run_at = ?, error = NULL WHERE jig_id = ?`
+  ).run(lastRunAt, jigId)
+}
+
+export function setScheduleEnabled(jigId: string, enabled: boolean): void {
+  const db = openDb()
+  db.prepare(`UPDATE schedules SET enabled = ? WHERE jig_id = ?`).run(enabled ? 1 : 0, jigId)
+}
+
+export function setScheduleError(jigId: string, error: string | null): void {
+  const db = openDb()
+  db.prepare(`UPDATE schedules SET error = ? WHERE jig_id = ?`).run(error, jigId)
+}
+
+export function markInterruptedRuns(): number {
+  const db = openDb()
+  db.prepare(
+    `UPDATE run_steps
+     SET status = 'fail',
+         finished_at = datetime('now'),
+         error = COALESCE(error, 'interrupted by process restart')
+     WHERE run_id IN (SELECT id FROM runs WHERE status = 'running')
+       AND status = 'running'`
+  ).run()
+  const result = db.prepare(
+    `UPDATE runs SET status = 'fail', finished_at = datetime('now'), error = 'interrupted by process restart' WHERE status = 'running'`
+  ).run()
+  return result.changes
 }

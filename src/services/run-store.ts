@@ -17,30 +17,39 @@ type RunRecord = {
 
 const RECENT_RESULT_TTL_MS = 60_000
 
-let activeRunId: number | null = null
-let activeAbort: AbortController | null = null
+/** jigId → runId for currently executing runs */
+const activeRuns = new Map<string, number>()
+/** runId → AbortController for cancellation */
+const activeAborts = new Map<number, AbortController>()
+/** runId → RunRecord for in-flight runs */
 const runs = new Map<number, RunRecord>()
+/** runId → RunRecord for recently finished runs */
 const recentResults = new Map<number, RunRecord>()
 
+export function hasActiveRunForJig(jigId: string): boolean {
+  return activeRuns.has(jigId)
+}
+
 export function hasActiveRun(): boolean {
-  return activeRunId !== null
+  return activeRuns.size > 0
 }
 
-export function getActiveRunId(): number | null {
-  return activeRunId
+export function getActiveRunForJig(jigId: string): number | null {
+  return activeRuns.get(jigId) ?? null
 }
 
-export function abortActiveRun(): void {
-  activeAbort?.abort()
+export function abortRunForJig(jigId: string): void {
+  const runId = activeRuns.get(jigId)
+  if (runId != null) activeAborts.get(runId)?.abort()
 }
 
-export function getActiveSignal(): AbortSignal | undefined {
-  return activeAbort?.signal
+export function getSignalForRun(runId: number): AbortSignal | undefined {
+  return activeAborts.get(runId)?.signal
 }
 
 export function startTrackedRun(runId: number, jigId: string, dryRun: boolean): void {
-  activeRunId = runId
-  activeAbort = new AbortController()
+  activeRuns.set(jigId, runId)
+  activeAborts.set(runId, new AbortController())
   runs.set(runId, {
     runId,
     jigId,
@@ -99,11 +108,21 @@ export function finishTrackedRun(runId: number): void {
   run.finishedAt = Date.now()
   recentResults.set(runId, run)
   runs.delete(runId)
-  if (activeRunId === runId) {
-    activeRunId = null
-    activeAbort = null
+  if (activeRuns.get(run.jigId) === runId) {
+    activeRuns.delete(run.jigId)
   }
+  activeAborts.delete(runId)
   pruneRecentResults()
+}
+
+export function discardTrackedRun(runId: number): void {
+  const run = runs.get(runId)
+  if (!run) return
+  runs.delete(runId)
+  if (activeRuns.get(run.jigId) === runId) {
+    activeRuns.delete(run.jigId)
+  }
+  activeAborts.delete(runId)
 }
 
 export function getRunStatus(runId: number): RunStatus | null {
@@ -113,9 +132,32 @@ export function getRunStatus(runId: number): RunStatus | null {
 }
 
 export function getActiveRunStatus(): RunStatus {
+  return getActiveRunStatusForJig()
+}
+
+export function getActiveRunStatusForJig(jigId?: string): RunStatus {
   pruneRecentResults()
-  if (activeRunId !== null) {
-    const run = runs.get(activeRunId)
+
+  if (jigId) {
+    const runId = activeRuns.get(jigId)
+    const run = runId != null ? runs.get(runId) : null
+    if (run) return toRunStatus(run, true)
+    const latestForJig = [...recentResults.values()]
+      .filter((recent) => recent.jigId === jigId)
+      .sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0))[0]
+    if (latestForJig) return toRunStatus(latestForJig, false)
+    return {
+      active: false,
+      jigId,
+      completedTools: [],
+      activeTools: [],
+      steps: [],
+    }
+  }
+
+  // Return the first active run (for dashboard polling)
+  for (const runId of activeRuns.values()) {
+    const run = runs.get(runId)
     if (run) return toRunStatus(run, true)
   }
 

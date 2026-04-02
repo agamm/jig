@@ -7,6 +7,7 @@
 import { join } from "path"
 import { appendFile } from "node:fs/promises"
 import type { RunRecorder } from "./sdk/context.js"
+import { SkipError } from "./sdk/context.js"
 import type { RunEvent } from "./run-events.js"
 import { insertStep, completeStep, completeRun } from "./db.js"
 import { dryRunContext } from "./sdk/dryrun.js"
@@ -37,6 +38,7 @@ export interface RunResult {
   tools: string[]
   durationMs: number
   error?: string
+  skipped?: boolean
 }
 
 /**
@@ -123,7 +125,7 @@ async function _runJig(
     // 1. Import jig (cache bust) — classified errors
     let mod: any
     try {
-      mod = await import(`${jigPath}?_t=${Date.now()}`)
+      mod = await import(`${jigPath}?_t=${Date.now()}_${Math.random().toString(36).slice(2)}`)
     } catch (e: any) {
       const msg = e?.message ?? String(e)
       const error = msg.includes("Cannot find module")
@@ -181,6 +183,14 @@ async function _runJig(
     return { output, tools, durationMs }
 
   } catch (e: any) {
+    // Skip — handler called ctx.skip(), run should not be persisted
+    if (e instanceof SkipError) {
+      const durationMs = Date.now() - start
+      log(`skipped: ${e.message}`)
+      onEvent({ type: "skipped", reason: e.message })
+      return { output: "", tools: [], durationMs, skipped: true }
+    }
+
     // Extract detailed error info from OpenAI SDK / provider errors
     let error = e?.message ?? String(e)
     if (e?.status && e?.error) {

@@ -1,11 +1,11 @@
 import type { RunDetail, StartRunResponse } from "../../shared/api.js"
 import { PROJECT_ROOT } from "../config/paths.js"
-import { insertRun, getRun } from "../db.js"
+import { getRun, insertRun, openDb } from "../db.js"
 import { discoverAllJigs } from "./jig-api.js"
 import { runJig, persist } from "../runner.js"
 import { formatDuration } from "../utils.js"
 import { ApiError } from "../server/http.js"
-import { abortActiveRun, applyRunEvent, finishTrackedRun, getActiveRunId, getActiveRunStatus, getActiveSignal, getRunStatus, hasActiveRun, startTrackedRun } from "./run-store.js"
+import { abortRunForJig, applyRunEvent, discardTrackedRun, finishTrackedRun, getActiveRunStatusForJig, getSignalForRun, getRunStatus, hasActiveRun, hasActiveRunForJig, startTrackedRun } from "./run-store.js"
 import { resolveJigPath } from "../domain/jig-source.js"
 import { existsSync } from "fs"
 
@@ -30,21 +30,29 @@ export async function startJigRun(id: string, body: any): Promise<StartRunRespon
   const persistHandler = !dryRun ? persist(runId, startTime) : null
 
   ;(async () => {
+    let skipped = false
     try {
-      await runJig(jigPath, params, (event) => {
-        applyRunEvent(runId, event)
-        persistHandler?.(event)
-      }, { dryRun, silent: true, signal: getActiveSignal() })
+      const result = await runJig(jigPath, params, (event) => {
+        if (event.type !== "skipped") applyRunEvent(runId, event)
+        if (event.type !== "skipped") persistHandler?.(event)
+      }, { dryRun, silent: true, signal: getSignalForRun(runId) })
+      if (result.skipped && !dryRun) {
+        skipped = true
+        const db = openDb()
+        db.prepare(`DELETE FROM run_steps WHERE run_id = ?`).run(runId)
+        db.prepare(`DELETE FROM runs WHERE id = ?`).run(runId)
+      }
     } finally {
-      finishTrackedRun(runId)
+      if (skipped) discardTrackedRun(runId)
+      else finishTrackedRun(runId)
     }
   })()
 
   return { runId, jigId: id, dryRun }
 }
 
-export function getActiveRunSnapshot() {
-  return getActiveRunStatus()
+export function getActiveRunSnapshot(jigId?: string) {
+  return getActiveRunStatusForJig(jigId)
 }
 
 export function getRunDetail(runId: number): RunDetail {
@@ -108,9 +116,14 @@ export function getRunDetail(runId: number): RunDetail {
   }
 }
 
-export async function cancelActiveRun(): Promise<{ ok: true; runId: number }> {
-  const runId = getActiveRunId()
-  if (runId === null) throw new ApiError(404, "No run in progress")
-  abortActiveRun()
-  return { ok: true, runId }
+export async function cancelActiveRun(jigId?: string): Promise<{ ok: true; jigId: string }> {
+  if (!jigId) {
+    // Cancel the first active run (backward compat)
+    const status = getActiveRunStatusForJig()
+    if (!status.active || !status.jigId) throw new ApiError(404, "No run in progress")
+    jigId = status.jigId
+  }
+  if (!hasActiveRunForJig(jigId)) throw new ApiError(404, `No run in progress for jig: ${jigId}`)
+  abortRunForJig(jigId)
+  return { ok: true, jigId }
 }

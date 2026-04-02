@@ -43,8 +43,9 @@ const weeklyUpdate = jig(
       weekday: "long", year: "numeric", month: "long", day: "numeric",
     })
 
-    const result = await agent<{ email: string; to: string; cc: string; subject: string }>(
-      `Write a weekly client update email for "${company}".
+    const result = await ctx.step("Gather data and write update", gatherTools, async () => {
+      return agent<{ email: string; to: string; cc: string; subject: string }>(
+        `Write a weekly client update email for "${company}".
 Today is ${today}.
 
 Gather data first, then write the email:
@@ -73,23 +74,25 @@ Also figure out:
 - The single primary recipient (to) — exactly one email address. Pick the main client contact from meeting participants, email threads, or calendar attendees. Always prefer business/work email addresses (company domains) over personal ones (gmail.com, yahoo.com, etc.).
 - CC — check the last weekly update email thread for CC'd people. Only include people who were previously CC'd, not every meeting attendee. Never put more than one address in "to". Same rule: prefer business emails.
 - A good subject line.`,
-      gatherTools,
-      { schema: { email: "string", to: "string", cc: "string", subject: "string" } }
-    )
+        gatherTools,
+        { schema: { email: "string", to: "string", cc: "string", subject: "string" } }
+      )
+    })
 
     ctx.output(result.email)
 
-    // Create Gmail draft
-    const draft = await workspace.gmail_createDraft({
-      to: result.to || recipients.to,
-      subject: result.subject,
-      body: result.email,
-      ...(result.cc || recipients.cc ? { cc: result.cc || recipients.cc } : {}),
-    })
+    await ctx.step("Create Gmail draft", [workspace.gmail_createDraft], async () => {
+      const draft = await workspace.gmail_createDraft({
+        to: result.to || recipients.to,
+        subject: result.subject,
+        body: result.email,
+        ...(result.cc || recipients.cc ? { cc: result.cc || recipients.cc } : {}),
+      })
 
-    const draftData = typeof draft === "object" ? draft as any : {}
-    const messageId = draftData?.message?.id ?? draftData?.id ?? ""
-    ctx.output(`\nhttps://mail.google.com/mail/u/0/#drafts/${messageId}`)
+      const draftData = typeof draft === "object" ? draft as any : {}
+      const messageId = draftData?.message?.id ?? draftData?.id ?? ""
+      ctx.output(`\nhttps://mail.google.com/mail/u/0/#drafts/${messageId}`)
+    })
   }
 )
 

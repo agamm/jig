@@ -23,6 +23,16 @@
   - Add step events to JigEvent union type so `io.emit()` can carry them
   - CLI renderEvent should handle step-start (print label + spinner) and step-done (print status + duration)
 
+- [ ] Notification settings for scheduler failures
+  - Add email/webhook/other contact method setting so users get alerted on run fails/crashes
+  - Important for scheduled runs that fail silently while user is away
+  - Consider: email, Slack webhook, or custom webhook as notification sinks
+- [ ] Concurrent run pipeline hardening
+  - All runs (manual, scheduled, webhook) go through the same run-store tracking
+  - Verify no race conditions in per-jig run-store (startTrackedRun/finishTrackedRun)
+  - Ensure persist() and applyRunEvent() are safe for concurrent calls across different jigs
+  - Test: two jigs running simultaneously, one fails mid-run while other succeeds
+
 ## Edge Cases to Think About
 - **Scan crash truncation**: if handler destructures a stub return (`result.email`), scan crashes before later steps. Works for weekly-update (destructure→tool call still runs), but deep chaining could truncate. Could mitigate with Proxy objects that return more Proxies, or accept that scan shows "at least these steps".
 - **Conditional steps invisible to scan**: `if (params.mode === "full") await tool1() else await tool2()` — scan passes empty params so always takes falsy branch. Could run scan multiple times with different param combos, but complexity explodes.

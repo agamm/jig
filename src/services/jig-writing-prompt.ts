@@ -40,8 +40,24 @@ Prefer direct tool calls > llm() > agent():
 - agent() only when the sequence of tool calls requires runtime judgment
 - Default to breaking large workflows into deterministic steps instead of one giant agent()
 
-### 2. Show progress
-Use ctx.output() to show what the jig is doing before each major step.
+### 2. Structure with ctx.step() blocks (REQUIRED)
+Every jig MUST use block-scoped steps:
+\`\`\`typescript
+const result = await ctx.step("Human-readable label", [tool1, tool2], async () => {
+  // Only tool1 and tool2 are allowed here
+  const data = await tool1({...})
+  ctx.output("Progress update")
+  return data
+})
+\`\`\`
+Rules:
+- Wrap every logical group of tool calls in a ctx.step() block
+- Each step declares exactly which tools it uses — only those tools work inside the block
+- Steps must be sequential (no nesting)
+- agent() and llm() calls are always allowed inside any step — they don't need to be in the tools array
+- Step labels MUST be static strings — never use template literals with runtime variables. Good: "Research meeting context". Bad: \`Research: \${eventSummary}\`
+- ALL ctx.output() calls must be inside ctx.step() blocks — output is tied to the step it belongs to
+- Use ctx.output() inside steps to show progress
 
 ### 3. Keep params minimal
 - Only add params when the user's description implies configurability
@@ -49,22 +65,28 @@ Use ctx.output() to show what the jig is doing before each major step.
 - If the jig works without user input, omit params entirely
 - Do NOT invent placeholder params for values that are already implied by the request
 
-### 4. Use the right tools
+### 4. Hardcode constants, don't discover them at runtime
+- If the jig needs a value that is constant across runs (the user's email, name, team, Slack channel, timezone, recipient list, etc.), prefer hardcoding it over discovering it at runtime
+- If you don't know a constant, ask the user before writing code. Keep the question short: "What email should I send the briefing to?" Then hardcode their answer.
+- Only use params for values that genuinely change between runs
+
+### 5. Use the right tools
 The available tools and probe results show what's available. Use multiple relevant tools when they materially improve the result.
 
-### 5. Preserve the existing toolset when editing
+### 6. Preserve the existing toolset when editing
 - If you are editing an existing jig, do NOT add or remove tools unless the user explicitly asked for tool changes
 - Small logic, wording, output, or scheduling edits should usually keep the existing tools unchanged
 - Only change the toolset when the current tools are insufficient or invalid for the requested behavior`
 }
 
 function codeFormatRules() {
-  return `### 5. Code format
+  return `### 7. Code format
 - Output ONLY TypeScript code. No explanation, no markdown fences.
 - Import SDK: import { jig, llm, agent } from "jig"
 - Import connections: import { serverName } from "jig/connections/serverName.js"
 - Use exact param names and types from the type definitions and schemas above
-- Use ctx.output() for output, NEVER console.log()
+- Use ctx.output() inside ctx.step() blocks for output, NEVER console.log()
+- ALL tool calls MUST be inside ctx.step() blocks — tools called outside a step will throw at runtime
 - End the file with: export default myJig
 - Do NOT call run() or process.exit()
 - Do NOT use require() or CommonJS imports
@@ -84,9 +106,11 @@ function agentExecutionRules() {
 - Use ctx.output() for output, NEVER console.log()
 - End the file with: export default myJig
 - Do NOT use require() or CommonJS
+- BEFORE writing any code, check: does this jig need the user's email, name, Slack channel, or any other personal constant? If yes, STOP and ask the user — do not write code until you have their answer. Do not use a tool call or agent() to discover it at runtime. Do not embed tricks like "find my email in sent mail". Just ask.
 - ALWAYS run check_jig after writing code
 - If check_jig reports errors, fix them and check again until it passes
-- Use web_search and browse to look up API docs when unsure about tool parameters
+- Tool schemas and type definitions are already in your context above — do NOT browse local files or URLs to find them
+- Use web_search and browse only for external API docs not already in context
 - When editing an existing jig, preserve the current tools unless the user explicitly asked to add or remove tools, or the current toolset is broken
 - When done, reply with 1-2 short plain text sentences summarizing what you changed. No markdown, no code blocks, no bullet points.`
 }

@@ -116,7 +116,7 @@ export async function createJig(description: string, io: JigIO): Promise<CreateR
   code = await validateAndFix(targetPath, code, context, io)
 
   // 9. Dry-run + LLM review
-  code = await dryRunAndReview(description, code, context, name, undefined, io)
+  code = await dryRunAndReview(description, code, context, name, io)
   // Final write ensures file matches returned code even if dryRunAndReview
   // found no issues (validateAndFix already wrote, but code may differ after dry-run fix)
 

@@ -518,7 +518,7 @@ async function runJigFile(path: string, io: JigIO, jigId: string) {
   const { runJig, persist } = await import("./runner.js")
   const { openDb, insertRun } = await import("./db.js")
 
-  openDb()
+  const db = openDb()
 
   // Extract param definitions — lightweight import just for prompting
   let paramDefs: Record<string, string> = {}
@@ -543,6 +543,11 @@ async function runJigFile(path: string, io: JigIO, jigId: string) {
     if (event.type === "error") console.error(event.message)
     persistHandler?.(event)
   })
+
+  if (result.skipped && !isDry) {
+    db.prepare(`DELETE FROM run_steps WHERE run_id = ?`).run(runId)
+    db.prepare(`DELETE FROM runs WHERE id = ?`).run(runId)
+  }
 
   if (result.error) process.exit(1)
 }

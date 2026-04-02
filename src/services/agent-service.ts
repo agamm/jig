@@ -24,6 +24,7 @@ type AgentSession = {
   events: AgentEvent[]
   status: "thinking" | "tool-calling" | "waiting" | "done" | "error"
   createdAt: number
+  pendingAskToolCallId?: string
 }
 
 const agentSessions = new Map<string, AgentSession>()
@@ -97,6 +98,20 @@ const AGENT_TOOL_DEFS: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "ask_user",
+      description: "Ask the user a question and wait for their response. Use this to collect information needed to write the jig — e.g. their email address, team name, Slack channel, or any other constant that should be hardcoded. The agent loop pauses until the user replies.",
+      parameters: {
+        type: "object",
+        properties: {
+          question: { type: "string", description: "A short, specific question for the user" },
+        },
+        required: ["question"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "browse",
       description: "Navigate to a URL and return the page content as text. Use for reading docs, API references, etc.",
       parameters: {
@@ -163,6 +178,17 @@ async function toolCheckJig(args: { jigId?: string }, session: AgentSession): Pr
 }
 
 async function toolBrowse(args: { url: string }): Promise<string> {
+  const timeout = new Promise<string>((_, reject) =>
+    setTimeout(() => reject(new Error("Browse timed out after 45s")), 45_000)
+  )
+  return Promise.race([timeout, _toolBrowse(args)])
+}
+
+async function _toolBrowse(args: { url: string }): Promise<string> {
+  const url = args.url
+  if (url.startsWith("file://") || url.startsWith("/")) {
+    return JSON.stringify({ error: "Cannot browse local files. Tool schemas and type definitions are already in your system prompt — look there instead." })
+  }
   try {
     const proc = Bun.spawn(
       ["npx", "agent-browser", "--engine", "chromium", "--headless", "open", args.url],
@@ -186,11 +212,14 @@ async function toolWebSearch(args: { query: string }): Promise<string> {
   return toolBrowse({ url: `https://www.google.com/search?q=${encodeURIComponent(args.query)}` })
 }
 
+const ASK_USER_SENTINEL = "__ASK_USER__"
+
 async function executeAgentTool(name: string, args: Record<string, any>, session: AgentSession): Promise<string> {
   switch (name) {
     case "read_jig_file": return toolReadJigFile(args, session)
     case "write_jig_file": return toolWriteJigFile(args as any, session)
     case "check_jig": return toolCheckJig(args, session)
+    case "ask_user": return ASK_USER_SENTINEL
     case "browse": return toolBrowse(args as any)
     case "web_search": return toolWebSearch(args as any)
     default: return JSON.stringify({ error: `Unknown tool: ${name}` })
@@ -247,15 +276,31 @@ async function buildAgentSystemPrompt(jigId?: string): Promise<string> {
 async function runAgentLoop(session: AgentSession): Promise<void> {
   const client = getAgentClient()
 
+  let consecutiveErrors = 0
   for (let round = 0; round < MAX_AGENT_ROUNDS; round++) {
     session.status = "thinking"
 
-    const response = await client.chat.completions.create({
-      model: JIG_EDITOR_MODEL,
-      max_tokens: 16384,
-      messages: session.messages,
-      tools: AGENT_TOOL_DEFS,
-    })
+    let response
+    try {
+      response = await client.chat.completions.create({
+        model: JIG_EDITOR_MODEL,
+        max_tokens: 16384,
+        messages: session.messages,
+        tools: AGENT_TOOL_DEFS,
+      })
+    } catch (e: any) {
+      consecutiveErrors++
+      const msg = e?.message ?? String(e)
+      if (consecutiveErrors >= 3) {
+        session.events.push({ type: "text", content: `Failed after ${consecutiveErrors} retries: ${msg}` })
+        session.status = "error"
+        return
+      }
+      session.events.push({ type: "text", content: `Network error (retry ${consecutiveErrors}/3): ${msg}` })
+      await new Promise((r) => setTimeout(r, 2000 * consecutiveErrors))
+      continue
+    }
+    consecutiveErrors = 0
 
     const msg = response.choices[0]?.message
     if (!msg) {
@@ -274,6 +319,7 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
     session.status = "tool-calling"
     let roundHadToolError = false
     let roundHadSuccessfulCheck = false
+    let pendingAsk: { toolCallId: string; question: string; event: AgentEvent } | null = null
     for (const toolCall of msg.tool_calls) {
       if (toolCall.type !== "function") {
         session.messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ error: `Unsupported tool call type: ${toolCall.type}` }) })
@@ -292,6 +338,16 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
 
       try {
         const result = await executeAgentTool(toolCall.function.name, args, session)
+
+        // ask_user: defer pause until all other tools in this round are done
+        if (result === ASK_USER_SENTINEL) {
+          const question = args.question ?? "I have a question for you."
+          event.status = "done"
+          event.result = question
+          pendingAsk = { toolCallId: toolCall.id, question, event }
+          continue
+        }
+
         event.status = "done"
         event.result = result
         if (toolCall.function.name === "check_jig" && result === "ok") {
@@ -304,6 +360,14 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
         roundHadToolError = true
         session.messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ error: e?.message }) })
       }
+    }
+
+    // Pause after processing all tools in the round
+    if (pendingAsk) {
+      session.events.push({ type: "text", content: pendingAsk.question })
+      session.pendingAskToolCallId = pendingAsk.toolCallId
+      session.status = "waiting"
+      return
     }
 
     if (!roundHadToolError && roundHadSuccessfulCheck && hasCompletedTool(session, "write_jig_file")) {
@@ -386,7 +450,15 @@ export async function pushAgentMessage(sessionId: string, body: any): Promise<{ 
   if (!message) throw new ApiError(400, "message is required")
 
   session.currentPrompt = message
-  session.messages.push({ role: "user", content: message })
+
+  // If the agent was waiting for an ask_user reply, inject the answer as a tool result
+  const pendingToolCallId = session.pendingAskToolCallId
+  if (pendingToolCallId) {
+    session.pendingAskToolCallId = undefined
+    session.messages.push({ role: "tool", tool_call_id: pendingToolCallId, content: message })
+  } else {
+    session.messages.push({ role: "user", content: message })
+  }
   session.status = "thinking"
 
   runAgentLoop(session).catch((error) => {

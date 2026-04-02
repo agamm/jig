@@ -81,6 +81,16 @@ describe("validateDefinitionObject", () => {
     expect(result.ok).toBe(false)
   })
 
+  it("rejects interval above 59 minutes", () => {
+    const result = validateDefinitionObject({
+      name: "too-long-interval",
+      options: { trigger: { type: "interval", minutes: 120 } },
+      handler: async () => {},
+    })
+    expect(result.ok).toBe(false)
+    expect(result.errors[0].message).toContain("above 59 minutes")
+  })
+
   it("rejects unknown trigger type", () => {
     const result = validateDefinitionObject({
       name: "bad-trigger",

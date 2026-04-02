@@ -32,10 +32,10 @@ import { jig } from "jig"
 
 export default jig("test-events", {
   trigger: { type: "manual" },
-  connections: [],
 }, async (ctx) => {
-  ctx.step("Step one")
-  ctx.output("hello world")
+  await ctx.step("Step one", [], async () => {
+    ctx.output("hello world")
+  })
 })
 `)
     const events: RunEvent[] = []
@@ -60,11 +60,11 @@ import { jig } from "jig"
 
 export default jig("test-multi-step", {
   trigger: { type: "manual" },
-  connections: [],
 }, async (ctx) => {
-  ctx.step("Gather data")
-  ctx.step("Process data")
-  ctx.output("processed")
+  await ctx.step("Gather data", [], async () => {})
+  await ctx.step("Process data", [], async () => {
+    ctx.output("processed")
+  })
 })
 `)
     const events: RunEvent[] = []
@@ -88,10 +88,10 @@ import { jig } from "jig"
 
 export default jig("test-throw", {
   trigger: { type: "manual" },
-  connections: [],
 }, async (ctx) => {
-  ctx.step("Will fail")
-  throw new Error("something broke")
+  await ctx.step("Will fail", [], async () => {
+    throw new Error("something broke")
+  })
 })
 `)
     try {

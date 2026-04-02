@@ -2,7 +2,7 @@ import { join } from "path"
 import OpenAI from "openai"
 import type { JigTool } from "./jig.js"
 import { spinner } from "./spinner.js"
-import { runContext, isStepScan, truncLabel } from "./context.js"
+import { runContext } from "./context.js"
 import { MAIN_MODEL } from "../config/models.js"
 
 const MAX_TOOL_ROUNDS = 30
@@ -30,11 +30,8 @@ export async function llm<T = string>(
   options?: { schema?: Record<string, string>; model?: string; maxTokens?: number }
 ): Promise<T> {
   const ctx = runContext.getStore()
-  if (ctx && !ctx.inAgent) ctx.step(truncLabel(prompt))
   const model = options?.model ?? MAIN_MODEL
   ctx?.addTool("llm", `llm(${model})`, true)
-
-  if (isStepScan()) return (options?.schema ? {} : "") as T
 
   const maxTokens = options?.maxTokens ?? 4096
   const userContent = `${prompt}\n\nData:\n${JSON.stringify(data, null, 2)}`
@@ -99,15 +96,12 @@ export async function agent<T = string>(
   options?: { schema?: Record<string, string>; model?: string; maxTokens?: number }
 ): Promise<T> {
   const ctx = runContext.getStore()
-  ctx?.step(truncLabel(prompt))
   // Record all connections this agent can use
   const connSet = new Set(tools.map(t => t._serverName))
   for (const c of connSet) ctx?.addConnection(c)
   for (const tool of tools) {
     ctx?.addTool(tool._serverName, tool._toolName, tool._readOnly ?? true)
   }
-
-  if (isStepScan()) return (options?.schema ? {} : "") as T
 
   ctx?.enterAgent()
 

@@ -52,6 +52,11 @@ function validateTrigger(trigger: unknown): ValidationError[] {
     case "interval":
       if (typeof t.minutes !== "number" || t.minutes <= 0) {
         errors.push({ field: "trigger.minutes", message: "Interval trigger requires a positive 'minutes' number" })
+      } else if (t.minutes > 59) {
+        errors.push({
+          field: "trigger.minutes",
+          message: "Interval triggers above 59 minutes are not supported by the built-in scheduler. Use cron for multi-hour schedules.",
+        })
       }
       break
     case "event":
@@ -120,6 +125,47 @@ function validateDefinition(def: unknown): ValidationError[] {
 }
 
 // ---------------------------------------------------------------------------
+// Tool declaration validation
+// ---------------------------------------------------------------------------
+
+/**
+ * Check that all tool calls in source are declared in the tools array.
+ */
+export function checkToolDeclarations(code: string, declaredToolNames: string[]): ValidationError[] {
+  const errors: ValidationError[] = []
+  const declared = new Set(declaredToolNames)
+
+  // Find connection imports
+  const importRe = /import\s*\{[^}]*\b(\w+)\b[^}]*\}\s*from\s*["']jig\/connections\/(\w+)\.(?:js|ts)["']/g
+  const connectionVars = new Map<string, string>()
+  for (const m of code.matchAll(importRe)) {
+    connectionVars.set(m[1], m[2])
+  }
+
+  // Find tool calls: connectionVar.toolName(
+  for (const [varName, serverName] of connectionVars) {
+    const callRe = new RegExp(`\\b${varName}\\.(\\w+)\\s*[,(\\[]`, "g")
+    for (const m of code.matchAll(callRe)) {
+      const toolName = m[1]
+      if (!declared.has(toolName)) {
+        errors.push({
+          field: `tools.${serverName}.${toolName}`,
+          message: `Tool "${serverName}.${toolName}" is used but not declared in the jig's tools array.`,
+        })
+      }
+    }
+  }
+
+  // Dedupe
+  const seen = new Set<string>()
+  return errors.filter(e => {
+    if (seen.has(e.field)) return false
+    seen.add(e.field)
+    return true
+  })
+}
+
+// ---------------------------------------------------------------------------
 // File validation (import + check)
 // ---------------------------------------------------------------------------
 
@@ -133,12 +179,23 @@ export async function validateJigFile(path: string): Promise<ValidationResult> {
   }
 
   try {
-    const mod = await import(`${path}?_t=${Date.now()}`)
+    const mod = await import(`${path}?_t=${Date.now()}_${Math.random().toString(36).slice(2)}`)
     if (!mod.default) {
       return { ok: false, errors: [{ field: "default", message: "Jig file must have a default export" }] }
     }
 
     const errors = validateDefinition(mod.default)
+
+    // Check tool declarations vs usage
+    const tools = mod.default?.options?.tools
+    if (Array.isArray(tools) && tools.length > 0) {
+      try {
+        const code = require("fs").readFileSync(path, "utf-8")
+        const declaredNames = tools.map((t: any) => t._toolName).filter(Boolean)
+        errors.push(...checkToolDeclarations(code, declaredNames))
+      } catch {}
+    }
+
     return {
       ok: errors.length === 0,
       errors,

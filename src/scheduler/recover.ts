@@ -2,7 +2,7 @@
  * Recovery — runs once at startup to handle missed runs and interrupted state.
  */
 import { advanceSchedule, listAllSchedules, markInterruptedRuns, setScheduleError } from "../db.js"
-import { startScheduledRun } from "../services/scheduled-run.js"
+import { startBackgroundRun } from "../services/background-run.js"
 import { computeNextRun } from "./cron-utils.js"
 
 export function recoverMissedRuns(): void {
@@ -31,7 +31,7 @@ export function recoverMissedRuns(): void {
     if (schedule.missed_strategy === "catch-up") {
       // Fire once immediately, then advance to next future occurrence
       if (!advanceSchedule(schedule.jig_id, schedule.next_run_at, nextRunAt)) continue
-      startScheduledRun(schedule.jig_id).catch((e) => {
+      startBackgroundRun(schedule.jig_id).catch((e) => {
         console.error(`[scheduler] catch-up failed for ${schedule.jig_id}:`, e?.message ?? e)
       })
     } else {

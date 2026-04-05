@@ -54,6 +54,11 @@
 - **No personal or client info in code** — never commit real company names, contact details, repo names, or email addresses. Use generic placeholders ("CompanyName", "repo-name", "Your Name").
 - Examples in comments/docs should use fictional names only.
 
+## Database
+- **Migrations: append only** — never insert or reorder entries in the `MIGRATIONS` array in `src/db.ts`. New migrations always go at the end. The `PRAGMA user_version` is an index — inserting before existing migrations causes them to be skipped on existing DBs.
+- **Credentials in SQLite, config in .env** — API keys and tokens entered by users during `jig connect` go in the `credentials` table. Static config (ports, feature flags) goes in `.env`.
+- **Test migrations against existing DBs** — after adding a migration, verify it runs on a DB that already has prior migrations applied, not just a fresh DB.
+
 ## Architecture
 - **Next.js is a thin proxy** — the dashboard (`dashboard/`) is a Next.js frontend that rewrites `/api/*` to the Bun API server (`src/server.ts`) via `next.config.ts`. All backend logic (LLM calls, file I/O, DB) goes in `src/server.ts`, never in Next.js API routes or middleware. The Bun server auto-loads `.env`; Next.js does not.
 - **Dashboard uses pnpm, not bun** — Next.js doesn't work well with bun for package management. The dashboard has its own `pnpm-lock.yaml`. Use `pnpm install` and `pnpm run dev` in `dashboard/`. `jig start` auto-installs dashboard deps via pnpm if `node_modules` is missing.

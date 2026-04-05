@@ -2,8 +2,8 @@
  * Scheduler tick — fires due cron runs every 60 seconds.
  */
 import { advanceSchedule, listDueSchedules, setScheduleError } from "../db.js"
-import { hasActiveRun } from "../services/run-store.js"
-import { startScheduledRun } from "../services/scheduled-run.js"
+import { hasActiveRunForJig } from "../services/run-store.js"
+import { startBackgroundRun } from "../services/background-run.js"
 import { computeNextRun } from "./cron-utils.js"
 
 export function tick(): void {
@@ -11,7 +11,7 @@ export function tick(): void {
   const due = listDueSchedules(now)
 
   for (const schedule of due) {
-    if (hasActiveRun()) continue
+    if (hasActiveRunForJig(schedule.jig_id)) continue
     if (!schedule.cron_expr) continue
 
     const nextRunAt = computeNextRun(schedule.cron_expr)
@@ -22,7 +22,7 @@ export function tick(): void {
     if (!advanceSchedule(schedule.jig_id, schedule.next_run_at, nextRunAt)) continue
 
     // Fire-and-forget — don't await, don't block the tick loop
-    startScheduledRun(schedule.jig_id).catch((e) => {
+    startBackgroundRun(schedule.jig_id).catch((e) => {
       console.error(`[scheduler] failed to start ${schedule.jig_id}:`, e?.message ?? e)
     })
   }

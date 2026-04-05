@@ -3,11 +3,11 @@
  */
 import { getSchedule } from "../db.js"
 import { discoverAllJigs } from "../services/jig-api.js"
-import { hasActiveRun } from "../services/run-store.js"
-import { startScheduledRun } from "../services/scheduled-run.js"
+import { hasActiveRunForJig } from "../services/run-store.js"
+import { startBackgroundRun } from "../services/background-run.js"
 import { validateWebhookToken } from "./webhook-auth.js"
 
-export function handleWebhook(jigId: string, token: string | null): { status: number; body: unknown } {
+export function handleWebhook(jigId: string, token: string | null, payload?: Record<string, unknown>): { status: number; body: unknown } {
   if (!discoverAllJigs().has(jigId)) {
     return { status: 404, body: { error: `Jig not found: ${jigId}` } }
   }
@@ -25,11 +25,11 @@ export function handleWebhook(jigId: string, token: string | null): { status: nu
     return { status: 403, body: { error: `Schedule for ${jigId} is disabled` } }
   }
 
-  if (hasActiveRun()) {
-    return { status: 409, body: { error: "A run is already in progress" } }
+  if (hasActiveRunForJig(jigId)) {
+    return { status: 409, body: { error: `A run is already in progress for ${jigId}` } }
   }
 
-  startScheduledRun(jigId).catch((e) => {
+  startBackgroundRun(jigId, payload).catch((e) => {
     console.error(`[webhook] failed to start ${jigId}:`, e?.message ?? e)
   })
 

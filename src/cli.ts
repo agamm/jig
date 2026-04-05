@@ -5,7 +5,7 @@
  * Business logic emits structured JigEvents. This file renders them as text.
  * A dashboard would render the same events as UI components.
  */
-import { loadServerConfigs } from "./mcp/config.js"
+import { loadServerConfigs, checkMissingEnvVars } from "./mcp/config.js"
 import { discoverJigs } from "./discover.js"
 import { existsSync } from "fs"
 import { join, relative } from "path"
@@ -172,6 +172,9 @@ function renderEvent(event: JigEvent): void {
       break
     case "server-ready":
       console.log(`\n${event.server} is ready.`)
+      break
+    case "setup-instructions":
+      console.log(`\n${event.message}\n`)
       break
 
     // Run events
@@ -474,6 +477,29 @@ async function connect(serverName: string | undefined, io: JigIO) {
     )
     io.emit({ type: "server-list", servers })
     return
+  }
+
+  // Check for missing credentials before attempting connection
+  const rawConfig = configs[serverName]
+  if (!rawConfig) {
+    const available = Object.keys(configs).join(", ")
+    io.emit({ type: "error", code: "unknown-server", message: `Unknown server "${serverName}". Available: ${available}` })
+    process.exit(1)
+  }
+  const missing = checkMissingEnvVars(rawConfig)
+  if (missing.length > 0) {
+    const setup = (rawConfig as any).setup as string | undefined
+    if (setup) io.emit({ type: "setup-instructions", message: setup })
+
+    const { setCredential } = await import("./db.js")
+    for (const varName of missing) {
+      const value = await io.ask(`Enter ${varName}:`)
+      if (!value.trim()) {
+        io.emit({ type: "error", code: "missing-credential", message: `${varName} is required` })
+        process.exit(1)
+      }
+      setCredential(varName, value.trim(), serverName)
+    }
   }
 
   const { getServerConfig } = await import("./mcp/config.js")

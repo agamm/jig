@@ -51,7 +51,7 @@ export interface RunResult {
  */
 export async function runJig(
   jigPath: string,
-  params: Record<string, string>,
+  params: Record<string, unknown>,
   onEvent: (e: RunEvent) => void,
   options?: { dryRun?: boolean; silent?: boolean; signal?: AbortSignal }
 ): Promise<RunResult> {
@@ -67,7 +67,7 @@ export async function runJig(
 
 async function _runJig(
   jigPath: string,
-  params: Record<string, string>,
+  params: Record<string, unknown>,
   onEvent: (e: RunEvent) => void,
   opts: { dryRun: boolean; silent: boolean; signal?: AbortSignal }
 ): Promise<RunResult> {
@@ -157,7 +157,10 @@ async function _runJig(
 
     // 4. Validate required params
     const required = Object.keys(def.options?.params ?? {})
-    const missing = required.filter((k: string) => !params[k]?.trim())
+    const missing = required.filter((k: string) => {
+      const v = params[k]
+      return v == null || (typeof v === "string" && !v.trim())
+    })
     if (missing.length > 0) {
       const error = `Missing required params: ${missing.join(", ")}`
       onEvent({ type: "error", message: error })

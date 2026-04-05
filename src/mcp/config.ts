@@ -2,6 +2,7 @@ import { join } from "path"
 import { homedir } from "os"
 import { existsSync } from "fs"
 import { PROJECT_ROOT } from "../config/paths.js"
+import { getCredential } from "../db.js"
 
 export type StdioServerConfig = {
   type: "stdio"
@@ -16,6 +17,7 @@ export type RemoteServerConfig = {
   description: string
   auth?: string
   headers?: Record<string, string>
+  setup?: string
 }
 
 export type RepoServerConfig = {
@@ -26,7 +28,16 @@ export type RepoServerConfig = {
   description: string
 }
 
-export type ServerConfig = StdioServerConfig | RemoteServerConfig | RepoServerConfig
+export type ServerMeta = {
+  pricing?: string
+  limits?: string
+  docs?: string
+  provider?: string
+}
+
+export type ServerConfig = (StdioServerConfig | RemoteServerConfig | RepoServerConfig) & {
+  meta?: ServerMeta
+}
 
 type ServerRegistry = Record<string, ServerConfig>
 
@@ -34,6 +45,40 @@ const SERVERS_DIR = join(homedir(), ".jig", "servers")
 
 function expandHome(str: string): string {
   return str.replace(/^~\//, homedir() + "/")
+}
+
+/**
+ * Replace $VAR references in a string with values from credentials DB, then process.env.
+ * Returns { resolved, missing } — missing lists any unresolved var names.
+ */
+export function resolveEnvVars(str: string): { resolved: string; missing: string[] } {
+  const missing: string[] = []
+  const resolved = str.replace(/\$([A-Z_][A-Z0-9_]*)/g, (_, name) => {
+    const fromDb = getCredential(name)
+    if (fromDb != null) return fromDb
+    const fromEnv = process.env[name]
+    if (fromEnv != null) return fromEnv
+    missing.push(name)
+    return `$${name}`
+  })
+  return { resolved, missing }
+}
+
+/**
+ * Check a remote config for unresolved $ENV_VAR references.
+ * Returns list of missing env var names, or empty array if all resolved.
+ */
+export function checkMissingEnvVars(config: ServerConfig): string[] {
+  const missing: string[] = []
+  if (config.type === "remote") {
+    missing.push(...resolveEnvVars(config.url).missing)
+    if (config.headers) {
+      for (const v of Object.values(config.headers)) {
+        missing.push(...resolveEnvVars(v).missing)
+      }
+    }
+  }
+  return [...new Set(missing)]
 }
 
 /**
@@ -117,6 +162,16 @@ export async function getServerConfig(name: string): Promise<StdioServerConfig |
       command: "node",
       args: [entryPath],
       description: config.description,
+    }
+  }
+
+  // Resolve $ENV_VAR references in remote config
+  if (config.type === "remote") {
+    config.url = resolveEnvVars(config.url).resolved
+    if (config.headers) {
+      for (const [k, v] of Object.entries(config.headers)) {
+        config.headers[k] = resolveEnvVars(v).resolved
+      }
     }
   }
 

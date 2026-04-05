@@ -72,7 +72,7 @@ export class Context {
   }
 
   constructor(
-    public readonly params: Record<string, string>,
+    public readonly params: Record<string, unknown>,
     private allowedTools: string[]
   ) {}
 

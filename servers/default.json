@@ -16,5 +16,15 @@
     "url": "https://api.githubcopilot.com/mcp/",
     "auth": "gh auth token",
     "description": "Repos, issues, PRs, commits"
+  },
+  "composio": {
+    "type": "remote",
+    "url": "https://connect.composio.dev/mcp",
+    "description": "Telegram, Slack, and 250+ integrations",
+    "meta": {
+      "pricing": "Free 20K calls/mo, $29/mo after",
+      "docs": "https://docs.composio.dev",
+      "provider": "Composio"
+    }
   }
 }

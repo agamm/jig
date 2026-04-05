@@ -41,3 +41,9 @@
 - **Nested agent() calls**: inner `agent()` creates a new step inside the outer agent's step. `_inAgent` stays true so tool calls inside inner agent don't sub-step. But the outer step gets finalized early. Probably fine in practice — nested agents are rare.
 - **ctx.parallel() with multiple tool calls**: parallel tool calls each try to create a step. Steps are sequential (ctx.step finalizes previous), so parallel calls would create rapid step churn. May want to batch parallel direct tool calls into one step, or only auto-step the first in a parallel batch.
 - **Scan + humanize for grouped jigs**: each entity is a separate file with separate handler. buildJigResponse only scans the first entity — other entities get same steps shown. Fine if entities share structure, wrong if they diverge.
+
+## Jig Ideas
+
+- [ ] **Trending digest email** — daily/weekly email with trending GitHub repos + best Hacker News posts
+- [ ] **SEO Search Console update** — pull Google Search Console data, surface what to fix (drops, errors, opportunities)
+- [ ] **Daily question** — given user's current state/context, generate a thought-provoking daily question

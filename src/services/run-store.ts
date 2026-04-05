@@ -30,9 +30,6 @@ export function hasActiveRunForJig(jigId: string): boolean {
   return activeRuns.has(jigId)
 }
 
-export function hasActiveRun(): boolean {
-  return activeRuns.size > 0
-}
 
 export function getActiveRunForJig(jigId: string): number | null {
   return activeRuns.get(jigId) ?? null

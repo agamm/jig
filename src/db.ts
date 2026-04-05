@@ -100,11 +100,25 @@ const MIGRATIONS: string[] = [
      error TEXT
    );`,
   // v3: authorized senders for channel triggers (Telegram chat IDs, phone numbers, emails)
+  // + credentials for MCP server connections (API keys, server IDs, etc.)
   `CREATE TABLE IF NOT EXISTS authorized_senders (
      channel TEXT NOT NULL,
      sender_id TEXT NOT NULL,
      authorized_at TEXT NOT NULL DEFAULT (datetime('now')),
      PRIMARY KEY (channel, sender_id)
+   );
+   CREATE TABLE IF NOT EXISTS credentials (
+     key TEXT PRIMARY KEY,
+     value TEXT NOT NULL,
+     server TEXT NOT NULL,
+     created_at TEXT NOT NULL DEFAULT (datetime('now'))
+   );`,
+  // v4: ensure credentials table exists (fixes DBs that migrated before credentials was added)
+  `CREATE TABLE IF NOT EXISTS credentials (
+     key TEXT PRIMARY KEY,
+     value TEXT NOT NULL,
+     server TEXT NOT NULL,
+     created_at TEXT NOT NULL DEFAULT (datetime('now'))
    );`,
 ]
 
@@ -173,7 +187,7 @@ export function closeDb(): void {
 
 export function insertRun(
   jigId: string,
-  params?: Record<string, string>
+  params?: Record<string, unknown>
 ): number {
   const db = openDb()
   const stmt = db.prepare(
@@ -400,6 +414,34 @@ export function setScheduleEnabled(jigId: string, enabled: boolean): void {
 export function setScheduleError(jigId: string, error: string | null): void {
   const db = openDb()
   db.prepare(`UPDATE schedules SET error = ? WHERE jig_id = ?`).run(error, jigId)
+}
+
+// ---------------------------------------------------------------------------
+// Credentials
+// ---------------------------------------------------------------------------
+
+export function getCredential(key: string): string | null {
+  const db = openDb()
+  const row = db.prepare(`SELECT value FROM credentials WHERE key = ?`).get(key) as { value: string } | null
+  return row?.value ?? null
+}
+
+export function setCredential(key: string, value: string, server: string): void {
+  const db = openDb()
+  db.prepare(`INSERT OR REPLACE INTO credentials (key, value, server) VALUES (?, ?, ?)`).run(key, value, server)
+}
+
+export function listCredentials(server?: string): { key: string; server: string; created_at: string }[] {
+  const db = openDb()
+  if (server) {
+    return db.prepare(`SELECT key, server, created_at FROM credentials WHERE server = ?`).all(server) as any[]
+  }
+  return db.prepare(`SELECT key, server, created_at FROM credentials`).all() as any[]
+}
+
+export function deleteCredentials(server: string): void {
+  const db = openDb()
+  db.prepare(`DELETE FROM credentials WHERE server = ?`).run(server)
 }
 
 // ---------------------------------------------------------------------------

@@ -46,7 +46,7 @@ export class JigOAuthProvider implements OAuthClientProvider {
   get clientMetadata(): OAuthClientMetadata {
     return {
       redirect_uris: [REDIRECT_URL],
-      token_endpoint_auth_method: "client_secret_basic",
+      token_endpoint_auth_method: "none",
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
       client_name: "Jig",

@@ -1,5 +1,5 @@
 /**
- * Starts a scheduled run for a jig — shared between tick and webhook triggers.
+ * Starts a background run for a jig — shared between cron tick and webhook triggers.
  *
  * Mirrors startJigRun() in run-api.ts but without HTTP request/response wrapping.
  */
@@ -8,10 +8,10 @@ import { PROJECT_ROOT } from "../config/paths.js"
 import { completeRun, insertRun, markScheduleTriggered, openDb, setScheduleError } from "../db.js"
 import { resolveJigPath } from "../domain/jig-source.js"
 import { runJig, persist } from "../runner.js"
-import { applyRunEvent, discardTrackedRun, finishTrackedRun, getSignalForRun, hasActiveRun, startTrackedRun } from "./run-store.js"
+import { applyRunEvent, discardTrackedRun, finishTrackedRun, getSignalForRun, hasActiveRunForJig, startTrackedRun } from "./run-store.js"
 
-export async function startScheduledRun(jigId: string): Promise<boolean> {
-  if (hasActiveRun()) return false
+export async function startBackgroundRun(jigId: string, params?: Record<string, unknown>): Promise<boolean> {
+  if (hasActiveRunForJig(jigId)) return false
 
   const jigPath = resolveJigPath(jigId)
   if (!existsSync(jigPath)) {
@@ -23,7 +23,7 @@ export async function startScheduledRun(jigId: string): Promise<boolean> {
     return false
   }
 
-  const runId = insertRun(jigId)
+  const runId = insertRun(jigId, params)
   startTrackedRun(runId, jigId, false)
   let shouldFinishTrackedRun = true
 
@@ -32,7 +32,7 @@ export async function startScheduledRun(jigId: string): Promise<boolean> {
   const persistHandler = persist(runId, startTime)
 
   try {
-    const result = await runJig(jigPath, {}, (event) => {
+    const result = await runJig(jigPath, params ?? {}, (event) => {
       // Don't persist "skipped" events — persist() doesn't handle them,
       // and we'll clean up the run row after
       if (event.type !== "skipped") {

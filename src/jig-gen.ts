@@ -43,6 +43,7 @@ export type JigEvent =
   | { type: "connecting"; server: string }
   | { type: "tools-discovered"; server: string; count: number; tools: string[] }
   | { type: "server-ready"; server: string }
+  | { type: "setup-instructions"; message: string }
   // Run events
   | { type: "jig-list"; jigs: string[] }
   | { type: "run-start"; name: string }

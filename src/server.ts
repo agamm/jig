@@ -307,7 +307,8 @@ export function createApiServer(port: number) {
           case "webhook": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
             const token = url.searchParams.get("token")
-            const result = handleWebhook(route.params.jigId, token)
+            const webhookBody = await req.json().catch(() => ({}))
+            const result = handleWebhook(route.params.jigId, token, webhookBody)
             return json(result.body, result.status)
           }
           default:

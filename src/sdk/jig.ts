@@ -20,7 +20,7 @@ export type JigTrigger =
 
 export type JigOptions = {
   trigger: JigTrigger
-  params?: Record<string, string>
+  params?: Record<string, unknown>
   tools?: JigTool<any, any>[]
 }
 
@@ -48,7 +48,7 @@ export function jig(
  */
 export async function run(
   definition: JigDefinition,
-  params: Record<string, string> = {},
+  params: Record<string, unknown> = {},
   options?: { silent?: boolean; recorder?: RunRecorder }
 ): Promise<Context> {
   const toolNames = (definition.options.tools ?? []).map((t) => t._toolName)

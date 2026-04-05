@@ -122,6 +122,12 @@ async function handleOAuthRedirect(
 ): Promise<McpConnection> {
   console.log(`[jig] ${name} requires authorization — opening browser...`)
 
+  const dots = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+  let dotIdx = 0
+  const spinner = setInterval(() => {
+    process.stdout.write(`\r${dots[dotIdx++ % dots.length]} Waiting for browser authorization...`)
+  }, 100)
+
   const codePromise = authProvider.waitForAuthCode()
   const client = new Client({ name: "jig", version: "0.1.0" })
   const transport = new StreamableHTTPClientTransport(new URL(config.url), {
@@ -130,10 +136,14 @@ async function handleOAuthRedirect(
 
   try {
     await client.connect(transport)
+    clearInterval(spinner)
+    process.stdout.write("\r\x1b[K")
     return { client, transport, serverName: name, config }
   } catch (error) {
     if (error instanceof UnauthorizedError) {
       const authCode = await codePromise
+      clearInterval(spinner)
+      process.stdout.write("\r\x1b[K")
       await transport.finishAuth(authCode)
 
       const freshClient = new Client({ name: "jig", version: "0.1.0" })
@@ -144,6 +154,8 @@ async function handleOAuthRedirect(
       authProvider.stopCallbackServer()
       return { client: freshClient, transport: freshTransport, serverName: name, config }
     }
+    clearInterval(spinner)
+    process.stdout.write("\r\x1b[K")
     throw error
   }
 }

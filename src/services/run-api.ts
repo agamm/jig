@@ -5,7 +5,7 @@ import { discoverAllJigs } from "./jig-api.js"
 import { runJig, persist } from "../runner.js"
 import { formatDuration } from "../utils.js"
 import { ApiError } from "../server/http.js"
-import { abortRunForJig, applyRunEvent, discardTrackedRun, finishTrackedRun, getActiveRunStatusForJig, getSignalForRun, getRunStatus, hasActiveRun, hasActiveRunForJig, startTrackedRun } from "./run-store.js"
+import { abortRunForJig, applyRunEvent, discardTrackedRun, finishTrackedRun, getActiveRunStatusForJig, getSignalForRun, getRunStatus, hasActiveRunForJig, startTrackedRun } from "./run-store.js"
 import { resolveJigPath } from "../domain/jig-source.js"
 import { existsSync } from "fs"
 

@@ -23,7 +23,7 @@ import { buildJigResponse, discoverAllJigs } from "./services/jig-api.js"
 import { getAgentSessionStatus, pushAgentMessage, startAgentSession } from "./services/agent-service.js"
 import { cancelActiveRun, getActiveRunSnapshot, getRunDetail, startJigRun } from "./services/run-api.js"
 import { handleWebhook } from "./scheduler/webhooks.js"
-import { getSchedule, listAllSchedules, setScheduleEnabled } from "./db.js"
+import { getSchedule, listAllSchedules, setScheduleEnabled, listAuthorizedSenders, addAuthorizedSender, removeAuthorizedSender } from "./db.js"
 import { startScheduler } from "./scheduler/index.js"
 import { syncSchedules } from "./scheduler/sync.js"
 import { getJigVersionDetail, listJigVersions, restoreJigVersion } from "./services/jig-versioning.js"
@@ -286,6 +286,22 @@ export function createApiServer(port: number) {
             const body = await req.json().catch(() => ({}))
             if (typeof body?.enabled !== "boolean") throw new ApiError(400, "Missing 'enabled' boolean")
             setScheduleEnabled(route.params.jigId, body.enabled)
+            return json({ ok: true })
+          }
+          case "authorizedSenders": {
+            if (req.method === "GET") return json(listAuthorizedSenders())
+            if (req.method === "POST") {
+              const body = await req.json().catch(() => ({}))
+              if (!body?.channel || !body?.sender_id) throw new ApiError(400, "Missing 'channel' and 'sender_id'")
+              addAuthorizedSender(body.channel, body.sender_id)
+              return json({ ok: true })
+            }
+            return json({ error: "Method not allowed" }, 405)
+          }
+          case "deleteAuthorizedSender": {
+            if (req.method !== "DELETE") return json({ error: "Method not allowed" }, 405)
+            const removed = removeAuthorizedSender(route.params.channel, route.params.senderId)
+            if (!removed) throw new ApiError(404, "Sender not found")
             return json({ ok: true })
           }
           case "webhook": {

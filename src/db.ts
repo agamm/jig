@@ -99,6 +99,13 @@ const MIGRATIONS: string[] = [
      enabled INTEGER NOT NULL DEFAULT 1,
      error TEXT
    );`,
+  // v3: authorized senders for channel triggers (Telegram chat IDs, phone numbers, emails)
+  `CREATE TABLE IF NOT EXISTS authorized_senders (
+     channel TEXT NOT NULL,
+     sender_id TEXT NOT NULL,
+     authorized_at TEXT NOT NULL DEFAULT (datetime('now')),
+     PRIMARY KEY (channel, sender_id)
+   );`,
 ]
 
 // ---------------------------------------------------------------------------
@@ -394,6 +401,42 @@ export function setScheduleError(jigId: string, error: string | null): void {
   const db = openDb()
   db.prepare(`UPDATE schedules SET error = ? WHERE jig_id = ?`).run(error, jigId)
 }
+
+// ---------------------------------------------------------------------------
+// Authorized senders
+// ---------------------------------------------------------------------------
+
+export interface AuthorizedSenderRow {
+  channel: string
+  sender_id: string
+  authorized_at: string
+}
+
+export function listAuthorizedSenders(): AuthorizedSenderRow[] {
+  const db = openDb()
+  return db.prepare(`SELECT * FROM authorized_senders ORDER BY channel, sender_id`).all() as AuthorizedSenderRow[]
+}
+
+export function isAuthorizedSender(channel: string, senderId: string): boolean {
+  const db = openDb()
+  const row = db.prepare(`SELECT 1 FROM authorized_senders WHERE channel = ? AND sender_id = ?`).get(channel, senderId)
+  return row != null
+}
+
+export function addAuthorizedSender(channel: string, senderId: string): void {
+  const db = openDb()
+  db.prepare(`INSERT OR IGNORE INTO authorized_senders (channel, sender_id) VALUES (?, ?)`).run(channel, senderId)
+}
+
+export function removeAuthorizedSender(channel: string, senderId: string): boolean {
+  const db = openDb()
+  const result = db.prepare(`DELETE FROM authorized_senders WHERE channel = ? AND sender_id = ?`).run(channel, senderId)
+  return result.changes > 0
+}
+
+// ---------------------------------------------------------------------------
+// Interrupted runs
+// ---------------------------------------------------------------------------
 
 export function markInterruptedRuns(): number {
   const db = openDb()

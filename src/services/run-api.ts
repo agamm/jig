@@ -21,7 +21,7 @@ export async function startJigRun(id: string, body: any): Promise<StartRunRespon
   if (!existsSync(`${PROJECT_ROOT}/.jig/connections/index.ts`)) {
     throw new ApiError(400, "No connections found. Run 'jig connect <server>' first.")
   }
-  if (hasActiveRun()) throw new ApiError(409, "A run is already in progress")
+  if (hasActiveRunForJig(id)) throw new ApiError(409, `A run is already in progress for ${id}`)
 
   const runId = dryRun ? -Date.now() : insertRun(id, Object.keys(params).length > 0 ? params : undefined)
   startTrackedRun(runId, id, dryRun)

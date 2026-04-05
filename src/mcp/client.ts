@@ -37,9 +37,9 @@ export async function connectServer(
     return { client, transport, serverName: name, config }
   }
 
-  // Remote server with token_command — use static auth header
-  if (config.auth) {
-    return connectWithToken(name, config as ServerConfig & { type: "remote"; auth: string })
+  // Remote server with token_command or custom headers
+  if (config.auth || config.headers) {
+    return connectWithHeaders(name, config)
   }
 
   // Remote server with browser OAuth
@@ -47,16 +47,21 @@ export async function connectServer(
 }
 
 /**
- * Connect using a token from a shell command (e.g. "gh auth token").
+ * Connect using a token from a shell command and/or custom headers.
  */
-async function connectWithToken(
+async function connectWithHeaders(
   name: string,
-  config: ServerConfig & { type: "remote"; auth: string }
+  config: ServerConfig & { type: "remote" }
 ): Promise<McpConnection> {
-  const token = await resolveToken(config.auth)
+  const headers: Record<string, string> = {}
+  if (config.auth) {
+    const token = await resolveToken(config.auth)
+    headers["Authorization"] = `Bearer ${token}`
+  }
+  if (config.headers) {
+    Object.assign(headers, config.headers)
+  }
   const url = new URL(config.url)
-
-  const headers = { Authorization: `Bearer ${token}` }
   const client = new Client({ name: "jig", version: "0.1.0" })
 
   try {

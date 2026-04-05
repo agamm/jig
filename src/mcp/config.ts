@@ -15,6 +15,7 @@ export type RemoteServerConfig = {
   url: string
   description: string
   auth?: string
+  headers?: Record<string, string>
 }
 
 export type RepoServerConfig = {

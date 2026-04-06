@@ -21,6 +21,10 @@
     "type": "remote",
     "url": "https://connect.composio.dev/mcp",
     "description": "Telegram, Slack, and 250+ integrations",
+    "proxy": {
+      "via": "COMPOSIO_MULTI_EXECUTE_TOOL",
+      "discover": "src/mcp/discover/composio.ts"
+    },
     "meta": {
       "pricing": "Free 20K calls/mo, $29/mo after",
       "docs": "https://docs.composio.dev",

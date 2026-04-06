@@ -508,7 +508,14 @@ async function connect(serverName: string | undefined, io: JigIO) {
   io.emit({ type: "connecting", server: serverName })
   const config = await getServerConfig(serverName)
   const connection = await connectServer(serverName, config)
-  const tools = await discoverTools(connection)
+  let tools = await discoverTools(connection)
+
+  // If server has a proxy discover script, use it to find real tools
+  if (rawConfig.proxy?.discover) {
+    io.emit({ type: "connecting", server: `${serverName} (discovering tools)` })
+    const { discover } = await import(join(PROJECT_ROOT, rawConfig.proxy.discover))
+    tools = await discover(connection)
+  }
 
   // LLM classifies read/write annotations — only during jig connect, not runtime
   await ensureAnnotations(tools)

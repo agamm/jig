@@ -35,8 +35,14 @@ export type ServerMeta = {
   provider?: string
 }
 
+export type ProxyConfig = {
+  via: string
+  discover: string
+}
+
 export type ServerConfig = (StdioServerConfig | RemoteServerConfig | RepoServerConfig) & {
   meta?: ServerMeta
+  proxy?: ProxyConfig
 }
 
 type ServerRegistry = Record<string, ServerConfig>

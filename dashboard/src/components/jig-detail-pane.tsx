@@ -174,7 +174,15 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
   const removalInstruction = useMemo(() => buildRemovalInstruction(queuedRemovalTools), [queuedRemovalTools]);
   const pendingToolKeys = useMemo(() => new Set(queuedRemovalTools.map((tool) => toolKey(tool))), [queuedRemovalTools]);
   const showDeriveFallback = detailTab === "steps" && mode.type === "idle" && !derivingSteps && runSteps.length === 0 && !!deriveError;
-  const approvalReady = runSteps.length === 0 ? tools.length > 0 : reviewableToolCount === 0 || reviewedToolCount >= reviewableToolCount;
+  // The "Approve Tools" button is always clickable when review is required —
+  // clicking it approves everything at once (no need to click ✓ on each tool).
+  const approvalReady = runSteps.length === 0 ? tools.length > 0 : true;
+
+  // Approve-all wrapper: mark every reviewable tool as reviewed, then commit.
+  const approveAllTools = () => {
+    setReviewedToolKeys(new Set(reviewableToolKeys));
+    toolApproval.approve();
+  };
   useEffect(() => {
     setReviewedToolKeys(new Set());
     setQueuedRemovalTools([]);
@@ -399,7 +407,7 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
                         {toolApproval.reviewRequired && (
                           <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-500/15 bg-[#111113] px-3 py-2">
                             <span className="text-[10px] text-amber-100/60">Flat fallback review</span>
-                            <Button onClick={toolApproval.approve} variant="success" size="xs">
+                            <Button onClick={approveAllTools} variant="success" size="xs">
                               Approve Tools
                             </Button>
                           </div>
@@ -415,6 +423,7 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
                 toolDisplay={toolApproval.reviewRequired ? "expanded" : "collapsed"}
                 reviewedToolKeys={reviewedToolKeys}
                 pendingToolKeys={pendingToolKeys}
+                toolsLocked={agent.isActive}
                 onApproveTool={toolApproval.reviewRequired ? (tool) => {
                   setReviewedToolKeys((current) => new Set(current).add(toolKey(tool)));
                   setQueuedRemovalTools((current) => current.filter((candidate) => !sameTool(candidate, tool)));
@@ -444,7 +453,7 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
                     {reviewableToolCount > 0 ? `${reviewedToolCount}/${reviewableToolCount} reviewed` : `${tools.length} tools`}
                   </span>
                   <Button
-                    onClick={toolApproval.approve}
+                    onClick={approveAllTools}
                     disabled={!approvalReady}
                     variant="success"
                     size="xs"

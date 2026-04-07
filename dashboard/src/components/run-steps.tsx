@@ -57,6 +57,7 @@ export function RunSteps({
   reviewedToolKeys,
   pendingToolKeys,
   onApproveTool,
+  toolsLocked = false,
 }: {
   steps: RunStep[];
   mode?: RunStepsMode;
@@ -71,6 +72,8 @@ export function RunSteps({
   reviewedToolKeys?: Set<string>;
   pendingToolKeys?: Set<string>;
   onApproveTool?: (tool: JigStepTool) => void;
+  /** When true, show every tool in a pending/loading state (e.g. while the agent is rewriting the jig). */
+  toolsLocked?: boolean;
 }) {
   const [expandedStep, setExpandedStep] = useState<number | null>(null);
 
@@ -208,7 +211,7 @@ export function RunSteps({
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {step.tools.map((tool) => {
                         const reviewed = reviewedToolKeys?.has(toolKey(tool)) ?? false;
-                        const pending = pendingToolKeys?.has(toolKey(tool)) ?? false;
+                        const pending = toolsLocked || (pendingToolKeys?.has(toolKey(tool)) ?? false);
                         return (
                         <span
                           key={`${tool.connection}:${tool.name}`}

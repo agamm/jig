@@ -1,37 +1,19 @@
 import { createServer, type Server } from "node:http"
-import { homedir } from "node:os"
-import { join } from "node:path"
-import { mkdir } from "node:fs/promises"
 import open from "open"
 import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js"
+import { getCredential, setCredential } from "../db.js"
 
 type OAuthClientMetadata = OAuthClientProvider["clientMetadata"]
 type OAuthClientInformationMixed = NonNullable<Awaited<ReturnType<OAuthClientProvider["clientInformation"]>>>
 type OAuthTokens = NonNullable<Awaited<ReturnType<OAuthClientProvider["tokens"]>>>
 
-const TOKENS_DIR = join(homedir(), ".jig", "tokens")
 const CALLBACK_PORT = 9876
 const REDIRECT_URL = `http://localhost:${CALLBACK_PORT}/callback`
 
-async function ensureTokensDir() {
-  await mkdir(TOKENS_DIR, { recursive: true })
-}
-
-function tokenPath(serverName: string) {
-  return join(TOKENS_DIR, `${serverName}.json`)
-}
-
-function clientPath(serverName: string) {
-  return join(TOKENS_DIR, `${serverName}_client.json`)
-}
-
-function verifierPath(serverName: string) {
-  return join(TOKENS_DIR, `${serverName}_verifier.txt`)
-}
-
 /**
- * File-based OAuth provider for Jig MCP connections.
- * Persists tokens to ~/.jig/tokens/ and opens the browser for auth flows.
+ * SQLite-backed OAuth provider for Jig MCP connections.
+ * Persists tokens in the `credentials` table under keys
+ * `oauth:{server}:{tokens|client|verifier}`.
  */
 export class JigOAuthProvider implements OAuthClientProvider {
   private _authResolve?: (code: string) => void
@@ -54,33 +36,31 @@ export class JigOAuthProvider implements OAuthClientProvider {
   }
 
   async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
+    const raw = getCredential(`oauth:${this.serverName}:client`)
+    if (!raw) return undefined
     try {
-      const file = Bun.file(clientPath(this.serverName))
-      if (!(await file.exists())) return undefined
-      return await file.json() as OAuthClientInformationMixed
+      return JSON.parse(raw) as OAuthClientInformationMixed
     } catch {
       return undefined
     }
   }
 
   async saveClientInformation(info: OAuthClientInformationMixed): Promise<void> {
-    await ensureTokensDir()
-    await Bun.write(clientPath(this.serverName), JSON.stringify(info, null, 2))
+    setCredential(`oauth:${this.serverName}:client`, JSON.stringify(info), this.serverName)
   }
 
   async tokens(): Promise<OAuthTokens | undefined> {
+    const raw = getCredential(`oauth:${this.serverName}:tokens`)
+    if (!raw) return undefined
     try {
-      const file = Bun.file(tokenPath(this.serverName))
-      if (!(await file.exists())) return undefined
-      return await file.json() as OAuthTokens
+      return JSON.parse(raw) as OAuthTokens
     } catch {
       return undefined
     }
   }
 
   async saveTokens(tokens: OAuthTokens): Promise<void> {
-    await ensureTokensDir()
-    await Bun.write(tokenPath(this.serverName), JSON.stringify(tokens, null, 2))
+    setCredential(`oauth:${this.serverName}:tokens`, JSON.stringify(tokens), this.serverName)
   }
 
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
@@ -89,16 +69,15 @@ export class JigOAuthProvider implements OAuthClientProvider {
   }
 
   async saveCodeVerifier(codeVerifier: string): Promise<void> {
-    await ensureTokensDir()
-    await Bun.write(verifierPath(this.serverName), codeVerifier)
+    setCredential(`oauth:${this.serverName}:verifier`, codeVerifier, this.serverName)
   }
 
   async codeVerifier(): Promise<string> {
-    const file = Bun.file(verifierPath(this.serverName))
-    if (!(await file.exists())) {
+    const value = getCredential(`oauth:${this.serverName}:verifier`)
+    if (!value) {
       throw new Error(`No code verifier saved for ${this.serverName}`)
     }
-    return await file.text()
+    return value
   }
 
   waitForAuthCode(): Promise<string> {

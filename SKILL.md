@@ -23,9 +23,9 @@ The goal: minimize what the LLM does at runtime. If you can hardcode it, hardcod
 Define a jig. The `tools` array is the permission boundary — nothing outside it can be called.
 
 ```typescript
-import { jig, llm, agent } from "../src/index.js"
-import { granola } from "../.jig/connections/granola.js"
-import { workspace } from "../.jig/connections/workspace.js"
+import { jig, llm, agent } from "@jig/sdk"
+import { granola } from "@jig/connections/granola.js"
+import { workspace } from "@jig/connections/workspace.js"
 
 const myJig = jig("my-jig", {
   params: {
@@ -109,13 +109,13 @@ const [meetings, emails] = await ctx.parallel(
 
 ### Connections
 
-Import from `.jig/connections/`. Auto-generated after `jig connect <server>`.
+Import from `@jig/connections/`. Auto-generated after `jig connect <server>`.
 Tools connect lazily on first call — no setup code needed.
 
 ```typescript
-import { granola } from "../.jig/connections/granola.js"
-import { workspace } from "../.jig/connections/workspace.js"
-import { github } from "../.jig/connections/github.js"
+import { granola } from "@jig/connections/granola.js"
+import { workspace } from "@jig/connections/workspace.js"
+import { github } from "@jig/connections/github.js"
 ```
 
 ---

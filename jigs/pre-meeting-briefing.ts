@@ -1,6 +1,6 @@
-import { jig, agent } from "jig"
-import { granola } from "jig/connections/granola.js"
-import { workspace } from "jig/connections/workspace.js"
+import { jig, agent } from "@jig/sdk"
+import { granola } from "@jig/connections/granola.js"
+import { workspace } from "@jig/connections/workspace.js"
 
 const gatherTools = [
   workspace.calendar_listEvents,

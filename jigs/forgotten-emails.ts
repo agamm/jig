@@ -1,5 +1,5 @@
-import { jig, agent, llm } from "jig"
-import { workspace } from "jig/connections/workspace.js"
+import { jig, agent, llm } from "@jig/sdk"
+import { workspace } from "@jig/connections/workspace.js"
 
 const gatherTools = [
   workspace.gmail_search,

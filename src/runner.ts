@@ -111,7 +111,7 @@ async function _runJig(
       if (/console\.log\s*\(/.test(stripped))
         problems.push("Use ctx.output() instead of console.log() — console.log bypasses the event stream.")
       if (/from\s+["'][.]{2}/.test(stripped))
-        problems.push('Jig uses relative imports (../) — use "jig" and "jig/connections/" aliases instead.')
+        problems.push('Jig uses relative imports (../) — use "@jig/sdk" and "@jig/connections/" aliases instead.')
       if (!/export\s+default/.test(stripped))
         problems.push('Jig must have an export default — add "export default <jigName>".')
 

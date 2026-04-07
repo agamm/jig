@@ -4,8 +4,8 @@ import { parseStepsFromSource } from "../src/derive-steps"
 describe("parseStepsFromSource", () => {
   it("extracts block-scoped steps with tools", () => {
     const code = `
-import { jig } from "jig"
-import { workspace } from "jig/connections/workspace.js"
+import { jig } from "@jig/sdk"
+import { workspace } from "@jig/connections/workspace.js"
 
 export default jig("test", {
   trigger: { type: "manual" },
@@ -39,8 +39,8 @@ export default jig("test", {
 
   it("returns empty for jigs without block-scoped steps", () => {
     const code = `
-import { jig } from "jig"
-import { workspace } from "jig/connections/workspace.js"
+import { jig } from "@jig/sdk"
+import { workspace } from "@jig/connections/workspace.js"
 
 export default jig("test", {
   trigger: { type: "manual" },
@@ -55,8 +55,8 @@ export default jig("test", {
 
   it("extracts connections from import statements", () => {
     const code = `
-import { workspace } from "jig/connections/workspace.js"
-import { granola } from "jig/connections/granola.js"
+import { workspace } from "@jig/connections/workspace.js"
+import { granola } from "@jig/connections/granola.js"
 
 export default jig("test", {
   trigger: { type: "manual" },

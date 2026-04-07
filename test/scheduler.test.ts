@@ -55,7 +55,7 @@ describe("scheduler sync", () => {
   it("preserves an existing schedule and records a visible error when cron becomes invalid", async () => {
     const jigPath = join(JIGS_DIR, "scheduler-sync-case.ts")
     writeFileSync(jigPath, `
-import { jig } from "jig"
+import { jig } from "@jig/sdk"
 
 export default jig("scheduler-sync-case", {
   trigger: { type: "cron", cron: "*/5 * * * *", missedStrategy: "skip" },
@@ -74,7 +74,7 @@ export default jig("scheduler-sync-case", {
     setScheduleEnabled("scheduler-sync-case", false)
 
     writeFileSync(jigPath, `
-import { jig } from "jig"
+import { jig } from "@jig/sdk"
 
 export default jig("scheduler-sync-case", {
   trigger: { type: "cron", cron: "not a cron", missedStrategy: "skip" },
@@ -95,7 +95,7 @@ export default jig("scheduler-sync-case", {
   it("records a visible error for unsupported long interval triggers", async () => {
     const jigPath = join(JIGS_DIR, "scheduler-long-interval-case.ts")
     writeFileSync(jigPath, `
-import { jig } from "jig"
+import { jig } from "@jig/sdk"
 
 export default jig("scheduler-long-interval-case", {
   trigger: { type: "interval", minutes: 120 },
@@ -148,7 +148,7 @@ describe("scheduler tick", () => {
   it("claims a due schedule once and records the actual launch time", async () => {
     const jigPath = join(JIGS_DIR, "scheduler-tick-case.ts")
     writeFileSync(jigPath, `
-import { jig } from "jig"
+import { jig } from "@jig/sdk"
 
 export default jig("scheduler-tick-case", {
   trigger: { type: "cron", cron: "* * * * *" },

@@ -15,9 +15,8 @@
     "rootDir": ".",
     "types": ["bun-types"],
     "paths": {
-      "jig": ["./src/index.ts"],
-      "jig/*": ["./src/*"],
-      "jig/connections/*": ["./.jig/connections/*"]
+      "@jig/sdk": ["./src/index.ts"],
+      "@jig/connections/*": ["./.jig/connections/*"]
     }
   },
   "include": ["src/**/*.ts", "shared/**/*.ts", "jigs/**/*.ts", ".jig/types/**/*.ts", ".jig/connections/**/*.ts"],

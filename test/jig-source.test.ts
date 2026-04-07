@@ -79,7 +79,7 @@ describe("run API invariants", () => {
     mkdirSync(CONNECTIONS_DIR, { recursive: true })
     if (createdConnectionsIndex) writeFileSync(CONNECTIONS_INDEX, "export {}\n")
     writeFileSync(jigPath, `
-import { jig } from "jig"
+import { jig } from "@jig/sdk"
 
 export default jig("per-jig-lock-case", {
   trigger: { type: "manual" },
@@ -111,7 +111,7 @@ export default jig("per-jig-lock-case", {
     mkdirSync(CONNECTIONS_DIR, { recursive: true })
     if (createdConnectionsIndex) writeFileSync(CONNECTIONS_INDEX, "export {}\n")
     writeFileSync(jigPath, `
-import { jig } from "jig"
+import { jig } from "@jig/sdk"
 
 export default jig("other-jig-case", {
   trigger: { type: "manual" },
@@ -147,7 +147,7 @@ export default jig("other-jig-case", {
     mkdirSync(CONNECTIONS_DIR, { recursive: true })
     if (createdConnectionsIndex) writeFileSync(CONNECTIONS_INDEX, "export {}\n")
     writeFileSync(jigPath, `
-import { jig } from "jig"
+import { jig } from "@jig/sdk"
 
 export default jig("skip-disappears-case", {
   trigger: { type: "manual" },

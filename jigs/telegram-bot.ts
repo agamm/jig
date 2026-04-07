@@ -11,9 +11,9 @@
  * Webhook body from Telegram:
  * { "update_id": 123, "message": { "text": "hello", "chat": { "id": 456 } } }
  */
-import { jig, agent } from "jig"
-import { workspace } from "jig/connections/workspace.js"
-// import { composio } from "jig/connections/composio.js"
+import { jig, agent } from "@jig/sdk"
+import { workspace } from "@jig/connections/workspace.js"
+// import { composio } from "@jig/connections/composio.js"
 
 const readTools = [
   workspace.gmail_search,

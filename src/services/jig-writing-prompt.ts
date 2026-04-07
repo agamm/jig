@@ -82,15 +82,15 @@ The available tools and probe results show what's available. Use multiple releva
 function codeFormatRules() {
   return `### 7. Code format
 - Output ONLY TypeScript code. No explanation, no markdown fences.
-- Import SDK: import { jig, llm, agent } from "jig"
-- Import connections: import { serverName } from "jig/connections/serverName.js"
+- Import SDK: import { jig, llm, agent } from "@jig/sdk"
+- Import connections: import { serverName } from "@jig/connections/serverName.js"
 - Use exact param names and types from the type definitions and schemas above
 - Use ctx.output() inside ctx.step() blocks for output, NEVER console.log()
 - ALL tool calls MUST be inside ctx.step() blocks — tools called outside a step will throw at runtime
 - End the file with: export default myJig
 - Do NOT call run() or process.exit()
 - Do NOT use require() or CommonJS imports
-- Do NOT use relative imports (../) — always use the "jig" and "jig/connections/" aliases
+- Do NOT use relative imports (../) — always use the "@jig/sdk" and "@jig/connections/" aliases
 - Do NOT add markdown fences around the code`
 }
 
@@ -100,9 +100,9 @@ function agentExecutionRules() {
 - If creating a new jig, choose a short valid jigId first and include it in your first write_jig_file call
 - Prefer concise concept names over literal sentence fragments. Good: forgotten-emails, weekly-update, morning-briefing, meeting-prep. Bad: check-my-email-for-emails-i-forgot
 - Valid jigId names use only lowercase letters, numbers, dashes, and underscores
-- Import SDK: import { jig, llm, agent } from "jig"
-- Import connections: import { serverName } from "jig/connections/serverName.js"
-- Do NOT use relative imports (../) — always use the "jig" and "jig/connections/" aliases
+- Import SDK: import { jig, llm, agent } from "@jig/sdk"
+- Import connections: import { serverName } from "@jig/connections/serverName.js"
+- Do NOT use relative imports (../) — always use the "@jig/sdk" and "@jig/connections/" aliases
 - Use ctx.output() for output, NEVER console.log()
 - End the file with: export default myJig
 - Do NOT use require() or CommonJS

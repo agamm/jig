@@ -5,7 +5,7 @@
  * Business logic emits structured JigEvents. This file renders them as text.
  * A dashboard would render the same events as UI components.
  */
-import { loadServerConfigs, checkMissingEnvVars } from "./mcp/config.js"
+import { loadServerConfigs, checkMissingCredentials } from "./mcp/config.js"
 import { discoverJigs } from "./discover.js"
 import { existsSync } from "fs"
 import { join, relative } from "path"
@@ -486,7 +486,7 @@ async function connect(serverName: string | undefined, io: JigIO) {
     io.emit({ type: "error", code: "unknown-server", message: `Unknown server "${serverName}". Available: ${available}` })
     process.exit(1)
   }
-  const missing = checkMissingEnvVars(rawConfig)
+  const missing = checkMissingCredentials(rawConfig)
   if (missing.length > 0) {
     const setup = (rawConfig as any).setup as string | undefined
     if (setup) io.emit({ type: "setup-instructions", message: setup })

@@ -38,6 +38,8 @@ export type ServerMeta = {
 export type ProxyConfig = {
   via: string
   discover: string
+  /** URL to the provider's dashboard where users can add more connections */
+  dashboardUrl?: string
 }
 
 export type ServerConfig = (StdioServerConfig | RemoteServerConfig | RepoServerConfig) & {
@@ -54,16 +56,14 @@ function expandHome(str: string): string {
 }
 
 /**
- * Replace $VAR references in a string with values from credentials DB, then process.env.
- * Returns { resolved, missing } — missing lists any unresolved var names.
+ * Replace $VAR references in a string with values from the SQLite credentials table.
+ * Returns { resolved, missing } — missing lists any credential keys not found in the DB.
  */
-export function resolveEnvVars(str: string): { resolved: string; missing: string[] } {
+export function resolveCredentials(str: string): { resolved: string; missing: string[] } {
   const missing: string[] = []
   const resolved = str.replace(/\$([A-Z_][A-Z0-9_]*)/g, (_, name) => {
-    const fromDb = getCredential(name)
-    if (fromDb != null) return fromDb
-    const fromEnv = process.env[name]
-    if (fromEnv != null) return fromEnv
+    const value = getCredential(name)
+    if (value != null) return value
     missing.push(name)
     return `$${name}`
   })
@@ -71,16 +71,16 @@ export function resolveEnvVars(str: string): { resolved: string; missing: string
 }
 
 /**
- * Check a remote config for unresolved $ENV_VAR references.
- * Returns list of missing env var names, or empty array if all resolved.
+ * Check a remote config for unresolved $VAR credential references.
+ * Returns list of missing credential keys, or empty array if all resolved.
  */
-export function checkMissingEnvVars(config: ServerConfig): string[] {
+export function checkMissingCredentials(config: ServerConfig): string[] {
   const missing: string[] = []
   if (config.type === "remote") {
-    missing.push(...resolveEnvVars(config.url).missing)
+    missing.push(...resolveCredentials(config.url).missing)
     if (config.headers) {
       for (const v of Object.values(config.headers)) {
-        missing.push(...resolveEnvVars(v).missing)
+        missing.push(...resolveCredentials(v).missing)
       }
     }
   }
@@ -171,12 +171,12 @@ export async function getServerConfig(name: string): Promise<StdioServerConfig |
     }
   }
 
-  // Resolve $ENV_VAR references in remote config
+  // Resolve $VAR references in remote config from the SQLite credentials table
   if (config.type === "remote") {
-    config.url = resolveEnvVars(config.url).resolved
+    config.url = resolveCredentials(config.url).resolved
     if (config.headers) {
       for (const [k, v] of Object.entries(config.headers)) {
-        config.headers[k] = resolveEnvVars(v).resolved
+        config.headers[k] = resolveCredentials(v).resolved
       }
     }
   }

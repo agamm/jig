@@ -7,6 +7,17 @@ import { PaneSection } from "@/components/pane-section"
 import { ServiceIcon } from "@/components/service-icon"
 import { useConnection } from "@/lib/swr"
 
+/** Parse URL and return only if it's http/https. Blocks javascript: and other schemes. */
+function safeExternalUrl(url: string): { href: string; hostname: string } | null {
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null
+    return { href: parsed.toString(), hostname: parsed.hostname }
+  } catch {
+    return null
+  }
+}
+
 export function ConnectionPane({ name, onClose, onJigClick, standalone = false }: {
   name: string
   onClose: () => void
@@ -35,8 +46,18 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
           </span>
         }
         badge={conn ? (
-          <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-medium ${conn.connected ? "bg-emerald-500/10 text-emerald-400" : "bg-[#1a1a1d] text-[#555]"}`}>
-            {conn.connected ? "Connected" : "Not connected"}
+          <span className="inline-flex items-center gap-1">
+            <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-medium ${conn.connected ? "bg-emerald-500/10 text-emerald-400" : "bg-[#1a1a1d] text-[#555]"}`}>
+              {conn.connected ? "Connected" : "Not connected"}
+            </span>
+            {conn.proxyVia && (
+              <span
+                className="rounded-full border border-[#2a2a2e] bg-[#1a1a1d] px-1.5 py-0.5 text-[9px] font-medium text-[#888]"
+                title={`Tools proxied via ${conn.proxyVia}`}
+              >
+                proxy
+              </span>
+            )}
           </span>
         ) : undefined}
         actions={
@@ -66,6 +87,23 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
               <p className="text-[12px] text-[#888] leading-relaxed">{conn.description}</p>
             )}
 
+            {/* Proxy: add more connections at provider's dashboard */}
+            {(() => {
+              const dash = conn.proxyDashboardUrl ? safeExternalUrl(conn.proxyDashboardUrl) : null
+              if (!dash) return null
+              return (
+                <a
+                  href={dash.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-[#1f1f23] bg-[#111113] px-2.5 py-1.5 text-[11px] text-[#ccc] hover:border-[#2a2a2e] hover:bg-[#151517] transition-colors"
+                >
+                  Manage connections at {dash.hostname}
+                  <span className="text-[#555]">↗</span>
+                </a>
+              )
+            })()}
+
             <PaneSection
               title="Tools"
               meta={<span className="text-[10px] text-[#444]">{conn.toolCount}</span>}
@@ -92,8 +130,12 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
                         <div key={tool.name} className="px-3 py-2.5">
                           <div className="flex items-center gap-2 mb-0.5">
                             <span className="text-[11px] font-mono text-[#ccc]">{tool.name}</span>
-                            {tool.readOnly && (
-                              <span className="rounded-full bg-blue-500/10 px-1.5 py-0.5 text-[8px] text-blue-400">read-only</span>
+                            {tool.destructive ? (
+                              <span className="rounded-full bg-red-500/10 px-1.5 py-0.5 text-[8px] text-red-400" title="Destructive — modifies or deletes data permanently">destructive</span>
+                            ) : tool.readOnly ? (
+                              <span className="rounded-full bg-blue-500/10 px-1.5 py-0.5 text-[8px] text-blue-400" title="Read-only — no side effects">read</span>
+                            ) : (
+                              <span className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[8px] text-amber-400" title="Write — creates or updates data">write</span>
                             )}
                           </div>
                           {tool.description && (

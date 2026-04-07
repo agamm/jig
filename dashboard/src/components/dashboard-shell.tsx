@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { useQueryState, parseAsString, parseAsBoolean } from "nuqs";
 import { mutate } from "swr";
 import type { Phase, Jig } from "@/types/jig";
@@ -12,7 +12,7 @@ import { ReviewPane } from "@/components/review-pane";
 import { ConnectionPane } from "@/components/connection-pane";
 import { ServiceIcon } from "@/components/service-icon";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/resizable";
-import { useModels } from "@/lib/swr";
+import { useModels, useConnections } from "@/lib/swr";
 
 function useLocalStorage(key: string, initial: boolean): [boolean, (v: boolean) => void, boolean] {
   const [value, setValue] = useState(initial);
@@ -53,12 +53,13 @@ export function DashboardShell({
   const [commandInput, setCommandInput] = useState("");
 
   const { data: models } = useModels();
+  const { data: connections, isLoading: connectionsLoading } = useConnections();
 
   const currentJig = jigs.find((j) => j.id === selectedJig) ?? null;
   const showOnboarding = phaseToggle ? phase === "day1" : jigs.length === 0 && !loading;
   const hasDetail = createOpen || (selectedJig && currentJig) || selectedConnection;
   const collapsed = sidebarMounted ? sidebarSlim : false;
-  const allConnections = useMemo(() => [...new Set(jigs.flatMap((j) => j.settings.connections))], [jigs]);
+  const allConnections = (connections ?? []).filter(c => c.connected);
 
   const [jigClickToken, setJigClickToken] = useState(0);
   function handleJigClick(jig: Jig) {
@@ -172,6 +173,51 @@ export function DashboardShell({
     </main>
   );
 
+  const connectionsMain = (
+    <main className="flex flex-col flex-1 overflow-hidden h-full">
+      <div className="flex h-11 shrink-0 items-center justify-between border-b border-[#1f1f23] px-4">
+        <span className="text-[13px] font-medium text-[#ededed]">Connections</span>
+      </div>
+      <div className="flex-1 overflow-y-auto px-6 py-6">
+        <div className="max-w-2xl mx-auto space-y-3">
+          {connectionsLoading && allConnections.length === 0 && (
+            <div className="py-8 text-center text-[11px] text-[#555]">Loading connections…</div>
+          )}
+          {!connectionsLoading && allConnections.length === 0 && (
+            <div className="py-8 text-center text-[11px] text-[#555]">
+              No connections yet. Run <code className="text-[10px] bg-[#1a1a1d] px-1 py-0.5 rounded font-mono">jig connect &lt;server&gt;</code> to add one.
+            </div>
+          )}
+          {allConnections.map((c) => (
+            <button
+              key={c.name}
+              onClick={() => setSelectedConnection(c.name)}
+              className={`relative flex w-full items-center gap-3 rounded-lg border px-4 py-3 transition-colors duration-150 ${selectedConnection === c.name ? "border-emerald-400/30 bg-[#15171a]" : "border-[#1f1f23] bg-[#111113] hover:border-[#2a2a2e] hover:bg-[#141416]"}`}
+            >
+              {selectedConnection === c.name && (
+                <span className="absolute left-0 top-2 bottom-2 w-[2px] rounded-r bg-emerald-400/60" />
+              )}
+              <ServiceIcon name={c.name} size={18} />
+              <span className="text-[13px] text-[#ededed] capitalize">{c.name}</span>
+              {c.proxyVia && (
+                <span className="rounded-full border border-[#2a2a2e] bg-[#1a1a1d] px-1.5 py-0.5 text-[9px] font-medium text-[#888]" title={`Tools proxied via ${c.proxyVia}`}>
+                  proxy
+                </span>
+              )}
+              <span className="text-[11px] text-[#555]">{c.toolCount} tools</span>
+              <span className="ml-auto h-2 w-2 rounded-full bg-emerald-400" />
+              <span className="text-[11px] text-[#555]">Connected</span>
+            </button>
+          ))}
+          <button className="flex w-full items-center gap-2 rounded-lg border border-dashed border-[#2a2a2e] px-4 py-3 text-[12px] text-[#555] transition-colors duration-150 hover:text-emerald-400 hover:border-emerald-400/30">
+            <span className="flex h-5 w-5 items-center justify-center rounded-full border border-dashed border-[#2a2a2e] text-[11px]">+</span>
+            Add connection
+          </button>
+        </div>
+      </div>
+    </main>
+  );
+
   const detailPane =
     createOpen && !selectedConnection ? (
       <CreateJigPane
@@ -260,31 +306,19 @@ export function DashboardShell({
 
       <div className="flex flex-1 overflow-hidden">
         {view === "connections" && (
-          <main className="flex flex-col flex-1 overflow-hidden">
-            <div className="flex h-11 shrink-0 items-center justify-between border-b border-[#1f1f23] px-4">
-              <span className="text-[13px] font-medium text-[#ededed]">Connections</span>
-            </div>
-            <div className="flex-1 overflow-y-auto px-6 py-6">
-              <div className="max-w-2xl mx-auto space-y-3">
-                {allConnections.map((c) => (
-                  <button
-                    key={c}
-                    onClick={() => { setView(null); setSelectedConnection(c); }}
-                    className="flex w-full items-center gap-3 rounded-lg border border-[#1f1f23] bg-[#111113] px-4 py-3 transition-colors duration-150 hover:border-[#2a2a2e] hover:bg-[#141416]"
-                  >
-                    <ServiceIcon name={c} size={18} />
-                    <span className="text-[13px] text-[#ededed] capitalize">{c}</span>
-                    <span className="ml-auto h-2 w-2 rounded-full bg-emerald-400" />
-                    <span className="text-[11px] text-[#555]">Connected</span>
-                  </button>
-                ))}
-                <button className="flex w-full items-center gap-2 rounded-lg border border-dashed border-[#2a2a2e] px-4 py-3 text-[12px] text-[#555] transition-colors duration-150 hover:text-emerald-400 hover:border-emerald-400/30">
-                  <span className="flex h-5 w-5 items-center justify-center rounded-full border border-dashed border-[#2a2a2e] text-[11px]">+</span>
-                  Add connection
-                </button>
-              </div>
-            </div>
-          </main>
+          selectedConnection && detailPane ? (
+            <ResizablePanelGroup direction="horizontal" className="flex-1">
+              <ResizablePanel defaultSize="52%" minSize="0%">
+                {connectionsMain}
+              </ResizablePanel>
+              <ResizableHandle />
+              <ResizablePanel defaultSize="48%" minSize="28%" maxSize="100%">
+                {detailPane}
+              </ResizablePanel>
+            </ResizablePanelGroup>
+          ) : (
+            connectionsMain
+          )
         )}
 
         {view === "settings" && (

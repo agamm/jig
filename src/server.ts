@@ -128,7 +128,14 @@ async function handleGetConnections(): Promise<Response> {
           toolCount = Array.isArray(schema) ? schema.length : 0
         } catch {}
       }
-      return { name, connected, toolCount, description: config.description }
+      return {
+        name,
+        connected,
+        toolCount,
+        description: config.description,
+        proxyVia: config.proxy?.via,
+        proxyDashboardUrl: config.proxy?.dashboardUrl,
+      }
     })
   )
   return json(connections)
@@ -142,16 +149,22 @@ async function handleGetConnection(name: string): Promise<Response> {
 
   const schemaPath = join(SCHEMAS_DIR, `${name}.json`)
   const connected = existsSync(schemaPath)
-  let tools: { name: string; description: string; readOnly: boolean }[] = []
+  let tools: { name: string; description: string; readOnly: boolean; destructive: boolean }[] = []
 
   if (connected) {
     try {
       const schemas = JSON.parse(readFileSync(schemaPath, "utf-8"))
-      tools = schemas.map((tool: any) => ({
-        name: tool.name,
-        description: tool.description?.split("\n")[0] ?? "",
-        readOnly: tool.annotations?.readOnlyHint === true,
-      }))
+      tools = schemas.map((tool: any) => {
+        const destructive = tool.annotations?.destructiveHint === true
+        // Destructive tools are never read-only — normalize to avoid ambiguity
+        const readOnly = !destructive && tool.annotations?.readOnlyHint === true
+        return {
+          name: tool.name,
+          description: tool.description?.split("\n")[0] ?? "",
+          readOnly,
+          destructive,
+        }
+      })
     } catch {}
   }
 
@@ -170,6 +183,8 @@ async function handleGetConnection(name: string): Promise<Response> {
     connected,
     toolCount: tools.length,
     description: config.description ?? "",
+    proxyVia: config.proxy?.via,
+    proxyDashboardUrl: config.proxy?.dashboardUrl,
     tools,
     usedBy,
   })

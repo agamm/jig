@@ -23,7 +23,8 @@
     "description": "Telegram, Slack, and 250+ integrations",
     "proxy": {
       "via": "COMPOSIO_MULTI_EXECUTE_TOOL",
-      "discover": "src/mcp/discover/composio.ts"
+      "discover": "src/mcp/discover/composio.ts",
+      "dashboardUrl": "https://dashboard.composio.dev/"
     },
     "meta": {
       "pricing": "Free 20K calls/mo, $29/mo after",

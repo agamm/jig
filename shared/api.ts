@@ -77,12 +77,17 @@ export interface Connection {
   connected: boolean
   toolCount: number
   description: string
+  /** If set, tools are proxied through this meta-tool (e.g. COMPOSIO_MULTI_EXECUTE_TOOL) */
+  proxyVia?: string
+  /** URL to provider's dashboard for adding more connections (only set for proxy connections) */
+  proxyDashboardUrl?: string
 }
 
 export interface ConnectionTool {
   name: string
   description: string
   readOnly: boolean
+  destructive: boolean
 }
 
 export interface ConnectionDetail extends Connection {

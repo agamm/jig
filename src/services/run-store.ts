@@ -197,3 +197,11 @@ function pruneRecentResults(): void {
     }
   }
 }
+
+/** Clear all in-memory run state. Intended for tests only. */
+export function resetRunStoreForTests(): void {
+  activeRuns.clear()
+  activeAborts.clear()
+  runs.clear()
+  recentResults.clear()
+}

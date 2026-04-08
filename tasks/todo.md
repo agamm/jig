@@ -9,6 +9,12 @@
 - [x] Deleted: deriveSteps LLM, jig_steps/jig_meta tables, recompile endpoint, derive-steps CLI command
 
 ## TODO
+- [ ] **System notifications** — alert user on jig failures/important events via MCP notification server, Resend (email), or Twilio (SMS). Pluggable sink chosen in settings.
+- [ ] **Concurrent run pipeline hardening** — all runs (manual, scheduled, webhook) must go through the same run-store tracking. Verify no race conditions in per-jig startTrackedRun/finishTrackedRun. Ensure persist() and applyRunEvent() are safe across concurrent jigs. Test: two jigs running simultaneously, one fails mid-run while other succeeds.
+- [ ] **CLI ↔ dashboard UI parity** — CLI `runJigFile` ignores step-start/step-done events; should render them through JigIO. `jig run` (no args) should list jigs with their derived steps. Both surfaces must show the same step progression, tool chips, and outputs.
+- [ ] **Onboarding from blank slate** — first-run experience: no jigs, no connections. Guide through connecting first service (Composio OAuth), accepting ToS, creating first jig. Plus: "Reset data" button in settings that wipes credentials/runs/jigs and returns to onboarding.
+- [ ] **"Add new jig" flow works end-to-end** — verify the dashboard "new jig" button creates a working jig from a prompt, types check, derives steps, and runs. Currently unclear if jig-gen prompt + save + derive + first-run all chain cleanly.
+- [ ] **Tagging jigs** — let users assign tags/labels to jigs (e.g. "work", "personal", "experimental") and filter the dashboard list by tag. Tags stored in jig file metadata or DB.
 - [ ] Per-jig model override
   - Dashboard has a disabled model dropdown in jig detail pane — wire it up
   - Add `model` field to JigDefinition options (optional override)
@@ -23,15 +29,6 @@
   - Add step events to JigEvent union type so `io.emit()` can carry them
   - CLI renderEvent should handle step-start (print label + spinner) and step-done (print status + duration)
 
-- [ ] Notification settings for scheduler failures
-  - Add email/webhook/other contact method setting so users get alerted on run fails/crashes
-  - Important for scheduled runs that fail silently while user is away
-  - Consider: email, Slack webhook, or custom webhook as notification sinks
-- [ ] Concurrent run pipeline hardening
-  - All runs (manual, scheduled, webhook) go through the same run-store tracking
-  - Verify no race conditions in per-jig run-store (startTrackedRun/finishTrackedRun)
-  - Ensure persist() and applyRunEvent() are safe for concurrent calls across different jigs
-  - Test: two jigs running simultaneously, one fails mid-run while other succeeds
 
 ## Edge Cases to Think About
 - **Scan crash truncation**: if handler destructures a stub return (`result.email`), scan crashes before later steps. Works for weekly-update (destructure→tool call still runs), but deep chaining could truncate. Could mitigate with Proxy objects that return more Proxies, or accept that scan shows "at least these steps".
@@ -47,6 +44,7 @@
 - [ ] **Trending digest email** — daily/weekly email with trending GitHub repos + best Hacker News posts
 - [ ] **SEO Search Console update** — pull Google Search Console data, surface what to fix (drops, errors, opportunities)
 - [ ] **Daily question** — given user's current state/context, generate a thought-provoking daily question
+- [ ] **Statement review inbox** — webhook jig triggered by an email that asks "please review" with a PDF/image attachment. Classifies as company vs personal financial statement, OCRs the file, scans for things to remove/question (duplicate charges, unusual merchants, subscriptions, missing line items), and replies to the email with the annotated review.
 
 ## Onboarding & Integrations
 

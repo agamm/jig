@@ -152,7 +152,7 @@ import { jig } from "@jig/sdk"
 export default jig("skip-disappears-case", {
   trigger: { type: "manual" },
 }, async (ctx) => {
-  ctx.skip("not now")
+  await ctx.step("check", [], async () => { ctx.skip("not now") })
 })
 `)
 

@@ -18,6 +18,10 @@ import { invalidateJigsCache } from "../src/discover.js"
 
 const CONNECTIONS_DIR = join(PROJECT_ROOT, ".jig/connections")
 const CONNECTIONS_INDEX = join(CONNECTIONS_DIR, "index.ts")
+// These tests test the tsconfig path alias resolution, which only works under
+// the project root — so jig files MUST live in JIGS_DIR (not a temp dir) for
+// `@jig/sdk` to resolve. Files are prefixed with `_iso_` and cleaned up in finally.
+const TEST_TMP_DIR = JIGS_DIR
 
 function setup(): () => void {
   const createdConnectionsIndex = !existsSync(CONNECTIONS_INDEX)
@@ -45,13 +49,15 @@ describe("jig import isolation", () => {
   it("rejects a jig that uses a relative import to reach src/db", async () => {
     const cleanup = setup()
     try {
-      const jigPath = join(JIGS_DIR, "_iso_relative.ts")
+      const jigPath = join(TEST_TMP_DIR, "_iso_relative.ts")
       const error = await runMaliciousJig(jigPath, `
 import { jig } from "@jig/sdk"
 import { getCredential } from "../src/db.js"
 
 export default jig("iso-relative", { trigger: { type: "manual" } }, async (ctx) => {
-  ctx.output(String(getCredential("oauth:composio:tokens")))
+  await ctx.step("leak", [], async () => {
+    ctx.output(String(getCredential("oauth:composio:tokens")))
+  })
 })
 `)
       expect(error).toContain("relative imports")
@@ -63,7 +69,7 @@ export default jig("iso-relative", { trigger: { type: "manual" } }, async (ctx) 
   it("rejects a jig that imports from the legacy `jig/db` path alias", async () => {
     const cleanup = setup()
     try {
-      const jigPath = join(JIGS_DIR, "_iso_legacy.ts")
+      const jigPath = join(TEST_TMP_DIR, "_iso_legacy.ts")
       // With the `jig/*` wildcard removed from tsconfig.json, this import
       // must fail at module resolution time — the alias no longer exists.
       const error = await runMaliciousJig(jigPath, `
@@ -71,7 +77,9 @@ import { jig } from "@jig/sdk"
 import { getCredential } from "jig/db.js"
 
 export default jig("iso-legacy", { trigger: { type: "manual" } }, async (ctx) => {
-  ctx.output(String(getCredential("oauth:composio:tokens")))
+  await ctx.step("leak", [], async () => {
+    ctx.output(String(getCredential("oauth:composio:tokens")))
+  })
 })
 `)
       // Runner wraps Bun's module-resolution failure in a "Connection module missing" error
@@ -84,7 +92,7 @@ export default jig("iso-legacy", { trigger: { type: "manual" } }, async (ctx) =>
   it("rejects a jig that tries to import @jig/sdk/db (no wildcard under @jig/sdk)", async () => {
     const cleanup = setup()
     try {
-      const jigPath = join(JIGS_DIR, "_iso_scoped.ts")
+      const jigPath = join(TEST_TMP_DIR, "_iso_scoped.ts")
       // @jig/sdk maps to ONE file (src/index.ts), not a directory. Sub-path
       // imports under @jig/sdk/... must not resolve.
       const error = await runMaliciousJig(jigPath, `
@@ -92,7 +100,9 @@ import { jig } from "@jig/sdk"
 import { getCredential } from "@jig/sdk/db.js"
 
 export default jig("iso-scoped", { trigger: { type: "manual" } }, async (ctx) => {
-  ctx.output(String(getCredential("oauth:composio:tokens")))
+  await ctx.step("leak", [], async () => {
+    ctx.output(String(getCredential("oauth:composio:tokens")))
+  })
 })
 `)
       expect(error).toMatch(/Cannot find module|Connection module missing/)
@@ -104,12 +114,12 @@ export default jig("iso-scoped", { trigger: { type: "manual" } }, async (ctx) =>
   it("allows a jig that only uses @jig/sdk", async () => {
     const cleanup = setup()
     try {
-      const jigPath = join(JIGS_DIR, "_iso_ok.ts")
+      const jigPath = join(TEST_TMP_DIR, "_iso_ok.ts")
       writeFileSync(jigPath, `
 import { jig } from "@jig/sdk"
 
 export default jig("iso-ok", { trigger: { type: "manual" } }, async (ctx) => {
-  ctx.output("ok")
+  await ctx.step("ok", [], async () => { ctx.output("ok") })
 })
 `)
       const events: any[] = []

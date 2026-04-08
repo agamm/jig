@@ -65,6 +65,43 @@ describe("ctx.step block-scoped", () => {
     expect(ctx.currentStepToolNames).toEqual([])
     expect(ctx.currentStepLabel).toBeNull()
   })
+
+  it("allows two sequential ctx.step calls at the top level", async () => {
+    const ctx = new Context({}, [])
+    const labels: string[] = []
+    await ctx.step("First", [], async () => { labels.push(ctx.currentStepLabel!) })
+    await ctx.step("Second", [], async () => { labels.push(ctx.currentStepLabel!) })
+    expect(labels).toEqual(["First", "Second"])
+    expect(ctx.currentStepLabel).toBeNull()
+  })
+
+  it("throws when ctx.step is nested inside another ctx.step", async () => {
+    const ctx = new Context({}, [])
+    let innerRan = false
+    let thrown: Error | null = null
+    try {
+      await ctx.step("Outer", [], async () => {
+        await ctx.step("Inner", [], async () => { innerRan = true })
+      })
+    } catch (e: any) {
+      thrown = e
+    }
+    expect(innerRan).toBe(false)
+    expect(thrown).toBeInstanceOf(Error)
+    expect(thrown!.message).toMatch(/nested/i)
+    expect(thrown!.message).toContain("Outer")
+    expect(thrown!.message).toContain("Inner")
+  })
+
+  it("allows another ctx.step after the previous one threw", async () => {
+    const ctx = new Context({}, [])
+    try {
+      await ctx.step("Fail", [], async () => { throw new Error("boom") })
+    } catch {}
+    let secondRan = false
+    await ctx.step("Recovery", [], async () => { secondRan = true })
+    expect(secondRan).toBe(true)
+  })
 })
 
 describe("tool enforcement", () => {

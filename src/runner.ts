@@ -11,6 +11,7 @@ import { SkipError } from "./sdk/context.js"
 import type { RunEvent } from "./run-events.js"
 import { insertStep, completeStep, completeRun } from "./db.js"
 import { dryRunContext } from "./sdk/dryrun.js"
+import { checkStepStructure } from "./services/jig-checker.js"
 
 // --- Debug log (async, queued) ---
 const LOG_PATH = join(import.meta.dir, "../jig_debug.log")
@@ -114,6 +115,8 @@ async function _runJig(
         problems.push('Jig uses relative imports (../) — use "@jig/sdk" and "@jig/connections/" aliases instead.')
       if (!/export\s+default/.test(stripped))
         problems.push('Jig must have an export default — add "export default <jigName>".')
+      // AST-based step structure check (nested steps + zero steps)
+      problems.push(...checkStepStructure(source, jigPath))
 
       if (problems.length > 0) {
         const error = `Jig validation failed:\n${problems.map(p => `  • ${p}`).join("\n")}`

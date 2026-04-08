@@ -127,7 +127,7 @@ export default jig("test-params", {
   connections: [],
   params: { name: "Your name" },
 }, async (ctx) => {
-  ctx.output(ctx.params.name)
+  await ctx.step("print", [], async () => { ctx.output(ctx.params.name) })
 })
 `)
     const events: RunEvent[] = []
@@ -147,7 +147,7 @@ export default jig("test-params-ok", {
   connections: [],
   params: { name: "Your name" },
 }, async (ctx) => {
-  ctx.output("Hello " + ctx.params.name)
+  await ctx.step("greet", [], async () => { ctx.output("Hello " + ctx.params.name) })
 })
 `)
     const events: RunEvent[] = []

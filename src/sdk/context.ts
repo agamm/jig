@@ -81,9 +81,13 @@ export class Context {
 
   /** Block-scoped step: sets allowed tools, runs fn, clears tools on exit. */
   async step<T>(label: string, tools: JigTool[], fn: () => Promise<T>): Promise<T> {
-    // Finish previous step if one was active.
-    if (this._stepSeq > 0 && !this._stepFinalized) {
-      this.finalize()
+    // Reject nested steps — they hide structure from the dashboard and break tool scoping.
+    if (this._currentStepLabel !== null) {
+      throw new Error(
+        `ctx.step("${label}") called inside step "${this._currentStepLabel}". `
+        + `Steps must be sequential at the top level of the handler — never nested. `
+        + `Move this step out of the surrounding step's callback.`
+      )
     }
     this._stepSeq++
     this._stepFinalized = false

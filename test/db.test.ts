@@ -17,12 +17,12 @@ afterEach(() => {
 
 describe("runs", () => {
   it("inserts and retrieves a run", () => {
-    const runId = insertRun("weekly-update", { week: "2026-03-20" })
+    const runId = insertRun("test-jig", { week: "2026-03-20" })
     expect(runId).toBeGreaterThan(0)
 
     const run = getRun(runId)
     expect(run).not.toBeNull()
-    expect(run!.jig_id).toBe("weekly-update")
+    expect(run!.jig_id).toBe("test-jig")
     expect(run!.entity).toBeNull()
     expect(run!.status).toBe("running")
     expect(run!.params).toBe('{"week":"2026-03-20"}')
@@ -49,11 +49,11 @@ describe("runs", () => {
   })
 
   it("lists runs by jig_id", () => {
-    insertRun("weekly-update")
-    insertRun("weekly-update")
+    insertRun("test-jig")
+    insertRun("test-jig")
     insertRun("invoice")
 
-    const weeklyRuns = listRuns("weekly-update")
+    const weeklyRuns = listRuns("test-jig")
     expect(weeklyRuns).toHaveLength(2)
 
     const allRuns = listRuns()
@@ -61,27 +61,27 @@ describe("runs", () => {
   })
 
   it("lists runs with limit", () => {
-    for (let i = 0; i < 5; i++) insertRun("weekly-update")
-    const runs = listRuns("weekly-update", 3)
+    for (let i = 0; i < 5; i++) insertRun("test-jig")
+    const runs = listRuns("test-jig", 3)
     expect(runs).toHaveLength(3)
   })
 
   it("gets jig runs", () => {
-    insertRun("weekly-update")
-    insertRun("weekly-update")
-    insertRun("weekly-update")
+    insertRun("test-jig")
+    insertRun("test-jig")
+    insertRun("test-jig")
 
-    const runs = getJigRuns("weekly-update")
+    const runs = getJigRuns("test-jig")
     expect(runs).toHaveLength(3)
   })
 
   it("gets last run", () => {
-    const r1 = insertRun("weekly-update")
+    const r1 = insertRun("test-jig")
     completeRun(r1, "fail", 1000)
-    const r2 = insertRun("weekly-update")
+    const r2 = insertRun("test-jig")
     completeRun(r2, "success", 2000)
 
-    const last = getLastRun("weekly-update")
+    const last = getLastRun("test-jig")
     expect(last).not.toBeNull()
     expect(last!.id).toBe(r2)
     expect(last!.status).toBe("success")
@@ -95,7 +95,7 @@ describe("runs", () => {
 
 describe("steps", () => {
   it("inserts and retrieves steps with a run", () => {
-    const runId = insertRun("weekly-update")
+    const runId = insertRun("test-jig")
     const s1 = insertStep(runId, 1, "Search emails")
     const s2 = insertStep(runId, 2, "Draft update")
 
@@ -133,11 +133,11 @@ describe("steps", () => {
 
 describe("getJigRuns includes steps", () => {
   it("returns runs with their steps", () => {
-    const runId = insertRun("weekly-update")
+    const runId = insertRun("test-jig")
     insertStep(runId, 1, "Gather data")
     insertStep(runId, 2, "Write email")
 
-    const runs = getJigRuns("weekly-update")
+    const runs = getJigRuns("test-jig")
     expect(runs).toHaveLength(1)
     expect(runs[0].steps).toHaveLength(2)
   })
@@ -145,7 +145,7 @@ describe("getJigRuns includes steps", () => {
 
 describe("step connections", () => {
   it("persists connections on steps", () => {
-    const runId = insertRun("weekly-update")
+    const runId = insertRun("test-jig")
     const stepId = insertStep(runId, 1, "Gather data")
     completeStep(stepId, "Done", "success", 1000, ["granola", "workspace", "github"])
 

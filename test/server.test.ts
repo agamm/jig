@@ -1,9 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test"
-import { existsSync, writeFileSync, mkdirSync, rmSync, readFileSync } from "fs"
+import { existsSync, writeFileSync, mkdirSync, rmSync, readFileSync, mkdtempSync } from "fs"
+import { tmpdir } from "os"
 import { join } from "path"
 import type { RunEvent } from "../src/run-events.js"
 
 const PROJECT_ROOT = join(import.meta.dir, "..")
+
+// Tests write ephemeral jig files into an OS temp dir — never the project's jigs/.
+const TEST_TMP_DIR = mkdtempSync(join(tmpdir(), "jig-runner-test-"))
 
 describe("runner", () => {
   it("emits error for jig without default export", async () => {
@@ -11,7 +15,7 @@ describe("runner", () => {
     const { openDb } = await import("../src/db.js")
     openDb(":memory:")
 
-    const testJig = join(PROJECT_ROOT, "jigs/_test_no_default.ts")
+    const testJig = join(TEST_TMP_DIR, "no-default.ts")
     writeFileSync(testJig, 'export const foo = "bar"')
     try {
       const events: RunEvent[] = []
@@ -25,8 +29,8 @@ describe("runner", () => {
 
   it("rejects jig with top-level run() call", async () => {
     const { runJig } = await import("../src/runner.js")
-    const testJig = join(PROJECT_ROOT, "jigs/_test_bad_run.ts")
-    writeFileSync(testJig, 'import { jig, run } from "../src/index.js"\nconst j = jig("x", { trigger: { type: "manual" } }, async () => {})\nawait run(j)\nprocess.exit(0)')
+    const testJig = join(TEST_TMP_DIR, "bad-run.ts")
+    writeFileSync(testJig, `import { jig, run } from "${PROJECT_ROOT}/src/index.js"\nconst j = jig("x", { trigger: { type: "manual" } }, async () => {})\nawait run(j)\nprocess.exit(0)`)
     try {
       const events: RunEvent[] = []
       const result = await runJig(testJig, {}, (e) => events.push(e), { dryRun: true, silent: true })
@@ -38,8 +42,8 @@ describe("runner", () => {
 
   it("rejects jig with console.log", async () => {
     const { runJig } = await import("../src/runner.js")
-    const testJig = join(PROJECT_ROOT, "jigs/_test_bad_console.ts")
-    writeFileSync(testJig, 'import { jig } from "../src/index.js"\nexport default jig("x", { trigger: { type: "manual" } }, async (ctx) => { console.log("bad") })')
+    const testJig = join(TEST_TMP_DIR, "bad-console.ts")
+    writeFileSync(testJig, `import { jig } from "${PROJECT_ROOT}/src/index.js"\nexport default jig("x", { trigger: { type: "manual" } }, async (ctx) => { console.log("bad") })`)
     try {
       const events: RunEvent[] = []
       const result = await runJig(testJig, {}, (e) => events.push(e), { dryRun: true, silent: true })

@@ -5,10 +5,8 @@ import { cronToText } from "./triggers.js"
 import { isValidJigId } from "./jig-id.js"
 
 export interface TriggerConfig {
-  type: "cron" | "interval" | "event" | "manual" | "webhook"
+  type: "cron" | "manual" | "webhook"
   cron?: string
-  minutes?: number
-  source?: string
   missedStrategy?: "catch-up" | "skip"
 }
 
@@ -82,26 +80,7 @@ export function extractTriggerConfig(code: string): TriggerParseResult {
     return { trigger: { type: "cron", cron: cronMatch[1], missedStrategy } }
   }
 
-  if (type === "interval") {
-    const minutesMatch = objectText.match(/minutes\s*:\s*(\d+)/)
-    if (!minutesMatch) {
-      return { trigger: null, error: "Interval trigger must use a literal minutes value" }
-    }
-    return {
-      trigger: { type: "interval", minutes: parseInt(minutesMatch[1]), missedStrategy },
-    }
-  }
-
-  if (type === "event") {
-    const sourceMatch = objectText.match(/source\s*:\s*["'`]([^"'`]+)["'`]/)
-    return {
-      trigger: sourceMatch
-        ? { type: "event", source: sourceMatch[1], missedStrategy }
-        : { type: "event", missedStrategy },
-    }
-  }
-
-  return { trigger: null, error: `Unsupported trigger type: ${type}` }
+  return { trigger: null, error: `Unsupported trigger type: ${type}. Expected: cron, manual, webhook` }
 }
 
 export function prettifyId(id: string): string {
@@ -128,12 +107,6 @@ export function extractTrigger(code: string): string {
   const type = trigger.type
   if (type === "cron") {
     return trigger.cron ? cronToText(trigger.cron) : "Scheduled"
-  }
-  if (type === "interval") {
-    return typeof trigger.minutes === "number" ? `Every ${trigger.minutes}m` : "Interval"
-  }
-  if (type === "event") {
-    return trigger.source ? `On ${trigger.source}` : "Event"
   }
   if (type === "manual") return "Manual"
   if (type === "webhook") return "Webhook"

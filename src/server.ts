@@ -80,8 +80,8 @@ async function handleUpdateTrigger(id: string, body: any): Promise<Response> {
 
   const trigger = textToTrigger(triggerText) ?? await textToTriggerLLM(triggerText)
   if (!trigger) throw new ApiError(400, `Could not parse trigger: "${triggerText}"`)
-  if (trigger.type === "interval" && typeof trigger.minutes === "number" && trigger.minutes > 59) {
-    throw new ApiError(400, "Interval triggers above 59 minutes are not supported by the built-in scheduler. Use cron for multi-hour schedules.")
+  if (trigger.type !== "cron" && trigger.type !== "manual" && trigger.type !== "webhook") {
+    throw new ApiError(400, `Unsupported trigger type: "${trigger.type}". Expected cron, manual, or webhook.`)
   }
 
   let code: string
@@ -101,8 +101,6 @@ async function handleUpdateTrigger(id: string, body: any): Promise<Response> {
   }
 
   const newTriggerText = trigger.type === "cron" && trigger.cron ? cronToText(trigger.cron)
-    : trigger.type === "interval" && trigger.minutes ? `Every ${trigger.minutes}m`
-    : trigger.type === "event" && trigger.source ? `On ${trigger.source}`
     : trigger.type === "manual" ? "Manual"
     : trigger.type === "webhook" ? "Webhook"
     : triggerText

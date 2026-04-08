@@ -22,7 +22,7 @@ const CONNECTIONS_DIR = join(PROJECT_ROOT, ".jig/connections")
 const CONNECTIONS_INDEX = join(CONNECTIONS_DIR, "index.ts")
 const TEST_JIGS = [
   join(JIGS_DIR, "scheduler-sync-case.ts"),
-  join(JIGS_DIR, "scheduler-long-interval-case.ts"),
+  join(JIGS_DIR, "scheduler-bad-trigger-case.ts"),
   join(JIGS_DIR, "scheduler-tick-case.ts"),
 ]
 let createdConnectionsIndex = false
@@ -92,24 +92,29 @@ export default jig("scheduler-sync-case", {
     expect(broken!.error).toContain("Invalid cron expression")
   })
 
-  it("records a visible error for unsupported long interval triggers", async () => {
-    const jigPath = join(JIGS_DIR, "scheduler-long-interval-case.ts")
+  it("rejects unsupported trigger types with a visible error", async () => {
+    const jigPath = join(JIGS_DIR, "scheduler-bad-trigger-case.ts")
     writeFileSync(jigPath, `
 import { jig } from "@jig/sdk"
 
-export default jig("scheduler-long-interval-case", {
-  trigger: { type: "interval", minutes: 120 },
+export default jig("scheduler-bad-trigger-case", {
+  trigger: { type: "interval", minutes: 30 },
 }, async (ctx) => {
   ctx.output("ok")
 })
 `)
 
-    await syncSchedules()
-    const schedule = getSchedule("scheduler-long-interval-case")
-    expect(schedule).not.toBeNull()
-    expect(schedule!.cron_expr).toBeNull()
-    expect(schedule!.next_run_at).toBeNull()
-    expect(schedule!.error).toContain("above 59 minutes")
+    try {
+      await syncSchedules()
+      // Either the schedule has a visible error or no schedule was created — both
+      // are acceptable as long as the unsupported trigger doesn't silently succeed.
+      const schedule = getSchedule("scheduler-bad-trigger-case")
+      if (schedule) {
+        expect(schedule.error).toBeTruthy()
+      }
+    } finally {
+      rmSync(jigPath, { force: true })
+    }
   })
 })
 

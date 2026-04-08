@@ -5,11 +5,10 @@
  * replaceTriggerInSource from server.ts.
  */
 import { describe, it, expect, afterEach } from "bun:test"
-import { writeFileSync, readFileSync, rmSync } from "fs"
+import { writeFileSync, readFileSync, rmSync, mkdtempSync } from "fs"
+import { tmpdir } from "os"
 import { join } from "path"
 import { cronToText, textToTrigger, triggerToSource, replaceTriggerInSource } from "../src/domain/triggers.js"
-
-const JIGS_DIR = join(import.meta.dir, "..", "jigs")
 
 // ---------------------------------------------------------------------------
 // cronToText
@@ -52,10 +51,10 @@ describe("textToTrigger", () => {
     expect(textToTrigger("webhook")).toEqual({ type: "webhook" })
   })
 
-  it("parses intervals", () => {
-    expect(textToTrigger("every 30m")).toEqual({ type: "interval", minutes: 30 })
-    expect(textToTrigger("every 5 minutes")).toEqual({ type: "interval", minutes: 5 })
-    expect(textToTrigger("every 15 min")).toEqual({ type: "interval", minutes: 15 })
+  it("parses intervals as cron expressions", () => {
+    expect(textToTrigger("every 30m")).toEqual({ type: "cron", cron: "*/30 * * * *" })
+    expect(textToTrigger("every 5 minutes")).toEqual({ type: "cron", cron: "*/5 * * * *" })
+    expect(textToTrigger("every 15 min")).toEqual({ type: "cron", cron: "*/15 * * * *" })
   })
 
   it("parses daily triggers", () => {
@@ -79,14 +78,10 @@ describe("textToTrigger", () => {
     expect(textToTrigger("15 of month 10:00")).toEqual({ type: "cron", cron: "0 10 15 * *" })
   })
 
-  it("parses event triggers", () => {
-    expect(textToTrigger("on gmail")).toEqual({ type: "event", source: "gmail" })
-    expect(textToTrigger("on new email")).toEqual({ type: "event", source: "new email" })
-  })
-
   it("returns null for unparseable text", () => {
     expect(textToTrigger("")).toBe(null)
     expect(textToTrigger("some random garbage")).toBe(null)
+    expect(textToTrigger("on gmail")).toBe(null) // event triggers no longer supported
   })
 
   it("handles time aliases", () => {
@@ -111,22 +106,13 @@ describe("triggerToSource", () => {
     expect(triggerToSource({ type: "cron", cron: "0 9 * * 1" })).toBe('{ type: "cron", cron: "0 9 * * 1" }')
   })
 
-  it("serializes interval", () => {
-    expect(triggerToSource({ type: "interval", minutes: 30 })).toBe("{ type: \"interval\", minutes: 30 }")
-  })
-
-  it("serializes event", () => {
-    expect(triggerToSource({ type: "event", source: "gmail" })).toBe('{ type: "event", source: "gmail" }')
-  })
-
-  it("serializes event with filter", () => {
-    expect(triggerToSource({ type: "event", source: "gmail", filter: "unread" }))
-      .toBe('{ type: "event", source: "gmail", filter: "unread" }')
-  })
-
   it("serializes manual and webhook", () => {
     expect(triggerToSource({ type: "manual" })).toBe('{ type: "manual" }')
     expect(triggerToSource({ type: "webhook" })).toBe('{ type: "webhook" }')
+  })
+
+  it("falls back to manual for unknown types", () => {
+    expect(triggerToSource({ type: "interval" } as any)).toBe('{ type: "manual" }')
   })
 })
 
@@ -155,14 +141,6 @@ export default jig("test", {
     expect(result).toContain('ctx.output("done")')
   })
 
-  it("replaces interval with cron", () => {
-    const code = makeCode('{ type: "interval", minutes: 30 }')
-    const result = replaceTriggerInSource(code, '{ type: "cron", cron: "0 8 * * *" }')
-
-    expect(result).toContain('cron: "0 8 * * *"')
-    expect(result).not.toContain("minutes: 30")
-  })
-
   it("replaces manual with cron", () => {
     const code = makeCode('{ type: "manual" }')
     const result = replaceTriggerInSource(code, '{ type: "cron", cron: "0 9 * * *" }')
@@ -182,7 +160,9 @@ export default jig("test", {
 // ---------------------------------------------------------------------------
 
 describe("trigger editing round-trip", () => {
-  const testJigPath = join(JIGS_DIR, "_test_trigger_rt.ts")
+  // Use a real OS temp dir — never write to project's jigs/
+  const tmpDir = mkdtempSync(join(tmpdir(), "jig-trigger-test-"))
+  const testJigPath = join(tmpDir, "_test_trigger_rt.ts")
   afterEach(() => { rmSync(testJigPath, { force: true }) })
 
   it("end-to-end: user types 'mon 8:00' → file gets cron trigger", () => {
@@ -217,10 +197,8 @@ export default jig("test", {
 
     for (let i = 0; i < inputs.length; i++) {
       const parsed = textToTrigger(inputs[i])!
-      const display = parsed.type === "cron" ? cronToText(parsed.cron!)
-        : parsed.type === "interval" ? `Every ${parsed.minutes}m`
-        : parsed.type
-      expect(display).toBe(expected[i])
+      expect(parsed.type).toBe("cron")
+      expect(cronToText(parsed.cron!)).toBe(expected[i])
     }
   })
 })

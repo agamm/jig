@@ -13,8 +13,6 @@ export type JigTool<TInput = unknown, TOutput = unknown> = {
 
 export type JigTrigger =
   | { type: "cron"; cron: string }          // e.g. "0 8 * * 1" = every monday 8am
-  | { type: "interval"; minutes: number }    // e.g. 30 = every 30 minutes
-  | { type: "event"; source: string; filter?: string }
   | { type: "manual" }
   | { type: "webhook" }
 

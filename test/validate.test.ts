@@ -35,22 +35,31 @@ describe("validateDefinitionObject", () => {
     expect(result.ok).toBe(true)
   })
 
-  it("accepts interval trigger", () => {
+  it("accepts webhook trigger", () => {
     const result = validateDefinitionObject({
-      name: "poll-jig",
-      options: { trigger: { type: "interval", minutes: 30 } },
+      name: "webhook-jig",
+      options: { trigger: { type: "webhook" } },
       handler: async () => {},
     })
     expect(result.ok).toBe(true)
   })
 
-  it("accepts event trigger", () => {
-    const result = validateDefinitionObject({
-      name: "event-jig",
-      options: { trigger: { type: "event", source: "gmail.newEmail", filter: "urgent" } },
+  it("rejects interval and event triggers (no longer supported)", () => {
+    const interval = validateDefinitionObject({
+      name: "poll-jig",
+      options: { trigger: { type: "interval", minutes: 30 } },
       handler: async () => {},
     })
-    expect(result.ok).toBe(true)
+    expect(interval.ok).toBe(false)
+    expect(interval.errors[0].message).toContain("Unknown trigger type")
+
+    const event = validateDefinitionObject({
+      name: "event-jig",
+      options: { trigger: { type: "event", source: "gmail.newEmail" } },
+      handler: async () => {},
+    })
+    expect(event.ok).toBe(false)
+    expect(event.errors[0].message).toContain("Unknown trigger type")
   })
 
   it("rejects invalid cron expression", () => {
@@ -70,25 +79,6 @@ describe("validateDefinitionObject", () => {
       handler: async () => {},
     })
     expect(result.ok).toBe(false)
-  })
-
-  it("rejects interval with non-positive minutes", () => {
-    const result = validateDefinitionObject({
-      name: "bad-interval",
-      options: { trigger: { type: "interval", minutes: 0 } },
-      handler: async () => {},
-    })
-    expect(result.ok).toBe(false)
-  })
-
-  it("rejects interval above 59 minutes", () => {
-    const result = validateDefinitionObject({
-      name: "too-long-interval",
-      options: { trigger: { type: "interval", minutes: 120 } },
-      handler: async () => {},
-    })
-    expect(result.ok).toBe(false)
-    expect(result.errors[0].message).toContain("above 59 minutes")
   })
 
   it("rejects unknown trigger type", () => {

@@ -3,8 +3,6 @@ import { TRIGGER_PARSE_MODEL } from "../config/models.js"
 type TriggerResult = {
   type: string
   cron?: string
-  minutes?: number
-  source?: string
   approximate?: boolean
   note?: string
 }
@@ -24,15 +22,19 @@ export function cronToText(cron: string): string {
   return cron
 }
 
-export function textToTrigger(text: string): { type: string; cron?: string; minutes?: number; source?: string } | null {
+export function textToTrigger(text: string): { type: string; cron?: string } | null {
   const t = text.trim()
   if (!t) return null
 
   if (/^manual$/i.test(t)) return { type: "manual" }
   if (/^webhook$/i.test(t)) return { type: "webhook" }
 
+  // "every N minutes" → cron */N expression
   const intervalMatch = t.match(/^every\s+(\d+)\s*m(?:in(?:ute)?s?)?$/i)
-  if (intervalMatch) return { type: "interval", minutes: parseInt(intervalMatch[1]) }
+  if (intervalMatch) {
+    const n = parseInt(intervalMatch[1])
+    if (n >= 1 && n <= 59) return { type: "cron", cron: `*/${n} * * * *` }
+  }
 
   const dayMap: Record<string, number> = { sun: 0, sunday: 0, mon: 1, monday: 1, tue: 2, tuesday: 2, wed: 3, wednesday: 3, thu: 4, thursday: 4, fri: 5, friday: 5, sat: 6, saturday: 6 }
   const timeAlias: Record<string, [number, number]> = {
@@ -75,9 +77,6 @@ export function textToTrigger(text: string): { type: string; cron?: string; minu
     if (time) return { type: "cron", cron: `${time[1]} ${time[0]} ${monthMatch[1]} * *` }
   }
 
-  const eventMatch = t.match(/^on\s+(.+)$/i)
-  if (eventMatch) return { type: "event", source: eventMatch[1].trim() }
-
   return null
 }
 
@@ -96,17 +95,15 @@ export async function textToTriggerLLM(text: string): Promise<TriggerResult | nu
 
 Possible formats:
 - { "type": "cron", "cron": "<5-field cron expression>" }
-- { "type": "interval", "minutes": <number> }
 - { "type": "manual" }
 - { "type": "webhook" }
-- { "type": "event", "source": "<source name>" }
 
 If the request CANNOT be exactly represented in standard 5-field cron (e.g. "odd weeks", "every 3rd Tuesday", "random times"), return the closest approximation AND set "approximate": true with a "note" explaining what was lost.
 
 Examples:
 "every friday at 9am" → { "type": "cron", "cron": "0 9 * * 5" }
 "twice a day" → { "type": "cron", "cron": "0 9,17 * * *" }
-"every 30 minutes" → { "type": "interval", "minutes": 30 }
+"every 30 minutes" → { "type": "cron", "cron": "*/30 * * * *" }
 "odd week tuesdays at 9am" → { "type": "cron", "cron": "0 9 * * 2", "approximate": true, "note": "Cron cannot express odd/even weeks — this will run every Tuesday" }` },
           { role: "user", content: text },
         ],
@@ -123,13 +120,9 @@ Examples:
   }
 }
 
-export function triggerToSource(trigger: { type: string; cron?: string; minutes?: number; source?: string; filter?: string }): string {
+export function triggerToSource(trigger: { type: string; cron?: string }): string {
   switch (trigger.type) {
     case "cron": return `{ type: "cron", cron: ${JSON.stringify(trigger.cron)} }`
-    case "interval": return `{ type: "interval", minutes: ${trigger.minutes} }`
-    case "event": return trigger.filter
-      ? `{ type: "event", source: ${JSON.stringify(trigger.source)}, filter: ${JSON.stringify(trigger.filter)} }`
-      : `{ type: "event", source: ${JSON.stringify(trigger.source)} }`
     case "manual": return `{ type: "manual" }`
     case "webhook": return `{ type: "webhook" }`
     default: return `{ type: "manual" }`

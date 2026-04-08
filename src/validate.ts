@@ -49,26 +49,11 @@ function validateTrigger(trigger: unknown): ValidationError[] {
         errors.push({ field: "trigger.cron", message: `Invalid cron expression: "${t.cron}". Expected 5 fields: minute hour day month weekday` })
       }
       break
-    case "interval":
-      if (typeof t.minutes !== "number" || t.minutes <= 0) {
-        errors.push({ field: "trigger.minutes", message: "Interval trigger requires a positive 'minutes' number" })
-      } else if (t.minutes > 59) {
-        errors.push({
-          field: "trigger.minutes",
-          message: "Interval triggers above 59 minutes are not supported by the built-in scheduler. Use cron for multi-hour schedules.",
-        })
-      }
-      break
-    case "event":
-      if (typeof t.source !== "string" || !t.source) {
-        errors.push({ field: "trigger.source", message: "Event trigger requires a 'source' string" })
-      }
-      break
     case "manual":
     case "webhook":
       break // no additional fields required
     default:
-      errors.push({ field: "trigger.type", message: `Unknown trigger type: "${t.type}". Expected: cron, interval, event, manual, webhook` })
+      errors.push({ field: "trigger.type", message: `Unknown trigger type: "${t.type}". Expected: cron, manual, webhook` })
   }
   return errors
 }

@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import type { RunStep, RunStepsMode } from "@/components/run-steps";
-import { cancelActiveRun, fetchActiveRunForJig, fetchRunStatus, startJigRun } from "@/lib/api";
+import { cancelActiveRun, fetchRunStatus, startJigRun } from "@/lib/api";
+import { useDetectActiveRun } from "@/lib/swr";
 import type { RunDetail, RunStatus } from "@shared/api";
 
 function formatDuration(ms: number): string {
@@ -34,12 +35,14 @@ export function useJigRun(jigId: string) {
   const abortRef = useRef<AbortController | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const runIdRef = useRef<number | null>(null);
+  const [attached, setAttached] = useState(false);
 
   const cleanup = useCallback(() => {
     abortRef.current?.abort();
     if (timerRef.current) clearInterval(timerRef.current);
     timerRef.current = null;
     runIdRef.current = null;
+    setAttached(false);
   }, []);
 
   useEffect(() => cleanup, [cleanup]);
@@ -53,7 +56,8 @@ export function useJigRun(jigId: string) {
     }, 1000);
 
     for (let i = 0; i < 300 && !abort.signal.aborted; i++) {
-      await new Promise(r => setTimeout(r, 1000));
+      // First iteration: fetch immediately (no delay) so we show state on attach
+      if (i > 0) await new Promise(r => setTimeout(r, 1000));
       if (abort.signal.aborted) return;
 
       try {
@@ -95,24 +99,25 @@ export function useJigRun(jigId: string) {
     }
   }, []);
 
-  // Check for in-progress run on mount (survives page refresh)
+  // SWR polls for any active run (initial, webhook-triggered, cron-triggered).
+  // Once we attach our own poll loop, SWR pauses to avoid double-polling.
+  const { data: activeRunData } = useDetectActiveRun(jigId, { paused: attached });
   useEffect(() => {
-    (async () => {
-      try {
-        const data: RunStatus = await fetchActiveRunForJig(jigId);
-        if (data.active && data.runId) {
-          const abort = new AbortController();
-          abortRef.current = abort;
-          runIdRef.current = data.runId;
-          setMode({ type: "running", elapsed: 0, dryRun: data.dryRun === true });
-          setCompletedTools(data.completedTools ?? []);
-          setActiveTools(data.activeTools ?? []);
-          if (data.readOnly) setToolReadOnly(data.readOnly);
-          await pollUntilDone(data.runId, abort, Date.now(), data.dryRun === true);
-        }
-      } catch {}
-    })();
-  }, [jigId, pollUntilDone]);
+    if (!activeRunData?.active || !activeRunData.runId) return;
+    // Already tracking this or another run — skip
+    if (runIdRef.current !== null) return;
+
+    const abort = new AbortController();
+    abortRef.current = abort;
+    runIdRef.current = activeRunData.runId;
+    setAttached(true);
+    setMode({ type: "running", elapsed: 0, dryRun: activeRunData.dryRun === true });
+    setCompletedTools(activeRunData.completedTools ?? []);
+    setActiveTools(activeRunData.activeTools ?? []);
+    if (activeRunData.readOnly) setToolReadOnly(activeRunData.readOnly);
+    // Let pollUntilDone fetch the full RunDetail (with step timing) on its first tick
+    pollUntilDone(activeRunData.runId, abort, Date.now(), activeRunData.dryRun === true);
+  }, [activeRunData, pollUntilDone]);
 
   const startRun = useCallback(async (dryRun: boolean, params?: Record<string, string>) => {
     cleanup();
@@ -129,6 +134,7 @@ export function useJigRun(jigId: string) {
     try {
       const data = await startJigRun(jigId, { dryRun, params });
       runIdRef.current = data.runId;
+      setAttached(true);
       await pollUntilDone(data.runId, abort, startTime, dryRun);
     } catch (e: any) {
       if (abort.signal.aborted) return;

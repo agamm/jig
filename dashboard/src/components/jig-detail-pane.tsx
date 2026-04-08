@@ -106,8 +106,152 @@ function ScheduleSection({ schedule, jigId, onRefresh }: { schedule: ScheduleInf
             </div>
           )}
         </div>
+        {schedule.triggerType === "webhook" && schedule.webhookUrl && (
+          <WebhookUrlRow url={schedule.webhookUrl} />
+        )}
       </div>
     </PaneSection>
+  );
+}
+
+function WebhookUrlRow({ url }: { url: string }) {
+  const [copyMenuOpen, setCopyMenuOpen] = useState(false);
+  const [copied, setCopied] = useState<"url" | "curl" | null>(null);
+  const [testOpen, setTestOpen] = useState(false);
+  const [testBody, setTestBody] = useState(
+    '{\n  "message": {\n    "text": "hello from test",\n    "chat": { "id": "12345" },\n    "from": { "first_name": "Test" }\n  }\n}'
+  );
+  const [testing, setTesting] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!copyMenuOpen) return;
+    function onClick(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setCopyMenuOpen(false);
+    }
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [copyMenuOpen]);
+
+  function buildCurl(): string {
+    const safeBody = testBody.trim() || "{}";
+    // Single-quoted heredoc-free curl, portable across shells
+    return `curl -X POST '${url}' \\\n  -H 'Content-Type: application/json' \\\n  -d '${safeBody.replace(/'/g, "'\\''")}'`;
+  }
+
+  async function copyTo(kind: "url" | "curl") {
+    try {
+      const text = kind === "url" ? url : buildCurl();
+      await navigator.clipboard.writeText(text);
+      setCopied(kind);
+      setCopyMenuOpen(false);
+      setTimeout(() => setCopied(null), 1500);
+    } catch {
+      toast.error("Failed to copy");
+    }
+  }
+
+  async function sendTest() {
+    let parsed: any;
+    try {
+      parsed = JSON.parse(testBody || "{}");
+    } catch (e: any) {
+      toast.error(`Invalid JSON: ${e?.message ?? "parse error"}`);
+      return;
+    }
+    setTesting(true);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(parsed),
+      });
+      if (res.ok) {
+        toast.success(`POST ${res.status} — jig triggered`);
+      } else {
+        const text = await res.text().catch(() => "");
+        toast.error(`POST ${res.status}: ${text || res.statusText}`);
+      }
+    } catch (e: any) {
+      toast.error(`Request failed: ${e?.message ?? e}`);
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  return (
+    <div className="border-t border-[#1f1f23] px-3 py-2">
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <span className="text-[9px] text-[#444] uppercase tracking-wider">Webhook URL</span>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setTestOpen((o) => !o)}
+            className="text-[9px] text-[#666] hover:text-emerald-400 transition-colors"
+            type="button"
+          >
+            {testOpen ? "hide test" : "test"}
+          </button>
+          <div className="relative" ref={menuRef}>
+            <button
+              onClick={() => setCopyMenuOpen((o) => !o)}
+              className="text-[9px] text-[#666] hover:text-emerald-400 transition-colors"
+              type="button"
+            >
+              {copied ? `copied ${copied}` : "copy ▾"}
+            </button>
+            {copyMenuOpen && (
+              <div className="absolute right-0 top-full mt-1 z-10 min-w-[120px] rounded-md border border-[#2a2a2e] bg-[#141416] shadow-lg">
+                <button
+                  onClick={() => copyTo("url")}
+                  className="block w-full text-left px-3 py-1.5 text-[10px] text-[#ccc] hover:bg-[#1a1a1d] transition-colors"
+                  type="button"
+                >
+                  Copy URL
+                </button>
+                <button
+                  onClick={() => copyTo("curl")}
+                  className="block w-full text-left px-3 py-1.5 text-[10px] text-[#ccc] hover:bg-[#1a1a1d] transition-colors border-t border-[#2a2a2e]"
+                  type="button"
+                >
+                  Copy as curl
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+      <code
+        className="block text-[9px] font-mono text-[#888] break-all cursor-pointer hover:text-[#ccc]"
+        onClick={() => copyTo("url")}
+        title="Click to copy"
+      >
+        {url}
+      </code>
+      {testOpen && (
+        <div className="mt-2 space-y-1.5">
+          <label className="block text-[9px] text-[#444] uppercase tracking-wider">Test POST body (JSON)</label>
+          <textarea
+            value={testBody}
+            onChange={(e) => setTestBody(e.target.value)}
+            className="w-full h-32 rounded border border-[#2a2a2e] bg-[#0e0e10] px-2 py-1.5 text-[10px] font-mono text-[#ccc] outline-none focus:border-[#3a3a3e] resize-y"
+            spellCheck={false}
+          />
+          <div className="flex items-center justify-end gap-2">
+            <button
+              onClick={sendTest}
+              disabled={testing}
+              className="rounded bg-emerald-500/10 border border-emerald-500/30 px-2 py-1 text-[10px] text-emerald-300 hover:bg-emerald-500/20 transition-colors disabled:opacity-50"
+              type="button"
+            >
+              {testing ? "Sending…" : "Send POST"}
+            </button>
+          </div>
+        </div>
+      )}
+      <p className="text-[9px] text-[#444] mt-1">
+        POST to this URL to trigger the jig. Include <code className="text-[#666]">?token=...</code>.
+      </p>
+    </div>
   );
 }
 
@@ -160,7 +304,10 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
       // Merge humanized names from derivedSteps into liveSteps by step number
       return liveSteps.map(live => {
         const derived = derivedSteps.find(d => d.num === live.num);
-        return derived && derived.name.length <= 60 ? { ...live, name: derived.name } : live;
+        if (!derived) return live;
+        const merged: RunStep = { ...live, tools: derived.tools ?? live.tools };
+        if (derived.name.length <= 60) merged.name = derived.name;
+        return merged;
       });
     }
     return derivedSteps;

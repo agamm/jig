@@ -183,7 +183,9 @@ export function RunSteps({
                             className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-[#2a2a2e] bg-[#1a1a1d] px-1.5 py-0.5 transition-colors hover:border-[#3a3a3e] hover:bg-[#202024]"
                           >
                             <ServiceIcon name={connection} size={11} />
-                            <span className="text-[9px] text-[#888] font-mono">{connection}</span>
+                            <span className="text-[9px] text-[#888] font-mono max-w-[220px] truncate">
+                              {tools.length === 1 ? `${connection}.${tools[0].name}` : connection}
+                            </span>
                             {tools.length > 1 && (
                               <span className="rounded-full bg-[#222327] px-1 py-[1px] text-[8px] text-[#666]">
                                 {tools.length}

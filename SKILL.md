@@ -120,6 +120,103 @@ import { github } from "@jig/connections/github.js"
 
 ---
 
+## Jig Writing Rules (must follow)
+
+These rules are enforced by the runner and the static validator. Violations
+cause the jig to refuse to run with a clear error.
+
+### 1. Maximize determinism (most important)
+Prefer direct tool calls > `llm()` > `agent()`:
+- Direct call when you know the tool + params at write time
+- `llm()` for synthesis, writing, or classification from known data
+- `agent()` only when the sequence of tool calls requires runtime judgment
+- Default to breaking large workflows into deterministic steps instead of one giant `agent()`
+
+### 2. Structure with `ctx.step()` blocks (REQUIRED, enforced)
+
+**Every jig MUST wrap its work in at least one `ctx.step()` block.** Tool calls
+outside a step throw at runtime. Jigs with zero steps are rejected by the
+validator.
+
+`ctx.step()` is purely a labeled scope. **Do NOT assign its return value** —
+pass data between steps using `let` variables in the outer handler scope.
+
+```typescript
+let events: any[] = []
+await ctx.step("Get calendar events", [calendar_listEvents], async () => {
+  events = await calendar_listEvents({...})
+  ctx.output(`Found ${events.length} events`)
+})
+await ctx.step("Send Telegram", [telegram_send_message], async () => {
+  await telegram_send_message({ chat_id: CHAT_ID, text: format(events) })
+})
+```
+
+Rules:
+- Wrap every logical group of tool calls in a `ctx.step()` block
+- Each step declares exactly which tools it uses — only those tools work inside the block
+- **Steps MUST be flat — never nest `ctx.step()` inside another `ctx.step()` callback. The runtime AND the static validator throw if you do.**
+- Conditional early-return is fine, but the early-return path must NOT contain another `ctx.step()` — finish the current step, then branch in the outer handler.
+- `agent()` and `llm()` calls are always allowed inside any step — they don't need to be in the tools array
+- Step labels MUST be static strings — never use template literals with runtime variables. Good: `"Research meeting context"`. Bad: `` `Research: ${eventSummary}` ``
+- ALL `ctx.output()` calls must be inside `ctx.step()` blocks — output is tied to the step it belongs to
+- Use `ctx.output()` inside steps to show progress
+
+### 3. Keep params minimal
+- Only add `params` when the user's description implies configurability
+- If the request already specifies the value, hardcode it
+- If the jig works without user input, omit `params` entirely
+- Do NOT invent placeholder params for values that are already implied by the request
+
+### 4. Hardcode constants, don't discover them at runtime
+- If the jig needs a value that is constant across runs (the user's email, name, team, Slack channel, timezone, recipient list, etc.), prefer hardcoding it over discovering it at runtime
+- If you don't know a constant, ask the user before writing code. Keep the question short: "What email should I send the briefing to?" Then hardcode their answer.
+- Only use `params` for values that genuinely change between runs
+
+### 5. Use the right tools
+The available tools and probe results show what's available. Use multiple relevant tools when they materially improve the result.
+
+### 6. Preserve the existing toolset when editing
+- If you are editing an existing jig, do NOT add or remove tools unless the user explicitly asked for tool changes
+- Small logic, wording, output, or scheduling edits should usually keep the existing tools unchanged
+- Only change the toolset when the current tools are insufficient or invalid for the requested behavior
+
+### 7. Pick the right trigger (ASK if unclear)
+
+Every jig has exactly one `trigger` field. The three types:
+
+- `{ type: "manual" }` — user runs it from the CLI or dashboard button. No schedule, no external input. Use for one-off tasks, interactive workflows, or jigs triggered only by a human click.
+- `{ type: "cron", cron: "0 8 * * 1" }` — runs on a schedule (5-field cron: min hour day-of-month month day-of-week). Examples: `"0 8 * * 1"` = Mon 8am, `"*/15 * * * *"` = every 15 min, `"0 9 * * 1-5"` = weekdays 9am. Use for digests, reminders, periodic sync, reports.
+- `{ type: "webhook" }` — runs when an external service POSTs to `/api/webhooks/{jigId}?token=...`. The POST body becomes `ctx.params` (nested JSON). Use for incoming messages from Telegram, Slack events, GitHub webhooks, email inbound parse, etc.
+
+**Webhook body is nested JSON.** Telegram sends `{ update_id, message: { text, chat: { id }, from: {...} } }`. Access via:
+```typescript
+const msg = ctx.params.message as any
+const text = msg?.text ?? ""
+const chatId = String(msg?.chat?.id ?? "")
+```
+Always cast to `any` for nested webhook shapes; jigs don't get typed payloads.
+
+**If the user's description doesn't make the trigger obvious, STOP and ask.** Do not default to `"manual"` silently — that's usually wrong. Good clarifying questions:
+- "Should this run on a schedule (e.g. every morning at 8am) or only when you click Run?"
+- "Is this triggered by an incoming Telegram message, or on a fixed schedule?"
+- "Should this fire every time a webhook comes in, or just once manually?"
+
+### 8. Code format
+- Output ONLY TypeScript code. No explanation, no markdown fences.
+- Import SDK: `import { jig, llm, agent } from "@jig/sdk"`
+- Import connections: `import { serverName } from "@jig/connections/serverName.js"`
+- Use exact param names and types from the type definitions and schemas
+- Use `ctx.output()` inside `ctx.step()` blocks for output, NEVER `console.log()`
+- ALL tool calls MUST be inside `ctx.step()` blocks — tools called outside a step throw at runtime
+- End the file with: `export default myJig`
+- Do NOT call `run()` or `process.exit()`
+- Do NOT use `require()` or CommonJS imports
+- Do NOT use relative imports (`../`) — always use the `"@jig/sdk"` and `"@jig/connections/"` aliases
+- Do NOT add markdown fences around the code
+
+---
+
 ## The Core Principle
 
 **Compile what you can.** A jig should be as deterministic as possible.

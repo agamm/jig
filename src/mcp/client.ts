@@ -182,10 +182,18 @@ export async function discoverTools(connection: McpConnection): Promise<Tool[]> 
   return allTools
 }
 
+export interface NotificationHint {
+  label: string          // "Telegram", "Gmail"
+  textField: string      // inputSchema property holding the message body
+  recipientField: string // inputSchema property holding the recipient/destination
+  extraRequired: string[] // other required fields the user must configure
+}
+
 /**
- * Ensures every tool has readOnlyHint and destructiveHint annotations.
- * Uses LLM to infer missing ones and verify existing ones.
- * Called once during `jig connect`, not on subsequent runtime connections.
+ * Ensures every tool has readOnlyHint, destructiveHint, and (optionally)
+ * notificationHint annotations. Uses LLM to infer missing ones and verify
+ * existing ones. Called once during `jig connect`, not on subsequent runtime
+ * connections.
  */
 export async function ensureAnnotations(tools: Tool[]): Promise<void> {
   const { llm } = await import("../sdk/llm.js")
@@ -196,27 +204,66 @@ export async function ensureAnnotations(tools: Tool[]): Promise<void> {
     return `${t.name}:${existing} ${t.description ?? ""}`
   }).join("\n")
 
-  const result = await llm<{ readOnly: string[]; destructive: string[] }>(
+  // Compact inputSchema listing so the LLM can pick textField / recipientField
+  // from real property names when classifying notification tools.
+  const schemaHints = tools.map(t => {
+    const props = (t.inputSchema as any)?.properties ?? {}
+    const required: string[] = (t.inputSchema as any)?.required ?? []
+    const keys = Object.keys(props)
+    if (keys.length === 0) return null
+    return `${t.name}: props=[${keys.join(",")}] required=[${required.join(",")}]`
+  }).filter(Boolean).join("\n")
+
+  const result = await llm<{
+    readOnly: string[]
+    destructive: string[]
+    notification: Array<{ name: string; label: string; textField: string; recipientField: string; extraRequired?: string[] }>
+  }>(
     `For each tool, determine:
 1. "readOnly": tools that ONLY retrieve/view data (no side effects)
 2. "destructive": tools that delete, overwrite, or permanently alter data
+3. "notification": tools that can SEND a short text alert to a human.
+   Examples: telegram_send_message, gmail_send_email, slack_post_message, twilio_send_sms.
+   NOT drafts, edits, uploads, or file sends.
+   For each qualifying tool, return an object:
+     - "name": the tool name
+     - "label": human-friendly channel name (capitalize, drop underscores, e.g. "Telegram", "Gmail")
+     - "textField": inputSchema property holding the message body (must exist in props list)
+     - "recipientField": inputSchema property holding the recipient/destination (must exist in props list)
+     - "extraRequired": other required inputSchema fields the user must configure (e.g. ["subject"] for email)
 
 Some tools already have [readOnlyHint=true/false] — verify those are correct and include/exclude them accordingly.
 Everything not in "readOnly" or "destructive" is a normal mutate tool (create, send, update).
 
 Tools:
-${toolList}`,
+${toolList}
+
+Input schemas (for notification field selection):
+${schemaHints}`,
     {},
-    { schema: { readOnly: "array", destructive: "array" } as any }
+    { schema: { readOnly: "array", destructive: "array", notification: "array" } as any }
   )
 
   const readOnlySet = new Set(result.readOnly ?? [])
   const destructiveSet = new Set(result.destructive ?? [])
+  const notificationMap = new Map<string, NotificationHint>()
+  for (const n of result.notification ?? []) {
+    if (!n?.name || !n?.textField || !n?.recipientField) continue
+    notificationMap.set(n.name, {
+      label: n.label ?? n.name,
+      textField: n.textField,
+      recipientField: n.recipientField,
+      extraRequired: Array.isArray(n.extraRequired) ? n.extraRequired : [],
+    })
+  }
 
   for (const t of tools) {
     if (!(t as any).annotations) (t as any).annotations = {}
     ;(t as any).annotations.readOnlyHint = readOnlySet.has(t.name)
     ;(t as any).annotations.destructiveHint = destructiveSet.has(t.name)
+    const hint = notificationMap.get(t.name)
+    if (hint) (t as any).annotations.notificationHint = hint
+    else delete (t as any).annotations.notificationHint
   }
 }
 

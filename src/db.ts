@@ -120,6 +120,12 @@ const MIGRATIONS: string[] = [
      server TEXT NOT NULL,
      created_at TEXT NOT NULL DEFAULT (datetime('now'))
    );`,
+  // v5: generic settings table (key/value JSON) — used by notifications settings
+  `CREATE TABLE IF NOT EXISTS settings (
+     key TEXT PRIMARY KEY,
+     value TEXT NOT NULL,
+     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+   );`,
 ]
 
 // ---------------------------------------------------------------------------
@@ -474,6 +480,25 @@ export function removeAuthorizedSender(channel: string, senderId: string): boole
   const db = openDb()
   const result = db.prepare(`DELETE FROM authorized_senders WHERE channel = ? AND sender_id = ?`).run(channel, senderId)
   return result.changes > 0
+}
+
+// ---------------------------------------------------------------------------
+// Settings (generic key/value, value is JSON string)
+// ---------------------------------------------------------------------------
+
+export function getSetting<T = unknown>(key: string): T | null {
+  const db = openDb()
+  const row = db.prepare(`SELECT value FROM settings WHERE key = ?`).get(key) as { value: string } | null
+  if (!row) return null
+  try { return JSON.parse(row.value) as T } catch { return null }
+}
+
+export function setSetting(key: string, value: unknown): void {
+  const db = openDb()
+  db.prepare(
+    `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`
+  ).run(key, JSON.stringify(value))
 }
 
 // ---------------------------------------------------------------------------

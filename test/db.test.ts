@@ -3,6 +3,7 @@ import {
   openDb, closeDb,
   insertRun, completeRun, listRuns, getRun, getJigRuns, getLastRun,
   insertStep, completeStep,
+  getSetting, setSetting,
 } from "../src/db.js"
 
 beforeEach(() => {
@@ -140,6 +141,26 @@ describe("getJigRuns includes steps", () => {
     const runs = getJigRuns("test-jig")
     expect(runs).toHaveLength(1)
     expect(runs[0].steps).toHaveLength(2)
+  })
+})
+
+describe("settings", () => {
+  it("returns null for missing key", () => {
+    expect(getSetting("nonexistent")).toBeNull()
+  })
+
+  it("round-trips a JSON value", () => {
+    setSetting("notifications", { channels: [{ connection: "composio", tool: "telegram_send_message", recipient: "42" }], triggerOn: { fail: true, timeout: true }, timeoutMinutes: 10 })
+    const got = getSetting<{ channels: unknown[]; timeoutMinutes: number }>("notifications")
+    expect(got).not.toBeNull()
+    expect(got!.timeoutMinutes).toBe(10)
+    expect(got!.channels).toHaveLength(1)
+  })
+
+  it("overwrites on re-set", () => {
+    setSetting("k", { a: 1 })
+    setSetting("k", { a: 2 })
+    expect(getSetting<{ a: number }>("k")!.a).toBe(2)
   })
 })
 

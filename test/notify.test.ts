@@ -79,6 +79,23 @@ describe("notify()", () => {
     expect(report.sent).toEqual([])
   })
 
+  it("ignoreTriggerGate sends test notifications even when fail notifications are disabled", async () => {
+    let calls = 0
+    const report = await notify({
+      title: "T", body: "B", kind: "fail",
+      ignoreTriggerGate: true,
+      toolCaller: async () => { calls++; return null },
+      settingsOverride: baseSettings({
+        channels: [{ connection: "composio", tool: "telegram_send_message", recipient: "42" }],
+        triggerOn: { fail: false },
+      }),
+      manifestOverride: [telegramManifest],
+    })
+    expect(calls).toBe(1)
+    expect(report.sent).toEqual([{ channel: "Telegram", ok: true }])
+    expect(report.errors).toEqual([])
+  })
+
   it("single telegram channel → caller invoked with correct payload", async () => {
     const seen: any[] = []
     const report = await notify({

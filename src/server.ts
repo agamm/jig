@@ -346,6 +346,7 @@ export function createApiServer(port: number) {
               title: "Jig test notification",
               body: "If you see this, notifications are working.",
               kind: "fail",
+              ignoreTriggerGate: true,
             })
             return json(report)
           }

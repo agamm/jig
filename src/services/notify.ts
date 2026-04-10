@@ -88,6 +88,8 @@ export async function notify(opts: {
   kind: "fail"
   jigId?: string
   runId?: number
+  /** Bypass trigger gating for explicit test sends. */
+  ignoreTriggerGate?: boolean
   /** Override for tests — inject a custom tool caller. */
   toolCaller?: (connection: string, tool: string, params: Record<string, unknown>) => Promise<unknown>
   /** Override for tests — supply settings directly instead of reading from DB. */
@@ -105,7 +107,7 @@ export async function notify(opts: {
     return report
   }
 
-  if (!settings.triggerOn?.[opts.kind]) return report
+  if (!opts.ignoreTriggerGate && !settings.triggerOn?.[opts.kind]) return report
   if (!settings.channels?.length) return report
 
   let manifest: NotificationCapableTool[]

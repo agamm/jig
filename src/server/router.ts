@@ -78,6 +78,9 @@ export function matchRoute(pathname: string): { handler: string; params: Record<
   const senderMatch = pathname.match(/^\/api\/authorized-senders\/([^/]+)\/(.+)$/)
   if (senderMatch) return { handler: "deleteAuthorizedSender", params: { channel: decodeURIComponent(senderMatch[1]), senderId: decodeURIComponent(senderMatch[2]) } }
 
+  if (pathname === "/api/settings/notifications") return { handler: "notificationSettings", params: {} }
+  if (pathname === "/api/settings/notifications/test") return { handler: "notificationSettingsTest", params: {} }
+
   const webhookMatch = pathname.match(/^\/api\/webhooks\/([^/]+)$/)
   if (webhookMatch) {
     if (!isValidJigId(decodeURIComponent(webhookMatch[1]))) return null

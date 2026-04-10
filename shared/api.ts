@@ -215,3 +215,39 @@ export interface RestoreJigVersionResult {
   ok: true
   sha: string
 }
+
+// ---------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------
+
+export interface NotificationCapableTool {
+  connection: string
+  tool: string
+  label: string
+  description: string
+  textField: string
+  recipientField: string
+  extraRequired: string[]
+}
+
+export interface NotificationChannel {
+  connection: string
+  tool: string
+  recipient: string
+  extraParams?: Record<string, unknown>
+}
+
+export interface NotificationSettings {
+  channels: NotificationChannel[]
+  triggerOn: { fail: boolean }
+}
+
+export interface NotificationSettingsResponse {
+  settings: NotificationSettings
+  availableTools: NotificationCapableTool[]
+}
+
+export interface NotifyTestResponse {
+  sent: Array<{ channel: string; ok: true }>
+  errors: Array<{ channel: string; error: string }>
+}

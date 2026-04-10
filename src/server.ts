@@ -22,6 +22,8 @@ import { loadServerConfigs } from "./mcp/config.js"
 import { buildJigResponse, discoverAllJigs } from "./services/jig-api.js"
 import { getAgentSessionStatus, pushAgentMessage, startAgentSession } from "./services/agent-service.js"
 import { cancelActiveRun, getActiveRunSnapshot, getRunDetail, startJigRun } from "./services/run-api.js"
+import { getNotificationSettings, saveNotificationSettings, notify, type NotificationSettings } from "./services/notify.js"
+import { readNotificationManifest } from "./mcp/discover/notification-manifest.js"
 import { handleWebhook } from "./scheduler/webhooks.js"
 import { getSchedule, listAllSchedules, setScheduleEnabled, listAuthorizedSenders, addAuthorizedSender, removeAuthorizedSender } from "./db.js"
 import { startScheduler } from "./scheduler/index.js"
@@ -316,6 +318,36 @@ export function createApiServer(port: number) {
             const removed = removeAuthorizedSender(route.params.channel, route.params.senderId)
             if (!removed) throw new ApiError(404, "Sender not found")
             return json({ ok: true })
+          }
+          case "notificationSettings": {
+            if (req.method === "GET") {
+              return json({
+                settings: getNotificationSettings(),
+                availableTools: readNotificationManifest(),
+              })
+            }
+            if (req.method === "PUT") {
+              const body = await req.json().catch(() => ({})) as Partial<NotificationSettings>
+              if (!body || !Array.isArray(body.channels)) {
+                throw new ApiError(400, "Body must include a 'channels' array")
+              }
+              const next: NotificationSettings = {
+                channels: body.channels,
+                triggerOn: { fail: body.triggerOn?.fail ?? true },
+              }
+              saveNotificationSettings(next)
+              return json({ settings: getNotificationSettings(), availableTools: readNotificationManifest() })
+            }
+            return json({ error: "Method not allowed" }, 405)
+          }
+          case "notificationSettingsTest": {
+            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+            const report = await notify({
+              title: "Jig test notification",
+              body: "If you see this, notifications are working.",
+              kind: "fail",
+            })
+            return json(report)
           }
           case "webhook": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)

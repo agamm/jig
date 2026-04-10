@@ -10,6 +10,7 @@ import { JigDetailPane } from "@/components/jig-detail-pane";
 import { CreateJigPane } from "@/components/create-jig-pane";
 import { ReviewPane } from "@/components/review-pane";
 import { ConnectionPane } from "@/components/connection-pane";
+import { NotificationsSettings } from "@/components/notifications-settings";
 import { ServiceIcon } from "@/components/service-icon";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/resizable";
 import { useModels, useConnections } from "@/lib/swr";
@@ -345,6 +346,10 @@ export function DashboardShell({
                       <span className="text-[13px] text-[#888] font-mono">3141</span>
                     </div>
                   </div>
+                </div>
+                <div className="space-y-3">
+                  <h3 className="text-[12px] text-[#555] uppercase tracking-wider">Notifications</h3>
+                  <NotificationsSettings />
                 </div>
                 <div className="space-y-3">
                   <h3 className="text-[12px] text-[#555] uppercase tracking-wider">Standing Permissions</h3>

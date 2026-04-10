@@ -6,6 +6,9 @@ import type {
   JigVersionDetail,
   JigVersion,
   ModelCatalog,
+  NotificationSettings,
+  NotificationSettingsResponse,
+  NotifyTestResponse,
   RestoreJigVersionResult,
   RunDetail,
   RunStatus,
@@ -127,4 +130,20 @@ export function restoreJigVersion(jigId: string, sha: string): Promise<RestoreJi
   return fetchJson(`/api/jigs/${encodeURIComponent(jigId)}/versions/${sha}/restore`, {
     method: "POST",
   })
+}
+
+export function fetchNotificationSettings(): Promise<NotificationSettingsResponse> {
+  return fetchJson("/api/settings/notifications")
+}
+
+export function saveNotificationSettings(settings: NotificationSettings): Promise<NotificationSettingsResponse> {
+  return fetchJson("/api/settings/notifications", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(settings),
+  })
+}
+
+export function sendTestNotification(): Promise<NotifyTestResponse> {
+  return fetchJson("/api/settings/notifications/test", { method: "POST" })
 }

@@ -150,10 +150,10 @@ describe("settings", () => {
   })
 
   it("round-trips a JSON value", () => {
-    setSetting("notifications", { channels: [{ connection: "composio", tool: "telegram_send_message", recipient: "42" }], triggerOn: { fail: true, timeout: true }, timeoutMinutes: 10 })
-    const got = getSetting<{ channels: unknown[]; timeoutMinutes: number }>("notifications")
+    setSetting("notifications", { channels: [{ connection: "composio", tool: "telegram_send_message", recipient: "42" }], triggerOn: { fail: true } })
+    const got = getSetting<{ channels: unknown[]; triggerOn: { fail: boolean } }>("notifications")
     expect(got).not.toBeNull()
-    expect(got!.timeoutMinutes).toBe(10)
+    expect(got!.triggerOn.fail).toBe(true)
     expect(got!.channels).toHaveLength(1)
   })
 

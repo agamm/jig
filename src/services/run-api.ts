@@ -8,6 +8,7 @@ import { ApiError } from "../server/http.js"
 import { abortRunForJig, applyRunEvent, discardTrackedRun, finishTrackedRun, getActiveRunStatusForJig, getSignalForRun, getRunStatus, hasActiveRunForJig, startTrackedRun } from "./run-store.js"
 import { resolveJigPath } from "../domain/jig-source.js"
 import { existsSync } from "fs"
+import { notify, formatFailureBody } from "./notify.js"
 
 export async function startJigRun(id: string, body: any): Promise<StartRunResponse> {
   const discovered = discoverAllJigs()
@@ -44,11 +45,37 @@ export async function startJigRun(id: string, body: any): Promise<StartRunRespon
       }
     } finally {
       if (skipped) discardTrackedRun(runId)
-      else finishTrackedRun(runId)
+      else {
+        finishTrackedRun(runId)
+        notifyOnFailure(id, runId, dryRun)
+      }
     }
   })()
 
   return { runId, jigId: id, dryRun }
+}
+
+/**
+ * Fire-and-forget failure notification. notify() never throws.
+ * Early-exits on dry runs, on success, or if the run row vanished.
+ */
+function notifyOnFailure(jigId: string, runId: number, dryRun: boolean): void {
+  if (dryRun || runId <= 0) return
+  const run = getRun(runId)
+  if (!run || run.status !== "fail") return
+
+  notify({
+    title: `Jig "${jigId}" failed`,
+    body: formatFailureBody({
+      jigId,
+      error: run.error,
+      startedAt: run.started_at,
+      durationMs: run.duration_ms,
+    }),
+    kind: "fail",
+    jigId,
+    runId,
+  }).catch(() => {})
 }
 
 export function getActiveRunSnapshot(jigId?: string) {

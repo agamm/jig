@@ -45,8 +45,7 @@ afterEach(() => {
 function baseSettings(overrides: Partial<NotificationSettings> = {}): NotificationSettings {
   return {
     channels: [],
-    triggerOn: { fail: true, timeout: true },
-    timeoutMinutes: 10,
+    triggerOn: { fail: true },
     ...overrides,
   }
 }
@@ -72,7 +71,7 @@ describe("notify()", () => {
       toolCaller: async () => { calls++; return null },
       settingsOverride: baseSettings({
         channels: [{ connection: "composio", tool: "telegram_send_message", recipient: "42" }],
-        triggerOn: { fail: false, timeout: true },
+        triggerOn: { fail: false },
       }),
       manifestOverride: [telegramManifest],
     })
@@ -194,30 +193,18 @@ describe("settings persistence", () => {
   it("defaults when no row exists", () => {
     const s = getNotificationSettings()
     expect(s.channels).toEqual([])
-    expect(s.triggerOn).toEqual({ fail: true, timeout: true })
-    expect(s.timeoutMinutes).toBe(10)
+    expect(s.triggerOn).toEqual({ fail: true })
   })
 
   it("round-trips a saved settings row", () => {
     saveNotificationSettings({
       channels: [{ connection: "composio", tool: "telegram_send_message", recipient: "42" }],
-      triggerOn: { fail: true, timeout: false },
-      timeoutMinutes: 15,
+      triggerOn: { fail: false },
     })
     const s = getNotificationSettings()
     expect(s.channels).toHaveLength(1)
     expect(s.channels[0].recipient).toBe("42")
-    expect(s.triggerOn.timeout).toBe(false)
-    expect(s.timeoutMinutes).toBe(15)
-  })
-
-  it("coerces invalid timeoutMinutes to default", () => {
-    saveNotificationSettings({
-      channels: [],
-      triggerOn: { fail: true, timeout: true },
-      timeoutMinutes: 0 as number,
-    })
-    expect(getNotificationSettings().timeoutMinutes).toBe(10)
+    expect(s.triggerOn.fail).toBe(false)
   })
 })
 

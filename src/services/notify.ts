@@ -34,8 +34,8 @@ export interface NotificationChannel {
 
 export interface NotificationSettings {
   channels: NotificationChannel[]
-  triggerOn: { fail: boolean; timeout: boolean }
-  timeoutMinutes: number
+  /** Whether to fire on jig run failures. More trigger kinds may land later. */
+  triggerOn: { fail: boolean }
 }
 
 export interface NotifyReport {
@@ -47,8 +47,7 @@ const SETTINGS_KEY = "notifications"
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   channels: [],
-  triggerOn: { fail: true, timeout: true },
-  timeoutMinutes: 10,
+  triggerOn: { fail: true },
 }
 
 // ---------------------------------------------------------------------------
@@ -62,19 +61,14 @@ export function getNotificationSettings(): NotificationSettings {
     channels: Array.isArray(raw.channels) ? raw.channels.filter(isValidChannel) : [],
     triggerOn: {
       fail: raw.triggerOn?.fail ?? true,
-      timeout: raw.triggerOn?.timeout ?? true,
     },
-    timeoutMinutes: typeof raw.timeoutMinutes === "number" && raw.timeoutMinutes > 0
-      ? raw.timeoutMinutes
-      : DEFAULT_NOTIFICATION_SETTINGS.timeoutMinutes,
   }
 }
 
 export function saveNotificationSettings(s: NotificationSettings): void {
   setSetting(SETTINGS_KEY, {
     channels: s.channels.filter(isValidChannel),
-    triggerOn: { fail: !!s.triggerOn?.fail, timeout: !!s.triggerOn?.timeout },
-    timeoutMinutes: s.timeoutMinutes > 0 ? s.timeoutMinutes : DEFAULT_NOTIFICATION_SETTINGS.timeoutMinutes,
+    triggerOn: { fail: s.triggerOn?.fail ?? true },
   })
 }
 
@@ -91,7 +85,7 @@ function isValidChannel(c: unknown): c is NotificationChannel {
 export async function notify(opts: {
   title: string
   body: string
-  kind: "fail" | "timeout"
+  kind: "fail"
   jigId?: string
   runId?: number
   /** Override for tests — inject a custom tool caller. */

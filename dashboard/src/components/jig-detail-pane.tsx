@@ -273,7 +273,7 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
   const [reviewedToolKeys, setReviewedToolKeys] = useState<Set<string>>(new Set());
   const [queuedRemovalTools, setQueuedRemovalTools] = useState<JigStepTool[]>([]);
   const tools = jig.settings.tools ?? [];
-  const toolApproval = useJigToolApproval(jigId, tools);
+  const toolApproval = useJigToolApproval(tools, jig.settings.permissions, onRefresh);
   const previousAutoRemovalRef = useRef("");
 
   const { mode, liveSteps, completedTools, activeTools, toolReadOnly, startRun, dismiss, cancelRun, isRunning } = useJigRun(jigId);
@@ -326,9 +326,9 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
   const approvalReady = runSteps.length === 0 ? tools.length > 0 : true;
 
   // Approve-all wrapper: mark every reviewable tool as reviewed, then commit.
-  const approveAllTools = () => {
+  const approveAllTools = async () => {
     setReviewedToolKeys(new Set(reviewableToolKeys));
-    toolApproval.approve();
+    await toolApproval.approve();
   };
   useEffect(() => {
     setReviewedToolKeys(new Set());
@@ -554,8 +554,8 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
                         {toolApproval.reviewRequired && (
                           <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-500/15 bg-[#111113] px-3 py-2">
                             <span className="text-[10px] text-amber-100/60">Flat fallback review</span>
-                            <Button onClick={approveAllTools} variant="success" size="xs">
-                              Approve Tools
+                            <Button onClick={approveAllTools} disabled={toolApproval.saving} variant="success" size="xs">
+                              {toolApproval.saving ? "Approving…" : "Approve Tools"}
                             </Button>
                           </div>
                         )}
@@ -601,11 +601,11 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
                   </span>
                   <Button
                     onClick={approveAllTools}
-                    disabled={!approvalReady}
+                    disabled={!approvalReady || toolApproval.saving}
                     variant="success"
                     size="xs"
                   >
-                    Approve Tools
+                    {toolApproval.saving ? "Approving…" : "Approve Tools"}
                   </Button>
                 </div>
               </div>

@@ -4,6 +4,7 @@ import {
   insertRun, completeRun, listRuns, getRun, getJigRuns, getLastRun,
   insertStep, completeStep,
   getSetting, setSetting,
+  getToolPermission, listToolPermissions, setToolPermission,
 } from "../src/db.js"
 
 beforeEach(() => {
@@ -24,7 +25,6 @@ describe("runs", () => {
     const run = getRun(runId)
     expect(run).not.toBeNull()
     expect(run!.jig_id).toBe("test-jig")
-    expect(run!.entity).toBeNull()
     expect(run!.status).toBe("running")
     expect(run!.params).toBe('{"week":"2026-03-20"}')
     expect(run!.steps).toEqual([])
@@ -161,6 +161,21 @@ describe("settings", () => {
     setSetting("k", { a: 1 })
     setSetting("k", { a: 2 })
     expect(getSetting<{ a: number }>("k")!.a).toBe(2)
+  })
+})
+
+describe("tool permissions", () => {
+  it("defaults to null when no policy exists", () => {
+    expect(getToolPermission("workspace", "gmail_send")).toBeNull()
+  })
+
+  it("round-trips and updates a policy", () => {
+    setToolPermission("workspace", "gmail_send", "ask")
+    expect(getToolPermission("workspace", "gmail_send")).toBe("ask")
+
+    setToolPermission("workspace", "gmail_send", "always")
+    expect(getToolPermission("workspace", "gmail_send")).toBe("always")
+    expect(listToolPermissions()).toHaveLength(1)
   })
 })
 

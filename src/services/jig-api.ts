@@ -1,13 +1,12 @@
-import { readFileSync } from "fs"
-import type { JigData, JigRun, JigTool } from "../../shared/api.js"
+import type { JigData, JigRun } from "../../shared/api.js"
 import { JIGS_DIR } from "../config/paths.js"
 import { getJigRuns, getLastRun, getSchedule } from "../db.js"
 import { discoverJigs } from "../discover.js"
-import { parseStepsFromSource } from "../derive-steps.js"
 import { formatDuration } from "../utils.js"
-import { extractConnections, extractParams, extractTrigger, getJigFilePath, prettifyId } from "../domain/jig-source.js"
+import { prettifyId } from "../domain/jig-source.js"
 import { getActiveRunStatusForJig } from "./run-store.js"
 import { webhookToken } from "../scheduler/webhook-auth.js"
+import { introspectJig } from "./introspect-jig.js"
 
 function deriveStatus(jigId: string): "healthy" | "attention" | "failed" {
   try {
@@ -36,20 +35,12 @@ function formatRuns(runs: ReturnType<typeof getJigRuns>): JigRun[] {
   }))
 }
 
-function dedupeTools(tools: JigTool[]): JigTool[] {
-  return [...new Map(tools.map((tool) => [`${tool.connection}:${tool.name}`, tool])).values()]
-}
-
 export async function buildJigResponse(
   id: string,
   runLimit: number,
   includeSteps = false,
 ): Promise<JigData> {
-  const filePath = getJigFilePath(id)
-  let code = ""
-  try {
-    if (filePath) code = readFileSync(filePath, "utf-8")
-  } catch {}
+  const jig = await introspectJig(id, { includeSteps })
 
   let runs: ReturnType<typeof getJigRuns> = []
   try {
@@ -59,32 +50,6 @@ export async function buildJigResponse(
   const recentDurations = runs.slice(0, 7).map((r) => r.duration_ms ?? 0).reverse()
   const maxDur = Math.max(...recentDurations, 1)
   const sparkline = recentDurations.map((d) => Math.round((d / maxDur) * 100))
-
-  let params: Record<string, string> = {}
-  let trigger = code ? extractTrigger(code) : ""
-  let tools: JigTool[] = []
-  let steps: JigData["steps"] = []
-  if (filePath) {
-    try {
-      const mod = await import(`${filePath}?_t=${Date.now()}_${Math.random().toString(36).slice(2)}`)
-      const def = mod.default
-      if (def?.options) params = def.options.params ?? {}
-      if (def?.options?.tools?.length) {
-        tools = dedupeTools(def.options.tools.map((tool: any) => ({
-          connection: tool._serverName,
-          name: tool._toolName,
-          readOnly: tool._readOnly === true,
-        })))
-      }
-      if (includeSteps && code) {
-        const { deriveSteps } = await import("../derive-steps.js")
-        steps = await deriveSteps(id, code)
-      }
-    } catch {
-      params = extractParams(code)
-      trigger = extractTrigger(code)
-    }
-  }
 
   const scheduleRow = getSchedule(id)
   const schedule = scheduleRow ? (() => {
@@ -105,32 +70,25 @@ export async function buildJigResponse(
   })() : undefined
 
   const activeRun = getActiveRunStatusForJig(id)
-  const connections = tools.length > 0
-    ? [...new Set(tools.map((tool) => tool.connection))]
-    : extractConnections(code)
-
-  // Detect legacy jigs (have a handler but no block-scoped ctx.step calls)
-  const needsUpgrade = code && /export\s+default/.test(code) && parseStepsFromSource(code).length === 0
-    ? true : undefined
 
   return {
     id,
     name: prettifyId(id),
-    trigger,
+    trigger: jig.trigger,
     status: deriveStatus(id),
     running: activeRun.active && !activeRun.dryRun,
     sparkline,
-    steps,
-    code,
+    steps: jig.steps,
+    code: jig.code,
     runs: formatRuns(runs),
-    params,
-    needsUpgrade,
+    params: jig.params,
+    needsUpgrade: jig.needsUpgrade,
     schedule,
     settings: {
-      trigger,
-      connections,
-      tools,
-      permissions: [],
+      trigger: jig.trigger,
+      connections: jig.connections,
+      tools: jig.tools,
+      permissions: jig.permissions,
     },
     costMonth: "",
     costLifetime: "",

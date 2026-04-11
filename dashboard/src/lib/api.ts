@@ -16,6 +16,8 @@ import type {
   StartRunResponse,
   StepList,
   TriggerUpdateResponse,
+  ToolPermission,
+  ToolPermissionPolicy,
 } from "@shared/api"
 
 async function fetchJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
@@ -146,4 +148,20 @@ export function saveNotificationSettings(settings: NotificationSettings): Promis
 
 export function sendTestNotification(): Promise<NotifyTestResponse> {
   return fetchJson("/api/settings/notifications/test", { method: "POST" })
+}
+
+export function fetchToolPermissions(): Promise<ToolPermission[]> {
+  return fetchJson("/api/permissions")
+}
+
+export function saveToolPermission(input: {
+  connection: string
+  tool: string
+  policy: ToolPermissionPolicy
+}): Promise<{ ok: true }> {
+  return fetchJson("/api/permissions", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  })
 }

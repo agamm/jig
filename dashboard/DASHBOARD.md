@@ -46,7 +46,6 @@ src/
 | `activeApproval` | page.tsx | ApprovalPane (content) |
 | `reviewMode` | page.tsx | Decides ReviewPane vs JigDetailPane |
 | `expandedGroup` | page.tsx | JigList (which group is expanded) |
-| `selectedEntity` | page.tsx | JigDetailPane (entity within grouped jig) |
 | `jigOrder*` | page.tsx | JigList (DnD reorder mutates this) |
 | `chatWidth` | useResizablePane | ChatPanel (width prop) |
 | `detailTab`, `editingTrigger`, `expandedRun`, `selectedDay` | JigDetailPane/ReviewPane | Internal to each pane |

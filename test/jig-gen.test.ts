@@ -41,7 +41,7 @@ import { github } from "../.jig/connections/github.js"`
     expect(extractImportedServers(code)).toEqual(["workspace", "granola", "github"])
   })
 
-  it("handles grouped jig import depth", () => {
+  it("handles nested relative import depth", () => {
     expect(extractImportedServers(
       `import { workspace } from "../../.jig/connections/workspace.js"`
     )).toEqual(["workspace"])

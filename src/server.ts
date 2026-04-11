@@ -25,7 +25,7 @@ import { cancelActiveRun, getActiveRunSnapshot, getRunDetail, startJigRun } from
 import { getNotificationSettings, saveNotificationSettings, notify, type NotificationSettings } from "./services/notify.js"
 import { readNotificationManifest } from "./mcp/discover/notification-manifest.js"
 import { handleWebhook } from "./scheduler/webhooks.js"
-import { getSchedule, listAllSchedules, setScheduleEnabled, listAuthorizedSenders, addAuthorizedSender, removeAuthorizedSender } from "./db.js"
+import { getSchedule, listAllSchedules, setScheduleEnabled, listAuthorizedSenders, addAuthorizedSender, removeAuthorizedSender, listToolPermissions, setToolPermission, type ToolPermissionPolicy } from "./db.js"
 import { startScheduler } from "./scheduler/index.js"
 import { syncSchedules } from "./scheduler/sync.js"
 import { getJigVersionDetail, listJigVersions, restoreJigVersion } from "./services/jig-versioning.js"
@@ -349,6 +349,27 @@ export function createApiServer(port: number) {
               ignoreTriggerGate: true,
             })
             return json(report)
+          }
+          case "toolPermissions": {
+            if (req.method === "GET") {
+              return json(listToolPermissions())
+            }
+            if (req.method === "PUT") {
+              const body = await req.json().catch(() => ({})) as {
+                connection?: string
+                tool?: string
+                policy?: ToolPermissionPolicy
+              }
+              if (!body?.connection || !body?.tool || !body?.policy) {
+                throw new ApiError(400, "Body must include 'connection', 'tool', and 'policy'")
+              }
+              if (!["always", "ask", "never"].includes(body.policy)) {
+                throw new ApiError(400, "Invalid policy. Expected always, ask, or never.")
+              }
+              setToolPermission(body.connection, body.tool, body.policy)
+              return json({ ok: true })
+            }
+            return json({ error: "Method not allowed" }, 405)
           }
           case "webhook": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)

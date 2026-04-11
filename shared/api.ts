@@ -38,6 +38,14 @@ export interface JigTool {
   readOnly: boolean
 }
 
+export type ToolPermissionPolicy = "always" | "ask" | "never"
+
+export interface ToolPermission {
+  connection: string
+  tool: string
+  policy: ToolPermissionPolicy
+}
+
 export interface ScheduleInfo {
   triggerType: "cron" | "webhook"
   cronExpr: string | null
@@ -66,7 +74,7 @@ export interface JigData {
     trigger: string
     connections: string[]
     tools?: JigTool[]
-    permissions: string[]
+    permissions: ToolPermission[]
   }
   costMonth?: string
   costLifetime?: string

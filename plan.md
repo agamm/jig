@@ -99,45 +99,13 @@ Permissions build naturally through usage. Every approval shows: `□ Always all
 
 A jig is a saved, reusable automation with an explicit trigger and tool set.
 
-#### Grouped Jigs — Same Workflow, Different Entities
-
-A consultant running the same workflow for multiple clients uses **grouped jigs**: a folder where each file is a self-contained variant sharing the same jig ID.
-
-```
-jigs/
-  weekly-update/           ← folder name = jig ID
-    acme.ts                ← entity = "acme"
-    globex.ts              ← entity = "globex"
-    initech.ts             ← entity = "initech"
-    _helpers.ts            ← underscore prefix = not a jig, shared code
-  email-triage.ts          ← file in jigs/ = single-instance jig
-```
+Jigs are plain `.ts` files in `jigs/`.
 
 **Discovery rules:**
-- **File** directly in `jigs/` → single-instance jig, ID from filename
-- **Folder** in `jigs/` → grouped jig, ID from folder name, each `.ts` file inside is a variant named by its filename
-- **`_` prefix** → skip during discovery (shared helpers, colocated with the variants they serve)
+- **File** directly in `jigs/` → jig, ID from filename
+- **`_` prefix** → skip during discovery (shared helpers, examples)
 
-**CLI + dashboard:**
-```
-jig run weekly-update              → which entity? [acme, globex, initech]
-jig run weekly-update acme         → runs just acme
-jig run weekly-update all          → runs all variants
-```
-
-Dashboard groups them:
-```
-weekly-update
-  ├── acme       ✓ ran Friday 9:00am
-  ├── globex     ✓ ran Friday 9:00am
-  └── initech    ✗ failed Friday 9:00am
-```
-
-**Memory is the file.** Each variant is fully self-contained — all client-specific knowledge, preferences, quirks, and recipient lists live in the file itself. No indirection. Open the file, see everything. When you learn something new about a client ("their fiscal week starts Monday"), edit the file. Git commit. Done.
-
-Each variant can diverge freely — different tools, different steps, different `llm()` prompts. They share a jig ID for grouping but are otherwise independent. Shared logic is extracted into `_helpers.ts` only when the repetition actually hurts — no premature abstraction.
-
-**How jigs evolve:** The assistant or self-healing system can propose edits to a specific variant's file. Each edit is a git commit. The git history IS the memory of how the jig learned and adapted over time.
+**How jigs evolve:** The assistant or self-healing system can propose edits to a jig file. Each edit is a git commit. The git history IS the memory of how the jig learned and adapted over time.
 
 **What the user sees:**
 
@@ -534,14 +502,8 @@ Why SQLite over JSON files:
 ```
 my-jig/                    ← git repo
 ├── jigs/                  ← saved automations
-│   ├── weekly-update/     ← grouped jig (one per client)
-│   │   ├── acme.ts
-│   │   ├── globex.ts
-│   │   └── _helpers.ts    ← underscore = not a jig, shared code
-│   ├── invoice/
-│   │   ├── acme.ts
-│   │   └── globex.ts
-│   ├── email-triage.ts    ← single-instance jig (no folder)
+│   ├── _helpers.ts        ← underscore = not a jig, shared code
+│   ├── email-triage.ts
 │   └── meeting-prep.ts
 ├── tools/                 ← custom tool definitions
 │   └── mercury.ts
@@ -598,9 +560,7 @@ jig connect <service>   — OAuth via Composio / configure MCP
 jig connections         — list connected services + permission levels
 jig new                 — AI generates a jig from description
 jig edit <name>         — AI modifies a jig
-jig run <name>          — run a single-instance jig
-jig run <name> <entity> — run a grouped jig for a specific entity
-jig run <name> all      — run a grouped jig for all entities
+jig run <name>          — run a jig
 jig runs                — list recent runs
 jig approve             — list pending approvals
 ```
@@ -673,8 +633,6 @@ Jig has three layers of memory, each with a different persistence model:
 Client-specific knowledge (preferences, quirks, recipients, formatting rules) lives directly in the jig file. No separate profiles, no config objects, no database lookups. Open the file, see everything.
 
 When the system learns something new (self-healing discovers a pattern, user gives feedback), the jig file itself is edited. Each edit is a git commit. Git history is the memory of how each jig evolved.
-
-For grouped jigs, each entity's variant file contains all knowledge about that entity. No indirection, no inheritance.
 
 ### 2. Runtime State — SQLite (`ctx.state`)
 

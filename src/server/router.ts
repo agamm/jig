@@ -80,6 +80,7 @@ export function matchRoute(pathname: string): { handler: string; params: Record<
 
   if (pathname === "/api/settings/notifications") return { handler: "notificationSettings", params: {} }
   if (pathname === "/api/settings/notifications/test") return { handler: "notificationSettingsTest", params: {} }
+  if (pathname === "/api/permissions") return { handler: "toolPermissions", params: {} }
 
   const webhookMatch = pathname.match(/^\/api\/webhooks\/([^/]+)$/)
   if (webhookMatch) {

@@ -15,7 +15,6 @@ import { PROJECT_ROOT } from "./config/paths.js"
 export interface RunRow {
   id: number
   jig_id: string
-  entity: string | null
   started_at: string
   finished_at: string | null
   status: "running" | "success" | "fail"
@@ -46,7 +45,6 @@ const SCHEMA = `
 CREATE TABLE IF NOT EXISTS runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   jig_id TEXT NOT NULL,
-  entity TEXT,
   started_at TEXT NOT NULL DEFAULT (datetime('now')),
   finished_at TEXT,
   status TEXT NOT NULL DEFAULT 'running',
@@ -75,11 +73,18 @@ CREATE INDEX IF NOT EXISTS idx_run_steps_run_id ON run_steps(run_id);
 
 CREATE TABLE IF NOT EXISTS step_cache (
   jig_id TEXT NOT NULL,
-  entity TEXT,
   code_hash TEXT NOT NULL,
   steps TEXT NOT NULL
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_step_cache_jig ON step_cache(jig_id, COALESCE(entity, ''));
+CREATE UNIQUE INDEX IF NOT EXISTS idx_step_cache_jig ON step_cache(jig_id);
+
+CREATE TABLE IF NOT EXISTS tool_permissions (
+  connection TEXT NOT NULL,
+  tool TEXT NOT NULL,
+  policy TEXT NOT NULL CHECK(policy IN ('always', 'ask', 'never')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (connection, tool)
+);
 `
 
 // Versioned migrations — each runs once, tracked by PRAGMA user_version.
@@ -126,6 +131,18 @@ const MIGRATIONS: string[] = [
      value TEXT NOT NULL,
      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
    );`,
+  // v6: remove abandoned entity support, add backend-owned tool permissions
+  `CREATE TABLE IF NOT EXISTS tool_permissions (
+     connection TEXT NOT NULL,
+     tool TEXT NOT NULL,
+     policy TEXT NOT NULL CHECK(policy IN ('always', 'ask', 'never')),
+     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+     PRIMARY KEY (connection, tool)
+   );
+   DROP INDEX IF EXISTS idx_step_cache_jig;
+   ALTER TABLE runs DROP COLUMN entity;
+   ALTER TABLE step_cache DROP COLUMN entity;
+   CREATE UNIQUE INDEX IF NOT EXISTS idx_step_cache_jig ON step_cache(jig_id);`,
 ]
 
 // ---------------------------------------------------------------------------
@@ -140,7 +157,11 @@ function runMigrations(db: Database) {
     } catch (e: any) {
       // Expected: column/table already exists from a partial prior run
       const msg = e?.message ?? ""
-      if (!msg.includes("duplicate column") && !msg.includes("already exists")) {
+      if (
+        !msg.includes("duplicate column") &&
+        !msg.includes("already exists") &&
+        !msg.includes("no such column")
+      ) {
         throw e
       }
     }
@@ -197,9 +218,9 @@ export function insertRun(
 ): number {
   const db = openDb()
   const stmt = db.prepare(
-    `INSERT INTO runs (jig_id, entity, params) VALUES (?, ?, ?)`
+    `INSERT INTO runs (jig_id, params) VALUES (?, ?)`
   )
-  const result = stmt.run(jigId, null, params ? JSON.stringify(params) : null)
+  const result = stmt.run(jigId, params ? JSON.stringify(params) : null)
   return Number(result.lastInsertRowid)
 }
 
@@ -311,9 +332,10 @@ export function getStepCache(jigId: string, codeHash: string): CachedStep[] | nu
 
 export function setStepCache(jigId: string, codeHash: string, steps: CachedStep[]): void {
   const db = openDb()
+  db.prepare(`DELETE FROM step_cache WHERE jig_id = ?`).run(jigId)
   db.prepare(
-    `INSERT OR REPLACE INTO step_cache (jig_id, entity, code_hash, steps) VALUES (?, ?, ?, ?)`
-  ).run(jigId, null, codeHash, JSON.stringify(steps))
+    `INSERT INTO step_cache (jig_id, code_hash, steps) VALUES (?, ?, ?)`
+  ).run(jigId, codeHash, JSON.stringify(steps))
 }
 
 export function clearAllStepCache(): void {
@@ -499,6 +521,40 @@ export function setSetting(key: string, value: unknown): void {
     `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`
   ).run(key, JSON.stringify(value))
+}
+
+// ---------------------------------------------------------------------------
+// Tool permissions
+// ---------------------------------------------------------------------------
+
+export type ToolPermissionPolicy = "always" | "ask" | "never"
+
+export interface ToolPermissionRow {
+  connection: string
+  tool: string
+  policy: ToolPermissionPolicy
+  updated_at: string
+}
+
+export function listToolPermissions(): ToolPermissionRow[] {
+  const db = openDb()
+  return db.prepare(`SELECT * FROM tool_permissions ORDER BY connection, tool`).all() as ToolPermissionRow[]
+}
+
+export function getToolPermission(connection: string, tool: string): ToolPermissionPolicy | null {
+  const db = openDb()
+  const row = db.prepare(
+    `SELECT policy FROM tool_permissions WHERE connection = ? AND tool = ?`
+  ).get(connection, tool) as { policy: ToolPermissionPolicy } | null
+  return row?.policy ?? null
+}
+
+export function setToolPermission(connection: string, tool: string, policy: ToolPermissionPolicy): void {
+  const db = openDb()
+  db.prepare(
+    `INSERT INTO tool_permissions (connection, tool, policy, updated_at) VALUES (?, ?, ?, datetime('now'))
+     ON CONFLICT(connection, tool) DO UPDATE SET policy = excluded.policy, updated_at = datetime('now')`
+  ).run(connection, tool, policy)
 }
 
 // ---------------------------------------------------------------------------

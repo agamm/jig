@@ -1,9 +1,8 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
-import type { JigTool } from "@shared/api"
-
-const STORAGE_KEY = "jig-tool-approvals-v1"
+import { useMemo, useState } from "react"
+import type { JigTool, ToolPermission } from "@shared/api"
+import { saveToolPermission } from "./api"
 
 function normalizeTools(tools: JigTool[]): JigTool[] {
   return [...tools]
@@ -18,62 +17,41 @@ export function getToolsetSignature(tools: JigTool[]): string {
     .join("|")
 }
 
-function getApprovalKey(jigId: string, signature: string): string {
-  return `${jigId}::${signature}`
+function allowedToolKeys(permissions: ToolPermission[]): Set<string> {
+  return new Set(
+    permissions
+      .filter((permission) => permission.policy === "always")
+      .map((permission) => `${permission.connection}:${permission.tool}`)
+  )
 }
 
-function readApprovalStore(): Record<string, true> {
-  if (typeof window === "undefined") return {}
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
-    if (!raw) return {}
-    const parsed = JSON.parse(raw)
-    return parsed && typeof parsed === "object" ? parsed : {}
-  } catch {
-    return {}
-  }
-}
-
-function writeApprovalStore(store: Record<string, true>) {
-  if (typeof window === "undefined") return
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(store))
-}
-
-export function isToolsetApproved(jigId: string, tools: JigTool[]): boolean {
-  if (tools.length === 0) return true
-  const signature = getToolsetSignature(tools)
-  if (!signature) return true
-  const store = readApprovalStore()
-  return store[getApprovalKey(jigId, signature)] === true
-}
-
-export function approveToolset(jigId: string, tools: JigTool[]) {
-  if (tools.length === 0) return
-  const signature = getToolsetSignature(tools)
-  if (!signature) return
-  const store = readApprovalStore()
-  store[getApprovalKey(jigId, signature)] = true
-  writeApprovalStore(store)
-}
-
-export function useJigToolApproval(jigId: string, tools: JigTool[]) {
+export function useJigToolApproval(tools: JigTool[], permissions: ToolPermission[], onApproved?: () => Promise<void> | void) {
   const signature = useMemo(() => getToolsetSignature(tools), [tools])
   const stableTools = useMemo(() => normalizeTools(tools), [signature])
-  const [approved, setApproved] = useState<boolean>(() => isToolsetApproved(jigId, stableTools))
+  const approvedToolKeys = useMemo(() => allowedToolKeys(permissions), [permissions])
+  const approved = stableTools.every((tool) => approvedToolKeys.has(`${tool.connection}:${tool.name}`))
+  const [saving, setSaving] = useState(false)
 
-  useEffect(() => {
-    setApproved(isToolsetApproved(jigId, stableTools))
-  }, [jigId, signature, stableTools])
-
-  const approve = useCallback(() => {
-    approveToolset(jigId, stableTools)
-    setApproved(true)
-  }, [jigId, stableTools])
+  async function approve() {
+    if (stableTools.length === 0) return
+    setSaving(true)
+    try {
+      await Promise.all(stableTools.map((tool) => saveToolPermission({
+        connection: tool.connection,
+        tool: tool.name,
+        policy: "always",
+      })))
+      await onApproved?.()
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return {
     approved,
     reviewRequired: signature.length > 0 && !approved,
     signature,
     approve,
+    saving,
   }
 }

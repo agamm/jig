@@ -3,14 +3,10 @@
  * No handler execution, no LLM, no proxies — just regex on source.
  */
 import type { CachedStep, CachedStepTool } from "./db.js"
+import { getConnectionImportBindings } from "./domain/source-analysis.js"
 
 function parseConnectionImports(code: string): Map<string, string> {
-  const imports = new Map<string, string>()
-  const re = /import\s*\{[^}]*\b(\w+)\b[^}]*\}\s*from\s*["']jig\/connections\/(\w+)\.(?:js|ts)["']/g
-  for (const m of code.matchAll(re)) {
-    imports.set(m[1], m[2])
-  }
-  return imports
+  return new Map(getConnectionImportBindings(code).map((binding) => [binding.localName, binding.serverName]))
 }
 
 function inferReadOnly(toolName: string): boolean {

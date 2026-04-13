@@ -1,18 +1,20 @@
-import { existsSync, readFileSync, readdirSync } from "fs"
-import { join } from "path"
+import { existsSync, readFileSync } from "fs"
 import OpenAI from "openai"
 import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions"
 import type { AgentEvent, AgentStatusResponse, StartAgentResponse } from "../../shared/api.js"
-import { EXAMPLES_DIR, JIGS_DIR, PROJECT_ROOT, SCHEMAS_DIR, TYPES_DIR } from "../config/paths.js"
 import { JIG_EDITOR_MODEL } from "../config/models.js"
 import { isValidJigId } from "../domain/jig-id.js"
-import { loadServerConfigs } from "../mcp/config.js"
 import { resolveJigPath } from "../domain/jig-source.js"
 import { checkJigFile } from "./jig-checker.js"
 import { buildAgentJigSystemPrompt } from "./jig-writing-prompt.js"
 import { writeJigSource } from "./jig-writer.js"
 import { ApiError } from "../server/http.js"
-import { renderCodeFacingToolCatalogSection } from "../tool-catalog.js"
+import {
+  buildAuthoringState,
+  collectBuildTimeToolPolicyIssues,
+  hasExplicitEmptyToolsArray,
+  type BuildTimeResolution,
+} from "../jig-gen.js"
 
 const MAX_AGENT_ROUNDS = 15
 const AGENT_SESSION_TTL = 30 * 60 * 1000
@@ -20,12 +22,17 @@ const AGENT_SESSION_TTL = 30 * 60 * 1000
 type AgentSession = {
   sessionId: string
   jigId?: string
-  currentPrompt: string
+  authoringIntent: string
+  authoringPolicy: {
+    requiresIntegration: boolean
+    buildResolutions: BuildTimeResolution[]
+  }
   messages: ChatCompletionMessageParam[]
   events: AgentEvent[]
   status: "thinking" | "tool-calling" | "waiting" | "done" | "error"
   createdAt: number
   pendingAskToolCallId?: string
+  pendingAskQuestion?: string
 }
 
 const agentSessions = new Map<string, AgentSession>()
@@ -45,6 +52,22 @@ function pruneAgentSessions() {
       agentSessions.delete(id)
     }
   }
+}
+
+export function appendAuthoringIntent(current: string, next: string): string {
+  const trimmedNext = next.trim()
+  if (!trimmedNext) return current
+  if (!current.trim()) return trimmedNext
+  return `${current.trim()}\n\nFollow-up instruction:\n${trimmedNext}`
+}
+
+export function appendAskAnswer(authoringIntent: string, question: string | undefined, answer: string): string {
+  const trimmedAnswer = answer.trim()
+  if (!trimmedAnswer) return authoringIntent
+  const detail = question?.trim()
+    ? `User answer for authoring:\nQuestion: ${question.trim()}\nAnswer: ${trimmedAnswer}`
+    : `User answer for authoring:\n${trimmedAnswer}`
+  return appendAuthoringIntent(authoringIntent, detail)
 }
 
 function getAgentClient(): OpenAI {
@@ -114,7 +137,7 @@ const AGENT_TOOL_DEFS: ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "browse",
-      description: "Navigate to a URL and return the page content as text. Use for reading docs, API references, etc.",
+      description: "Navigate to a URL and return the page content as text. Use only for external docs or API references that are not already in the prompt context.",
       parameters: {
         type: "object",
         properties: {
@@ -128,7 +151,7 @@ const AGENT_TOOL_DEFS: ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "web_search",
-      description: "Search the web and return results. Use for finding API docs, examples, MCP tool schemas, etc.",
+      description: "Search the web and return results. Use only for external docs or examples that are not already in the prompt context.",
       parameters: {
         type: "object",
         properties: {
@@ -164,7 +187,7 @@ async function toolWriteJigFile(args: { code: string; jigId?: string; message?: 
     jigId,
     commit: true,
     commitMessage: args.message ? `jig: ${jigId} — ${args.message}` : `jig: ${jigId} — update`,
-    commitPrompt: session.currentPrompt,
+    commitPrompt: session.authoringIntent,
   })
 
   return JSON.stringify({ ok: true, path: filePath })
@@ -175,7 +198,19 @@ async function toolCheckJig(args: { jigId?: string }, session: AgentSession): Pr
   if (!jigId) return JSON.stringify({ error: "No jigId specified" })
   const filePath = resolveJigPath(jigId)
   if (!existsSync(filePath)) return JSON.stringify({ error: `File not found: ${filePath}` })
-  return checkJigFile(filePath)
+  const result = await checkJigFile(filePath)
+  const code = readFileSync(filePath, "utf-8")
+  const extraErrors: string[] = []
+
+  if (session.authoringPolicy.requiresIntegration && hasExplicitEmptyToolsArray(code)) {
+    extraErrors.push("Validator behavior.empty-tools: Workflow depends on an integration, but the generated jig declares tools: []. Do not generate an integration-backed jig without real tools.")
+  }
+  for (const issue of collectBuildTimeToolPolicyIssues(code, session.authoringPolicy.buildResolutions)) {
+    extraErrors.push(`Validator behavior.build-time-resolution.${issue.server}: ${issue.message}`)
+  }
+
+  if (result === "ok" && extraErrors.length === 0) return "ok"
+  return [result === "ok" ? null : result, ...extraErrors].filter(Boolean).join("\n")
 }
 
 async function toolBrowse(args: { url: string }): Promise<string> {
@@ -227,31 +262,10 @@ async function executeAgentTool(name: string, args: Record<string, any>, session
   }
 }
 
-async function buildAgentSystemPrompt(jigId?: string): Promise<string> {
-  const skillPath = `${PROJECT_ROOT}/SKILL.md`
-  const skillMd = existsSync(skillPath) ? readFileSync(skillPath, "utf-8") : ""
-
-  const isSafeFilename = (f: string) => /^[a-zA-Z0-9._-]+$/.test(f)
-  const typeFiles = existsSync(TYPES_DIR) ? readdirSync(TYPES_DIR).filter((f) => f.endsWith(".d.ts") && isSafeFilename(f)) : []
-  const typeSections: string[] = []
-  for (const file of typeFiles) {
-    typeSections.push(`## Type: ${file}\n${readFileSync(join(TYPES_DIR, file), "utf-8")}`)
-  }
-
-  const schemaFiles = existsSync(SCHEMAS_DIR) ? readdirSync(SCHEMAS_DIR).filter((f) => f.endsWith(".json") && isSafeFilename(f)) : []
-  const toolCatalogSections: string[] = []
-  for (const file of schemaFiles) {
-    const serverName = file.replace(".json", "")
-    const schemas = JSON.parse(readFileSync(join(SCHEMAS_DIR, file), "utf-8"))
-    toolCatalogSections.push(renderCodeFacingToolCatalogSection(serverName, schemas))
-  }
-
-  let serverDescriptions = ""
-  try {
-    const configs = await loadServerConfigs()
-    serverDescriptions = Object.entries(configs).map(([name, cfg]) => `${name}: ${(cfg as any).description ?? ""}`).join("\n")
-  } catch {}
-
+async function buildAgentSystemPrompt(instruction: string, jigId?: string): Promise<{
+  prompt: string
+  authoringPolicy: AgentSession["authoringPolicy"]
+}> {
   let currentCode: string | undefined
   if (jigId) {
     const filePath = resolveJigPath(jigId)
@@ -260,18 +274,31 @@ async function buildAgentSystemPrompt(jigId?: string): Promise<string> {
     }
   }
 
-  const examplePath = `${EXAMPLES_DIR}/weekly-update.ts`
-  const exampleJig = existsSync(examplePath) ? readFileSync(examplePath, "utf-8") : undefined
+  let authoring
+  try {
+    authoring = await buildAuthoringState(instruction, {
+      existingCode: currentCode,
+    })
+  } catch (error: any) {
+    throw new ApiError(400, error?.message ?? "Failed to build authoring context")
+  }
 
-  return buildAgentJigSystemPrompt({
-    jigId,
-    skillMd,
-    typeDefs: typeSections.join("\n\n"),
-    toolCatalog: toolCatalogSections.join("\n\n"),
-    serverDescriptions,
-    currentCode,
-    exampleJig,
-  })
+  return {
+    prompt: buildAgentJigSystemPrompt({
+      jigId,
+      skillMd: authoring.context.skillMd,
+      typeDefs: authoring.context.typeDefs,
+      toolCatalog: authoring.context.toolCatalog,
+      serverDescriptions: authoring.context.serverDescriptions,
+      buildHints: authoring.context.buildHints,
+      currentCode,
+      exampleJig: authoring.context.exampleJig,
+    }),
+    authoringPolicy: {
+      requiresIntegration: authoring.requiresIntegration || authoring.allServers.length > 0,
+      buildResolutions: authoring.buildResolutions,
+    },
+  }
 }
 
 async function runAgentLoop(session: AgentSession): Promise<void> {
@@ -367,6 +394,7 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
     if (pendingAsk) {
       session.events.push({ type: "text", content: pendingAsk.question })
       session.pendingAskToolCallId = pendingAsk.toolCallId
+      session.pendingAskQuestion = pendingAsk.question
       session.status = "waiting"
       return
     }
@@ -399,12 +427,13 @@ export async function startAgentSession(body: any): Promise<StartAgentResponse> 
   }
 
   const sessionId = crypto.randomUUID()
-  const systemPrompt = await buildAgentSystemPrompt(jigId)
+  const { prompt: systemPrompt, authoringPolicy } = await buildAgentSystemPrompt(instruction, jigId)
 
   const session: AgentSession = {
     sessionId,
     jigId,
-    currentPrompt: instruction,
+    authoringIntent: instruction,
+    authoringPolicy,
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: instruction },
@@ -450,14 +479,18 @@ export async function pushAgentMessage(sessionId: string, body: any): Promise<{ 
   const message = body?.message as string
   if (!message) throw new ApiError(400, "message is required")
 
-  session.currentPrompt = message
-
   // If the agent was waiting for an ask_user reply, inject the answer as a tool result
   const pendingToolCallId = session.pendingAskToolCallId
   if (pendingToolCallId) {
+    session.authoringIntent = appendAskAnswer(session.authoringIntent, session.pendingAskQuestion, message)
     session.pendingAskToolCallId = undefined
+    session.pendingAskQuestion = undefined
     session.messages.push({ role: "tool", tool_call_id: pendingToolCallId, content: message })
   } else {
+    session.authoringIntent = appendAuthoringIntent(session.authoringIntent, message)
+    const { prompt, authoringPolicy } = await buildAgentSystemPrompt(session.authoringIntent, session.jigId)
+    session.authoringPolicy = authoringPolicy
+    session.messages[0] = { role: "system", content: prompt }
     session.messages.push({ role: "user", content: message })
   }
   session.status = "thinking"

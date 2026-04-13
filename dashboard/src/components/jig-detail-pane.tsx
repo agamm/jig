@@ -267,7 +267,6 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
   const trigger = useTriggerSave(jigId, jig.settings.trigger);
   const [expandedRun, setExpandedRun] = useState<number | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [upgradeRequested, setUpgradeRequested] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [paramsExpanded, setParamsExpanded] = useState(false);
   const [codeCopied, setCodeCopied] = useState(false);
@@ -519,27 +518,6 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
             </div>
           )}
         </div>
-
-        {/* Upgrade banner for legacy jigs */}
-        {jig.needsUpgrade && mode.type === "idle" && (
-          <div className="rounded-lg border border-blue-500/20 bg-blue-500/[0.04] p-3" style={{ animation: "fade-up 0.15s ease" }}>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-[10px] font-medium uppercase tracking-wider text-blue-400">Upgrade Available</p>
-                <p className="mt-1 text-[11px] text-blue-100/70">
-                  This jig uses the old format. Upgrade to declarative steps for tool enforcement and better visibility.
-                </p>
-              </div>
-              <Button
-                onClick={() => setUpgradeRequested(true)}
-                variant="accent"
-                size="xs"
-              >
-                Upgrade
-              </Button>
-            </div>
-          </div>
-        )}
 
         {/* Steps or Code */}
         {detailTab === "steps" ? (
@@ -795,11 +773,7 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
         <AgentInput
           agent={agent}
           jigId={jigId}
-          externalValue={
-            upgradeRequested
-              ? 'Upgrade this jig to use declarative ctx.step("label", [tools], async () => {...}) syntax for each step. Keep the same behavior.'
-              : removalInstruction || undefined
-          }
+          externalValue={removalInstruction || undefined}
         />
       </div>
     </aside>

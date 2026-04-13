@@ -9,6 +9,7 @@ import { completeRun, insertRun, markScheduleTriggered, openDb, setScheduleError
 import { resolveJigPath } from "../domain/jig-source.js"
 import { runJig, persist } from "../runner.js"
 import { applyRunEvent, discardTrackedRun, finishTrackedRun, getSignalForRun, hasActiveRunForJig, startTrackedRun } from "./run-store.js"
+import { maybeNotifyRunFailure } from "./run-failure-notify.js"
 
 export async function startBackgroundRun(jigId: string, params?: Record<string, unknown>): Promise<boolean> {
   if (hasActiveRunForJig(jigId)) return false
@@ -54,7 +55,10 @@ export async function startBackgroundRun(jigId: string, params?: Record<string, 
     setScheduleError(jigId, e?.message ?? String(e))
     completeRun(runId, "fail", Date.now() - startTime, e?.message ?? String(e))
   } finally {
-    if (shouldFinishTrackedRun) finishTrackedRun(runId)
+    if (shouldFinishTrackedRun) {
+      finishTrackedRun(runId)
+      void maybeNotifyRunFailure(jigId, runId, false).catch(() => {})
+    }
   }
   return true
 }

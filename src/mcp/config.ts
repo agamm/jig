@@ -37,7 +37,7 @@ export type ServerMeta = {
 
 export type ProxyConfig = {
   via: string
-  discover: string
+  connectDiscovery: string
   /** URL to the provider's dashboard where users can add more connections */
   dashboardUrl?: string
 }
@@ -45,6 +45,8 @@ export type ProxyConfig = {
 export type ServerConfig = (StdioServerConfig | RemoteServerConfig | RepoServerConfig) & {
   meta?: ServerMeta
   proxy?: ProxyConfig
+  /** Authoring-time discovery hook used by jig generation to resolve dynamic runtime targets. */
+  authoringDiscovery?: string
 }
 
 type ServerRegistry = Record<string, ServerConfig>

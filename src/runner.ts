@@ -12,6 +12,7 @@ import type { RunEvent } from "./run-events.js"
 import { insertStep, completeStep, completeRun } from "./db.js"
 import { dryRunContext } from "./sdk/dryrun.js"
 import { checkStepStructure } from "./services/jig-checker.js"
+import { hasConsoleLogCall } from "./domain/source-analysis.js"
 
 // --- Debug log (async, queued) ---
 const LOG_PATH = join(import.meta.dir, "../jig_debug.log")
@@ -109,7 +110,7 @@ async function _runJig(
         problems.push("Jig calls run() at module level — remove it. The runner calls run() for you.")
       if (/^\s*process\.exit/m.test(stripped))
         problems.push("Jig calls process.exit() at module level — remove it.")
-      if (/console\.log\s*\(/.test(stripped))
+      if (hasConsoleLogCall(source, jigPath))
         problems.push("Use ctx.output() instead of console.log() — console.log bypasses the event stream.")
       if (/from\s+["'][.]{2}/.test(stripped))
         problems.push('Jig uses relative imports (../) — use "@jig/sdk" and "@jig/connections/" aliases instead.')

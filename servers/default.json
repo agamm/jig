@@ -17,13 +17,23 @@
     "auth": "gh auth token",
     "description": "Repos, issues, PRs, commits"
   },
+  "apify": {
+    "type": "remote",
+    "url": "https://mcp.apify.com",
+    "description": "Apify Actors, web scraping, automation, docs",
+    "authoringDiscovery": "src/mcp/discover/apify.ts",
+    "meta": {
+      "docs": "https://docs.apify.com/platform/integrations/mcp",
+      "provider": "Apify"
+    }
+  },
   "composio": {
     "type": "remote",
     "url": "https://connect.composio.dev/mcp",
     "description": "Telegram, Slack, and 250+ integrations",
     "proxy": {
       "via": "COMPOSIO_MULTI_EXECUTE_TOOL",
-      "discover": "src/mcp/discover/composio.ts",
+      "connectDiscovery": "src/mcp/discover/composio.ts",
       "dashboardUrl": "https://dashboard.composio.dev/"
     },
     "meta": {

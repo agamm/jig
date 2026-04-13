@@ -11,6 +11,7 @@ describe("example jig catalog", () => {
     expect(ids).toContain("pre-meeting-briefing")
     expect(examples.every((example) => example.steps.length > 0)).toBe(true)
     expect(examples.every((example) => example.trigger.length > 0)).toBe(true)
+    expect(examples.every((example) => example.connections.includes("workspace"))).toBe(true)
     expect(readFileSync("examples/weekly-update.ts", "utf-8")).not.toContain("params:")
   })
 

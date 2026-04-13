@@ -9,6 +9,7 @@ import { existsSync } from "fs"
 import { createInterface } from "node:readline/promises"
 import { createApiServer } from "./server.js"
 import { CONNECTIONS_DIR, DASHBOARD_DIR, PROJECT_ROOT } from "./config/paths.js"
+import { startScheduler } from "./scheduler/index.js"
 
 /** Check if a port is free by briefly listening, then closing. */
 async function isPortFree(port: number): Promise<boolean> {
@@ -121,6 +122,10 @@ export async function startServer(options?: { port?: number }) {
   // 2. Start Bun API server on an internal port
   const apiServer = tryServe(4173)
   const apiPort = apiServer.port
+  const scheduler = await startScheduler().catch((e: unknown) => {
+    console.error("[scheduler] failed to start:", e)
+    return null
+  })
 
   // 3. Start Next.js on the free user-facing port
   const nextProcess = Bun.spawn(["pnpm", "run", "dev", "--port", String(userPort)], {
@@ -145,6 +150,7 @@ export async function startServer(options?: { port?: number }) {
   const cleanup = async () => {
     const { closeAllConnections } = await import("./mcp/client.js")
     await closeAllConnections()
+    scheduler?.stop()
     nextProcess.kill()
     apiServer.stop(true)
     process.exit(0)

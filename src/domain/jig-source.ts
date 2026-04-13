@@ -3,6 +3,7 @@ import { join } from "path"
 import { JIGS_DIR } from "../config/paths.js"
 import { cronToText } from "./triggers.js"
 import { isValidJigId } from "./jig-id.js"
+import { getImportedServers } from "./source-analysis.js"
 
 export interface TriggerConfig {
   type: "cron" | "manual" | "webhook"
@@ -97,8 +98,7 @@ export function extractParams(code: string): Record<string, string> {
 }
 
 export function extractConnections(code: string): string[] {
-  const matches = code.matchAll(/from\s+["'].*?\/connections\/(\w+)\.(?:js|ts)["']/g)
-  return [...new Set([...matches].map((m) => m[1]))]
+  return getImportedServers(code)
 }
 
 export function extractTrigger(code: string): string {

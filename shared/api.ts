@@ -70,7 +70,6 @@ export interface JigData {
   code: string
   runs: JigRun[]
   schedule?: ScheduleInfo
-  needsUpgrade?: boolean
   settings: {
     trigger: string
     connections: string[]

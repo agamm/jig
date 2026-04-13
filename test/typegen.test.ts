@@ -9,6 +9,7 @@ import {
   generateRuntimeModule,
   generateProxyRuntimeModule,
   generateTypeDeclaration,
+  toolNameToIdentifier,
 } from "../src/mcp/typegen.js"
 
 const sampleTools: Tool[] = [
@@ -39,6 +40,33 @@ const sampleTools: Tool[] = [
   },
 ]
 
+const hyphenatedTools: Tool[] = [
+  {
+    name: "search-actors",
+    description: "Search actors",
+    inputSchema: {
+      type: "object",
+      properties: {
+        "max-results": { type: "integer", description: "Maximum result count" },
+      },
+      required: [],
+    },
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "apify--rag-web-browser",
+    description: "Fetch web data",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string" },
+      },
+      required: ["query"],
+    },
+    annotations: { readOnlyHint: false },
+  },
+]
+
 describe("generateRuntimeModule (direct)", () => {
   it("generates tool exports with correct readOnly flags from annotations", () => {
     const code = generateRuntimeModule("testsvc", sampleTools)
@@ -65,6 +93,14 @@ describe("generateRuntimeModule (direct)", () => {
     expect(code).toContain(`getServerConfig("my-server")`)
     expect(code).toContain(`connectServer("my-server"`)
     expect(code).toContain(`registerConnection("my-server"`)
+  })
+
+  it("sanitizes invalid tool names into valid export identifiers", () => {
+    const code = generateRuntimeModule("apify", hyphenatedTools)
+    expect(code).toContain(`export const search_actors = tool("search-actors", true)`)
+    expect(code).toContain(`export const apify_rag_web_browser = tool("apify--rag-web-browser", false)`)
+    expect(code).toContain(`"search-actors": search_actors`)
+    expect(code).toContain(`"apify--rag-web-browser": apify_rag_web_browser`)
   })
 })
 
@@ -169,5 +205,21 @@ describe("generateTypeDeclaration", () => {
     const types = generateTypeDeclaration("x", [tool])
     expect(types).toContain("* /")
     expect(types).not.toContain("*/ pattern")
+  })
+
+  it("sanitizes hyphenated tool and param names into valid TypeScript", () => {
+    const types = generateTypeDeclaration("apify", hyphenatedTools)
+    expect(types).toContain("search_actors: JigTool")
+    expect(types).toContain("apify_rag_web_browser: JigTool")
+    expect(types).toContain(`"max-results"?: number`)
+    expect(types).not.toContain("search-actors: JigTool")
+  })
+})
+
+describe("toolNameToIdentifier", () => {
+  it("maps MCP tool names to safe identifiers", () => {
+    expect(toolNameToIdentifier("search-actors")).toBe("search_actors")
+    expect(toolNameToIdentifier("apify--rag-web-browser")).toBe("apify_rag_web_browser")
+    expect(toolNameToIdentifier("1password")).toBe("_1password")
   })
 })

@@ -53,6 +53,20 @@ describe("runner", () => {
     }
   })
 
+  it("does not reject string literals that merely mention console.log()", async () => {
+    const { runJig } = await import("../src/runner.js")
+    const testJig = join(TEST_TMP_DIR, "console-string.ts")
+    writeFileSync(testJig, `import { jig } from "${PROJECT_ROOT}/src/index.js"\nexport default jig("x", { trigger: { type: "manual" } }, async (ctx) => { await ctx.step("ok", [], async () => { ctx.output("Mention console.log() in docs only") }) })`)
+    try {
+      const events: RunEvent[] = []
+      const result = await runJig(testJig, {}, (e) => events.push(e), { dryRun: true, silent: true })
+      expect(result.error).toBeUndefined()
+      expect(events.some(e => e.type === "done")).toBe(true)
+    } finally {
+      rmSync(testJig, { force: true })
+    }
+  })
+
   it("emits error for nonexistent jig file", async () => {
     const { runJig } = await import("../src/runner.js")
     const { openDb } = await import("../src/db.js")

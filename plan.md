@@ -18,82 +18,30 @@ Users see natural language and visual steps. Code is the compiled artifact that 
 
 | Concept | What it is | Example |
 |---------|-----------|---------|
-| **Jig** | A saved automation. Has a trigger, tools, steps. Lives in `jigs/`. | "My monthly invoice jig" |
-| **Task** | A one-shot execution plan. Proposed by the assistant, approved by you, runs once. | "Draft a reply to Sarah" |
-| **Run** | A single execution of a jig or task. The receipt. | "Invoice jig ran March 1 — 4 steps, 4.2s" |
+| **Jig** | A saved automation. Has a trigger, tools, and step structure. Lives in `jigs/`. | "My monthly invoice jig" |
+| **Run** | A single execution of a jig. The receipt. | "Invoice jig ran March 1 — 4 steps, 4.2s" |
 | **Step** | One operation within a run. | "Read timesheet from Google Drive" |
 | **Connection** | An authenticated service. | "Gmail ✓  Mercury ✓  Granola ✓" |
-| **Action** | A specific capability on a connection. | "Gmail → search, draft, send" |
-| **Assistant** | The default jig. Chat-triggered, read-only tools, can propose tasks. | "What meetings do I have tomorrow?" |
-
-A **task** can be **promoted to a jig**: "I need this every month" → saves to `jigs/`, adds a trigger.
-
-The **assistant** is itself a jig — the default one. Its special power is proposing tasks with explicit tools/steps for your approval.
+| **Tool** | A specific capability exposed by a connection. | "Gmail → search, draft" |
+| **Authoring Agent** | The dashboard/CLI backend flow that creates or edits jigs from natural language. | "Create a weekly update jig" |
 
 ---
 
 ## How It Works
 
-### The Assistant (Chat)
+### Authoring Agent
 
-The assistant is a jig with read-only tools. It answers questions freely. When you ask it to **do** something, it compiles a task.
+The dashboard and CLI both talk to the same backend authoring flow. You describe the automation you want, and the backend:
 
-**Read-only — no approval needed:**
-> "What did Acme email me about last week?"
-> → uses gmail.search, responds with results.
+1. Resolves which connected servers the jig needs
+2. Applies any server-specific authoring strategy
+3. Generates TypeScript against the connected/generated tool surface
+4. Validates the jig and fixes errors before saving
 
-**Within standing permissions — just does it:**
-> "Draft a reply saying we'll review by Friday."
-> → gmail.draft is pre-authorized, creates draft, shows result.
-
-**Needs elevation — proposes a task:**
-> "Create an invoice on Mercury for this month."
-
-```
-Create March invoice for Acme Corp
-
-1. Read timesheet from Google Drive
-2. Find last invoice email
-3. Compare hours — flag changes
-4. Create invoice on Mercury ($25,200)
-
-Will use: Drive (read) · Gmail (search) · Mercury (create invoice)
-
-[Approve]  [Edit]  [Reject]
-```
-
-> [Approve] → runs deterministically, logged to runs/
-> "I need this every month." → promoted to a jig with trigger `"every 1st 9am"`
-
-### Standing Permissions
-
-You set your trust level per action. The assistant operates within those bounds without asking.
-
-```
-Gmail
-  ✓ Search          always allowed
-  ✓ Read            always allowed
-  ✓ Draft           always allowed
-  ○ Send            ask every time
-  ✗ Delete          never
-
-Google Drive
-  ✓ Read            always allowed
-  ✗ Write           never
-
-Mercury
-  ○ Read            ask every time
-  ○ Create invoice  ask every time
-```
-
-Three levels:
-- **✓ Always** — assistant uses freely, no approval
-- **○ Ask** — must propose a task, get approval
-- **✗ Never** — blocked even if requested (guardrail)
-
-Permissions build naturally through usage. Every approval shows: `□ Always allow this action` — upgrading ○ → ✓ inline. No settings page needed on day one.
-
-**Multi-step with partial authorization:** the assistant runs pre-authorized steps silently, then pauses only at the permission boundary. Minimum friction, maximum visibility where it matters.
+The server-specific rule matters:
+- Default servers expose their generated `.d.ts` and schema tool surface directly
+- `apify` may do build-time Actor discovery, then generate runtime code against the resolved Actor path
+- `composio` may do config-driven proxy discovery, then expose the discovered connected-tool surface rather than raw meta-tools
 
 ### Jigs (Saved Automations)
 
@@ -121,10 +69,8 @@ Runs every 1st of the month at 9am
    └─ uses AI to detect differences
 4. Draft invoice email
    └─ creates Gmail draft
-5. Wait for your approval
-6. Send email
 
-Tools: Google Drive (read) · Gmail (search, draft, send)
+Tools: Google Drive (read) · Gmail (search, draft)
 
 Last run: March 1 — ✓ Completed (4.2s)
 Next run: April 1 at 9:00am
@@ -135,22 +81,25 @@ Next run: April 1 at 9:00am
 **What actually exists (visible via "View code"):**
 
 ```typescript
-import { jig, llm } from "jig"
-import { workspace } from "jig/connections"
+import { jig, llm } from "@jig/sdk"
+import { workspace } from "@jig/connections/workspace.js"
 
 export default jig("monthly-invoice-acme", {
-  trigger: "every 1st 9am",
-  tools: [workspace.drive_search, workspace.gmail_search, workspace.gmail_createDraft, workspace.gmail_send],
+  trigger: { type: "cron", cron: "0 9 1 * *" },
+  tools: [workspace.drive_search, workspace.gmail_search, workspace.gmail_createDraft],
 }, async (ctx) => {
-  const timesheet = await workspace.drive_downloadFile({ fileId: "...", localPath: "/tmp/timesheet.xlsx" })
-  const last = await workspace.gmail_search({ query: "subject:invoice to:billing@acme.co", maxResults: 1 })
-  const diff = await llm("Compare hours, flag changes", { timesheet, last }, {
-    schema: { changed: "boolean", summary: "string", hours: "number" }
+  let timesheet: unknown
+  let lastInvoice: unknown
+
+  await ctx.step("Find source documents", [workspace.drive_search, workspace.gmail_search], async () => {
+    timesheet = await workspace.drive_search({ query: "Acme timesheet March" })
+    lastInvoice = await workspace.gmail_search({ query: "subject:invoice to:billing@acme.co", maxResults: 1 })
   })
-  const draft = await llm("Draft invoice email", { timesheet, diff })
-  await workspace.gmail_createDraft({ to: "billing@acme.co", subject: "Invoice", body: draft })
-  await ctx.human("Review draft", { show: draft, actions: ["approve", "edit", "reject"] })
-  await workspace.gmail_send({ to: "billing@acme.co", subject: "Invoice", body: draft })
+
+  await ctx.step("Draft invoice email", [workspace.gmail_createDraft], async () => {
+    const draft = await llm("Draft invoice email", { timesheet, lastInvoice })
+    await workspace.gmail_createDraft({ to: "billing@acme.co", subject: "Invoice", body: draft as string })
+  })
 })
 ```
 
@@ -165,8 +114,6 @@ Most users never open "View code." Power users live there.
 Every jig has a trigger:
 
 - **Cron** — `"every friday 9am"`, `"every 1st 9am"`, `"every 30m"`
-- **Event** — `"on gmail.newEmail matching 'urgent'"` (Composio/MCP webhooks)
-- **Chat** — the assistant's trigger (always listening)
 - **Manual** — `jig run <name>` or dashboard button
 - **Webhook** — every jig gets a trigger URL automatically
 
@@ -175,19 +122,19 @@ Every jig has a trigger:
 Every jig gets a URL out of the box:
 
 ```
-http://localhost:3141/trigger/monthly-invoice-acme?key=sk_a8f3...
+http://localhost:3141/api/webhooks/monthly-invoice-acme?token=sk_a8f3...
 ```
 
 Or exposed publicly (ngrok, Cloudflare tunnel, deployed):
 
 ```
-https://jig.yourdomain.com/trigger/weekly-update?key=sk_a8f3...
+https://jig.yourdomain.com/api/webhooks/weekly-update?token=sk_a8f3...
 ```
 
 Supports input parameters:
 
 ```
-POST /trigger/monthly-invoice-acme?key=sk_a8f3...
+POST /api/webhooks/monthly-invoice-acme?token=sk_a8f3...
 Content-Type: application/json
 { "client": "Acme", "month": "march" }
 ```
@@ -208,11 +155,11 @@ Dashboard shows **[Copy trigger URL]** on every jig. One click, clipboard.
 ### Core
 
 ```typescript
-import { jig, llm } from "jig"
-import { workspace, granola } from "jig/connections"
+import { jig, llm } from "@jig/sdk"
+import { workspace } from "@jig/connections/workspace.js"
 
 export default jig("name", {
-  trigger: "every friday 9am",
+  trigger: { type: "cron", cron: "0 9 * * 5" },
   tools: [workspace.gmail_search, workspace.gmail_createDraft],
 }, async (ctx) => {
   // ... steps ...
@@ -220,89 +167,33 @@ export default jig("name", {
 ```
 
 - **`tools` array** — hard permission boundary. Not listed = can't be called. Code-enforced, not LLM-interpreted.
-- **Durable** — each SDK `await` persists step results. On crash, resumes from last completed step. (Only SDK calls are memoized — `gmail.search`, `llm()`, `ctx.human()`, etc. — not arbitrary async functions.)
-- **Observable** — every SDK call auto-tracked. No explicit logging needed.
+- **Observable** — runs and steps are tracked by the runtime and shown in the dashboard/API.
+- **Scoped** — runtime code should stay on the generated connection surface; authoring-time discovery should not leak back into jig runtime code.
 - **Self-healing** — when a code step fails at runtime (unexpected data format, API change, edge case), the jig opens an LLM hatch to attempt repair before giving up. See [Self-Healing](#self-healing).
 
 ### Actions Inside Jigs
 
 ```typescript
 // MCP tool calls (typed, generated after `jig connect`)
-import { workspace, granola } from "jig/connections"
+import { jig, llm } from "@jig/sdk"
+import { workspace } from "@jig/connections/workspace.js"
 
-const emails = await workspace.gmail_search({ query: "subject:invoice", maxResults: 5 })
-const meetings = await granola.list_meetings({ from: "2026-03-01" })
-const events = await workspace.calendar_listEvents({ calendarId: "primary" })
+export default jig("weekly-update", {
+  trigger: { type: "manual" },
+  tools: [workspace.calendar_listEvents, workspace.gmail_search, workspace.gmail_createDraft],
+}, async (ctx) => {
+  let meetings: unknown
+  let emails: unknown
 
-// LLM — content generation and judgment
-const draft = await llm("Write weekly update", { commits, meetings })
+  await ctx.step("Gather source data", [workspace.calendar_listEvents, workspace.gmail_search], async () => {
+    meetings = await workspace.calendar_listEvents({ calendarId: "primary" })
+    emails = await workspace.gmail_search({ query: "label:inbox newer_than:7d", maxResults: 20 })
+  })
 
-// Structured LLM output — when you need booleans, objects, not strings
-const priority = await llm("Is this high priority?", { email }, {
-  schema: { isHighPriority: "boolean", reason: "string" }
-})
-
-// Human approval — with rich payload
-const approved = await ctx.human("Review invoice", {
-  show: invoiceData,
-  editable: true,
-  actions: ["approve", "reject", "edit"],
-})
-
-// Parallel execution
-const [emails, commits] = await ctx.parallel(
-  gmail.search("subject:update"),
-  github.listCommits({ since: "7d" })
-)
-
-// Batch processing — for large datasets that exceed LLM context
-const flagged = await ctx.map(emails, 20, async (batch) => {
-  return llm("Which need a reply?", { batch })
-})
-
-// Persistent state — remember across runs (for cron jigs)
-const already = await ctx.state.get(`prepped:${meeting.id}`)
-if (already) continue
-await ctx.state.set(`prepped:${meeting.id}`, true, { ttl: "24h" })
-
-// Secrets — never logged in runs/
-const key = ctx.secret("MERCURY_API_KEY")
-
-// Call another jig
-await ctx.run("send-notification", { message: "Invoice approved" })
-```
-
-### Custom Tools
-
-For APIs without Composio or MCP connectors:
-
-```typescript
-// tools/mercury.ts
-import { defineTools } from "jig"
-
-export const mercury = defineTools("mercury", {
-  createInvoice: {
-    method: "POST",
-    url: "https://api.mercury.com/invoices",
-    auth: "bearer",
-    params: { amount: "number", client: "string", description: "string" }
-  },
-  listInvoices: {
-    method: "GET",
-    url: "https://api.mercury.com/invoices",
-    auth: "bearer",
-  }
-})
-```
-
-Then use like any other tool:
-
-```typescript
-import { mercury } from "../tools/mercury"
-
-export default jig("create-invoice", {
-  tools: [mercury.createInvoice],
-  // ...
+  await ctx.step("Draft summary", [workspace.gmail_createDraft], async () => {
+    const draft = await llm("Write a weekly update email", { meetings, emails })
+    await workspace.gmail_createDraft({ to: "team@example.com", subject: "Weekly update", body: draft as string })
+  })
 })
 ```
 
@@ -363,8 +254,7 @@ The code is the **compiled artifact**. Users see a **natural-language + visual p
 | "Read timesheet from Google Drive" | `await drive.read("path/to/file.xlsx")` |
 | "Search for last invoice email" | `await gmail.search("subject:invoice", { limit: 1 })` |
 | "Compare hours using AI" | `await llm("Compare hours", { ... })` |
-| "Wait for your approval" | `await ctx.human("Review", { ... })` |
-| "Send email" | `await gmail.send(draft)` |
+| "Draft invoice email" | `await workspace.gmail_createDraft({ ... })` |
 
 Generated from AST parsing + SDK call metadata at load time. No LLM needed for the basic view.
 
@@ -374,11 +264,8 @@ Simple, functional web UI. No GenUI — just clean HTML pages:
 
 - **Jigs list** — name, trigger, last run status, next run time
 - **Run detail** — step-by-step timeline with results (rendered as formatted text/JSON)
-- **Pending approvals** — `ctx.human()` interactions with action buttons
-- **Connections** — connected services + permission levels
-- **Assistant chat** — text input, conversation history, task proposals
-
-Approval panels render the `show` payload as formatted data with action buttons. No fancy component selection — just sensible defaults (tables for arrays, text for strings, JSON for complex objects).
+- **Connections** — connected services + tool surfaces
+- **Authoring chat** — text input, agent activity, jig generation/editing
 
 ### GenUI Dashboard (v2 — future)
 
@@ -390,10 +277,10 @@ Frameworks to evaluate when ready: Tambo, Vercel AI SDK v6, CopilotKit + AG-UI, 
 
 ## Frontend: PWA (Exploring)
 
-One idea worth exploring: ship the dashboard as a **Progressive Web App** so it doubles as the notification/approval channel on mobile.
+One idea worth exploring: ship the dashboard as a **Progressive Web App** so it doubles as the notification channel on mobile.
 
 Potential benefits:
-- **Push notifications** — pending approvals, completions, urgent alerts
+- **Push notifications** — completions, failures, urgent alerts
 - **Installable** on phone home screen — feels native
 - **One codebase** — no separate WhatsApp/Telegram integration needed
 
@@ -406,11 +293,11 @@ Open questions:
 
 ## First Run
 
-`npx create-jig` → opens `http://localhost:3141`:
+`jig start` opens `http://localhost:3141`:
 
-1. Paste LLM API key → test call confirms
-2. Connect one service (Gmail, Calendar, etc.) → OAuth
-3. Chat opens → assistant works immediately
+1. Start the dashboard and API server
+2. Connect one service (Workspace, GitHub, Apify, etc.)
+3. Create the first jig from natural language
 
 No wizard, no config files. Value in 2 minutes. Everything else discovered through usage.
 
@@ -418,21 +305,15 @@ No wizard, no config files. Value in 2 minutes. Everything else discovered throu
 
 ## Distribution
 
-Jig is a git clone. Upstream is the framework. Your clone has your jigs.
+Jig is a git repo. Upstream is the framework. Your clone has your jigs.
 
-On `jig start`, clones auto-pull from upstream in the background. Upstream repos (no `upstream` remote) skip this check.
+When you want updates from upstream, use `jig update`.
 
 ---
 
 ## Deployment
 
-`jig start` detects your setup and asks interactively:
-
-- **Local** — foreground process, good for chat and manual runs
-- **Daemon** — background service via systemd/launchd, survives reboots
-- **Expose** — daemon + Cloudflare Tunnel for public webhook URLs
-
-CLI flags (`--daemon`, `--expose`) available for automation/scripts.
+Current default flow is local: run `jig start` for the dashboard + API server. Background-service and public-expose workflows are future deployment work, not current guaranteed product surface.
 
 ---
 
@@ -454,9 +335,9 @@ Built into the SDK. No boilerplate.
 
 ## Permission Resolution
 
-**Jig `tools` array always wins.** Saved jigs use their declared tools. Standing permissions only govern the assistant's ad-hoc tasks.
+**Jig `tools` array always wins.** Saved jigs use their declared tools. Authoring may discover or resolve runtime targets at build time, but the saved jig runtime still runs only against its declared tool surface.
 
-**Jigs only run from their declared trigger.** A jig with `trigger: "every 1st 9am"` runs on that schedule — not from a random webhook or accidental `jig run`. This is default behavior, not opt-in. The `tools` array controls *what* a jig can do; the trigger controls *when* it can do it. Both are enforced by the runtime, not by the LLM.
+**Jigs only run from their declared trigger.** A jig with `trigger: { type: "cron", cron: "0 9 1 * *" }` runs on that schedule, while `{ type: "manual" }` and `{ type: "webhook" }` behave as named. The `tools` array controls *what* a jig can do; the trigger controls *when* it can do it. Both are enforced by the runtime, not by the LLM.
 
 ---
 
@@ -471,22 +352,16 @@ Every `llm()` call logs tokens + cost to SQLite automatically. `jig costs` shows
 Single Bun process started by `jig start`:
 
 - **Jig Runner** — loads/executes .ts files from `jigs/`
-- **Step Memoizer** — persists step results to SQLite, resumes on crash
+- **Run/Step Tracker** — records step results, timing, and status to SQLite
 - **Cron Scheduler** — triggers jigs on schedule
-- **Event Listener** — MCP webhooks
 - **Webhook Server** — trigger URLs for every jig
-- **Approval Queue** — tracks `ctx.human()` waits
-- **State Store** — persistent key-value for `ctx.state` (SQLite)
 - **API Server** — dashboard + webhook receiver
-- **File Watcher** — hot reloads jigs on change
 
 ### Storage: SQLite
 
 All runtime data lives in a single `jig.db` file (via Bun's built-in `bun:sqlite`):
 
 - **Runs** — execution history with step results, timing, status
-- **State** — `ctx.state` key-value store with TTL
-- **Approvals** — pending `ctx.human()` interactions
 
 Why SQLite over JSON files:
 - Concurrent reads/writes (WAL mode) — no corruption from parallel jig execution
@@ -505,10 +380,8 @@ my-jig/                    ← git repo
 │   ├── _helpers.ts        ← underscore = not a jig, shared code
 │   ├── email-triage.ts
 │   └── meeting-prep.ts
-├── tools/                 ← custom tool definitions
-│   └── mercury.ts
-├── jig.db                 ← runs, state, approvals (gitignored)
-├── jig.config.ts          ← settings + standing permissions
+├── .jig/                  ← generated schemas, connection modules, types
+├── jig.db                 ← runs and runtime state (gitignored)
 ├── .env                   ← API keys (gitignored)
 └── package.json
 ```
@@ -517,33 +390,11 @@ The repo IS the system. Clone anywhere, `jig start`, it runs.
 
 ---
 
-## Config
-
-```typescript
-import { defineConfig } from "jig"
-
-export default defineConfig({
-  llm: { model: "claude-sonnet-4-6", provider: "anthropic" },
-  dashboard: { port: 3141 },
-
-  // Standing permissions — what the assistant can do without asking
-  permissions: {
-    gmail:    { search: "always", read: "always", draft: "always", send: "ask", delete: "never" },
-    drive:    { read: "always", write: "never" },
-    calendar: { read: "always", create: "ask" },
-    mercury:  { read: "ask", createInvoice: "ask" },
-    github:   { read: "always", push: "never" },
-  },
-})
-```
-
----
-
 ## Creating & Updating Jigs
 
 Three paths, all produce the same `.ts` file:
 
-- **Chat** — ask the assistant, it proposes a task, you say "save as jig" → writes to `jigs/`
+- **Chat** — describe a jig in natural language, the backend agent writes it to `jigs/`
 - **CLI** — `jig new` / `jig edit <name>` → AI generates/modifies .ts files
 - **Editor** — open .ts file directly, full TypeScript autocomplete
 - **Dashboard** — edit via natural language, see changes as plain-English diff
@@ -554,15 +405,13 @@ Git tracks full history of all changes.
 
 ## CLI
 
-```
-jig start               — run daemon (cron, triggers, dashboard/PWA)
-jig connect <service>   — OAuth via Composio / configure MCP
-jig connections         — list connected services + permission levels
+``` 
+jig start               — start dashboard + API server
+jig connect <service>   — connect and generate tool artifacts
 jig new                 — AI generates a jig from description
 jig edit <name>         — AI modifies a jig
 jig run <name>          — run a jig
-jig runs                — list recent runs
-jig approve             — list pending approvals
+jig update              — pull latest from upstream
 ```
 
 ---
@@ -583,19 +432,16 @@ jig approve             — list pending approvals
 |---|---|---|
 | Gmail, Calendar, Drive, Docs, Sheets, Chat | `gemini-cli-extensions/workspace` | stdio (local, Apache 2.0) |
 | Granola | `mcp.granola.ai/mcp` | remote |
-| Slack | `mcp.slack.com/mcp` | remote |
-| Notion | `mcp.notion.com/mcp` | remote |
-| Linear | `mcp.linear.app/sse` | remote |
+| GitHub | `api.githubcopilot.com/mcp/` | remote |
+| Apify | `mcp.apify.com` | remote |
+| Composio | `connect.composio.dev/mcp` | remote proxy/discovery |
 
 Users can also paste any MCP server URL to add custom integrations.
 
-### Custom tools
-`defineTools()` remains as an escape hatch for HTTP APIs without MCP servers.
-
 ```
-$ jig connect workspace   → Browser OAuth → 56 Google Workspace tools available
-$ jig connect granola     → Browser OAuth → 4 Granola tools available
-$ jig connections         → Lists all connected servers + status
+$ jig connect workspace   → Browser OAuth → generated Workspace tool surface
+$ jig connect apify       → generated Apify connection surface
+$ jig connect composio    → proxy discovery → generated connected-tool surface
 ```
 
 ---
@@ -605,8 +451,7 @@ $ jig connections         → Lists all connected servers + status
 | Layer | Mechanism |
 |-------|-----------|
 | **Jig permissions** | `tools` array — code-enforced closed set per jig |
-| **Standing permissions** | Per-action trust levels (always / ask / never) for assistant tasks |
-| **Credentials** | MCP OAuth (browser-based) + `.env` for custom APIs — never in repo |
+| **Credentials** | MCP OAuth / configured auth commands + SQLite credential storage — never in repo |
 | **Webhook auth** | Per-jig secret keys on trigger URLs |
 | **Audit** | Every action logged to SQLite with timing and results — queryable |
 | **Versioning** | Git — full history of every jig change |
@@ -616,8 +461,8 @@ $ jig connections         → Lists all connected servers + status
 ## Tech Stack
 
 - **Runtime:** Bun
-- **Integrations:** MCP servers + custom HTTP tools
-- **LLM:** Anthropic Claude (configurable)
+- **Integrations:** MCP servers + generated connection modules
+- **LLM:** OpenRouter-backed model selection
 - **Storage:** SQLite via `bun:sqlite` — single file, no server
 - **Frontend:** Web dashboard (v1: simple HTML + chat; v2: explore GenUI/PWA)
 - **Distribution:** Git clone (upstream + private instance)
@@ -634,11 +479,9 @@ Client-specific knowledge (preferences, quirks, recipients, formatting rules) li
 
 When the system learns something new (self-healing discovers a pattern, user gives feedback), the jig file itself is edited. Each edit is a git commit. Git history is the memory of how each jig evolved.
 
-### 2. Runtime State — SQLite (`ctx.state`)
+### 2. Runtime State — SQLite (future)
 
-Operational state that changes between runs: "already prepped this meeting," "last invoice number," "token refresh timestamp." Key-value store with TTL in `jig.db`.
-
-This is ephemeral operational data, not permanent knowledge. If you deleted `jig.db`, jigs would still know HOW to do their job (that's in the code). They'd just lose track of WHERE they left off.
+Operational state between runs is a plausible future addition, but the current codebase should not assume a public `ctx.state` API exists until it is implemented and documented as real runtime surface.
 
 ### 3. Run History — SQLite (append-only)
 
@@ -714,6 +557,6 @@ The LLM's heavy lifting happens at **creation time**, not execution time. It wri
 
 This is the fundamental difference: OpenClaw burns tokens and risks errors on every run. Jig burns tokens once (at creation) and runs reliably forever after.
 
-No existing tool combines: deterministic execution with LLM hatches, self-healing on failure, code-enforced permissions, human-in-the-loop approval with standing permissions, self-hosted git-native, and an interactive assistant that compiles tasks into automations.
+No existing tool combines: deterministic execution with LLM hatches, self-healing on failure, code-enforced permissions, self-hosted git-native operation, and an interactive assistant that compiles natural-language requests into automations.
 
 The pitch: **"Day one, it's your assistant. Day thirty, it runs your business."**

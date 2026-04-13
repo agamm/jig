@@ -34,6 +34,7 @@ describe("jig writing prompt policy", () => {
         skillMd,
         typeDefs: "",
         toolCatalog: "",
+        buildHints: "",
         relevantSchemas: "",
         exampleJig: "",
         serverDescriptions: "",

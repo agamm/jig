@@ -251,7 +251,6 @@ export function createApiServer(port: number) {
   // Clear step cache on startup — ensures stale derivations from old SDK versions don't persist
   const { clearAllStepCache } = require("./db.js")
   clearAllStepCache()
-  startScheduler().catch((e) => console.error("[scheduler] failed to start:", e))
 
   return Bun.serve({
     port,
@@ -465,5 +464,18 @@ process.on("unhandledRejection", (error) => {
 if (import.meta.main) {
   const port = parseInt(process.env.PORT ?? "3141")
   const server = createApiServer(port)
+  const scheduler = await startScheduler().catch((e) => {
+    console.error("[scheduler] failed to start:", e)
+    return null
+  })
+  const cleanup = async () => {
+    const { closeAllConnections } = await import("./mcp/client.js")
+    await closeAllConnections()
+    scheduler?.stop()
+    server.stop(true)
+    process.exit(0)
+  }
+  process.on("SIGINT", cleanup)
+  process.on("SIGTERM", cleanup)
   console.log(`API server on http://localhost:${server.port}`)
 }

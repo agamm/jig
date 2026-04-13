@@ -5,6 +5,7 @@ type CreatorPromptInput = {
     skillMd: string
     typeDefs: string
     toolCatalog: string
+    buildHints?: string
     relevantSchemas: string
     exampleJig: string
     serverDescriptions: string
@@ -18,6 +19,7 @@ type AgentPromptInput = {
   typeDefs: string
   toolCatalog: string
   serverDescriptions: string
+  buildHints?: string
   currentCode?: string
   exampleJig?: string
 }
@@ -39,19 +41,26 @@ function agentExecutionRules() {
 - Prefer concise concept names over literal sentence fragments. Good: forgotten-emails, weekly-update, morning-briefing, meeting-prep. Bad: check-my-email-for-emails-i-forgot
 - Valid jigId names use only lowercase letters, numbers, dashes, and underscores
 - Import SDK: import { jig, llm, agent } from "@jig/sdk"
-- Import connections: import { serverName } from "@jig/connections/serverName.js"
+- Import connections: import { serverName } from "@jig/connections/serverName"
 - Do NOT use relative imports (../) — always use the "@jig/sdk" and "@jig/connections/" aliases
 - Use ctx.output() for output, NEVER console.log()
 - End the file with: export default myJig
 - Do NOT use require() or CommonJS
 - BEFORE writing any code, check: does this jig need the user's email, name, Slack channel, or any other personal constant? If yes, STOP and ask the user — do not write code until you have their answer. Do not use a tool call or agent() to discover it at runtime. Do not embed tricks like "find my email in sent mail". Just ask.
-- BEFORE writing any code, also check: is the trigger type obvious from the user's description? The three triggers are manual, cron, webhook. If unclear, STOP and ask a short question like "Should this run on a schedule, manually, or via webhook?" Do NOT default to "manual" silently.
+- BEFORE writing any code, also check: is the trigger type obvious from the user's description? The three triggers are manual, cron, webhook.
+- Trigger precedence rule: explicit trigger wording wins over timing words that only describe the data window or content. Example: explicit manual wording still means manual even if the task mentions "last week", "daily", or "weekly" as content context.
+- If the user explicitly says manual, run on click, on demand, schedule, every day/week, cron, webhook, incoming event, or POST/webhook URL, treat that as decisive and do NOT ask again.
+- Only ask if the trigger is still genuinely unclear after reading the whole request. Do NOT default to "manual" silently.
+- BEFORE writing any code, also check: does the workflow depend on a specific connection, MCP server, or tool? If yes and it is unavailable, STOP and fail with the missing dependency. Do NOT write a placeholder jig that tells the user to connect it later.
 - For webhook jigs, the POST body becomes ctx.params as nested JSON. Telegram example: const text = (ctx.params.message as any)?.text. Cast to any for nested shapes.
 - ALWAYS run check_jig after writing code
 - If check_jig reports errors, fix them and check again until it passes
+- For Jig-specific behavior, prompts, validators, schemas, or generated code, use the repo context above as the source of truth. Do NOT browse or web-search for Jig docs or Jig behavior.
 - Tool schemas and type definitions are already in your context above — do NOT browse local files or URLs to find them
+- Use the code-facing connection tool identifiers exactly as shown in the type definitions and tool catalog. If an MCP tool name was normalized into a valid TypeScript identifier, use the normalized identifier in code.
 - Use web_search and browse only for external API docs not already in context
 - When editing an existing jig, preserve the current tools unless the user explicitly asked to add or remove tools, or the current toolset is broken
+- Never write a jig that only outputs setup instructions, "connect X" guidance, or fabricated sample/example output. If real tool use is required and unavailable, fail instead.
 - When done, reply with 1-2 short plain text sentences summarizing what you changed. No markdown, no code blocks, no bullet points.`
 }
 
@@ -67,6 +76,7 @@ export function buildCreatorJigPrompt({
     context.skillMd,
     section("Available Connections", context.serverDescriptions),
     section("Tool Catalog", context.toolCatalog),
+    section("Build-Time Resolved Runtime Targets", context.buildHints),
     section("Tool Schemas (exact param names, types, required fields)", context.relevantSchemas),
     section("Probe Results (real data from the user's connected services)", probeResults),
     section("Example Jig (for reference)", `\`\`\`typescript\n${context.exampleJig}\n\`\`\``),
@@ -77,7 +87,21 @@ export function buildCreatorJigPrompt({
           `${description}\n\nModify the existing jig code according to the instruction. Preserve the existing structure and only change what's needed.`
         )
       : section("Task", `Create a new jig that does the following:\n${description}`),
-    "## Rules\nFollow the **Jig Writing Rules** section in the skill above. They are enforced by the runner and the static validator.",
+    context.buildHints
+      ? `## Build-Time Resolution Policy
+Any runtime target resolved above was discovered during jig creation, not during jig execution.
+
+- Hardcode the resolved IDs, actor names, or resource identifiers directly into the generated jig
+- Do NOT emit runtime rediscovery code for those targets
+- Do NOT add back excluded search/meta-tools just because they exist on the connection
+- Keep the jig focused on the selected runtime tools and concrete execution path`
+      : null,
+    `## Rules
+Follow the **Jig Writing Rules** section in the skill above. They are enforced by the runner and the static validator.
+
+If the workflow depends on a connection or tool that is unavailable, fail instead of writing a placeholder jig.
+Never output setup instructions like "run jig connect ..." from inside the jig itself.
+Never fabricate "example output" with llm() to compensate for missing tools.`,
   ])
 }
 
@@ -87,6 +111,7 @@ export function buildAgentJigSystemPrompt({
   typeDefs,
   toolCatalog,
   serverDescriptions,
+  buildHints,
   currentCode,
   exampleJig,
 }: AgentPromptInput): string {
@@ -98,9 +123,19 @@ IMPORTANT: Act immediately. Do NOT describe what you plan to do — just do it. 
     typeDefs,
     section("Available Connections", serverDescriptions),
     section("Tool Catalog", toolCatalog),
+    section("Build-Time Resolved Runtime Targets", buildHints),
     currentCode ? section(`Current Jig Code (${jigId})`, `\`\`\`typescript\n${currentCode}\n\`\`\``) : null,
     exampleJig && jigId !== "weekly-update"
       ? section("Example Jig", `\`\`\`typescript\n${exampleJig}\n\`\`\``)
+      : null,
+    buildHints
+      ? `## Build-Time Resolution Policy
+Any runtime target resolved above was discovered during jig creation, not during jig execution.
+
+- Hardcode the resolved IDs, actor names, or resource identifiers directly into the generated jig
+- Do NOT emit runtime rediscovery code for those targets
+- Do NOT add back excluded search/meta-tools just because they exist on the connection
+- Keep the jig focused on the selected runtime tools and concrete execution path`
       : null,
     agentExecutionRules(),
   ])

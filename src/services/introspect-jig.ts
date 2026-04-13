@@ -1,7 +1,6 @@
 import { readFileSync } from "fs"
 import type { JigTool, ToolPermission } from "../../shared/api.js"
 import { extractConnections, extractParams, extractTrigger, getJigFilePath } from "../domain/jig-source.js"
-import { parseStepsFromSource } from "../derive-steps.js"
 import { getToolPermission } from "../db.js"
 
 function dedupeTools(tools: JigTool[]): JigTool[] {
@@ -18,7 +17,6 @@ export interface IntrospectedJig {
   connections: string[]
   steps: import("../../shared/api.js").JigStep[]
   permissions: ToolPermission[]
-  needsUpgrade?: boolean
 }
 
 export async function introspectJig(id: string, options: { includeSteps?: boolean } = {}): Promise<IntrospectedJig> {
@@ -66,9 +64,6 @@ export async function introspectJig(id: string, options: { includeSteps?: boolea
     policy: getToolPermission(tool.connection, tool.name) ?? "ask",
   }))
 
-  const needsUpgrade = code && /export\s+default/.test(code) && parseStepsFromSource(code).length === 0
-    ? true : undefined
-
   return {
     id,
     filePath,
@@ -79,6 +74,5 @@ export async function introspectJig(id: string, options: { includeSteps?: boolea
     connections,
     steps,
     permissions,
-    needsUpgrade,
   }
 }

@@ -12,8 +12,12 @@
 - [ ] **System notifications** — alert user on jig failures/important events via MCP notification server, Resend (email), or Twilio (SMS). Pluggable sink chosen in settings.
 - [ ] **Concurrent run pipeline hardening** — all runs (manual, scheduled, webhook) must go through the same run-store tracking. Verify no race conditions in per-jig startTrackedRun/finishTrackedRun. Ensure persist() and applyRunEvent() are safe across concurrent jigs. Test: two jigs running simultaneously, one fails mid-run while other succeeds.
 - [ ] **CLI ↔ dashboard UI parity** — CLI `runJigFile` ignores step-start/step-done events; should render them through JigIO. `jig run` (no args) should list jigs with their derived steps. Both surfaces must show the same step progression, tool chips, and outputs.
+- [ ] **CLI self-update flow** — when running the `jig` CLI, check whether a newer version is available and offer/apply a self-update path compatible with global installs via `npm i -g`.
 - [ ] **Onboarding from blank slate** — first-run experience: no jigs, no connections. Guide through connecting first service (Composio OAuth), accepting ToS, creating first jig. Plus: "Reset data" button in settings that wipes credentials/runs/jigs and returns to onboarding.
 - [ ] **"Add new jig" flow works end-to-end** — verify the dashboard "new jig" button creates a working jig from a prompt, types check, derives steps, and runs. Currently unclear if jig-gen prompt + save + derive + first-run all chain cleanly.
+- [ ] **Dashboard data fetching cleanup** — use `swr` for dashboard read/query state (jig detail, runs, connection status, tool approval state) where it improves cache + revalidation behavior, but keep imperative command flows like start agent session / send agent message / run actions on direct fetch-style calls.
+- [ ] **`ctx.human()` support** — if human-in-the-loop approval returns, implement it as a real current runtime/API feature with matching dashboard/backend flow; do not rely on the old product spec alone.
+- [ ] **Advanced runtime helpers** — evaluate and implement only if they fit the real runtime model: `ctx.parallel()`, `ctx.map()`, `ctx.state`, `ctx.secret()`, and `ctx.run()`. Keep docs/specs aligned with actual support instead of assuming these exist.
 - [ ] **Tagging jigs** — let users assign tags/labels to jigs (e.g. "work", "personal", "experimental") and filter the dashboard list by tag. Tags stored in jig file metadata or DB.
 - [ ] Per-jig model override
   - Dashboard has a disabled model dropdown in jig detail pane — wire it up
@@ -49,6 +53,7 @@
 ## Onboarding & Integrations
 
 - [ ] **Onboarding flow** — first-run experience for jig: guide users through connecting services (Composio, Gmail, etc.) and accepting terms of service. Should show clear setup steps, handle OAuth flows, track acceptance.
+- [ ] **Use `skills.sh/official` for integration context** — evaluate `https://skills.sh/official` as an additional source of truth during connection authoring/discovery so Jig can pull better tool descriptions, auth/setup guidance, and service capability context when generating or editing jigs.
 - [ ] **Evaluate Composio alternatives** — research Nango (nango.dev, OSS self-hostable, no inbound triggers), Metorial (metorial.com), Pipedream (trigger ecosystem, multi-tenant auth). Check if they fit the proxy pattern (meta-tool + discover), pricing for personal use, privacy/SOC2, auth model, stdio vs remote MCP, inbound webhooks, self-hosting. Add second-source integration platforms to servers.json alongside composio.
 
 ## Jig Sandboxing (deferred)

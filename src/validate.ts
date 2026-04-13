@@ -8,6 +8,7 @@ import { existsSync } from "fs"
 import type { JigDefinition, JigTrigger } from "./sdk/jig.js"
 import { PROJECT_ROOT } from "./config/paths.js"
 import { toolNameToIdentifier } from "./mcp/typegen.js"
+import { getConnectionToolReferences } from "./domain/source-analysis.js"
 
 // ---------------------------------------------------------------------------
 // Validation errors
@@ -122,24 +123,12 @@ export function checkToolDeclarations(code: string, declaredToolNames: string[])
   const declared = new Set(declaredToolNames)
   const declaredIdentifiers = new Set(declaredToolNames.map(toolNameToIdentifier))
 
-  // Find connection imports
-  const importRe = /import\s*\{[^}]*\b(\w+)\b[^}]*\}\s*from\s*["'](?:@jig|jig|(?:\.\.\/)+\.jig)\/connections\/(\w+)\.(?:js|ts)["']/g
-  const connectionVars = new Map<string, string>()
-  for (const m of code.matchAll(importRe)) {
-    connectionVars.set(m[1], m[2])
-  }
-
-  // Find tool calls: connectionVar.toolName(
-  for (const [varName, serverName] of connectionVars) {
-    const callRe = new RegExp(`\\b${varName}\\.(\\w+)\\s*[,(\\[]`, "g")
-    for (const m of code.matchAll(callRe)) {
-      const toolName = m[1]
-      if (!declared.has(toolName) && !declaredIdentifiers.has(toolName)) {
-        errors.push({
-          field: `tools.${serverName}.${toolName}`,
-          message: `Tool "${serverName}.${toolName}" is used but not declared in the jig's tools array.`,
-        })
-      }
+  for (const ref of getConnectionToolReferences(code)) {
+    if (!declared.has(ref.toolName) && !declaredIdentifiers.has(ref.toolName)) {
+      errors.push({
+        field: `tools.${ref.serverName}.${ref.toolName}`,
+        message: `Tool "${ref.serverName}.${ref.toolName}" is used but not declared in the jig's tools array.`,
+      })
     }
   }
 
@@ -158,7 +147,7 @@ export function checkToolDeclarations(code: string, declaredToolNames: string[])
 export function checkPlaceholderJigPatterns(code: string): ValidationError[] {
   const errors: ValidationError[] = []
 
-  const importRe = /import\s*\{[^}]*\b(\w+)\b[^}]*\}\s*from\s*["'](?:@jig|jig|(?:\.\.\/)+\.jig)\/connections\/(\w+)\.(?:js|ts)["']/g
+  const importRe = /import\s*\{[^}]*\b(\w+)\b[^}]*\}\s*from\s*["'](?:@jig|jig|(?:\.\.\/)+\.jig)\/connections\/([A-Za-z0-9_-]+)(?:\.(?:js|ts))?["']/g
   const connectionVars = [...code.matchAll(importRe)].map((match) => match[1])
   const codeWithoutConnectionImports = code.replace(importRe, "")
   const hasConnectionImport = connectionVars.length > 0

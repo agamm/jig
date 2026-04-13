@@ -1,0 +1,468 @@
+import type { McpConnection } from "../client.js"
+import { callTool } from "../client.js"
+import { llm } from "../../sdk/llm.js"
+import { firstLineSummary } from "../../text.js"
+
+type ActorCard = {
+  fullName: string
+  title?: string
+  description?: string
+  url?: string
+  categories?: string[]
+  totalUsers?: number
+  monthlyUsers?: number
+  successRate?: number
+  bookmarks?: number
+  rating?: number
+}
+
+type ActorDetails = {
+  actorInfo?: {
+    fullName?: string
+    title?: string
+    description?: string
+    categories?: string[]
+    url?: string
+  }
+  description?: string
+  inputSchema?: unknown
+  outputSchema?: unknown
+  totalUsers?: number
+  monthlyUsers?: number
+  successRate?: number
+  bookmarks?: number
+  rating?: number
+}
+
+type ApifyDiscoveryOps = {
+  callTool: typeof callTool
+  llm: typeof llm
+}
+
+export async function resolveForBuild(args: {
+  description: string
+  connection: McpConnection
+  ask?: (question: string) => Promise<string>
+}): Promise<{ context: string; requiredTools?: string[]; includeTools?: string[]; excludeTools?: string[] } | null> {
+  return resolveForBuildWithOps(args, { callTool, llm })
+}
+
+export async function resolveForBuildWithOps(
+  args: {
+    description: string
+    connection: McpConnection
+    ask?: (question: string) => Promise<string>
+  },
+  ops: ApifyDiscoveryOps
+): Promise<{ context: string; requiredTools?: string[]; includeTools?: string[]; excludeTools?: string[] } | null> {
+  const explicitActor = findExplicitActorName(args.description)
+  const candidates = explicitActor
+    ? [{ fullName: explicitActor }]
+    : sortCandidatesByPopularity(await searchCandidates(args.connection, args.description, ops))
+
+  if (candidates.length === 0) return null
+
+  const detailedCandidates = await loadCandidateDetails(args.connection, candidates.slice(0, 4), ops)
+  if (detailedCandidates.length === 0) return null
+
+  if (explicitActor || detailedCandidates.length === 1) {
+    const chosen = detailedCandidates[0]
+    return {
+      context: buildResolutionContext(
+        args.description,
+        chosen,
+        explicitActor ? "The user explicitly named this Apify Actor." : "This was the only strong Apify Actor match found."
+      ),
+      requiredTools: ["call-actor"],
+      includeTools: ["call-actor", "get-actor-run", "get-actor-output"],
+      excludeTools: ["search-actors", "fetch-actor-details"],
+    }
+  }
+
+  const rankedCandidates = sortCandidatesByPopularity(detailedCandidates)
+  const selection = await chooseActor(args.description, rankedCandidates, ops)
+  let actorName = selection.actor
+
+  if (selection.askUser && rankedCandidates.length > 1 && args.ask) {
+    const answer = await args.ask(buildChoiceQuestion(rankedCandidates))
+    actorName = await resolveUserChoice(answer, rankedCandidates, actorName, ops)
+  }
+
+  const chosen = rankedCandidates.find((candidate) => candidate.fullName === actorName) ?? rankedCandidates[0]
+  return {
+    context: buildResolutionContext(args.description, chosen, selection.reason),
+    requiredTools: ["call-actor"],
+    includeTools: ["call-actor", "get-actor-run", "get-actor-output"],
+    excludeTools: ["search-actors", "fetch-actor-details"],
+  }
+}
+
+function findExplicitActorName(description: string): string | null {
+  const urlMatch = description.match(/https?:\/\/apify\.com\/([a-z0-9-]+\/[a-z0-9-][a-z0-9-./]*)/i)
+  if (urlMatch) return urlMatch[1]
+
+  const namedMatch = description.match(/\b(?:actor|use|using)\s+([a-z0-9-]+\/[a-z0-9-][a-z0-9-./]*)\b/i)
+  return namedMatch?.[1] ?? null
+}
+
+async function searchCandidates(
+  connection: McpConnection,
+  description: string,
+  ops: ApifyDiscoveryOps
+): Promise<ActorCard[]> {
+  const queries = await deriveQueries(description, ops)
+  const byName = new Map<string, ActorCard>()
+
+  for (const keywords of queries) {
+    const result = await ops.callTool(connection, "search-actors", { keywords, limit: 5 }) as any
+    for (const actor of await normalizeActorCards(result, ops)) {
+      if (!actor.fullName || byName.has(actor.fullName)) continue
+      byName.set(actor.fullName, actor)
+    }
+  }
+
+  return [...byName.values()]
+}
+
+async function deriveQueries(description: string, ops: ApifyDiscoveryOps): Promise<string[]> {
+  const result = await ops.llm<{ queries: string[] }>(
+    `Choose two short Apify Store search queries to find the best Actor for this automation.
+
+Rules:
+- Return exactly 2 queries
+- Each query must be 1-3 words
+- Use platform/use-case keywords, not full sentences
+- Prefer broad-but-specific terms like "github trending", "google maps", "real estate leads"
+- Do not include punctuation or quotes`,
+    { description },
+    { schema: { queries: "array" } }
+  )
+
+  return (result.queries || [])
+    .map((query) => String(query).trim())
+    .filter(Boolean)
+    .slice(0, 2)
+}
+
+async function normalizeActorCards(result: any, ops: ApifyDiscoveryOps): Promise<ActorCard[]> {
+  const markdown = toMarkdownText(result)
+  if (markdown) return parseActorCardsFromMarkdown(markdown, ops)
+  const actors = Array.isArray(result?.actors) ? result.actors : []
+  return actors
+    .map((actor: any) => ({
+      fullName: actor.fullName,
+      title: actor.title,
+      description: actor.description,
+      url: actor.url,
+      categories: Array.isArray(actor.categories) ? actor.categories : [],
+      totalUsers: toOptionalNumber(actor.stats?.totalUsers),
+      monthlyUsers: toOptionalNumber(actor.stats?.monthlyUsers),
+      successRate: toOptionalNumber(actor.stats?.successRate),
+      bookmarks: toOptionalNumber(actor.stats?.bookmarks),
+      rating: toOptionalNumber(actor.rating?.value ?? actor.rating),
+    }))
+    .filter((actor: ActorCard) => Boolean(actor.fullName))
+}
+
+async function loadCandidateDetails(
+  connection: McpConnection,
+  candidates: ActorCard[],
+  ops: ApifyDiscoveryOps
+): Promise<Array<ActorCard & { details: ActorDetails }>> {
+  const resolved = await Promise.all(
+    candidates.map(async (candidate) => {
+      try {
+        const raw = await ops.callTool(connection, "fetch-actor-details", {
+          actor: candidate.fullName,
+          output: {
+            description: true,
+            inputSchema: true,
+            outputSchema: true,
+            metadata: true,
+            stats: true,
+            rating: true,
+          },
+        })
+        const details = await normalizeActorDetails(raw, candidate, ops)
+        return { ...candidate, details }
+      } catch {
+        return null
+      }
+    })
+  )
+
+  return resolved.filter(Boolean) as Array<ActorCard & { details: ActorDetails }>
+}
+
+async function chooseActor(
+  description: string,
+  candidates: Array<ActorCard & { details: ActorDetails }>,
+  ops: ApifyDiscoveryOps
+): Promise<{ actor: string; reason: string; askUser: boolean }> {
+  const shortlist = candidates.map((candidate) => ({
+    actor: candidate.fullName,
+    title: candidate.details.actorInfo?.title ?? candidate.title ?? candidate.fullName,
+    description: firstLineSummary(candidate.details.description ?? candidate.details.actorInfo?.description ?? candidate.description),
+    categories: candidate.details.actorInfo?.categories ?? candidate.categories ?? [],
+    popularity: {
+      monthlyUsers: candidate.details.monthlyUsers ?? candidate.monthlyUsers ?? null,
+      totalUsers: candidate.details.totalUsers ?? candidate.totalUsers ?? null,
+      successRate: candidate.details.successRate ?? candidate.successRate ?? null,
+      bookmarks: candidate.details.bookmarks ?? candidate.bookmarks ?? null,
+      rating: candidate.details.rating ?? candidate.rating ?? null,
+    },
+    inputSchema: candidate.details.inputSchema ?? null,
+  }))
+
+  return await ops.llm<{ actor: string; reason: string; askUser: boolean }>(
+    `Choose the best Apify Actor for implementing this automation at build time.
+
+Rules:
+- Prefer a concrete Actor that directly solves the requested workflow
+- Prefer stable, reusable scrapers over generic search/browser tools
+- When multiple Actors fit semantically, prefer the one with stronger adoption and reliability signals (monthly users, total users, bookmarks, success rate, rating)
+- Set askUser=true only if two or more candidates are genuinely plausible and the tradeoff is product-level, not minor
+- Return the chosen actor full name exactly as provided in the shortlist`,
+    { description, candidates: shortlist },
+    { schema: { actor: "string", reason: "string", askUser: "boolean" } }
+  )
+}
+
+function buildChoiceQuestion(candidates: Array<ActorCard & { details: ActorDetails }>): string {
+  const options = candidates
+    .slice(0, 3)
+    .map((candidate, index) => {
+      const title = candidate.details.actorInfo?.title ?? candidate.title ?? candidate.fullName
+      const summary = firstLineSummary(candidate.details.description ?? candidate.details.actorInfo?.description ?? candidate.description)
+      return `${index + 1}. ${candidate.fullName} — ${title}${summary ? `: ${summary}` : ""}`
+    })
+    .join("\n")
+
+  return `Which Apify Actor should this jig use?\n${options}\nReply with the number or the actor name.`
+}
+
+async function resolveUserChoice(
+  answer: string,
+  candidates: Array<ActorCard & { details: ActorDetails }>,
+  fallbackActor: string,
+  ops: ApifyDiscoveryOps
+): Promise<string> {
+  const trimmed = answer.trim()
+  if (!trimmed) return fallbackActor
+
+  const numeric = Number.parseInt(trimmed, 10)
+  if (Number.isInteger(numeric) && numeric >= 1 && numeric <= candidates.length) {
+    return candidates[numeric - 1].fullName
+  }
+
+  const direct = candidates.find((candidate) => {
+    const haystack = `${candidate.fullName} ${candidate.details.actorInfo?.title ?? candidate.title ?? ""}`.toLowerCase()
+    return haystack.includes(trimmed.toLowerCase())
+  })
+  if (direct) return direct.fullName
+
+  const result = await ops.llm<{ actor: string }>(
+    `Map the user's answer to one of the available Apify Actors.
+Return the actor full name exactly as listed.`,
+    {
+      answer,
+      candidates: candidates.map((candidate) => ({
+        actor: candidate.fullName,
+        title: candidate.details.actorInfo?.title ?? candidate.title ?? candidate.fullName,
+      })),
+      fallbackActor,
+    },
+    { schema: { actor: "string" } }
+  )
+
+  return candidates.find((candidate) => candidate.fullName === result.actor)?.fullName ?? fallbackActor
+}
+
+function buildResolutionContext(
+  description: string,
+  candidate: ActorCard & { details: ActorDetails },
+  reason: string
+): string {
+  const actorInfo = candidate.details.actorInfo
+  const actorName = actorInfo?.fullName ?? candidate.fullName
+  const title = actorInfo?.title ?? candidate.title ?? actorName
+  const summary = firstLineSummary(candidate.details.description ?? actorInfo?.description ?? candidate.description)
+  const inputSchema = candidate.details.inputSchema ?? {}
+  const outputSchema = candidate.details.outputSchema
+
+  const parts = [
+    `Resolved Apify Actor at build time for this workflow: ${actorName}.`,
+    `Use apify.call_actor at runtime with actor "${actorName}". If the actor returns a run or dataset flow, apify.get_actor_run and apify.get_actor_output are allowed runtime follow-ups. Do not use apify.search_actors or apify.fetch_actor_details in the jig runtime unless the user explicitly wants dynamic rediscovery.`,
+    `Why this actor was chosen: ${reason}`,
+    summary ? `Actor summary: ${title} — ${summary}` : `Actor summary: ${title}`,
+    `Original workflow request: ${description}`,
+    `Actor input schema:\n${JSON.stringify(inputSchema, null, 2)}`,
+  ]
+
+  if (outputSchema) {
+    parts.push(`Actor output schema:\n${JSON.stringify(outputSchema, null, 2)}`)
+  }
+
+  return parts.join("\n\n")
+}
+
+async function parseActorCardsFromMarkdown(markdown: string, ops: ApifyDiscoveryOps): Promise<ActorCard[]> {
+  const result = await ops.llm<{ actors: ActorCard[] }>(
+    `Extract structured Apify Actor search results from markdown.
+
+Rules:
+- Return only actors explicitly listed in the markdown
+- Preserve actor full names exactly
+- Extract popularity signals when present: totalUsers, monthlyUsers, successRate, bookmarks, rating
+- Omit fields that are not present
+- Return JSON only`,
+    { markdown },
+    { schema: { actors: "array" } }
+  )
+
+  return (result.actors ?? [])
+    .map((actor) => ({
+      fullName: actor.fullName,
+      title: actor.title,
+      description: actor.description,
+      url: actor.url,
+      categories: Array.isArray(actor.categories) ? actor.categories : [],
+      totalUsers: toOptionalNumber(actor.totalUsers),
+      monthlyUsers: toOptionalNumber(actor.monthlyUsers),
+      successRate: toOptionalNumber(actor.successRate),
+      bookmarks: toOptionalNumber(actor.bookmarks),
+      rating: toOptionalNumber(actor.rating),
+    }))
+    .filter((actor) => Boolean(actor.fullName))
+}
+
+async function normalizeActorDetails(result: unknown, fallback: ActorCard, ops: ApifyDiscoveryOps): Promise<ActorDetails> {
+  const markdown = toMarkdownText(result)
+  if (markdown) {
+    return parseActorDetailsFromMarkdown(markdown, fallback, ops)
+  }
+
+  if (result && typeof result === "object" && !Array.isArray(result)) {
+    return result as ActorDetails
+  }
+  if (typeof result !== "string") {
+    return {
+      actorInfo: {
+        fullName: fallback.fullName,
+        title: fallback.title,
+        description: fallback.description,
+        categories: fallback.categories,
+        url: fallback.url,
+      },
+      totalUsers: fallback.totalUsers,
+      monthlyUsers: fallback.monthlyUsers,
+      successRate: fallback.successRate,
+      bookmarks: fallback.bookmarks,
+      rating: fallback.rating,
+    }
+  }
+
+  return {
+    actorInfo: {
+      fullName: fallback.fullName,
+      title: fallback.title,
+      description: fallback.description,
+      categories: fallback.categories,
+      url: fallback.url,
+    },
+    totalUsers: fallback.totalUsers,
+    monthlyUsers: fallback.monthlyUsers,
+    successRate: fallback.successRate,
+    bookmarks: fallback.bookmarks,
+    rating: fallback.rating,
+  }
+}
+
+async function parseActorDetailsFromMarkdown(
+  markdown: string,
+  fallback: ActorCard,
+  ops: ApifyDiscoveryOps
+): Promise<ActorDetails> {
+  const result = await ops.llm<{
+    actorInfo?: ActorDetails["actorInfo"]
+    description?: string
+    inputSchema?: unknown
+    outputSchema?: unknown
+    totalUsers?: number | string
+    monthlyUsers?: number | string
+    successRate?: number | string
+    bookmarks?: number | string
+    rating?: number | string
+  }>(
+    `Extract structured Apify Actor details from markdown.
+
+Rules:
+- Preserve the actor full name exactly
+- Extract actorInfo, description, inputSchema, and outputSchema when present
+- Extract popularity signals when present: totalUsers, monthlyUsers, successRate, bookmarks, rating
+- Omit fields that are not present
+- Return JSON only`,
+    { markdown },
+    {
+      schema: {
+        actorInfo: "object",
+        description: "string",
+        inputSchema: "object",
+        outputSchema: "object",
+        totalUsers: "number",
+        monthlyUsers: "number",
+        successRate: "number",
+        bookmarks: "number",
+        rating: "number",
+      } as any,
+    }
+  )
+
+  return {
+    actorInfo: {
+      fullName: result.actorInfo?.fullName ?? fallback.fullName,
+      title: result.actorInfo?.title ?? fallback.title,
+      description: result.actorInfo?.description ?? result.description ?? fallback.description,
+      categories: result.actorInfo?.categories ?? fallback.categories,
+      url: result.actorInfo?.url ?? fallback.url,
+    },
+    description: result.description ?? result.actorInfo?.description ?? fallback.description,
+    inputSchema: result.inputSchema,
+    outputSchema: result.outputSchema,
+    totalUsers: toOptionalNumber(result.totalUsers) ?? fallback.totalUsers,
+    monthlyUsers: toOptionalNumber(result.monthlyUsers) ?? fallback.monthlyUsers,
+    successRate: toOptionalNumber(result.successRate) ?? fallback.successRate,
+    bookmarks: toOptionalNumber(result.bookmarks) ?? fallback.bookmarks,
+    rating: toOptionalNumber(result.rating) ?? fallback.rating,
+  }
+}
+
+function toMarkdownText(result: unknown): string | null {
+  if (typeof result === "string") return result
+  if (Array.isArray(result) && result.every((item) => typeof item === "string")) {
+    return result.join("\n")
+  }
+  return null
+}
+
+function sortCandidatesByPopularity<T extends ActorCard>(candidates: T[]): T[] {
+  return [...candidates].sort((a, b) =>
+    compareNumbers(b.monthlyUsers, a.monthlyUsers)
+    || compareNumbers(b.bookmarks, a.bookmarks)
+    || compareNumbers(b.rating, a.rating)
+    || compareNumbers(b.totalUsers, a.totalUsers)
+    || compareNumbers(b.successRate, a.successRate)
+  )
+}
+
+function compareNumbers(a?: number, b?: number): number {
+  return (a ?? -1) - (b ?? -1)
+}
+
+function toOptionalNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value
+  if (typeof value !== "string") return undefined
+  const normalized = value.replace(/,/g, "")
+  const parsed = Number.parseFloat(normalized)
+  return Number.isFinite(parsed) ? parsed : undefined
+}

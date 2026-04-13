@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest"
-import { stripCodeFences, extractImportedServers } from "../src/jig-gen.js"
+import {
+  stripCodeFences,
+  extractImportedServers,
+  hasExplicitEmptyToolsArray,
+  collectBuildTimeToolPolicyIssues,
+  deriveAuthoringServerScope,
+} from "../src/jig-gen.js"
 import { Context } from "../src/sdk/context.js"
 import { jig, run } from "../src/sdk/jig.js"
 
@@ -51,6 +57,132 @@ import { github } from "../.jig/connections/github.js"`
     expect(extractImportedServers(
       `import { jig, run } from "../src/index.js"`
     )).toEqual([])
+  })
+
+  it("extracts alias-based connection imports", () => {
+    expect(extractImportedServers(
+      `import { apify } from "@jig/connections/apify.js"`
+    )).toEqual(["apify"])
+  })
+
+  it("extracts extensionless connection imports", () => {
+    expect(extractImportedServers(
+      `import { workspace } from "@jig/connections/workspace"`
+    )).toEqual(["workspace"])
+  })
+})
+
+describe("hasExplicitEmptyToolsArray", () => {
+  it("detects an explicitly empty tools array", () => {
+    expect(hasExplicitEmptyToolsArray(`export default jig("x", { tools: [] }, async () => {})`)).toBe(true)
+  })
+
+  it("does not flag non-empty tools arrays", () => {
+    expect(hasExplicitEmptyToolsArray(`export default jig("x", { tools: [apify.call_actor] }, async () => {})`)).toBe(false)
+  })
+
+  it("does not flag code without a tools property", () => {
+    expect(hasExplicitEmptyToolsArray(`export default jig("x", { trigger: { type: "manual" } }, async () => {})`)).toBe(false)
+  })
+})
+
+describe("collectBuildTimeToolPolicyIssues", () => {
+  const apifyResolution = {
+    server: "apify",
+    context: 'Resolved Apify Actor at build time for this workflow: community/github-trending-scraper.',
+    requiredTools: ["call-actor"],
+    includeTools: ["call-actor", "get-actor-run", "get-actor-output"],
+    excludeTools: ["search-actors", "fetch-actor-details"],
+  }
+
+  it("flags runtime rediscovery tools after build-time resolution", () => {
+    const code = `
+import { jig } from "@jig/sdk"
+import { apify } from "@jig/connections/apify.js"
+
+export default jig("x", { tools: [apify.search_actors, apify.call_actor] }, async (ctx) => {
+  await ctx.step("Run", [apify.search_actors, apify.call_actor], async () => {
+    await apify.search_actors({ keywords: "github trending" })
+    await apify.call_actor({ actor: "community/github-trending-scraper", input: {} })
+  })
+})
+`
+
+    expect(collectBuildTimeToolPolicyIssues(code, [apifyResolution])).toEqual([
+      {
+        server: "apify",
+        message: "Do not use apify.search_actors at runtime here. Build-time discovery already resolved the target, so keep runtime code on concrete execution tools only.",
+      },
+    ])
+  })
+
+  it("flags code that never uses the required concrete runtime tool", () => {
+    const code = `
+import { jig } from "@jig/sdk"
+import { apify } from "@jig/connections/apify.js"
+
+export default jig("x", { tools: [apify.search_actors] }, async (ctx) => {
+  await ctx.step("Run", [apify.search_actors], async () => {
+    await apify.search_actors({ keywords: "github trending" })
+  })
+})
+`
+
+    expect(collectBuildTimeToolPolicyIssues(code, [apifyResolution])).toContainEqual({
+      server: "apify",
+      message: "Build-time discovery already resolved the runtime target. This code must use the required runtime tools for apify: call-actor.",
+    })
+  })
+
+  it("still requires call_actor even if a follow-up runtime tool is used", () => {
+    const code = `
+import { jig } from "@jig/sdk"
+import { apify } from "@jig/connections/apify.js"
+
+export default jig("x", { tools: [apify.get_actor_output] }, async (ctx) => {
+  await ctx.step("Run", [apify.get_actor_output], async () => {
+    await apify.get_actor_output({ datasetId: "abc123" })
+  })
+})
+`
+
+    expect(collectBuildTimeToolPolicyIssues(code, [apifyResolution])).toContainEqual({
+      server: "apify",
+      message: "Build-time discovery already resolved the runtime target. This code must use the required runtime tools for apify: call-actor.",
+    })
+  })
+
+  it("accepts concrete runtime code that only uses the selected execution tool", () => {
+    const code = `
+import { jig } from "@jig/sdk"
+import { apify } from "@jig/connections/apify.js"
+
+export default jig("x", { tools: [apify.call_actor] }, async (ctx) => {
+  await ctx.step("Run", [apify.call_actor], async () => {
+    await apify.call_actor({ actor: "community/github-trending-scraper", input: {} })
+  })
+})
+`
+
+    expect(collectBuildTimeToolPolicyIssues(code, [apifyResolution])).toEqual([])
+  })
+})
+
+describe("deriveAuthoringServerScope", () => {
+  it("keeps imported servers in the required connection set for edits", () => {
+    expect(deriveAuthoringServerScope(["github"], ["apify"])).toEqual({
+      allServers: ["github", "apify"],
+      newServers: ["apify"],
+      buildResolutionServers: ["apify"],
+    })
+  })
+
+  it("treats planned servers as the full scope when there is no existing code", () => {
+    expect(deriveAuthoringServerScope([], ["apify", "github"])).toEqual({
+      allServers: ["apify", "github"],
+      newServers: ["apify", "github"],
+      buildResolutionServers: ["apify", "github"],
+    })
   })
 })
 

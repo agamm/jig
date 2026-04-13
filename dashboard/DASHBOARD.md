@@ -80,8 +80,8 @@ The right side of the screen shows one of three mutually exclusive panes:
 
 1. **Replace imports** in page.tsx:
    - `JIGS_WEEK2` / `JIGS_MONTH3` → fetch from Jig runtime API (`/api/jigs`)
-   - `CHAT_MESSAGES` → real chat history from assistant
-   - `APPROVAL_DATA` → fetch from approval queue (`/api/approvals`)
+   - `CHAT_MESSAGES` → agent session events from the backend agent API (`/api/agent`)
+   - `APPROVAL_DATA` → future approval backend; no approval API is wired yet
 
 2. **The `Jig` interface** (`types/jig.ts`) maps to the runtime's jig discovery + run history. Key mappings:
    - `jig.steps` → derived from AST parsing (the "natural language view" from plan.md)
@@ -97,12 +97,12 @@ The right side of the screen shows one of three mutually exclusive panes:
 
 | Component | Currently | Needs |
 |-----------|-----------|-------|
-| `ChatPanel` | Static messages array | WebSocket/SSE for real-time chat |
+| `ChatPanel` | Static messages array | Hook into the agent API (`/api/agent`) via the shared polling flow |
 | `JigList` | In-memory array with DnD | API fetch + optimistic reorder |
 | `JigDetailPane` | Mock runs/costs | Fetch run history, aggregate costs |
-| `ApprovalPane` | Hardcoded single approval | Fetch from approval queue, support navigation between multiple |
-| `ReviewPane` | Static steps | Connect to `createJig`/`editJig` API for AI editing |
-| `OnboardingView` | Static cards | Real `jig connect` OAuth flow |
+| `ApprovalPane` | Hardcoded single approval | Future approval backend; do not assume a `ctx.human()` queue exists |
+| `ReviewPane` | Static steps | Connect to the shared backend authoring flow through `/api/agent` |
+| `OnboardingView` | Static cards | Real `/api/connections` + `/api/connections/:name/connect` flow |
 
 ### Scalability Notes
 
@@ -175,10 +175,10 @@ Standing permissions (always/ask/never per action) are v0.2 on the roadmap. The 
 |-------------------|------|---------------|
 | Jig data source | `lib/mock-data.ts` → `lib/api.ts` | Replace static arrays with fetch calls |
 | Type definitions | `types/jig.ts` | Align with runtime types from `src/sdk/jig.ts` |
-| Chat backend | `components/chat-panel.tsx` | Connect to assistant via WebSocket/SSE |
+| Chat backend | `components/chat-panel.tsx` | Connect to the shared agent backend via `/api/agent` |
 | Run execution | `components/jig-detail-pane.tsx` | Wire Run/Dry Run buttons to `jig run` API |
-| Jig creation | `components/review-pane.tsx` | Wire Compile & Save to `createJig()` from `src/creator.ts` |
-| AI editing | `components/review-pane.tsx` | Wire "Edit with AI" to `editJig()` from `src/creator.ts` |
-| Approval flow | `components/approval-pane.tsx` | Wire to `ctx.human()` approval queue |
-| OAuth connect | `components/onboarding-view.tsx` | Wire to `jig connect` OAuth flow |
+| Jig creation | `components/review-pane.tsx` | Start a backend authoring session through `/api/agent` |
+| AI editing | `components/review-pane.tsx` | Reuse the same backend authoring session flow through `/api/agent` |
+| Approval flow | `components/approval-pane.tsx` | Keep as future work; no approval backend is wired today |
+| OAuth connect | `components/onboarding-view.tsx` | Wire to `/api/connections` and `/api/connections/:name/connect` |
 | Service discovery | `components/service-icon.tsx` | Load icons dynamically from connected servers |

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import type { AgentEvent, AgentStatus } from "@shared/api"
 import { formatElapsed } from "@/lib/format"
 import { Spinner } from "@/components/spinner"
@@ -75,6 +75,11 @@ export function AgentActivity({ events, status }: { events: AgentEvent[]; status
   const active = status === "thinking" || status === "tool-calling"
   const [lastToolAt, setLastToolAt] = useState<number | null>(null)
   const [elapsed, setElapsed] = useState(0)
+  const latestToolSignature = useMemo(() => {
+    const latestEvent = events.at(-1)
+    if (latestEvent?.type !== "tool-call") return null
+    return `${events.length}:${latestEvent.tool}:${latestEvent.status}:${latestEvent.result ?? ""}`
+  }, [events])
 
   useEffect(() => {
     if (!active) {
@@ -83,18 +88,14 @@ export function AgentActivity({ events, status }: { events: AgentEvent[]; status
       return
     }
 
-    const latestEvent = events.at(-1)
-    if (latestEvent?.type === "tool-call") {
+    if (latestToolSignature) {
       setLastToolAt(Date.now())
       setElapsed(0)
       return
     }
 
-    if (lastToolAt === null) {
-      setLastToolAt(Date.now())
-      setElapsed(0)
-    }
-  }, [active, events, lastToolAt])
+    setLastToolAt((current) => current ?? Date.now())
+  }, [active, latestToolSignature])
 
   useEffect(() => {
     if (!active || lastToolAt === null) {

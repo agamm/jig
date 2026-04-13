@@ -1,11 +1,14 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
+import { mutate } from "swr"
 import { Button } from "@/components/button"
 import { PaneHeader } from "@/components/pane-header"
 import { PaneSection } from "@/components/pane-section"
 import { ServiceIcon } from "@/components/service-icon"
+import { connectConnection, fetchConnections } from "@/lib/api"
 import { useConnection } from "@/lib/swr"
+import { runConnectFlow } from "@shared/connect-flow"
 
 /** Parse URL and return only if it's http/https. Blocks javascript: and other schemes. */
 function safeExternalUrl(url: string): { href: string; hostname: string } | null {
@@ -18,6 +21,19 @@ function safeExternalUrl(url: string): { href: string; hostname: string } | null
   }
 }
 
+function formatConnectError(error: unknown): string {
+  const message = error instanceof Error ? error.message : ""
+  if (message === "Unknown API route") {
+    return "The running Jig API is older than this dashboard build. Restart `jig start` and try connecting again."
+  }
+  return message || "Failed to connect"
+}
+
+function credentialKeyFromQuestion(question: string): string {
+  const match = question.match(/^Enter (.+):$/)
+  return match?.[1] ?? question
+}
+
 export function ConnectionPane({ name, onClose, onJigClick, standalone = false }: {
   name: string
   onClose: () => void
@@ -25,13 +41,120 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
   standalone?: boolean
 }) {
   const [search, setSearch] = useState("")
+  const [connectStatus, setConnectStatus] = useState<string | null>(null)
+  const [connecting, setConnecting] = useState(false)
+  const [missingCredentials, setMissingCredentials] = useState<string[]>([])
+  const [credentialValues, setCredentialValues] = useState<Record<string, string>>({})
+  const [awaitingCredentialKey, setAwaitingCredentialKey] = useState<string | null>(null)
   const { data: conn, isLoading: loading, error, mutate: reload } = useConnection(name)
+  const credentialValuesRef = useRef<Record<string, string>>({})
+  const pendingCredentialRef = useRef<{
+    key: string
+    resolve: (value: string) => void
+    reject: (error: Error) => void
+  } | null>(null)
+
+  useEffect(() => {
+    credentialValuesRef.current = credentialValues
+  }, [credentialValues])
+
+  useEffect(() => {
+    if (!connecting || !conn?.connected) return
+    setConnecting(false)
+  }, [connecting, conn?.connected])
+
+  useEffect(() => {
+    return () => {
+      const pending = pendingCredentialRef.current
+      if (!pending) return
+      pendingCredentialRef.current = null
+      pending.reject(new Error("Connect cancelled"))
+    }
+  }, [])
 
   function prettifyUsedByLabel(jigId: string): string {
     return jigId
       .replace(/::/g, " / ")
       .replace(/[-_]/g, " ")
       .replace(/\b\w/g, c => c.toUpperCase())
+  }
+
+  function cancelPendingCredential(message: string) {
+    const pending = pendingCredentialRef.current
+    if (!pending) return
+    pendingCredentialRef.current = null
+    setAwaitingCredentialKey(null)
+    pending.reject(new Error(message))
+  }
+
+  function continuePendingCredential(): boolean {
+    const pending = pendingCredentialRef.current
+    if (!pending) return false
+    const value = credentialValuesRef.current[pending.key]?.trim()
+    if (!value) return false
+    pendingCredentialRef.current = null
+    setAwaitingCredentialKey(null)
+    pending.resolve(value)
+    return true
+  }
+
+  async function handleConnect() {
+    if (!conn) return
+    if (continuePendingCredential()) return
+    if (awaitingCredentialKey) {
+      setConnectStatus(`Enter ${awaitingCredentialKey} to continue.`)
+      return
+    }
+    setConnecting(true)
+    setConnectStatus(null)
+    setMissingCredentials([])
+    try {
+      await runConnectFlow(conn.name, {
+        ask: async (question: string) => {
+          const key = credentialKeyFromQuestion(question)
+          setMissingCredentials((prev) => prev.includes(key) ? prev : [...prev, key])
+          setCredentialValues((prev) => key in prev ? prev : { ...prev, [key]: "" })
+          setConnectStatus(`Enter ${key} to continue.`)
+
+          const currentValue = credentialValuesRef.current[key]?.trim()
+          if (currentValue) return currentValue
+
+          return await new Promise<string>((resolve, reject) => {
+            pendingCredentialRef.current = { key, resolve, reject }
+            setAwaitingCredentialKey(key)
+          })
+        },
+        emit: (event) => {
+          switch (event.type) {
+            case "connecting":
+              setConnectStatus(`Connecting to ${event.server}...`)
+              break
+            case "setup-instructions":
+              setConnectStatus(event.message)
+              break
+            case "tools-discovered":
+              setConnectStatus(`Connected. Discovered ${event.count} tool${event.count === 1 ? "" : "s"}.`)
+              break
+            case "error":
+              setConnectStatus(event.message)
+              break
+            default:
+              break
+          }
+        },
+      }, {
+        listConnections: fetchConnections,
+        connect: connectConnection,
+      })
+      setMissingCredentials([])
+      setCredentialValues({})
+      await mutate("connections")
+      await reload()
+    } catch (e: unknown) {
+      setConnectStatus(formatConnectError(e))
+    } finally {
+      setConnecting(false)
+    }
   }
 
   return (
@@ -61,7 +184,14 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
           </span>
         ) : undefined}
         actions={
-          <Button onClick={onClose} variant="subtle" size="sm">
+          <Button
+            onClick={() => {
+              cancelPendingCredential("Connect cancelled")
+              onClose()
+            }}
+            variant="subtle"
+            size="sm"
+          >
             &#10005;
           </Button>
         }
@@ -87,6 +217,61 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
               <p className="text-[12px] text-[#888] leading-relaxed">{conn.description}</p>
             )}
 
+            <div className={`relative rounded-lg border border-[#1f1f23] bg-[#111113] px-4 py-3 space-y-3 ${connecting ? "overflow-hidden" : ""}`}>
+              {connecting && (
+                <>
+                  <div className="absolute inset-0 overflow-hidden rounded-lg">
+                    <div
+                      className="absolute inset-[-200%]"
+                      style={{
+                        animation: "spin-light 3s linear infinite",
+                        background: "conic-gradient(transparent 240deg, rgba(96,165,250,0.3) 260deg, rgba(96,165,250,0.7) 275deg, rgba(96,165,250,1) 280deg, rgba(96,165,250,0.7) 285deg, rgba(96,165,250,0.3) 300deg, transparent 320deg)",
+                      }}
+                    />
+                  </div>
+                  <div className="absolute inset-[1px] rounded-[7px] bg-[#111113]" />
+                </>
+              )}
+              <div className={`flex items-center justify-between gap-3 ${connecting ? "relative z-10" : ""}`}>
+                <div>
+                  <p className="text-[12px] text-[#ededed]">{conn.connected ? "Connection ready" : "Connect this service"}</p>
+                  <p className="mt-1 text-[11px] text-[#666]">
+                    {conn.connected ? "Refresh tool discovery if the provider added new capabilities." : "Starts the same backend connect flow used by the CLI."}
+                  </p>
+                </div>
+                <Button
+                  onClick={handleConnect}
+                  variant={conn.connected ? "subtle" : "success"}
+                  size="sm"
+                  disabled={awaitingCredentialKey ? !credentialValues[awaitingCredentialKey]?.trim() : connecting}
+                >
+                  {awaitingCredentialKey ? "Continue" : connecting ? "Connecting..." : conn.connected ? "Refresh Tools" : "Connect"}
+                </Button>
+              </div>
+
+              {missingCredentials.length > 0 && (
+                <div className={`space-y-2 rounded-lg border border-[#1f1f23] bg-[#0d0d0f] px-3 py-3 ${connecting ? "relative z-10" : ""}`}>
+                  <p className="text-[11px] text-[#888]">Additional credentials are required before this connection can start.</p>
+                  {missingCredentials.map((key) => (
+                    <input
+                      key={key}
+                      type="password"
+                      placeholder={key}
+                      value={credentialValues[key] ?? ""}
+                      onChange={(e) => setCredentialValues((prev) => ({ ...prev, [key]: e.target.value }))}
+                      className="w-full rounded-md border border-[#1f1f23] bg-[#09090b] px-2.5 py-1.5 text-[11px] text-[#ededed] placeholder:text-[#444] outline-none focus:border-[#2a2a2e] transition-colors"
+                    />
+                  ))}
+                </div>
+              )}
+
+              {connectStatus && (
+                <div className={`rounded-md border border-[#1f1f23] bg-[#0d0d0f] px-3 py-2 text-[11px] text-[#888] whitespace-pre-wrap ${connecting ? "relative z-10" : ""}`}>
+                  {connectStatus}
+                </div>
+              )}
+            </div>
+
             {/* Proxy: add more connections at provider's dashboard */}
             {(() => {
               const dash = conn.proxyDashboardUrl ? safeExternalUrl(conn.proxyDashboardUrl) : null
@@ -110,7 +295,7 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
             >
               {conn.tools.length === 0 ? (
                 <p className="text-[11px] text-[#555]">
-                  No tools discovered. Run <code className="text-[10px] bg-[#1a1a1d] px-1 py-0.5 rounded font-mono">jig connect {conn.name}</code>
+                  No tools discovered yet.
                 </p>
               ) : (
                 <>

@@ -3,7 +3,15 @@ import { isValidJigId } from "../domain/jig-id.js"
 export function matchRoute(pathname: string): { handler: string; params: Record<string, string> } | null {
   if (pathname === "/api/models") return { handler: "getModels", params: {} }
   if (pathname === "/api/jigs") return { handler: "listJigs", params: {} }
+  if (pathname === "/api/examples") return { handler: "listExamples", params: {} }
+
+  const addExampleMatch = pathname.match(/^\/api\/examples\/([^/]+)\/add$/)
+  if (addExampleMatch) return { handler: "addExample", params: { id: decodeURIComponent(addExampleMatch[1]) } }
+
   if (pathname === "/api/connections") return { handler: "connections", params: {} }
+
+  const connectMatch = pathname.match(/^\/api\/connections\/([^/]+)\/connect$/)
+  if (connectMatch) return { handler: "connectConnection", params: { name: decodeURIComponent(connectMatch[1]) } }
 
   const connMatch = pathname.match(/^\/api\/connections\/([^/]+)$/)
   if (connMatch) return { handler: "getConnection", params: { name: decodeURIComponent(connMatch[1]) } }
@@ -80,6 +88,7 @@ export function matchRoute(pathname: string): { handler: string; params: Record<
 
   if (pathname === "/api/settings/notifications") return { handler: "notificationSettings", params: {} }
   if (pathname === "/api/settings/notifications/test") return { handler: "notificationSettingsTest", params: {} }
+  if (pathname === "/api/settings/reset-local") return { handler: "resetLocalState", params: {} }
   if (pathname === "/api/permissions") return { handler: "toolPermissions", params: {} }
 
   const webhookMatch = pathname.match(/^\/api\/webhooks\/([^/]+)$/)

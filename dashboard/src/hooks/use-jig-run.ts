@@ -1,18 +1,12 @@
 import { useState, useCallback, useRef, useEffect } from "react";
+import { mutate as mutateCache } from "swr";
 import type { RunStep, RunStepsMode } from "@/components/run-steps";
 import { cancelActiveRun, fetchRunStatus, startJigRun } from "@/lib/api";
 import { useDetectActiveRun } from "@/lib/swr";
 import type { RunDetail, RunStatus } from "@shared/api";
 
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`
-  const s = Math.round(ms / 1000)
-  if (s < 60) return `${s}s`
-  return `${Math.floor(s / 60)}m ${s % 60}s`
-}
-
-function toRunSteps(data: Pick<RunDetail, "steps">): RunStep[] {
-  return data.steps.map((step, idx) => ({
+function toRunSteps(data: Pick<RunDetail, "steps" | "output">): RunStep[] {
+  const steps = data.steps.map((step, idx) => ({
     num: idx + 1,
     name: step.label,
     status: step.status,
@@ -20,10 +14,33 @@ function toRunSteps(data: Pick<RunDetail, "steps">): RunStep[] {
     output: step.output ?? undefined,
     time: step.status === "running" ? undefined : step.time,
   }))
+  const fallbackOutput = data.output?.trim()
+  if (fallbackOutput && steps.length > 0 && !steps.some((step) => step.output?.trim())) {
+    steps[steps.length - 1] = {
+      ...steps[steps.length - 1],
+      output: fallbackOutput,
+    }
+  }
+  return steps
 }
 
-function matchesTarget(data: { jigId?: string }, jigId: string): boolean {
-  return data.jigId === jigId
+function activeRunKey(jigId: string) {
+  return `jig/${jigId}/active-run`
+}
+
+function toActiveRunSteps(data: Pick<RunStatus, "steps">): RunStep[] {
+  return (data.steps ?? []).map((step) => ({
+    num: step.seq,
+    name: step.label,
+    status: step.status,
+    connections: step.connections,
+    output: step.output ?? undefined,
+  }))
+}
+
+function isTerminalRunDetailError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /Run not found|HTTP 404/i.test(message)
 }
 
 export function useJigRun(jigId: string) {
@@ -35,7 +52,16 @@ export function useJigRun(jigId: string) {
   const abortRef = useRef<AbortController | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const runIdRef = useRef<number | null>(null);
+  const liveStepsRef = useRef<RunStep[]>([]);
   const [attached, setAttached] = useState(false);
+
+  useEffect(() => {
+    liveStepsRef.current = liveSteps;
+  }, [liveSteps]);
+
+  const setInactiveSnapshot = useCallback(() => {
+    void mutateCache(activeRunKey(jigId), { active: false, jigId, steps: [] }, false);
+  }, [jigId]);
 
   const cleanup = useCallback(() => {
     abortRef.current?.abort();
@@ -73,6 +99,8 @@ export function useJigRun(jigId: string) {
           clearInterval(timerRef.current!);
           timerRef.current = null;
           runIdRef.current = null;
+          setAttached(false);
+          setInactiveSnapshot();
           const elapsed = Math.round((Date.now() - startTime) / 1000);
           setMode({
             type: "done",
@@ -83,8 +111,44 @@ export function useJigRun(jigId: string) {
           });
           return;
         }
+
+        void mutateCache(activeRunKey(jigId), {
+          active: true,
+          runId,
+          jigId,
+          dryRun: isDryRun,
+          startedAt: startTime,
+          completedTools: data.completedTools ?? [],
+          activeTools: data.activeTools ?? [],
+          readOnly: data.readOnly ?? {},
+          steps: data.steps ?? [],
+          status: "running",
+          output: data.output ?? undefined,
+        }, false);
       } catch (e: any) {
         if (abort.signal.aborted) return;
+        if (!isTerminalRunDetailError(e)) continue;
+
+        clearInterval(timerRef.current!);
+        timerRef.current = null;
+        runIdRef.current = null;
+        setAttached(false);
+        setInactiveSnapshot();
+
+        const hadSteps = liveStepsRef.current.length > 0;
+        if (hadSteps) {
+          setMode((prev) => prev.type === "running"
+            ? { type: "done", elapsed: prev.elapsed, dryRun: prev.dryRun, status: "fail", error: e?.message ?? "Run not found" }
+            : prev
+          );
+        } else {
+          setMode({ type: "idle" });
+          setLiveSteps([]);
+          setCompletedTools([]);
+          setActiveTools([]);
+          setToolReadOnly({});
+        }
+        return;
       }
     }
 
@@ -92,12 +156,14 @@ export function useJigRun(jigId: string) {
       clearInterval(timerRef.current!);
       timerRef.current = null;
       runIdRef.current = null;
+      setAttached(false);
+      setInactiveSnapshot();
       setMode(prev => prev.type === "running"
         ? { type: "done", elapsed: prev.elapsed, dryRun: prev.dryRun, status: "fail", error: "Timed out" }
         : prev
       );
     }
-  }, []);
+  }, [jigId, setInactiveSnapshot]);
 
   // SWR polls for any active run (initial, webhook-triggered, cron-triggered).
   // Once we attach our own poll loop, SWR pauses to avoid double-polling.
@@ -112,11 +178,12 @@ export function useJigRun(jigId: string) {
     runIdRef.current = activeRunData.runId;
     setAttached(true);
     setMode({ type: "running", elapsed: 0, dryRun: activeRunData.dryRun === true });
+    setLiveSteps(toActiveRunSteps(activeRunData));
     setCompletedTools(activeRunData.completedTools ?? []);
     setActiveTools(activeRunData.activeTools ?? []);
     if (activeRunData.readOnly) setToolReadOnly(activeRunData.readOnly);
     // Let pollUntilDone fetch the full RunDetail (with step timing) on its first tick
-    pollUntilDone(activeRunData.runId, abort, Date.now(), activeRunData.dryRun === true);
+    pollUntilDone(activeRunData.runId, abort, activeRunData.startedAt ?? Date.now(), activeRunData.dryRun === true);
   }, [activeRunData, pollUntilDone]);
 
   const startRun = useCallback(async (dryRun: boolean, params?: Record<string, string>) => {
@@ -135,32 +202,49 @@ export function useJigRun(jigId: string) {
       const data = await startJigRun(jigId, { dryRun, params });
       runIdRef.current = data.runId;
       setAttached(true);
+      void mutateCache(activeRunKey(jigId), {
+        active: true,
+        runId: data.runId,
+        jigId,
+        dryRun,
+        startedAt: startTime,
+        completedTools: [],
+        activeTools: [],
+        readOnly: {},
+        steps: [],
+        status: "running",
+      }, false);
       await pollUntilDone(data.runId, abort, startTime, dryRun);
     } catch (e: any) {
       if (abort.signal.aborted) return;
+      setAttached(false);
+      setInactiveSnapshot();
       setMode({ type: "done", elapsed: Math.round((Date.now() - startTime) / 1000), dryRun, status: "fail", error: e?.message ?? "Unknown error" });
     }
-  }, [jigId, cleanup, pollUntilDone]);
+  }, [jigId, cleanup, pollUntilDone, setInactiveSnapshot]);
 
   const dismiss = useCallback(() => {
     runIdRef.current = null;
+    setAttached(false);
+    setInactiveSnapshot();
     setMode({ type: "idle" });
     setLiveSteps([]);
     setCompletedTools([]);
     setActiveTools([]);
     setToolReadOnly({});
-  }, []);
+  }, [setInactiveSnapshot]);
 
   const cancelRun = useCallback(async () => {
     cleanup();
     try { await cancelActiveRun(jigId); } catch {}
+    setInactiveSnapshot();
     setMode(prev => prev.type === "running"
       ? { type: "done", elapsed: prev.elapsed, dryRun: prev.dryRun, status: "fail" }
       : prev
     );
     setLiveSteps(prev => prev.map(s => s.status === "running" ? { ...s, status: "fail" } : s));
     setActiveTools([]);
-}, [cleanup, jigId]);
+}, [cleanup, jigId, setInactiveSnapshot]);
 
   return { mode, liveSteps, completedTools, activeTools, toolReadOnly, startRun, dismiss, cancelRun, isRunning: mode.type === "running" };
 }

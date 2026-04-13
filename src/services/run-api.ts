@@ -100,6 +100,7 @@ export function getRunDetail(runId: number): RunDetail {
       completedTools: status.completedTools,
       activeTools: status.activeTools,
       readOnly: status.readOnly,
+      output: status.output ?? null,
       steps: status.steps.map((step) => ({
         label: step.label,
         time: step.durationMs ? formatDuration(step.durationMs) : "—",
@@ -123,6 +124,7 @@ export function getRunDetail(runId: number): RunDetail {
     completedTools: status?.completedTools ?? [],
     activeTools: status?.activeTools ?? [],
     readOnly: status?.readOnly,
+    output: status?.output ?? run!.output ?? null,
     steps: (status?.steps?.length ? status.steps : run!.steps.map((step) => ({
       seq: step.seq,
       label: step.label,

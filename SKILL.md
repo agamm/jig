@@ -176,6 +176,16 @@ Rules:
 ### 5. Use the right tools
 The available tools and probe results show what's available. Use multiple relevant tools when they materially improve the result.
 
+If the requested workflow depends on a specific connection, MCP server, or tool, the jig MUST actually use it. Do not degrade into a no-op jig that only explains setup steps.
+
+Forbidden patterns:
+- Do NOT tell the user to run `jig connect ...` from inside jig output
+- Do NOT emit placeholder copy like "Once connected, this jig will..."
+- Do NOT use `llm()` to fabricate "example output" for a tool you failed to call
+- Do NOT replace a missing integration with generic prose or mocked/sample results
+
+If the required connection or tool is unavailable, stop creation/editing and surface the missing dependency instead of writing placeholder code.
+
 ### 6. Preserve the existing toolset when editing
 - If you are editing an existing jig, do NOT add or remove tools unless the user explicitly asked for tool changes
 - Small logic, wording, output, or scheduling edits should usually keep the existing tools unchanged
@@ -197,7 +207,16 @@ const chatId = String(msg?.chat?.id ?? "")
 ```
 Always cast to `any` for nested webhook shapes; jigs don't get typed payloads.
 
-**If the user's description doesn't make the trigger obvious, STOP and ask.** Do not default to `"manual"` silently — that's usually wrong. Good clarifying questions:
+**If the user's description doesn't make the trigger obvious, STOP and ask.** Do not default to `"manual"` silently — that's usually wrong.
+
+Interpret explicit trigger language as decisive:
+- If the user says `manual`, `run manually`, `on demand`, `when I click Run`, or similar, use `{ type: "manual" }` and do not ask again.
+- If the user says `every morning`, `weekly`, `every Monday`, `on a schedule`, `cron`, or similar, use `{ type: "cron", ... }` and do not ask again.
+- If the user says `webhook`, `POST`, `incoming event`, `Telegram message`, or similar event-driven language, use `{ type: "webhook" }` and do not ask again.
+- If a request contains both a clear trigger and other timing words used only as content context, the clear trigger wins. Example: "manual run, find weekly trending GitHub repos" is still manual.
+- Strong precedence: explicit trigger wording also wins over timing words that only describe the data window or content, such as "last week", "daily summary", or "weekly trending".
+
+Good clarifying questions:
 - "Should this run on a schedule (e.g. every morning at 8am) or only when you click Run?"
 - "Is this triggered by an incoming Telegram message, or on a fixed schedule?"
 - "Should this fire every time a webhook comes in, or just once manually?"
@@ -207,6 +226,7 @@ Always cast to `any` for nested webhook shapes; jigs don't get typed payloads.
 - Import SDK: `import { jig, llm, agent } from "@jig/sdk"`
 - Import connections: `import { serverName } from "@jig/connections/serverName.js"`
 - Use exact param names and types from the type definitions and schemas
+- For Jig-specific behavior, prompts, validators, schemas, or generated code, use this repo as the source of truth. Do NOT browse or web-search for Jig docs or Jig behavior.
 - Use `ctx.output()` inside `ctx.step()` blocks for output, NEVER `console.log()`
 - ALL tool calls MUST be inside `ctx.step()` blocks — tools called outside a step throw at runtime
 - End the file with: `export default myJig`

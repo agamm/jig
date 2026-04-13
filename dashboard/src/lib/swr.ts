@@ -1,7 +1,7 @@
 /** SWR keys and fetchers for jig data. */
 import useSWR, { type SWRConfiguration } from "swr"
-import { fetchJigs, fetchJig, fetchModels, fetchJigSteps, fetchConnections, fetchConnection, fetchJigVersions, fetchActiveRunForJig } from "./api"
-import type { JigData, ModelCatalog, StepList, Connection, ConnectionDetail, JigVersion, RunStatus } from "@shared/api"
+import { fetchJigs, fetchJig, fetchModels, fetchJigSteps, fetchConnections, fetchConnection, fetchJigVersions, fetchActiveRunForJig, fetchExamples } from "./api"
+import type { JigData, ModelCatalog, StepList, Connection, ConnectionDetail, JigVersion, RunStatus, ExampleJig } from "@shared/api"
 
 const REFRESH_INTERVAL = 10_000
 
@@ -10,6 +10,12 @@ export function useJigs(config?: SWRConfiguration<JigData[]>) {
     refreshInterval: REFRESH_INTERVAL,
     revalidateOnFocus: true,
     ...config,
+  })
+}
+
+export function useExamples() {
+  return useSWR<ExampleJig[]>("examples", fetchExamples, {
+    revalidateOnFocus: false,
   })
 }
 

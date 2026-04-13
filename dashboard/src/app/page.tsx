@@ -1,19 +1,19 @@
 "use client";
 
-import { Suspense } from "react";
-import { DashboardShell } from "@/components/dashboard-shell";
-import { useJigs } from "@/lib/swr";
+import dynamic from "next/dynamic";
 
-function Dashboard() {
-  const { data: jigs, isLoading } = useJigs({
-    // Backend may still be starting — retry aggressively on error
-    errorRetryInterval: 1000,
-    errorRetryCount: 10,
-  });
-
-  return <DashboardShell jigs={jigs ?? []} loading={isLoading} />;
-}
+const DashboardPage = dynamic(
+  () => import("@/components/dashboard-page").then((mod) => mod.DashboardPage),
+  {
+    ssr: false,
+    loading: () => (
+      <main className="flex h-full items-center justify-center bg-[#0a0a0b] text-sm text-[#555]">
+        Loading dashboard...
+      </main>
+    ),
+  },
+);
 
 export default function Page() {
-  return <Suspense><Dashboard /></Suspense>;
+  return <DashboardPage />;
 }

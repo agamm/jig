@@ -38,6 +38,7 @@
 import type { Tool } from "@modelcontextprotocol/sdk/types.js"
 import type { McpConnection } from "../client.js"
 import { callTool } from "../client.js"
+import { firstLineSummary } from "../../text.js"
 
 export async function discover(connection: McpConnection): Promise<Tool[]> {
   // 1. Query the session root endpoint to get connected toolkits.
@@ -102,7 +103,7 @@ export async function discover(connection: McpConnection): Promise<Tool[]> {
     if (schema?.input_schema) {
       tools.push({
         name: slug.toLowerCase(),
-        description: (schema.description ?? "").split("\n")[0].trim(),
+        description: firstLineSummary(schema.description),
         inputSchema: schema.input_schema,
       })
     } else {
@@ -123,7 +124,7 @@ export async function discover(connection: McpConnection): Promise<Tool[]> {
         if (s?.input_schema) {
           tools.push({
             name: slug.toLowerCase(),
-            description: (s.description ?? "").split("\n")[0].trim(),
+            description: firstLineSummary(s.description),
             inputSchema: s.input_schema,
           })
           fetchedCount++

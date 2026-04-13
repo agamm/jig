@@ -24,6 +24,7 @@ function formatRuns(runs: ReturnType<typeof getJigRuns>): JigRun[] {
     duration: r.duration_ms ? formatDuration(r.duration_ms) : "—",
     status: (r.status === "fail" ? "fail" : "success") as "success" | "fail",
     cost: "",
+    output: r.output ?? undefined,
     steps: r.steps.map((s) => ({
       label: s.label,
       time: s.duration_ms ? formatDuration(s.duration_ms) : "—",

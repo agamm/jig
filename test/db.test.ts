@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test"
+import { mkdtempSync, rmSync, writeFileSync } from "fs"
+import { join } from "path"
+import { tmpdir } from "os"
 import {
   openDb, closeDb,
   insertRun, completeRun, listRuns, getRun, getJigRuns, getLastRun,
@@ -32,12 +35,13 @@ describe("runs", () => {
 
   it("completes a run", () => {
     const runId = insertRun("email-triage")
-    completeRun(runId, "success", 4200)
+    completeRun(runId, "success", 4200, undefined, "Draft created")
 
     const run = getRun(runId)
     expect(run!.status).toBe("success")
     expect(run!.duration_ms).toBe(4200)
     expect(run!.finished_at).not.toBeNull()
+    expect(run!.output).toBe("Draft created")
   })
 
   it("completes a failed run with error", () => {
@@ -161,6 +165,25 @@ describe("settings", () => {
     setSetting("k", { a: 1 })
     setSetting("k", { a: 2 })
     expect(getSetting<{ a: number }>("k")!.a).toBe(2)
+  })
+})
+
+describe("db recovery", () => {
+  it("re-runs migrations after recreating a broken on-disk database", () => {
+    const dir = mkdtempSync(join(tmpdir(), "jig-db-recovery-"))
+    const dbPath = join(dir, "broken.db")
+    writeFileSync(dbPath, "not a sqlite database")
+
+    closeDb()
+    const db = openDb(dbPath)
+    const tables = db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all() as Array<{ name: string }>
+    const tableNames = tables.map((row) => row.name)
+
+    expect(tableNames).toContain("settings")
+    expect(tableNames).toContain("tool_permissions")
+
+    closeDb()
+    rmSync(dir, { recursive: true, force: true })
   })
 })
 

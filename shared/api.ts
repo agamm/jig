@@ -29,6 +29,7 @@ export interface JigRun {
   duration: string
   status: RunOutcomeStatus
   cost: string
+  output?: string
   steps?: JigRunStep[]
 }
 
@@ -103,6 +104,29 @@ export interface ConnectionDetail extends Connection {
   usedBy: string[]
 }
 
+export interface ExampleJig {
+  id: string
+  name: string
+  trigger: string
+  description: string
+  connections: string[]
+  steps: JigStep[]
+}
+
+export type ConnectConnectionResponse =
+  | {
+      ok: true
+      server: string
+      toolCount: number
+      tools: string[]
+    }
+  | {
+      ok: false
+      server: string
+      missingCredentials: string[]
+      setup?: string
+    }
+
 export interface ModelInfo {
   id: string
   label: string
@@ -156,6 +180,7 @@ export interface RunStatus {
   runId?: number
   jigId?: string
   dryRun?: boolean
+  startedAt?: number
   completedTools: string[]
   activeTools: string[]
   steps: LiveRunStep[]
@@ -192,6 +217,7 @@ export interface RunDetail {
   completedTools: string[]
   activeTools: string[]
   readOnly?: Record<string, boolean>
+  output?: string | null
   steps: RunDetailStep[]
 }
 
@@ -203,6 +229,17 @@ export interface TriggerUpdateResponse {
   ok: boolean
   trigger: string
   warning?: string
+}
+
+export interface ResetLocalStateResponse {
+  ok: true
+  deletedJigs: string[]
+  disconnectedConnections?: string[]
+}
+
+export interface AddExampleJigResponse {
+  ok: true
+  jigId: string
 }
 
 export interface JigVersion {

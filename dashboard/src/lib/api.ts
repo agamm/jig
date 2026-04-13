@@ -1,7 +1,10 @@
 import type {
+  AddExampleJigResponse,
   AgentStatusResponse,
   Connection,
   ConnectionDetail,
+  ConnectConnectionResponse,
+  ExampleJig,
   JigData,
   JigVersionDetail,
   JigVersion,
@@ -10,6 +13,7 @@ import type {
   NotificationSettingsResponse,
   NotifyTestResponse,
   RestoreJigVersionResult,
+  ResetLocalStateResponse,
   RunDetail,
   RunStatus,
   StartAgentResponse,
@@ -33,6 +37,14 @@ export function fetchJigs(): Promise<JigData[]> {
   return fetchJson("/api/jigs")
 }
 
+export function fetchExamples(): Promise<ExampleJig[]> {
+  return fetchJson("/api/examples")
+}
+
+export function addExampleJig(id: string): Promise<AddExampleJigResponse> {
+  return fetchJson(`/api/examples/${encodeURIComponent(id)}/add`, { method: "POST" })
+}
+
 export function fetchJig(jigId: string): Promise<JigData> {
   return fetchJson(`/api/jigs/${encodeURIComponent(jigId)}`)
 }
@@ -51,6 +63,14 @@ export function fetchConnections(): Promise<Connection[]> {
 
 export function fetchConnection(name: string): Promise<ConnectionDetail> {
   return fetchJson(`/api/connections/${encodeURIComponent(name)}`)
+}
+
+export function connectConnection(name: string, credentials?: Record<string, string>): Promise<ConnectConnectionResponse> {
+  return fetchJson(`/api/connections/${encodeURIComponent(name)}/connect`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(credentials ? { credentials } : {}),
+  })
 }
 
 export function fetchJigSteps(jigId: string): Promise<StepList> {
@@ -148,6 +168,10 @@ export function saveNotificationSettings(settings: NotificationSettings): Promis
 
 export function sendTestNotification(): Promise<NotifyTestResponse> {
   return fetchJson("/api/settings/notifications/test", { method: "POST" })
+}
+
+export function resetLocalState(): Promise<ResetLocalStateResponse> {
+  return fetchJson("/api/settings/reset-local", { method: "POST" })
 }
 
 export function fetchToolPermissions(): Promise<ToolPermission[]> {

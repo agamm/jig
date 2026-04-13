@@ -5,6 +5,7 @@ type RunRecord = {
   runId: number
   jigId: string
   dryRun: boolean
+  startedAt: number
   completedTools: string[]
   activeTools: string[]
   steps: LiveRunStep[]
@@ -51,6 +52,7 @@ export function startTrackedRun(runId: number, jigId: string, dryRun: boolean): 
     runId,
     jigId,
     dryRun,
+    startedAt: Date.now(),
     completedTools: [],
     activeTools: [],
     steps: [],
@@ -179,6 +181,7 @@ function toRunStatus(run: RunRecord, active: boolean): RunStatus {
     runId: run.runId,
     jigId: run.jigId,
     dryRun: run.dryRun,
+    startedAt: run.startedAt,
     completedTools: run.completedTools,
     activeTools: run.activeTools,
     steps: run.steps,

@@ -18,6 +18,23 @@ afterEach(() => {
 })
 
 describe("notification settings routes", () => {
+  it("matches the connection connect route", () => {
+    const r = matchRoute("/api/connections/workspace/connect")
+    expect(r?.handler).toBe("connectConnection")
+    expect(r?.params.name).toBe("workspace")
+  })
+
+  it("matches the examples route", () => {
+    const r = matchRoute("/api/examples")
+    expect(r?.handler).toBe("listExamples")
+  })
+
+  it("matches the add-example route", () => {
+    const r = matchRoute("/api/examples/weekly-update/add")
+    expect(r?.handler).toBe("addExample")
+    expect(r?.params.id).toBe("weekly-update")
+  })
+
   it("matches the GET/PUT route", () => {
     const r = matchRoute("/api/settings/notifications")
     expect(r?.handler).toBe("notificationSettings")
@@ -26,6 +43,11 @@ describe("notification settings routes", () => {
   it("matches the test-send route", () => {
     const r = matchRoute("/api/settings/notifications/test")
     expect(r?.handler).toBe("notificationSettingsTest")
+  })
+
+  it("matches the local reset route", () => {
+    const r = matchRoute("/api/settings/reset-local")
+    expect(r?.handler).toBe("resetLocalState")
   })
 
   it("does not match an unrelated path", () => {

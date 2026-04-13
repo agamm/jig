@@ -4,11 +4,11 @@
  * Route parsing and side-effect orchestration live here; domain logic lives in
  * dedicated services under src/services and src/domain.
  */
-import { existsSync, readFileSync, rmSync, writeFileSync } from "fs"
+import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs"
 import { join } from "path"
-import { openDb } from "./db.js"
+import { closeDb, openDb } from "./db.js"
 import { getModelCatalog } from "./config/models.js"
-import { JIGS_DIR, PROJECT_ROOT, SCHEMAS_DIR } from "./config/paths.js"
+import { CONNECTIONS_DIR, JIGS_DIR, PROJECT_ROOT, SCHEMAS_DIR, TYPES_DIR } from "./config/paths.js"
 import { extractConnections, getJigFilePath, resolveJigPath } from "./domain/jig-source.js"
 import { invalidateJigsCache } from "./discover.js"
 import {
@@ -23,14 +23,17 @@ import { buildJigResponse, discoverAllJigs } from "./services/jig-api.js"
 import { getAgentSessionStatus, pushAgentMessage, startAgentSession } from "./services/agent-service.js"
 import { cancelActiveRun, getActiveRunSnapshot, getRunDetail, startJigRun } from "./services/run-api.js"
 import { getNotificationSettings, saveNotificationSettings, notify, type NotificationSettings } from "./services/notify.js"
+import { connectConfiguredServer } from "./services/connect-server.js"
+import { addExampleJig, listExampleJigs } from "./services/example-jigs.js"
 import { readNotificationManifest } from "./mcp/discover/notification-manifest.js"
 import { handleWebhook } from "./scheduler/webhooks.js"
-import { getSchedule, listAllSchedules, setScheduleEnabled, listAuthorizedSenders, addAuthorizedSender, removeAuthorizedSender, listToolPermissions, setToolPermission, type ToolPermissionPolicy } from "./db.js"
+import { getSchedule, listAllSchedules, setScheduleEnabled, listAuthorizedSenders, addAuthorizedSender, removeAuthorizedSender, listToolPermissions, setToolPermission, listCredentials, type ToolPermissionPolicy } from "./db.js"
 import { startScheduler } from "./scheduler/index.js"
 import { syncSchedules } from "./scheduler/sync.js"
 import { getJigVersionDetail, listJigVersions, restoreJigVersion } from "./services/jig-versioning.js"
 import { ApiError, json } from "./server/http.js"
 import { matchRoute } from "./server/router.js"
+import { firstLineSummary } from "./text.js"
 
 function ensureJigExists(id: string): void {
   if (!discoverAllJigs().has(id)) throw new ApiError(404, `Jig not found: ${id}`)
@@ -160,7 +163,7 @@ async function handleGetConnection(name: string): Promise<Response> {
         const readOnly = !destructive && tool.annotations?.readOnlyHint === true
         return {
           name: tool.name,
-          description: tool.description?.split("\n")[0] ?? "",
+          description: firstLineSummary(tool.description),
           readOnly,
           destructive,
         }
@@ -206,6 +209,43 @@ async function handleDeleteJig(id: string): Promise<Response> {
   return json({ ok: true, jigId: id })
 }
 
+async function handleResetLocalState(): Promise<Response> {
+  const disconnectedConnections = [...new Set([
+    ...listCredentials().map((row) => row.server),
+    ...(existsSync(SCHEMAS_DIR)
+      ? readdirSync(SCHEMAS_DIR).filter((name) => name.endsWith(".json")).map((name) => name.replace(/\.json$/, ""))
+      : []),
+  ])].sort()
+
+  const { closeAllConnections } = await import("./mcp/client.js")
+  await closeAllConnections()
+  closeDb()
+
+  const deletedJigs: string[] = []
+  if (existsSync(JIGS_DIR)) {
+    for (const name of readdirSync(JIGS_DIR)) {
+      const target = join(JIGS_DIR, name)
+      rmSync(target, { recursive: true, force: true })
+      deletedJigs.push(name)
+    }
+  }
+
+  for (const file of ["jig.db", "jig.db-shm", "jig.db-wal"]) {
+    rmSync(join(PROJECT_ROOT, file), { force: true })
+  }
+
+  // Remove generated local MCP artifacts too so onboarding is truly fresh.
+  rmSync(join(PROJECT_ROOT, ".jig", "notification-tools.json"), { force: true })
+  rmSync(SCHEMAS_DIR, { recursive: true, force: true })
+  rmSync(TYPES_DIR, { recursive: true, force: true })
+  rmSync(CONNECTIONS_DIR, { recursive: true, force: true })
+
+  invalidateJigsCache()
+  openDb()
+
+  return json({ ok: true, deletedJigs, disconnectedConnections })
+}
+
 export function createApiServer(port: number) {
   openDb()
   // Clear step cache on startup — ensures stale derivations from old SDK versions don't persist
@@ -230,6 +270,23 @@ export function createApiServer(port: number) {
             )
             return json(jigs)
           }
+          case "listExamples":
+            return json(listExampleJigs())
+          case "addExample": {
+            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+            try {
+              const jigId = await addExampleJig(route.params.id)
+              return json({ ok: true, jigId })
+            } catch (error: any) {
+              if (error?.message?.startsWith("Jig already exists:")) {
+                throw new ApiError(409, error.message)
+              }
+              if (error?.message?.startsWith("Example jig not found:") || error?.message === "Invalid example jig id") {
+                throw new ApiError(404, error.message)
+              }
+              throw error
+            }
+          }
           case "getJig": {
             if (req.method === "DELETE") return handleDeleteJig(route.params.id)
             ensureJigExists(route.params.id)
@@ -253,6 +310,11 @@ export function createApiServer(port: number) {
             return handleGetConnections()
           case "getConnection":
             return handleGetConnection(route.params.name)
+          case "connectConnection": {
+            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+            const body = await req.json().catch(() => ({})) as { credentials?: Record<string, string> }
+            return json(await connectConfiguredServer(route.params.name, { credentials: body?.credentials }))
+          }
           case "getSteps": {
             return handleGetSteps(route.params.id)
           }
@@ -370,6 +432,10 @@ export function createApiServer(port: number) {
               return json({ ok: true })
             }
             return json({ error: "Method not allowed" }, 405)
+          }
+          case "resetLocalState": {
+            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+            return handleResetLocalState()
           }
           case "webhook": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)

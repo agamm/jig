@@ -259,7 +259,7 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
   jig: Jig;
   onClose: () => void;
   onRefresh?: () => Promise<void> | void;
-  onDelete?: () => Promise<void> | void;
+  onDelete?: (jigId: string) => Promise<void> | void;
   onConnectionClick?: (name: string) => void;
 }) {
   const jigId = jig.id;
@@ -270,6 +270,7 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
   const [upgradeRequested, setUpgradeRequested] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [paramsExpanded, setParamsExpanded] = useState(false);
+  const [codeCopied, setCodeCopied] = useState(false);
   const [reviewedToolKeys, setReviewedToolKeys] = useState<Set<string>>(new Set());
   const [queuedRemovalTools, setQueuedRemovalTools] = useState<JigStepTool[]>([]);
   const tools = jig.settings.tools ?? [];
@@ -301,6 +302,11 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
   // Steps: live steps during/after run (with humanized names from derived), derived when idle
   const runSteps: RunStep[] = useMemo(() => {
     if (mode.type === "running" || mode.type === "done") {
+      if (liveSteps.length === 0) {
+        return mode.type === "running"
+          ? derivedSteps.map((step) => ({ ...step, status: "pending" as const }))
+          : derivedSteps
+      }
       // Merge humanized names from derivedSteps into liveSteps by step number
       return liveSteps.map(live => {
         const derived = derivedSteps.find(d => d.num === live.num);
@@ -312,6 +318,9 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
     }
     return derivedSteps;
   }, [derivedSteps, mode, liveSteps]);
+  const runStartError = mode.type === "done" && mode.status === "fail" && liveSteps.length === 0
+    ? mode.error ?? "Run failed before any steps started."
+    : null;
   const reviewableToolKeys = useMemo(() => getReviewableToolKeys(runSteps, tools), [runSteps, tools]);
   const reviewableToolCount = reviewableToolKeys.size;
   const reviewedToolCount = useMemo(
@@ -357,11 +366,21 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
     try {
       await deleteJig(jigId)
       setConfirmDeleteOpen(false)
-      await onDelete?.()
+      await onDelete?.(jigId)
     } catch (error: any) {
       toast.error(error?.message ?? "Failed to delete jig")
     } finally {
       setDeleting(false)
+    }
+  }
+
+  const handleCopyCode = async () => {
+    try {
+      await navigator.clipboard.writeText(jig.code)
+      setCodeCopied(true)
+      setTimeout(() => setCodeCopied(false), 1500)
+    } catch {
+      toast.error("Failed to copy code")
     }
   }
 
@@ -610,9 +629,23 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
                 </div>
               </div>
             )}
+            {runStartError && (
+              <div className="mt-3 rounded-lg border border-rose-500/20 bg-rose-500/[0.05] px-3 py-2">
+                <p className="text-[10px] font-medium uppercase tracking-wider text-rose-300">Run failed</p>
+                <p className="mt-1 text-[11px] leading-relaxed text-rose-100/70">{runStartError}</p>
+              </div>
+            )}
           </div>
         ) : (
-          <div key="code" className="rounded-lg border border-[#1f1f23] bg-[#111113] p-4 font-mono overflow-x-auto flip-enter">
+          <div key="code" className="relative rounded-lg border border-[#1f1f23] bg-[#111113] p-4 font-mono overflow-x-auto flip-enter">
+            <button
+              type="button"
+              onClick={handleCopyCode}
+              className="absolute right-3 top-3 z-10 rounded-md border border-[#2a2a2e] bg-[#0d0d0f] px-2 py-1 text-[10px] text-[#888] transition-colors hover:border-[#3a3a3e] hover:text-[#ededed]"
+              title="Copy code"
+            >
+              {codeCopied ? "Copied" : "Copy"}
+            </button>
             <HighlightedCode code={jig.code} connections={jig.settings.connections} />
           </div>
         )}
@@ -667,7 +700,8 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
           <div className="rounded-lg border border-[#1f1f23] bg-[#111113] divide-y divide-[#1a1a1d] max-h-[300px] overflow-y-auto">
             {jig.runs.slice(0, 10).map((run, i) => {
               const resultStep = run.steps?.find(s => s.output);
-              const outputPreview = resultStep?.output?.slice(0, 80);
+              const runOutput = resultStep?.output ?? run.output;
+              const outputPreview = runOutput?.slice(0, 80);
               const date = new Date(run.date);
               const isToday = new Date().toDateString() === date.toDateString();
               const timeStr = date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
@@ -695,9 +729,9 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
                   </button>
                   {expandedRun === i && (
                     <div className="border-t border-[#1a1a1d] px-4 py-2.5" style={{ animation: "fade-up 0.15s ease" }}>
-                      {resultStep?.output ? (
+                      {runOutput ? (
                         <div className="max-h-48 overflow-y-auto rounded-md border border-[#1f1f23] bg-[#0a0a0b] p-3">
-                          <MarkdownOutput markdown={resultStep.output} />
+                          <MarkdownOutput markdown={runOutput} />
                         </div>
                       ) : (
                         <p className="text-[10px] text-[#555] italic">No output recorded</p>

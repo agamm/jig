@@ -13,6 +13,7 @@ import { readdirSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 
 import type { Tool } from "@modelcontextprotocol/sdk/types.js"
 import { PROJECT_ROOT, SCHEMAS_DIR } from "../../config/paths.js"
 import type { NotificationHint } from "../client.js"
+import { firstLineSummary } from "../../text.js"
 
 export interface NotificationCapableTool {
   connection: string      // server name, e.g. "composio"
@@ -53,7 +54,7 @@ export function buildNotificationManifest(
         connection,
         tool: t.name,
         label: hint.label,
-        description: (t.description ?? "").split("\n")[0],
+        description: firstLineSummary(t.description),
         textField: hint.textField,
         recipientField: hint.recipientField,
         extraRequired: hint.extraRequired ?? [],

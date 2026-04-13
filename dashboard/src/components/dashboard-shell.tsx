@@ -13,7 +13,10 @@ import { ConnectionPane } from "@/components/connection-pane";
 import { NotificationsSettings } from "@/components/notifications-settings";
 import { ServiceIcon } from "@/components/service-icon";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/resizable";
+import { useConnectionCatalog } from "@/lib/hooks";
 import { useModels, useConnections } from "@/lib/swr";
+import { addExampleJig } from "@/lib/api";
+import type { ExampleJig } from "@shared/api";
 
 function useLocalStorage(key: string, initial: boolean): [boolean, (v: boolean) => void, boolean] {
   const [value, setValue] = useState(initial);
@@ -32,11 +35,13 @@ function useLocalStorage(key: string, initial: boolean): [boolean, (v: boolean) 
 
 export function DashboardShell({
   jigs: initialJigs,
+  examples = [],
   loading = false,
   phaseToggle = false,
   onPhaseChange,
 }: {
   jigs: Jig[];
+  examples?: ExampleJig[];
   loading?: boolean;
   phaseToggle?: boolean;
   onPhaseChange?: (phase: Phase) => void;
@@ -51,8 +56,6 @@ export function DashboardShell({
   const [createOpen, setCreateOpen] = useState(false);
   const [createInstruction, setCreateInstruction] = useState("");
   const [createStartToken, setCreateStartToken] = useState(0);
-  const [commandInput, setCommandInput] = useState("");
-
   const { data: models } = useModels();
   const { data: connections, isLoading: connectionsLoading } = useConnections();
 
@@ -60,14 +63,22 @@ export function DashboardShell({
   const showOnboarding = phaseToggle ? phase === "day1" : jigs.length === 0 && !loading;
   const hasDetail = createOpen || (selectedJig && currentJig) || selectedConnection;
   const collapsed = sidebarMounted ? sidebarSlim : false;
-  const allConnections = (connections ?? []).filter(c => c.connected);
+  const {
+    availableConnections,
+    connectedCount,
+    firstDisconnectedConnection,
+  } = useConnectionCatalog(connections);
 
-  const [jigClickToken, setJigClickToken] = useState(0);
-  function handleJigClick(jig: Jig) {
-    setSelectedJig(jig.id);
-    setJigClickToken(t => t + 1);
+  function openJigDetail(jigId: string) {
+    setCreateOpen(false);
+    setView(null);
+    setSelectedJig(jigId);
     setReviewMode(null);
     setSelectedConnection(null);
+  }
+
+  function handleJigClick(jig: Jig) {
+    openJigDetail(jig.id);
   }
 
   function closeDetail() {
@@ -92,8 +103,7 @@ export function DashboardShell({
   async function refreshJigs(openJigId?: string) {
     await mutate("jigs")
     if (openJigId) {
-      setCreateOpen(false)
-      setSelectedJig(openJigId)
+      openJigDetail(openJigId)
     }
   }
 
@@ -129,7 +139,26 @@ export function DashboardShell({
         {loading && (
           <div className="flex h-32 items-center justify-center text-sm text-[#555]">Loading...</div>
         )}
-        {showOnboarding && <OnboardingView onCreate={() => openCreatePane()} />}
+        {showOnboarding && (
+          <OnboardingView
+            onCreate={() => openCreatePane()}
+            onConnectionClick={(name) => {
+              setView("connections");
+              setSelectedConnection(name);
+            }}
+            onExampleAdd={async (id) => {
+              const result = await addExampleJig(id);
+              await refreshJigs(result.jigId);
+            }}
+            onExampleOpen={(id) => {
+              openJigDetail(id);
+            }}
+            connectedCount={connectedCount}
+            connections={availableConnections}
+            examples={examples}
+            existingJigIds={jigs.map((jig) => jig.id)}
+          />
+        )}
         {!showOnboarding && !loading && (
           <JigList
             jigs={jigs}
@@ -139,37 +168,6 @@ export function DashboardShell({
             onCreate={() => openCreatePane()}
           />
         )}
-      </div>
-
-      <div className="shrink-0 border-t border-[#1f1f23] px-4 py-2.5">
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            const instruction = commandInput.trim();
-            if (!instruction) return;
-            openCreatePane(instruction, true);
-            setCommandInput("");
-          }}
-          className="flex items-center gap-2 rounded-lg border border-[#1f1f23] bg-[#111113] px-3 py-2 text-[12px] transition-colors duration-150 hover:border-[#2a2a2e]"
-        >
-          <svg className="w-3.5 h-3.5 text-[#555]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-          </svg>
-          <input
-            type="text"
-            value={commandInput}
-            onChange={(e) => setCommandInput(e.target.value)}
-            placeholder="Jig anything..."
-            className="flex-1 bg-transparent text-[12px] text-[#ededed] outline-none placeholder:text-[#444]"
-          />
-          <button
-            type="submit"
-            disabled={!commandInput.trim()}
-            className="rounded-md bg-emerald-600 px-2 py-0.5 text-[10px] font-medium text-white transition-colors duration-150 hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-30"
-          >
-            Create
-          </button>
-        </form>
       </div>
     </main>
   );
@@ -181,15 +179,15 @@ export function DashboardShell({
       </div>
       <div className="flex-1 overflow-y-auto px-6 py-6">
         <div className="max-w-2xl mx-auto space-y-3">
-          {connectionsLoading && allConnections.length === 0 && (
+          {connectionsLoading && availableConnections.length === 0 && (
             <div className="py-8 text-center text-[11px] text-[#555]">Loading connections…</div>
           )}
-          {!connectionsLoading && allConnections.length === 0 && (
+          {!connectionsLoading && availableConnections.length === 0 && (
             <div className="py-8 text-center text-[11px] text-[#555]">
               No connections yet. Run <code className="text-[10px] bg-[#1a1a1d] px-1 py-0.5 rounded font-mono">jig connect &lt;server&gt;</code> to add one.
             </div>
           )}
-          {allConnections.map((c) => (
+          {availableConnections.map((c) => (
             <button
               key={c.name}
               onClick={() => setSelectedConnection(c.name)}
@@ -206,13 +204,16 @@ export function DashboardShell({
                 </span>
               )}
               <span className="text-[11px] text-[#555]">{c.toolCount} tools</span>
-              <span className="ml-auto h-2 w-2 rounded-full bg-emerald-400" />
-              <span className="text-[11px] text-[#555]">Connected</span>
+              <span className={`ml-auto h-2 w-2 rounded-full ${c.connected ? "bg-emerald-400" : "bg-[#444]"}`} />
+              <span className="text-[11px] text-[#555]">{c.connected ? "Connected" : "Available"}</span>
             </button>
           ))}
-          <button className="flex w-full items-center gap-2 rounded-lg border border-dashed border-[#2a2a2e] px-4 py-3 text-[12px] text-[#555] transition-colors duration-150 hover:text-emerald-400 hover:border-emerald-400/30">
+          <button
+            onClick={() => firstDisconnectedConnection && setSelectedConnection(firstDisconnectedConnection.name)}
+            className="flex w-full items-center gap-2 rounded-lg border border-dashed border-[#2a2a2e] px-4 py-3 text-[12px] text-[#555] transition-colors duration-150 hover:text-emerald-400 hover:border-emerald-400/30"
+          >
             <span className="flex h-5 w-5 items-center justify-center rounded-full border border-dashed border-[#2a2a2e] text-[11px]">+</span>
-            Add connection
+            Connect a service
           </button>
         </div>
       </div>
@@ -231,16 +232,19 @@ export function DashboardShell({
       />
     ) : selectedJig && currentJig && !reviewMode && !selectedConnection ? (
       <JigDetailPane
-        key={jigClickToken}
+        key={currentJig.id}
         jig={currentJig}
         onClose={closeDetail}
         onConnectionClick={(name) => {
           setSelectedConnection(name);
         }}
         onRefresh={() => mutate("jigs")}
-        onDelete={async () => {
-          await mutate("jigs")
+        onDelete={async (deletedJigId) => {
+          await mutate("jigs", (current: Jig[] | undefined) =>
+            (current ?? []).filter((candidate) => candidate.id !== deletedJigId),
+          false)
           closeDetail()
+          await mutate("jigs")
         }}
       />
     ) : selectedConnection ? (
@@ -248,9 +252,7 @@ export function DashboardShell({
         name={selectedConnection}
         onClose={() => setSelectedConnection(null)}
         onJigClick={(jigId) => {
-          setSelectedConnection(null);
-          setSelectedJig(jigId);
-          setReviewMode(null);
+          openJigDetail(jigId);
         }}
       />
     ) : selectedJig && currentJig && reviewMode && !selectedConnection ? (
@@ -260,9 +262,38 @@ export function DashboardShell({
   return (
     <div className="flex h-full" style={{ background: "#0a0a0b" }}>
       <nav className={`flex shrink-0 flex-col border-r border-[#1f1f23] bg-[#0a0a0b] transition-all duration-200 overflow-hidden ${collapsed ? "w-[52px]" : "w-[180px]"}`}>
-        <div className={`flex h-11 shrink-0 items-center border-b border-[#1f1f23] gap-2 ${collapsed ? "justify-center px-0" : "px-3"}`}>
-          <span className="h-[7px] w-[7px] rounded-full bg-emerald-400 shrink-0" />
-          {!collapsed && <span className="text-[13px] font-semibold text-[#ededed]">Jig</span>}
+        <div className={`flex h-11 shrink-0 items-center border-b border-[#1f1f23] ${collapsed ? "justify-center px-0" : "justify-between px-3"}`}>
+          {!collapsed ? (
+            <div className="flex items-center gap-2">
+              <span className="h-[7px] w-[7px] rounded-full bg-emerald-400 shrink-0" />
+              <span className="text-[13px] font-semibold text-[#ededed]">Jig</span>
+            </div>
+          ) : null}
+          {!collapsed ? (
+            <button
+              onClick={() => setSidebarSlim(!sidebarSlim)}
+              className="flex h-7 w-7 items-center justify-center rounded-md text-[#444] transition-colors duration-150 hover:bg-[#111113] hover:text-[#9a9aa3]"
+              title="Collapse sidebar"
+              aria-label="Collapse sidebar"
+            >
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="11 17 6 12 11 7" />
+                <polyline points="18 17 13 12 18 7" />
+              </svg>
+            </button>
+          ) : (
+            <button
+              onClick={() => setSidebarSlim(!sidebarSlim)}
+              className="flex h-11 w-full items-center justify-center text-[#444] transition-colors duration-150 hover:bg-[#111113] hover:text-[#9a9aa3]"
+              title="Expand sidebar"
+              aria-label="Expand sidebar"
+            >
+              <svg className="h-3.5 w-3.5 rotate-180" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="11 17 6 12 11 7" />
+                <polyline points="18 17 13 12 18 7" />
+              </svg>
+            </button>
+          )}
         </div>
 
         <div className="flex-1 flex flex-col gap-0.5 py-2">
@@ -290,19 +321,6 @@ export function DashboardShell({
           </div>
         )}
 
-        <div className={`border-t border-[#1f1f23] py-2 ${collapsed ? "px-1" : "px-2"}`}>
-          <button
-            onClick={() => setSidebarSlim(!sidebarSlim)}
-            className={`flex items-center gap-2 rounded-md w-full py-1.5 text-[11px] text-[#444] hover:text-[#888] hover:bg-[#111113] transition-colors duration-150 ${collapsed ? "justify-center px-0" : "px-2"}`}
-            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          >
-            <svg className={`w-3.5 h-3.5 transition-transform duration-200 ${collapsed ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="11 17 6 12 11 7" />
-              <polyline points="18 17 13 12 18 7" />
-            </svg>
-            {!collapsed && <span>Collapse</span>}
-          </button>
-        </div>
       </nav>
 
       <div className="flex flex-1 overflow-hidden">
@@ -329,9 +347,15 @@ export function DashboardShell({
             </div>
             <div className="flex-1 overflow-y-auto px-6 py-6">
               <div className="max-w-2xl mx-auto space-y-6">
+                <div className="rounded-xl border border-[#1f1f23] bg-[#0d0d0f] px-4 py-4">
+                  <p className="text-[12px] leading-relaxed text-[#777]">
+                    Configure local behavior for this workspace. Changes here affect only this machine unless the setting is stored in your repo.
+                  </p>
+                </div>
                 <div className="space-y-3">
                   <h3 className="text-[12px] text-[#555] uppercase tracking-wider">LLM Provider</h3>
                   <div className="rounded-lg border border-[#1f1f23] bg-[#111113] px-4 py-3">
+                    <p className="mb-2 text-[11px] text-[#666]">Default model used for the assistant and jig generation.</p>
                     <div className="flex items-center justify-between">
                       <span className="text-[13px] text-[#ededed]">{models?.main?.id ?? "Loading..."}</span>
                       <span className="text-[11px] text-[#555] rounded-md border border-[#1f1f23] px-2 py-0.5">Change</span>
@@ -339,23 +363,16 @@ export function DashboardShell({
                   </div>
                 </div>
                 <div className="space-y-3">
-                  <h3 className="text-[12px] text-[#555] uppercase tracking-wider">Dashboard</h3>
-                  <div className="rounded-lg border border-[#1f1f23] bg-[#111113] px-4 py-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[13px] text-[#ccc]">Port</span>
-                      <span className="text-[13px] text-[#888] font-mono">3141</span>
-                    </div>
-                  </div>
-                </div>
-                <div className="space-y-3">
                   <h3 className="text-[12px] text-[#555] uppercase tracking-wider">Notifications</h3>
-                  <NotificationsSettings />
-                </div>
-                <div className="space-y-3">
-                  <h3 className="text-[12px] text-[#555] uppercase tracking-wider">Standing Permissions</h3>
-                  <div className="rounded-lg border border-dashed border-[#1f1f23] px-4 py-6 text-center">
-                    <p className="text-[12px] text-[#444]">Permissions are configured in jig.config.ts</p>
-                  </div>
+                  <NotificationsSettings
+                    onReset={async () => {
+                      closeDetail();
+                      setView(null);
+                      await mutate("jigs", [], false);
+                      await mutate("examples");
+                      await mutate("connections");
+                    }}
+                  />
                 </div>
               </div>
             </div>

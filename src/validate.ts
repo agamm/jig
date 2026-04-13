@@ -7,6 +7,7 @@
 import { existsSync } from "fs"
 import type { JigDefinition, JigTrigger } from "./sdk/jig.js"
 import { PROJECT_ROOT } from "./config/paths.js"
+import { toolNameToIdentifier } from "./mcp/typegen.js"
 
 // ---------------------------------------------------------------------------
 // Validation errors
@@ -119,9 +120,10 @@ function validateDefinition(def: unknown): ValidationError[] {
 export function checkToolDeclarations(code: string, declaredToolNames: string[]): ValidationError[] {
   const errors: ValidationError[] = []
   const declared = new Set(declaredToolNames)
+  const declaredIdentifiers = new Set(declaredToolNames.map(toolNameToIdentifier))
 
   // Find connection imports
-  const importRe = /import\s*\{[^}]*\b(\w+)\b[^}]*\}\s*from\s*["']jig\/connections\/(\w+)\.(?:js|ts)["']/g
+  const importRe = /import\s*\{[^}]*\b(\w+)\b[^}]*\}\s*from\s*["'](?:@jig|jig|(?:\.\.\/)+\.jig)\/connections\/(\w+)\.(?:js|ts)["']/g
   const connectionVars = new Map<string, string>()
   for (const m of code.matchAll(importRe)) {
     connectionVars.set(m[1], m[2])
@@ -132,7 +134,7 @@ export function checkToolDeclarations(code: string, declaredToolNames: string[])
     const callRe = new RegExp(`\\b${varName}\\.(\\w+)\\s*[,(\\[]`, "g")
     for (const m of code.matchAll(callRe)) {
       const toolName = m[1]
-      if (!declared.has(toolName)) {
+      if (!declared.has(toolName) && !declaredIdentifiers.has(toolName)) {
         errors.push({
           field: `tools.${serverName}.${toolName}`,
           message: `Tool "${serverName}.${toolName}" is used but not declared in the jig's tools array.`,
@@ -146,6 +148,70 @@ export function checkToolDeclarations(code: string, declaredToolNames: string[])
   return errors.filter(e => {
     if (seen.has(e.field)) return false
     seen.add(e.field)
+    return true
+  })
+}
+
+/**
+ * Reject instructional placeholder jigs that narrate setup instead of doing the work.
+ */
+export function checkPlaceholderJigPatterns(code: string): ValidationError[] {
+  const errors: ValidationError[] = []
+
+  const importRe = /import\s*\{[^}]*\b(\w+)\b[^}]*\}\s*from\s*["'](?:@jig|jig|(?:\.\.\/)+\.jig)\/connections\/(\w+)\.(?:js|ts)["']/g
+  const connectionVars = [...code.matchAll(importRe)].map((match) => match[1])
+  const codeWithoutConnectionImports = code.replace(importRe, "")
+  const hasConnectionImport = connectionVars.length > 0
+  const hasRuntimeConnectionUse = connectionVars.some((varName) => {
+    const directCallRe = new RegExp(`\\b${varName}\\.(\\w+)\\s*\\(`, "g")
+    const stepToolRe = new RegExp(`\\bctx\\.step\\s*\\([\\s\\S]*?\\[[\\s\\S]*?\\b${varName}\\.(\\w+)\\b`, "m")
+    const agentToolRe = new RegExp(`\\bagent\\s*(?:<[^>]+>)?\\s*\\([\\s\\S]*?\\[[\\s\\S]*?\\b${varName}\\.(\\w+)\\b`, "m")
+    return directCallRe.test(codeWithoutConnectionImports)
+      || stepToolRe.test(codeWithoutConnectionImports)
+      || agentToolRe.test(codeWithoutConnectionImports)
+  })
+  const hasInstructionalConnect = /\bjig connect\s+[a-z0-9_-]+/i.test(code)
+  const hasPlaceholderCopy =
+    /once connected/i.test(code) ||
+    /this jig is designed to/i.test(code) ||
+    /configure .*credentials/i.test(code) ||
+    /example output/i.test(code)
+  const fabricatesExampleOutput =
+    /llm\s*\(\s*["'`][^"'`]*generate example output/i.test(code) ||
+    /llm\s*\(\s*["'`][^"'`]*example output/i.test(code)
+
+  if (fabricatesExampleOutput) {
+    errors.push({
+      field: "behavior.placeholder-output",
+      message: "Do not use llm() to fabricate example output. Use real tools or fail creation/editing if the required connection is unavailable.",
+    })
+  }
+
+  if (hasInstructionalConnect) {
+    errors.push({
+      field: "behavior.setup-instructions",
+      message: 'Do not tell the user to run "jig connect ..." from inside a jig. If the workflow needs that connection, fail creation/editing instead of generating placeholder code.',
+    })
+  }
+
+  if ((hasPlaceholderCopy || hasInstructionalConnect) && !hasRuntimeConnectionUse) {
+    errors.push({
+      field: "behavior.placeholder-jig",
+      message: "Jig only contains setup/instructional placeholder behavior instead of performing real work. Use the required tools or fail creation/editing.",
+    })
+  }
+
+  if (hasConnectionImport && !hasRuntimeConnectionUse) {
+    errors.push({
+      field: "behavior.unused-connections",
+      message: "Jig imports connections but never uses any connection tools. Do not import a service unless the jig actually uses it.",
+    })
+  }
+
+  const seen = new Set<string>()
+  return errors.filter((error) => {
+    if (seen.has(error.field)) return false
+    seen.add(error.field)
     return true
   })
 }
@@ -171,15 +237,15 @@ export async function validateJigFile(path: string): Promise<ValidationResult> {
 
     const errors = validateDefinition(mod.default)
 
-    // Check tool declarations vs usage
-    const tools = mod.default?.options?.tools
-    if (Array.isArray(tools) && tools.length > 0) {
-      try {
-        const code = require("fs").readFileSync(path, "utf-8")
+    try {
+      const code = require("fs").readFileSync(path, "utf-8")
+      const tools = mod.default?.options?.tools
+      if (Array.isArray(tools) && tools.length > 0) {
         const declaredNames = tools.map((t: any) => t._toolName).filter(Boolean)
         errors.push(...checkToolDeclarations(code, declaredNames))
-      } catch {}
-    }
+      }
+      errors.push(...checkPlaceholderJigPatterns(code))
+    } catch {}
 
     return {
       ok: errors.length === 0,

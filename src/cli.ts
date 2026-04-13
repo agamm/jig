@@ -5,13 +5,14 @@
  * Business logic emits structured JigEvents. This file renders them as text.
  * A dashboard would render the same events as UI components.
  */
-import { loadServerConfigs, checkMissingCredentials } from "./mcp/config.js"
 import { discoverJigs } from "./discover.js"
 import { existsSync } from "fs"
 import { join, relative } from "path"
 import { createInterface } from "node:readline/promises"
 import type { JigIO, JigEvent } from "./jig-gen.js"
-import { CONNECTIONS_DIR, PROJECT_ROOT, SCHEMAS_DIR } from "./config/paths.js"
+import { CONNECTIONS_DIR, PROJECT_ROOT } from "./config/paths.js"
+import { runConnectFlow } from "../shared/connect-flow.js"
+import type { ConnectConnectionResponse, Connection } from "../shared/api.js"
 
 const API_PORT = parseInt(process.env.PORT ?? "3141")
 const API_BASE = `http://localhost:${API_PORT}`
@@ -464,76 +465,28 @@ async function update() {
 // ---------------------------------------------------------------------------
 
 async function connect(serverName: string | undefined, io: JigIO) {
-  const configs = await loadServerConfigs()
+  await ensureServer()
 
-  if (!serverName) {
-    const servers = await Promise.all(
-      Object.entries(configs).map(async ([name, config]) => {
-        const schemaPath = join(SCHEMAS_DIR, `${name}.json`)
-        const connected = existsSync(schemaPath)
-        const toolCount = connected ? (await Bun.file(schemaPath).json()).length : 0
-        return { name, connected, toolCount, description: config.description }
-      })
-    )
-    io.emit({ type: "server-list", servers })
-    return
-  }
-
-  // Check for missing credentials before attempting connection
-  const rawConfig = configs[serverName]
-  if (!rawConfig) {
-    const available = Object.keys(configs).join(", ")
-    io.emit({ type: "error", code: "unknown-server", message: `Unknown server "${serverName}". Available: ${available}` })
-    process.exit(1)
-  }
-  const missing = checkMissingCredentials(rawConfig)
-  if (missing.length > 0) {
-    const setup = (rawConfig as any).setup as string | undefined
-    if (setup) io.emit({ type: "setup-instructions", message: setup })
-
-    const { setCredential } = await import("./db.js")
-    for (const varName of missing) {
-      const value = await io.ask(`Enter ${varName}:`)
-      if (!value.trim()) {
-        io.emit({ type: "error", code: "missing-credential", message: `${varName} is required` })
-        process.exit(1)
-      }
-      setCredential(varName, value.trim(), serverName)
+  const fetchApiJson = async <T>(path: string, init?: RequestInit): Promise<T> => {
+    const res = await fetch(`${API_BASE}${path}`, init)
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+      throw new Error(error.error ?? `HTTP ${res.status}`)
     }
+    return res.json() as Promise<T>
   }
 
-  const { getServerConfig } = await import("./mcp/config.js")
-  const { connectServer, discoverTools, ensureAnnotations } = await import("./mcp/client.js")
-
-  io.emit({ type: "connecting", server: serverName })
-  const config = await getServerConfig(serverName)
-  const connection = await connectServer(serverName, config)
-  let tools = await discoverTools(connection)
-
-  // If server has a proxy discover script, use it to find real tools
-  if (rawConfig.proxy?.discover) {
-    io.emit({ type: "connecting", server: `${serverName} (discovering tools)` })
-    const { discover } = await import(join(PROJECT_ROOT, rawConfig.proxy.discover))
-    tools = await discover(connection)
-  }
-
-  // LLM classifies read/write annotations — only during jig connect, not runtime
-  await ensureAnnotations(tools)
-  // Re-save schemas with enriched annotations
-  await Bun.write(join(SCHEMAS_DIR, `${serverName}.json`), JSON.stringify(tools, null, 2))
-
-  io.emit({ type: "tools-discovered", server: serverName, count: tools.length, tools: tools.map(t => t.name) })
-
-  // Regenerate types + connection modules
-  const typegen = Bun.spawn(["bun", "run", "src/mcp/typegen.ts"], {
-    cwd: PROJECT_ROOT,
-    stdout: "inherit",
-    stderr: "inherit",
+  await runConnectFlow(serverName, io, {
+    listConnections: () => fetchApiJson<Connection[]>("/api/connections"),
+    connect: (name, credentials) => fetchApiJson<ConnectConnectionResponse>(
+      `/api/connections/${encodeURIComponent(name)}/connect`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(credentials ? { credentials } : {}),
+      }
+    ),
   })
-  await typegen.exited
-
-  io.emit({ type: "server-ready", server: serverName })
-  process.exit(0)
 }
 
 // ---------------------------------------------------------------------------

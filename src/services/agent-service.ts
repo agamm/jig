@@ -3,7 +3,7 @@ import { join } from "path"
 import OpenAI from "openai"
 import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions"
 import type { AgentEvent, AgentStatusResponse, StartAgentResponse } from "../../shared/api.js"
-import { JIGS_DIR, PROJECT_ROOT, SCHEMAS_DIR, TYPES_DIR } from "../config/paths.js"
+import { EXAMPLES_DIR, JIGS_DIR, PROJECT_ROOT, SCHEMAS_DIR, TYPES_DIR } from "../config/paths.js"
 import { JIG_EDITOR_MODEL } from "../config/models.js"
 import { isValidJigId } from "../domain/jig-id.js"
 import { loadServerConfigs } from "../mcp/config.js"
@@ -12,6 +12,7 @@ import { checkJigFile } from "./jig-checker.js"
 import { buildAgentJigSystemPrompt } from "./jig-writing-prompt.js"
 import { writeJigSource } from "./jig-writer.js"
 import { ApiError } from "../server/http.js"
+import { renderCodeFacingToolCatalogSection } from "../tool-catalog.js"
 
 const MAX_AGENT_ROUNDS = 15
 const AGENT_SESSION_TTL = 30 * 60 * 1000
@@ -242,7 +243,7 @@ async function buildAgentSystemPrompt(jigId?: string): Promise<string> {
   for (const file of schemaFiles) {
     const serverName = file.replace(".json", "")
     const schemas = JSON.parse(readFileSync(join(SCHEMAS_DIR, file), "utf-8"))
-    toolCatalogSections.push(`## ${serverName} tools\n${schemas.map((t: any) => `  ${t.name}: ${t.description?.split("\n")[0] ?? ""}`).join("\n")}`)
+    toolCatalogSections.push(renderCodeFacingToolCatalogSection(serverName, schemas))
   }
 
   let serverDescriptions = ""
@@ -259,7 +260,7 @@ async function buildAgentSystemPrompt(jigId?: string): Promise<string> {
     }
   }
 
-  const examplePath = `${JIGS_DIR}/weekly-update.ts`
+  const examplePath = `${EXAMPLES_DIR}/weekly-update.ts`
   const exampleJig = existsSync(examplePath) ? readFileSync(examplePath, "utf-8") : undefined
 
   return buildAgentJigSystemPrompt({

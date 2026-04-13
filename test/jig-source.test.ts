@@ -66,6 +66,18 @@ describe("active run snapshots", () => {
     finishTrackedRun(1001)
     finishTrackedRun(1002)
   })
+
+  it("includes the original start time for active runs", () => {
+    const before = Date.now()
+    startTrackedRun(1003, "gamma", true)
+
+    const status = getActiveRunStatusForJig("gamma")
+    expect(status.startedAt).toBeDefined()
+    expect(status.startedAt!).toBeGreaterThanOrEqual(before)
+    expect(status.startedAt!).toBeLessThanOrEqual(Date.now())
+
+    finishTrackedRun(1003)
+  })
 })
 
 describe("run API invariants", () => {

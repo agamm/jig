@@ -234,7 +234,7 @@ export function persist(runId: number, startTime: number): (e: RunEvent) => void
         break
       }
       case "done":
-        completeRun(runId, "success", event.durationMs)
+        completeRun(runId, "success", event.durationMs, undefined, event.output)
         break
       case "error":
         completeRun(runId, "fail", Date.now() - startTime, event.message)

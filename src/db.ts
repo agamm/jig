@@ -20,6 +20,7 @@ export interface RunRow {
   status: "running" | "success" | "fail"
   duration_ms: number | null
   error: string | null
+  output: string | null
   params: string | null // JSON
 }
 
@@ -50,6 +51,7 @@ CREATE TABLE IF NOT EXISTS runs (
   status TEXT NOT NULL DEFAULT 'running',
   duration_ms INTEGER,
   error TEXT,
+  output TEXT,
   params TEXT
 );
 
@@ -143,6 +145,8 @@ const MIGRATIONS: string[] = [
    ALTER TABLE runs DROP COLUMN entity;
    ALTER TABLE step_cache DROP COLUMN entity;
    CREATE UNIQUE INDEX IF NOT EXISTS idx_step_cache_jig ON step_cache(jig_id);`,
+  // v7: persist run-level output for historical run previews/fallbacks
+  `ALTER TABLE runs ADD COLUMN output TEXT;`,
 ]
 
 // ---------------------------------------------------------------------------
@@ -193,6 +197,7 @@ export function openDb(path?: string): Database {
       _db.exec("PRAGMA journal_mode = WAL")
       _db.exec("PRAGMA foreign_keys = ON")
       _db.exec(SCHEMA)
+      runMigrations(_db)
     } else {
       throw e
     }
@@ -228,12 +233,13 @@ export function completeRun(
   runId: number,
   status: "success" | "fail",
   durationMs: number,
-  error?: string
+  error?: string,
+  output?: string
 ): void {
   const db = openDb()
   db.prepare(
-    `UPDATE runs SET status = ?, duration_ms = ?, finished_at = datetime('now'), error = ? WHERE id = ?`
-  ).run(status, durationMs, error ?? null, runId)
+    `UPDATE runs SET status = ?, duration_ms = ?, finished_at = datetime('now'), error = ?, output = ? WHERE id = ?`
+  ).run(status, durationMs, error ?? null, output ?? null, runId)
 }
 
 export function listRuns(jigId?: string, limit = 20): RunRow[] {

@@ -116,6 +116,7 @@ export async function startServer(options?: { port?: number }) {
 
   // 1. Ensure dashboard port is available
   const userPort = await ensurePort(preferredPort)
+  process.env.JIG_DASHBOARD_PORT = String(userPort)
 
   // 2. Start Bun API server on an internal port
   const apiServer = tryServe(4173)

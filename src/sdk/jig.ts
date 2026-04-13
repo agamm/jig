@@ -41,7 +41,7 @@ export function jig(
 
 /**
  * Run a jig with the given params. Pure execution — no I/O.
- * Param prompting is the caller's responsibility (CLI uses io.ask, dashboard uses a form).
+ * Param prompting is the caller's responsibility (CLI and dashboard both use io.ask adapters).
  * Returns the context so callers can access captured output.
  */
 export async function run(
@@ -64,4 +64,3 @@ export async function run(
     return ctx
   })
 }
-

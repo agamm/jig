@@ -9,6 +9,7 @@ import { existsSync } from "fs"
 import { createInterface } from "node:readline/promises"
 import { createApiServer } from "./server.js"
 import { CONNECTIONS_DIR, DASHBOARD_DIR, PROJECT_ROOT } from "./config/paths.js"
+import { resetSessionLog } from "./debug/session-log.js"
 import { startScheduler } from "./scheduler/index.js"
 
 /** Check if a port is free by briefly listening, then closing. */
@@ -82,6 +83,8 @@ function tryServe(start: number): ReturnType<typeof createApiServer> {
 }
 
 export async function startServer(options?: { port?: number }) {
+  await resetSessionLog()
+
   // Auto-install dashboard deps if missing
   if (!existsSync(`${DASHBOARD_DIR}/node_modules`)) {
     console.log("Installing dashboard dependencies...")

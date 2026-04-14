@@ -52,6 +52,8 @@ function agentExecutionRules() {
 - If the user explicitly says manual, run on click, on demand, schedule, every day/week, cron, webhook, incoming event, or POST/webhook URL, treat that as decisive and do NOT ask again.
 - Only ask if the trigger is still genuinely unclear after reading the whole request. Do NOT default to "manual" silently.
 - BEFORE writing any code, also check: does the workflow depend on a specific connection, MCP server, or tool? If yes and it is unavailable, STOP and fail with the missing dependency. Do NOT write a placeholder jig that tells the user to connect it later.
+- If the user explicitly names a connection/provider/server, preserve that intent. Prefer that exact connection over inferred alternatives unless it is clearly impossible or mismatched for the task.
+- Prefer the smallest sufficient connection set. If the user explicitly wants to access a site or dataset via a provider like Apify, do not pull in that site's first-party connection unless the jig truly needs the first-party API or write actions as well.
 - For webhook jigs, the POST body becomes ctx.params as nested JSON. Telegram example: const text = (ctx.params.message as any)?.text. Cast to any for nested shapes.
 - ALWAYS run check_jig after writing code
 - If check_jig reports errors, fix them and check again until it passes

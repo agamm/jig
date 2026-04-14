@@ -137,6 +137,11 @@ export interface ModelCatalog {
   fast: ModelInfo
 }
 
+export interface AgentConversationTurn {
+  role: "user" | "assistant"
+  content: string
+}
+
 export type AgentEvent =
   | {
       type: "tool-call"
@@ -152,6 +157,16 @@ export type AgentEvent =
 
 export type AgentStatus = "thinking" | "tool-calling" | "waiting" | "done" | "error" | "idle"
 
+export interface AgentMetrics {
+  model?: string
+  round?: number
+  activeTool?: string
+  promptTokens?: number
+  completionTokens?: number
+  totalTokens?: number
+  updatedAt?: number
+}
+
 export interface StartAgentResponse {
   sessionId: string
   jigId?: string
@@ -162,6 +177,7 @@ export interface AgentStatusResponse {
   jigId?: string
   events: AgentEvent[]
   totalEvents: number
+  metrics?: AgentMetrics
 }
 
 export interface LiveRunStep {

@@ -303,7 +303,10 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
     if (mode.type === "running" || mode.type === "done") {
       if (liveSteps.length === 0) {
         return mode.type === "running"
-          ? derivedSteps.map((step) => ({ ...step, status: "pending" as const }))
+          ? derivedSteps.map((step, index) => ({
+            ...step,
+            status: index === 0 ? "running" as const : "pending" as const,
+          }))
           : derivedSteps
       }
       // Merge humanized names from derivedSteps into liveSteps by step number
@@ -766,7 +769,12 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
       </div>
 
       {/* Agent activity stream (shown when active) */}
-      <AgentPanel events={agent.events} status={agent.status} onRetry={() => agent.sendMessage("Continue — retry the last step.")} />
+      <AgentPanel
+        events={agent.events}
+        status={agent.status}
+        metrics={agent.metrics}
+        onRetry={() => agent.sendMessage("Continue — retry the last step.")}
+      />
 
       {/* Agent input bar */}
       <div className="border-t border-[#1f1f23] p-3">

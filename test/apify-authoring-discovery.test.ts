@@ -57,8 +57,8 @@ describe("apify authoring discovery", () => {
       llm: async <T>(prompt: string, data: Record<string, unknown>) => {
         llmCalls.push({ prompt, data })
 
-        if (prompt.includes("Choose two short Apify Store search queries")) {
-          return { queries: ["github trending", "trending repos"] } as T
+        if (prompt.includes("Choose one short Apify Store search query")) {
+          return { query: "github trending" } as T
         }
 
         if (prompt.includes("Extract structured Apify Actor search results from markdown")) {
@@ -115,11 +115,21 @@ describe("apify authoring discovery", () => {
     expect(result?.requiredTools).toEqual(["call-actor"])
     expect(result?.includeTools).toEqual(["call-actor", "get-actor-run", "get-actor-output"])
     expect(result?.excludeTools).toEqual(["search-actors", "fetch-actor-details"])
+    expect(result?.resolvedInputSchema).toEqual({
+      type: "object",
+      properties: {
+        since: { type: "string" },
+        language: { type: "string" },
+      },
+    })
     expect(result?.context).toContain('Resolved Apify Actor at build time for this workflow: community/github-trending-scraper.')
     expect(result?.context).toContain('Use apify.call_actor at runtime with actor "community/github-trending-scraper".')
-    expect(result?.context).toContain("apify.get_actor_run and apify.get_actor_output are allowed runtime follow-ups")
+    expect(result?.context).toContain("Prefer the normal sync flow when the user wants results now")
+    expect(result?.context).toContain("then read `items` and `datasetId` from that response")
+    expect(result?.context).toContain("If the response includes a `datasetId`, use apify.get_actor_output")
+    expect(result?.context).toContain("Do not call apify.get_actor_run immediately after a normal sync apify.call_actor")
     expect(result?.context).toContain('"since"')
-    expect(llmCalls.some((call) => call.prompt.includes("Choose two short Apify Store search queries"))).toBe(true)
+    expect(llmCalls.some((call) => call.prompt.includes("Choose one short Apify Store search query"))).toBe(true)
     expect(llmCalls.some((call) => call.prompt.includes("Extract structured Apify Actor search results from markdown"))).toBe(true)
     expect(llmCalls.some((call) => call.prompt.includes("Extract structured Apify Actor details from markdown"))).toBe(true)
   })
@@ -182,8 +192,8 @@ describe("apify authoring discovery", () => {
         throw new Error(`Unexpected tool call: ${toolName}`)
       },
       llm: async <T>(prompt: string) => {
-        if (prompt.includes("Choose two short Apify Store search queries")) {
-          return { queries: ["github trending", "github scraper"] } as T
+        if (prompt.includes("Choose one short Apify Store search query")) {
+          return { query: "github trending" } as T
         }
 
         if (prompt.includes("Choose the best Apify Actor for implementing this automation at build time")) {
@@ -206,5 +216,243 @@ describe("apify authoring discovery", () => {
     expect(result).not.toBeNull()
     expect(result?.context).toContain("Resolved Apify Actor at build time for this workflow: best/trending-github.")
     expect(result?.context).toContain('Use apify.call_actor at runtime with actor "best/trending-github".')
+  })
+
+  it("uses the LLM fallback instead of substring matching for fuzzy user choices", async () => {
+    let mapCalls = 0
+
+    const result = await resolveForBuildWithOps({
+      description: "Create a jig to scrape GitHub trending repositories with the best-fitting Apify actor",
+      connection: {} as any,
+      ask: async () => "trending github",
+    }, {
+      callTool: async (_connection, toolName, args) => {
+        if (toolName === "search-actors") {
+          return {
+            actors: [
+              {
+                fullName: "popular/general-github",
+                title: "Popular GitHub Scraper",
+                description: "General GitHub scraping actor.",
+              },
+              {
+                fullName: "best/trending-github",
+                title: "GitHub Trending Specialist",
+                description: "Fetches trending GitHub repositories by timeframe.",
+              },
+            ],
+          }
+        }
+
+        if (toolName === "fetch-actor-details") {
+          if ((args as any)?.actor === "popular/general-github") {
+            return {
+              actorInfo: {
+                fullName: "popular/general-github",
+                title: "Popular GitHub Scraper",
+                description: "General GitHub scraping actor.",
+              },
+            }
+          }
+
+          return {
+            actorInfo: {
+              fullName: "best/trending-github",
+              title: "GitHub Trending Specialist",
+              description: "Fetches trending GitHub repositories by timeframe.",
+            },
+          }
+        }
+
+        throw new Error(`Unexpected tool call: ${toolName}`)
+      },
+      llm: async <T>(prompt: string) => {
+        if (prompt.includes("Choose one short Apify Store search query")) {
+          return { query: "github trending" } as T
+        }
+
+        if (prompt.includes("Choose the best Apify Actor for implementing this automation at build time")) {
+          return {
+            actor: "best/trending-github",
+            reason: "It directly matches GitHub trending by timeframe.",
+            askUser: true,
+          } as T
+        }
+
+        if (prompt.includes("Map the user's answer to one of the available Apify Actors")) {
+          mapCalls++
+          return { actor: "best/trending-github" } as T
+        }
+
+        throw new Error(`Unexpected llm prompt: ${prompt.slice(0, 80)}`)
+      },
+    })
+
+    expect(mapCalls).toBe(1)
+    expect(result).not.toBeNull()
+    expect(result?.resolvedTarget).toBe("best/trending-github")
+  })
+
+  it("accepts actor cards returned with id/name aliases and still resolves details", async () => {
+    const result = await resolveForBuildWithOps({
+      description: "manually trigger a github most trendy repos (from last week) via apify and output here.",
+      connection: {} as any,
+    }, {
+      callTool: async (_connection, toolName, args) => {
+        if (toolName === "search-actors") {
+          return `
+# Search results:
+## [GitHub Trending Scraper](https://apify.com/automation-lab/github-trending-scraper) (\`automation-lab/github-trending-scraper\`)
+- **Description:** Scrape GitHub Trending repositories by language and time range: today, this week, or this month.
+- **Stats:** 16 total users, 10 monthly users, Runs succeeded: 96.4%
+`
+        }
+
+        if (toolName === "fetch-actor-details") {
+          expect(args).toEqual({
+            actor: "automation-lab/github-trending-scraper",
+            output: {
+              description: true,
+              inputSchema: true,
+              outputSchema: true,
+              metadata: true,
+              stats: true,
+              rating: true,
+            },
+          })
+          return {
+            actorInfo: {
+              fullName: "automation-lab/github-trending-scraper",
+              title: "GitHub Trending Scraper",
+              description: "Scrape GitHub Trending repositories by language and time range: today, this week, or this month.",
+            },
+            inputSchema: {
+              type: "object",
+              properties: {
+                since: { type: "string" },
+              },
+              required: ["since"],
+            },
+          }
+        }
+
+        throw new Error(`Unexpected tool call: ${toolName}`)
+      },
+      llm: async <T>(prompt: string) => {
+        if (prompt.includes("Choose one short Apify Store search query")) {
+          return { query: "github trending" } as T
+        }
+
+        if (prompt.includes("Extract structured Apify Actor search results from markdown")) {
+          return {
+            actors: [{
+              name: "GitHub Trending Scraper",
+              id: "automation-lab/github-trending-scraper",
+              url: "https://apify.com/automation-lab/github-trending-scraper",
+              description: "Scrape GitHub Trending repositories by language and time range: today, this week, or this month.",
+              totalUsers: 16,
+              monthlyUsers: 10,
+              successRate: 96.4,
+            }],
+          } as T
+        }
+
+        if (prompt.includes("Choose the best Apify Actor for implementing this automation at build time")) {
+          return {
+            actor: "automation-lab/github-trending-scraper",
+            reason: "It directly matches GitHub trending repositories with a weekly timeframe.",
+            askUser: false,
+          } as T
+        }
+
+        throw new Error(`Unexpected llm prompt: ${prompt.slice(0, 80)}`)
+      },
+    })
+
+    expect(result).not.toBeNull()
+    expect(result?.resolvedTarget).toBe("automation-lab/github-trending-scraper")
+    expect(result?.context).toContain('Use apify.call_actor at runtime with actor "automation-lab/github-trending-scraper".')
+  })
+
+  it("accepts actor cards returned with actorId/name aliases and still resolves details", async () => {
+    const result = await resolveForBuildWithOps({
+      description: "manually trigger a github most trendy repos (from last week) via apify and output here.",
+      connection: {} as any,
+    }, {
+      callTool: async (_connection, toolName, args) => {
+        if (toolName === "search-actors") {
+          return `
+# Search results:
+## [GitHub Trending Scraper](https://apify.com/automation-lab/github-trending-scraper) (\`automation-lab/github-trending-scraper\`)
+- **Description:** Scrape GitHub Trending repositories by language and time range: today, this week, or this month.
+- **Stats:** 16 total users, 10 monthly users, Runs succeeded: 96.4%
+`
+        }
+
+        if (toolName === "fetch-actor-details") {
+          expect(args).toEqual({
+            actor: "automation-lab/github-trending-scraper",
+            output: {
+              description: true,
+              inputSchema: true,
+              outputSchema: true,
+              metadata: true,
+              stats: true,
+              rating: true,
+            },
+          })
+          return {
+            actorInfo: {
+              fullName: "automation-lab/github-trending-scraper",
+              title: "GitHub Trending Scraper",
+              description: "Scrape GitHub Trending repositories by language and time range: today, this week, or this month.",
+            },
+            inputSchema: {
+              type: "object",
+              properties: {
+                since: { type: "string" },
+              },
+              required: ["since"],
+            },
+          }
+        }
+
+        throw new Error(`Unexpected tool call: ${toolName}`)
+      },
+      llm: async <T>(prompt: string) => {
+        if (prompt.includes("Choose one short Apify Store search query")) {
+          return { query: "github trending" } as T
+        }
+
+        if (prompt.includes("Extract structured Apify Actor search results from markdown")) {
+          return {
+            actors: [{
+              name: "GitHub Trending Scraper",
+              actorId: "automation-lab/github-trending-scraper",
+              url: "https://apify.com/automation-lab/github-trending-scraper",
+              description: "Scrape GitHub Trending repositories by language and time range: today, this week, or this month.",
+              totalUsers: 16,
+              monthlyUsers: 10,
+              successRate: 96.4,
+              categories: "Developer Tools, News",
+            }],
+          } as T
+        }
+
+        if (prompt.includes("Choose the best Apify Actor for implementing this automation at build time")) {
+          return {
+            actor: "automation-lab/github-trending-scraper",
+            reason: "It directly matches GitHub trending repositories with a weekly timeframe.",
+            askUser: false,
+          } as T
+        }
+
+        throw new Error(`Unexpected llm prompt: ${prompt.slice(0, 80)}`)
+      },
+    })
+
+    expect(result).not.toBeNull()
+    expect(result?.resolvedTarget).toBe("automation-lab/github-trending-scraper")
+    expect(result?.context).toContain('Use apify.call_actor at runtime with actor "automation-lab/github-trending-scraper".')
   })
 })

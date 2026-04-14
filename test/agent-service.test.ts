@@ -1,29 +1,47 @@
 import { describe, expect, it } from "bun:test"
-import { appendAskAnswer, appendAuthoringIntent } from "../src/services/agent-service.js"
+import {
+  normalizeConversationHistory,
+  renderConversationIntent,
+} from "../src/services/agent-service.js"
 
 describe("agent authoring intent accumulation", () => {
-  it("preserves the original instruction when a follow-up message arrives", () => {
-    const initial = "Create a jig to find trending GitHub repositories with Apify."
-    const combined = appendAuthoringIntent(initial, "Use weekly results and format the output cleanly.")
+  it("normalizes explicit conversation history and appends the latest user message once", () => {
+    const history = normalizeConversationHistory([
+      { role: "user", content: "Create a jig for GitHub trending via Apify." },
+      { role: "assistant", content: "I need the target timeframe." },
+      { role: "user", content: "last week" },
+    ], "last week")
 
-    expect(combined).toContain(initial)
-    expect(combined).toContain("Follow-up instruction:")
-    expect(combined).toContain("Use weekly results and format the output cleanly.")
+    expect(history).toEqual([
+      { role: "user", content: "Create a jig for GitHub trending via Apify." },
+      { role: "assistant", content: "I need the target timeframe." },
+      { role: "user", content: "last week" },
+    ])
   })
 
-  it("records ask-user answers into the accumulated authoring intent", () => {
-    const initial = "Create a jig to email a summary to my team."
-    const combined = appendAskAnswer(initial, "What email address should this send to?", "team@example.com")
+  it("ignores malformed turns and trims messages", () => {
+    const history = normalizeConversationHistory([
+      { role: "user", content: "  Create a manual jig.  " },
+      { role: "assistant", content: "   " },
+      { role: "system", content: "ignore me" },
+      null,
+    ], "  Add a webhook trigger.  ")
 
-    expect(combined).toContain(initial)
-    expect(combined).toContain("User answer for authoring:")
-    expect(combined).toContain("Question: What email address should this send to?")
-    expect(combined).toContain("Answer: team@example.com")
+    expect(history).toEqual([
+      { role: "user", content: "Create a manual jig." },
+      { role: "user", content: "Add a webhook trigger." },
+    ])
   })
 
-  it("ignores empty follow-up messages and empty answers", () => {
-    const initial = "Create a manual jig."
-    expect(appendAuthoringIntent(initial, "   ")).toBe(initial)
-    expect(appendAskAnswer(initial, "Any question", "   ")).toBe(initial)
+  it("renders full conversation transcripts for authoring context", () => {
+    const transcript = renderConversationIntent([
+      { role: "user", content: "Create a jig for GitHub trending via Apify." },
+      { role: "assistant", content: "I can do that. What timeframe?" },
+      { role: "user", content: "Use last week and output here." },
+    ])
+
+    expect(transcript).toContain("User: Create a jig for GitHub trending via Apify.")
+    expect(transcript).toContain("Assistant: I can do that. What timeframe?")
+    expect(transcript).toContain("User: Use last week and output here.")
   })
 })

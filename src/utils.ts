@@ -1,5 +1,6 @@
 /** Format milliseconds as human-readable duration: "1.2s", "1m 56s", "2h 3m" */
 export function formatDuration(ms: number): string {
+  if (ms < 1000) return `${Math.max(1, Math.round(ms))}ms`
   const secs = ms / 1000
   if (secs < 60) return `${secs.toFixed(1)}s`
   const mins = Math.floor(secs / 60)

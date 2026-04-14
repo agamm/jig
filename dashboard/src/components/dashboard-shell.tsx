@@ -226,6 +226,10 @@ export function DashboardShell({
         initialInstruction={createInstruction}
         startToken={createStartToken}
         onClose={() => setCreateOpen(false)}
+        onConnectionClick={(name) => {
+          setView("connections");
+          setSelectedConnection(name);
+        }}
         onCreated={async (jigId) => {
           await refreshJigs(jigId);
         }}

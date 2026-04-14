@@ -43,7 +43,7 @@ export async function resolveForBuild(args: {
   description: string
   connection: McpConnection
   ask?: (question: string) => Promise<string>
-}): Promise<{ context: string; requiredTools?: string[]; includeTools?: string[]; excludeTools?: string[] } | null> {
+}): Promise<{ context: string; requiredTools?: string[]; includeTools?: string[]; excludeTools?: string[]; resolvedTarget?: string; resolvedInputSchema?: unknown } | null> {
   return resolveForBuildWithOps(args, { callTool, llm })
 }
 
@@ -54,7 +54,7 @@ export async function resolveForBuildWithOps(
     ask?: (question: string) => Promise<string>
   },
   ops: ApifyDiscoveryOps
-): Promise<{ context: string; requiredTools?: string[]; includeTools?: string[]; excludeTools?: string[] } | null> {
+): Promise<{ context: string; requiredTools?: string[]; includeTools?: string[]; excludeTools?: string[]; resolvedTarget?: string; resolvedInputSchema?: unknown } | null> {
   const explicitActor = findExplicitActorName(args.description)
   const candidates = explicitActor
     ? [{ fullName: explicitActor }]
@@ -76,6 +76,8 @@ export async function resolveForBuildWithOps(
       requiredTools: ["call-actor"],
       includeTools: ["call-actor", "get-actor-run", "get-actor-output"],
       excludeTools: ["search-actors", "fetch-actor-details"],
+      resolvedTarget: chosen.details.actorInfo?.fullName ?? chosen.fullName,
+      resolvedInputSchema: chosen.details.inputSchema ?? null,
     }
   }
 
@@ -94,6 +96,8 @@ export async function resolveForBuildWithOps(
     requiredTools: ["call-actor"],
     includeTools: ["call-actor", "get-actor-run", "get-actor-output"],
     excludeTools: ["search-actors", "fetch-actor-details"],
+    resolvedTarget: chosen.details.actorInfo?.fullName ?? chosen.fullName,
+    resolvedInputSchema: chosen.details.inputSchema ?? null,
   }
 }
 
@@ -110,38 +114,35 @@ async function searchCandidates(
   description: string,
   ops: ApifyDiscoveryOps
 ): Promise<ActorCard[]> {
-  const queries = await deriveQueries(description, ops)
+  const query = await deriveQuery(description, ops)
   const byName = new Map<string, ActorCard>()
 
-  for (const keywords of queries) {
-    const result = await ops.callTool(connection, "search-actors", { keywords, limit: 5 }) as any
-    for (const actor of await normalizeActorCards(result, ops)) {
-      if (!actor.fullName || byName.has(actor.fullName)) continue
-      byName.set(actor.fullName, actor)
-    }
+  if (!query) return []
+
+  const result = await ops.callTool(connection, "search-actors", { keywords: query, limit: 5 }) as any
+  for (const actor of await normalizeActorCards(result, ops)) {
+    if (!actor.fullName || byName.has(actor.fullName)) continue
+    byName.set(actor.fullName, actor)
   }
 
   return [...byName.values()]
 }
 
-async function deriveQueries(description: string, ops: ApifyDiscoveryOps): Promise<string[]> {
-  const result = await ops.llm<{ queries: string[] }>(
-    `Choose two short Apify Store search queries to find the best Actor for this automation.
+async function deriveQuery(description: string, ops: ApifyDiscoveryOps): Promise<string> {
+  const result = await ops.llm<{ query: string }>(
+    `Choose one short Apify Store search query to find the best Actor for this automation.
 
 Rules:
-- Return exactly 2 queries
-- Each query must be 1-3 words
+- Return exactly 1 query
+- The query must be 1-3 words
 - Use platform/use-case keywords, not full sentences
 - Prefer broad-but-specific terms like "github trending", "google maps", "real estate leads"
 - Do not include punctuation or quotes`,
     { description },
-    { schema: { queries: "array" } }
+    { schema: { query: "string" } }
   )
 
-  return (result.queries || [])
-    .map((query) => String(query).trim())
-    .filter(Boolean)
-    .slice(0, 2)
+  return String(result.query ?? "").trim()
 }
 
 async function normalizeActorCards(result: any, ops: ApifyDiscoveryOps): Promise<ActorCard[]> {
@@ -149,18 +150,7 @@ async function normalizeActorCards(result: any, ops: ApifyDiscoveryOps): Promise
   if (markdown) return parseActorCardsFromMarkdown(markdown, ops)
   const actors = Array.isArray(result?.actors) ? result.actors : []
   return actors
-    .map((actor: any) => ({
-      fullName: actor.fullName,
-      title: actor.title,
-      description: actor.description,
-      url: actor.url,
-      categories: Array.isArray(actor.categories) ? actor.categories : [],
-      totalUsers: toOptionalNumber(actor.stats?.totalUsers),
-      monthlyUsers: toOptionalNumber(actor.stats?.monthlyUsers),
-      successRate: toOptionalNumber(actor.stats?.successRate),
-      bookmarks: toOptionalNumber(actor.stats?.bookmarks),
-      rating: toOptionalNumber(actor.rating?.value ?? actor.rating),
-    }))
+    .map((actor: any) => normalizeActorCard(actor))
     .filter((actor: ActorCard) => Boolean(actor.fullName))
 }
 
@@ -255,9 +245,11 @@ async function resolveUserChoice(
     return candidates[numeric - 1].fullName
   }
 
+  const normalizedAnswer = normalizeChoiceText(trimmed)
   const direct = candidates.find((candidate) => {
-    const haystack = `${candidate.fullName} ${candidate.details.actorInfo?.title ?? candidate.title ?? ""}`.toLowerCase()
-    return haystack.includes(trimmed.toLowerCase())
+    const normalizedFullName = normalizeChoiceText(candidate.fullName)
+    const normalizedTitle = normalizeChoiceText(candidate.details.actorInfo?.title ?? candidate.title ?? "")
+    return normalizedAnswer === normalizedFullName || normalizedAnswer === normalizedTitle
   })
   if (direct) return direct.fullName
 
@@ -278,6 +270,14 @@ Return the actor full name exactly as listed.`,
   return candidates.find((candidate) => candidate.fullName === result.actor)?.fullName ?? fallbackActor
 }
 
+function normalizeChoiceText(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+}
+
 function buildResolutionContext(
   description: string,
   candidate: ActorCard & { details: ActorDetails },
@@ -292,7 +292,7 @@ function buildResolutionContext(
 
   const parts = [
     `Resolved Apify Actor at build time for this workflow: ${actorName}.`,
-    `Use apify.call_actor at runtime with actor "${actorName}". If the actor returns a run or dataset flow, apify.get_actor_run and apify.get_actor_output are allowed runtime follow-ups. Do not use apify.search_actors or apify.fetch_actor_details in the jig runtime unless the user explicitly wants dynamic rediscovery.`,
+    `Use apify.call_actor at runtime with actor "${actorName}". Pass the exact MCP params: use \`actor\`, not \`actorId\`, and pass a real object to \`input\`, not a JSON string. Prefer the normal sync flow when the user wants results now: call apify.call_actor, then read \`items\` and \`datasetId\` from that response. The jig should return the actor's actual results, not just the raw apify.call_actor envelope. If the response includes a \`datasetId\`, use apify.get_actor_output with that datasetId to fetch the real dataset items and output those items to the user. Do not call apify.get_actor_run immediately after a normal sync apify.call_actor just to recover output. Use apify.get_actor_run only for async/background runs or when the user explicitly needs run metadata. Do not use apify.search_actors or apify.fetch_actor_details in the jig runtime unless the user explicitly wants dynamic rediscovery.`,
     `Why this actor was chosen: ${reason}`,
     summary ? `Actor summary: ${title} — ${summary}` : `Actor summary: ${title}`,
     `Original workflow request: ${description}`,
@@ -321,19 +321,27 @@ Rules:
   )
 
   return (result.actors ?? [])
-    .map((actor) => ({
-      fullName: actor.fullName,
-      title: actor.title,
-      description: actor.description,
-      url: actor.url,
-      categories: Array.isArray(actor.categories) ? actor.categories : [],
-      totalUsers: toOptionalNumber(actor.totalUsers),
-      monthlyUsers: toOptionalNumber(actor.monthlyUsers),
-      successRate: toOptionalNumber(actor.successRate),
-      bookmarks: toOptionalNumber(actor.bookmarks),
-      rating: toOptionalNumber(actor.rating),
-    }))
+    .map((actor) => normalizeActorCard(actor))
     .filter((actor) => Boolean(actor.fullName))
+}
+
+function normalizeActorCard(actor: Record<string, any>): ActorCard {
+  return {
+    fullName: String(actor.fullName ?? actor.actorId ?? actor.id ?? "").trim(),
+    title: actor.title ?? actor.name,
+    description: actor.description,
+    url: actor.url,
+    categories: Array.isArray(actor.categories)
+      ? actor.categories
+      : typeof actor.categories === "string"
+        ? actor.categories.split(",").map((value: string) => value.trim()).filter(Boolean)
+        : [],
+    totalUsers: toOptionalNumber(actor.totalUsers ?? actor.stats?.totalUsers),
+    monthlyUsers: toOptionalNumber(actor.monthlyUsers ?? actor.stats?.monthlyUsers),
+    successRate: toOptionalNumber(actor.successRate ?? actor.stats?.successRate),
+    bookmarks: toOptionalNumber(actor.bookmarks ?? actor.stats?.bookmarks),
+    rating: toOptionalNumber(actor.rating?.value ?? actor.rating),
+  }
 }
 
 async function normalizeActorDetails(result: unknown, fallback: ActorCard, ops: ApifyDiscoveryOps): Promise<ActorDetails> {

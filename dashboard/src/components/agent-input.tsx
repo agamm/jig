@@ -1,7 +1,8 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef } from "react"
 import { Button } from "@/components/button"
+import { useInputHistory } from "@/hooks/use-input-history"
 
 type AgentState = {
   sessionId: string | null
@@ -9,8 +10,8 @@ type AgentState = {
   isActive: boolean
   isWaiting: boolean
   canSend: boolean
-  sendMessage: (msg: string) => void
-  startSession: (msg: string, jigId?: string) => void
+  sendMessage: (msg: string) => Promise<boolean>
+  startSession: (msg: string, jigId?: string) => Promise<boolean>
   reset: () => void
 }
 
@@ -20,39 +21,48 @@ export function AgentInput({
   idlePlaceholder = "Describe a change...",
   variant = "default",
   externalValue,
+  onExternalValueChange,
+  autoFocus = false,
 }: {
   agent: AgentState
   jigId?: string
   idlePlaceholder?: string
   variant?: "default" | "create"
   externalValue?: string
+  onExternalValueChange?: (value: string) => void
+  autoFocus?: boolean
 }) {
-  const [input, setInput] = useState("")
   const prevStatusRef = useRef(agent.status)
-
-  // Sync from external value (e.g. tool removal instructions)
-  useEffect(() => {
-    if (externalValue !== undefined) setInput(externalValue)
-  }, [externalValue])
+  const inputRef = useRef<HTMLInputElement>(null)
+  const input = useInputHistory({ externalValue, onExternalValueChange })
 
   // Clear input when agent starts waiting for user response
   useEffect(() => {
     if (agent.status === "waiting" && prevStatusRef.current !== "waiting") {
-      setInput("")
+      input.clear()
     }
     prevStatusRef.current = agent.status
-  }, [agent.status])
+  }, [agent.status, input])
 
-  function handleSend() {
-    const trimmed = input.trim()
+  useEffect(() => {
+    if (!autoFocus) return
+    const timer = window.setTimeout(() => {
+      inputRef.current?.focus()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [autoFocus])
+
+  async function handleSend() {
+    const trimmed = input.value.trim()
     if (!trimmed || !agent.canSend) return
 
+    let ok = false
     if (agent.sessionId) {
-      agent.sendMessage(trimmed)
+      ok = await agent.sendMessage(trimmed)
     } else {
-      agent.startSession(trimmed, jigId)
+      ok = await agent.startSession(trimmed, jigId)
     }
-    setInput("")
+    if (ok) input.commit(trimmed)
   }
 
   const placeholder = agent.isWaiting
@@ -64,20 +74,46 @@ export function AgentInput({
   return (
     <div className="flex items-center gap-2 rounded-lg border border-[#1f1f23] bg-[#111113] px-3 py-2">
       <input
+        ref={inputRef}
         type="text"
-        value={input}
-        onChange={(e) => setInput(e.target.value)}
-        onKeyDown={(e) => { if (e.key === "Enter") handleSend() }}
+        value={input.value}
+        onChange={(e) => input.setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            void handleSend()
+            return
+          }
+          if (e.key === "ArrowUp") {
+            e.preventDefault()
+            input.browsePrevious()
+            return
+          }
+          if (e.key === "ArrowDown") {
+            e.preventDefault()
+            input.browseNext()
+          }
+        }}
         placeholder={placeholder}
         disabled={!agent.canSend}
+        autoFocus={autoFocus}
         className="flex-1 bg-transparent text-[12px] text-[#ededed] outline-none placeholder:text-[#555] disabled:opacity-50"
       />
       {(agent.status === "done" || agent.status === "error") && (
-        <Button onClick={agent.reset} variant="subtle" size="xs">Clear</Button>
+        <Button
+          onClick={() => {
+            input.clear()
+            input.clearHistory()
+            agent.reset()
+          }}
+          variant="subtle"
+          size="xs"
+        >
+          Clear
+        </Button>
       )}
       <Button
-        onClick={handleSend}
-        disabled={!input.trim() || !agent.canSend}
+        onClick={() => void handleSend()}
+        disabled={!input.value.trim() || !agent.canSend}
         variant="success"
         size="xs"
       >

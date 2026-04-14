@@ -31,6 +31,7 @@ import { getSchedule, listAllSchedules, setScheduleEnabled, listAuthorizedSender
 import { startScheduler } from "./scheduler/index.js"
 import { syncSchedules } from "./scheduler/sync.js"
 import { getJigVersionDetail, listJigVersions, restoreJigVersion } from "./services/jig-versioning.js"
+import { resetSessionLog } from "./debug/session-log.js"
 import { ApiError, json } from "./server/http.js"
 import { matchRoute } from "./server/router.js"
 import { firstLineSummary } from "./text.js"
@@ -448,7 +449,10 @@ export function createApiServer(port: number) {
         }
       } catch (error: any) {
         if (error instanceof ApiError) {
-          return json({ error: error.message }, error.status)
+          return json({
+            error: error.message,
+            ...(error.details ? { details: error.details } : {}),
+          }, error.status)
         }
         console.error("API error:", error)
         return json({ error: error?.message ?? "Internal server error" }, 500)
@@ -463,6 +467,7 @@ process.on("unhandledRejection", (error) => {
 
 if (import.meta.main) {
   const port = parseInt(process.env.PORT ?? "3141")
+  await resetSessionLog()
   const server = createApiServer(port)
   const scheduler = await startScheduler().catch((e) => {
     console.error("[scheduler] failed to start:", e)

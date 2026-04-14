@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "fs"
 import OpenAI from "openai"
 import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions"
-import type { AgentEvent, AgentStatusResponse, StartAgentResponse } from "../../shared/api.js"
+import type { AgentConversationTurn, AgentEvent, AgentMetrics, AgentStatusResponse, StartAgentResponse } from "../../shared/api.js"
 import { JIG_EDITOR_MODEL } from "../config/models.js"
 import { isValidJigId } from "../domain/jig-id.js"
 import { resolveJigPath } from "../domain/jig-source.js"
@@ -9,9 +9,11 @@ import { checkJigFile } from "./jig-checker.js"
 import { buildAgentJigSystemPrompt } from "./jig-writing-prompt.js"
 import { writeJigSource } from "./jig-writer.js"
 import { ApiError } from "../server/http.js"
+import { logSessionEvent } from "../debug/session-log.js"
 import {
   buildAuthoringState,
   collectBuildTimeToolPolicyIssues,
+  CreatorError,
   hasExplicitEmptyToolsArray,
   type BuildTimeResolution,
 } from "../jig-gen.js"
@@ -23,6 +25,7 @@ type AgentSession = {
   sessionId: string
   jigId?: string
   authoringIntent: string
+  conversationHistory: AgentConversationTurn[]
   authoringPolicy: {
     requiresIntegration: boolean
     buildResolutions: BuildTimeResolution[]
@@ -30,6 +33,7 @@ type AgentSession = {
   messages: ChatCompletionMessageParam[]
   events: AgentEvent[]
   status: "thinking" | "tool-calling" | "waiting" | "done" | "error"
+  metrics: AgentMetrics
   createdAt: number
   pendingAskToolCallId?: string
   pendingAskQuestion?: string
@@ -54,20 +58,58 @@ function pruneAgentSessions() {
   }
 }
 
-export function appendAuthoringIntent(current: string, next: string): string {
-  const trimmedNext = next.trim()
-  if (!trimmedNext) return current
-  if (!current.trim()) return trimmedNext
-  return `${current.trim()}\n\nFollow-up instruction:\n${trimmedNext}`
+export function normalizeConversationHistory(
+  history: unknown,
+  latestUserMessage?: string
+): AgentConversationTurn[] {
+  const normalized = Array.isArray(history)
+    ? history
+        .filter((turn): turn is AgentConversationTurn =>
+          Boolean(turn)
+          && typeof turn === "object"
+          && (((turn as any).role === "user") || ((turn as any).role === "assistant"))
+          && typeof (turn as any).content === "string"
+        )
+        .map((turn) => ({
+          role: turn.role,
+          content: turn.content.trim(),
+        }))
+        .filter((turn) => Boolean(turn.content))
+    : []
+
+  const trimmedLatest = latestUserMessage?.trim()
+  if (!trimmedLatest) return normalized
+
+  const last = normalized[normalized.length - 1]
+  if (last?.role === "user" && last.content === trimmedLatest) return normalized
+  return [...normalized, { role: "user", content: trimmedLatest }]
 }
 
-export function appendAskAnswer(authoringIntent: string, question: string | undefined, answer: string): string {
-  const trimmedAnswer = answer.trim()
-  if (!trimmedAnswer) return authoringIntent
-  const detail = question?.trim()
-    ? `User answer for authoring:\nQuestion: ${question.trim()}\nAnswer: ${trimmedAnswer}`
-    : `User answer for authoring:\n${trimmedAnswer}`
-  return appendAuthoringIntent(authoringIntent, detail)
+export function renderConversationIntent(history: AgentConversationTurn[]): string {
+  if (history.length === 0) return ""
+  return history
+    .map((turn) => `${turn.role === "assistant" ? "Assistant" : "User"}: ${turn.content}`)
+    .join("\n\n")
+}
+
+function buildConversationMessages(history: AgentConversationTurn[]): ChatCompletionMessageParam[] {
+  return history.map((turn) => ({
+    role: turn.role,
+    content: turn.content,
+  }))
+}
+
+function setSessionConversationHistory(
+  session: AgentSession,
+  history: AgentConversationTurn[],
+  fallbackUserMessage?: string
+): void {
+  if (history.length > 0) {
+    session.conversationHistory = history
+  } else if (fallbackUserMessage?.trim()) {
+    session.conversationHistory = [...session.conversationHistory, { role: "user", content: fallbackUserMessage.trim() }]
+  }
+  session.authoringIntent = renderConversationIntent(session.conversationHistory)
 }
 
 function getAgentClient(): OpenAI {
@@ -280,6 +322,9 @@ async function buildAgentSystemPrompt(instruction: string, jigId?: string): Prom
       existingCode: currentCode,
     })
   } catch (error: any) {
+    if (error instanceof CreatorError) {
+      throw new ApiError(400, error.message, error.details)
+    }
     throw new ApiError(400, error?.message ?? "Failed to build authoring context")
   }
 
@@ -307,9 +352,34 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
   let consecutiveErrors = 0
   for (let round = 0; round < MAX_AGENT_ROUNDS; round++) {
     session.status = "thinking"
+    session.metrics = {
+      ...session.metrics,
+      model: JIG_EDITOR_MODEL,
+      round: round + 1,
+      activeTool: undefined,
+      updatedAt: Date.now(),
+    }
+    logSessionEvent({
+      source: "authoring.agent",
+      event: "status",
+      sessionId: session.sessionId,
+      jigId: session.jigId,
+      status: session.status,
+      round,
+    })
 
     let response
     try {
+      logSessionEvent({
+        source: "authoring.agent",
+        event: "request",
+        sessionId: session.sessionId,
+        jigId: session.jigId,
+        round,
+        model: JIG_EDITOR_MODEL,
+        messages: session.messages,
+        tools: AGENT_TOOL_DEFS,
+      })
       response = await client.chat.completions.create({
         model: JIG_EDITOR_MODEL,
         max_tokens: 16384,
@@ -317,6 +387,15 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
         tools: AGENT_TOOL_DEFS,
       })
     } catch (e: any) {
+      logSessionEvent({
+        source: "authoring.agent",
+        event: "request-error",
+        sessionId: session.sessionId,
+        jigId: session.jigId,
+        round,
+        model: JIG_EDITOR_MODEL,
+        error: e,
+      })
       consecutiveErrors++
       const msg = e?.message ?? String(e)
       if (consecutiveErrors >= 3) {
@@ -333,7 +412,36 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
     const msg = response.choices[0]?.message
     if (!msg) {
       session.status = "error"
+      logSessionEvent({
+        source: "authoring.agent",
+        event: "empty-response",
+        sessionId: session.sessionId,
+        jigId: session.jigId,
+        round,
+        model: JIG_EDITOR_MODEL,
+        usage: response.usage,
+      })
       return
+    }
+    logSessionEvent({
+      source: "authoring.agent",
+      event: "response",
+      sessionId: session.sessionId,
+      jigId: session.jigId,
+      round,
+      model: JIG_EDITOR_MODEL,
+      message: msg,
+      finishReason: response.choices[0]?.finish_reason,
+      usage: response.usage,
+    })
+    session.metrics = {
+      ...session.metrics,
+      model: JIG_EDITOR_MODEL,
+      round: round + 1,
+      promptTokens: response.usage?.prompt_tokens,
+      completionTokens: response.usage?.completion_tokens,
+      totalTokens: response.usage?.total_tokens,
+      updatedAt: Date.now(),
     }
 
     session.messages.push(msg as ChatCompletionMessageParam)
@@ -341,10 +449,31 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
     if (!msg.tool_calls?.length) {
       session.events.push({ type: "text", content: msg.content ?? "" })
       session.status = "done"
+      logSessionEvent({
+        source: "authoring.agent",
+        event: "done",
+        sessionId: session.sessionId,
+        jigId: session.jigId,
+        round,
+        content: msg.content ?? "",
+      })
       return
     }
 
     session.status = "tool-calling"
+    session.metrics = {
+      ...session.metrics,
+      round: round + 1,
+      updatedAt: Date.now(),
+    }
+    logSessionEvent({
+      source: "authoring.agent",
+      event: "status",
+      sessionId: session.sessionId,
+      jigId: session.jigId,
+      status: session.status,
+      round,
+    })
     let roundHadToolError = false
     let roundHadSuccessfulCheck = false
     let pendingAsk: { toolCallId: string; question: string; event: AgentEvent } | null = null
@@ -363,6 +492,20 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
 
       const event: AgentEvent = { type: "tool-call", tool: toolCall.function.name, args, status: "running" }
       session.events.push(event)
+      session.metrics = {
+        ...session.metrics,
+        activeTool: toolCall.function.name,
+        updatedAt: Date.now(),
+      }
+      logSessionEvent({
+        source: "authoring.agent",
+        event: "tool-start",
+        sessionId: session.sessionId,
+        jigId: session.jigId,
+        round,
+        tool: toolCall.function.name,
+        args,
+      })
 
       try {
         const result = await executeAgentTool(toolCall.function.name, args, session)
@@ -372,12 +515,37 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
           const question = args.question ?? "I have a question for you."
           event.status = "done"
           event.result = question
+          logSessionEvent({
+            source: "authoring.agent",
+            event: "tool-ask-user",
+            sessionId: session.sessionId,
+            jigId: session.jigId,
+            round,
+            tool: toolCall.function.name,
+            args,
+            question,
+          })
           pendingAsk = { toolCallId: toolCall.id, question, event }
           continue
         }
 
         event.status = "done"
         event.result = result
+        session.metrics = {
+          ...session.metrics,
+          activeTool: session.metrics.activeTool === toolCall.function.name ? undefined : session.metrics.activeTool,
+          updatedAt: Date.now(),
+        }
+        logSessionEvent({
+          source: "authoring.agent",
+          event: "tool-done",
+          sessionId: session.sessionId,
+          jigId: session.jigId,
+          round,
+          tool: toolCall.function.name,
+          args,
+          result,
+        })
         if (toolCall.function.name === "check_jig" && result === "ok") {
           roundHadSuccessfulCheck = true
         }
@@ -385,7 +553,22 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
       } catch (e: any) {
         event.status = "error"
         event.result = e?.message ?? String(e)
+        session.metrics = {
+          ...session.metrics,
+          activeTool: session.metrics.activeTool === toolCall.function.name ? undefined : session.metrics.activeTool,
+          updatedAt: Date.now(),
+        }
         roundHadToolError = true
+        logSessionEvent({
+          source: "authoring.agent",
+          event: "tool-error",
+          sessionId: session.sessionId,
+          jigId: session.jigId,
+          round,
+          tool: toolCall.function.name,
+          args,
+          error: e,
+        })
         session.messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ error: e?.message }) })
       }
     }
@@ -396,6 +579,15 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
       session.pendingAskToolCallId = pendingAsk.toolCallId
       session.pendingAskQuestion = pendingAsk.question
       session.status = "waiting"
+      logSessionEvent({
+        source: "authoring.agent",
+        event: "status",
+        sessionId: session.sessionId,
+        jigId: session.jigId,
+        status: session.status,
+        round,
+        question: pendingAsk.question,
+      })
       return
     }
 
@@ -407,12 +599,27 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
           : "Jig written and it passed the jig check.",
       })
       session.status = "done"
+      logSessionEvent({
+        source: "authoring.agent",
+        event: "done",
+        sessionId: session.sessionId,
+        jigId: session.jigId,
+        round,
+        reason: "write-and-check-ok",
+      })
       return
     }
   }
 
   session.events.push({ type: "text", content: "Agent reached maximum rounds." })
   session.status = "done"
+  logSessionEvent({
+    source: "authoring.agent",
+    event: "done",
+    sessionId: session.sessionId,
+    jigId: session.jigId,
+    reason: "max-rounds",
+  })
 }
 
 export async function startAgentSession(body: any): Promise<StartAgentResponse> {
@@ -426,30 +633,55 @@ export async function startAgentSession(body: any): Promise<StartAgentResponse> 
     throw new ApiError(409, "An agent session is already editing this jig")
   }
 
+  const conversationHistory = normalizeConversationHistory(body?.history, instruction)
+  const authoringIntent = renderConversationIntent(conversationHistory) || instruction
   const sessionId = crypto.randomUUID()
-  const { prompt: systemPrompt, authoringPolicy } = await buildAgentSystemPrompt(instruction, jigId)
+  const { prompt: systemPrompt, authoringPolicy } = await buildAgentSystemPrompt(authoringIntent, jigId)
 
   const session: AgentSession = {
     sessionId,
     jigId,
-    authoringIntent: instruction,
+    authoringIntent,
+    conversationHistory,
     authoringPolicy,
     messages: [
       { role: "system", content: systemPrompt },
-      { role: "user", content: instruction },
+      ...buildConversationMessages(conversationHistory),
     ],
     events: [],
     status: "thinking",
+    metrics: {
+      model: JIG_EDITOR_MODEL,
+      round: 1,
+      updatedAt: Date.now(),
+    },
     createdAt: Date.now(),
   }
 
   pruneAgentSessions()
   agentSessions.set(sessionId, session)
   if (jigId) activeAgentJigs.add(jigId)
+  logSessionEvent({
+    source: "authoring.agent",
+    event: "session-start",
+    sessionId,
+    jigId,
+    instruction,
+    authoringIntent,
+    conversationHistory,
+    systemPrompt,
+  })
 
   runAgentLoop(session).catch((error) => {
     session.status = "error"
     session.events.push({ type: "text", content: error?.message ?? String(error) })
+    logSessionEvent({
+      source: "authoring.agent",
+      event: "fatal-error",
+      sessionId: session.sessionId,
+      jigId: session.jigId,
+      error,
+    })
   }).finally(() => {
     if (session.jigId) activeAgentJigs.delete(session.jigId)
   })
@@ -466,6 +698,7 @@ export function getAgentSessionStatus(sessionId: string, sinceIndex: number): Ag
     jigId: session.jigId,
     events: session.events.slice(sinceIndex),
     totalEvents: session.events.length,
+    metrics: session.metrics,
   }
 }
 
@@ -478,16 +711,26 @@ export async function pushAgentMessage(sessionId: string, body: any): Promise<{ 
 
   const message = body?.message as string
   if (!message) throw new ApiError(400, "message is required")
+  const conversationHistory = normalizeConversationHistory(body?.history, message)
+  logSessionEvent({
+    source: "authoring.agent",
+    event: "user-message",
+    sessionId,
+    jigId: session.jigId,
+    message,
+    conversationHistory,
+    waitingForToolCallId: session.pendingAskToolCallId,
+  })
 
   // If the agent was waiting for an ask_user reply, inject the answer as a tool result
   const pendingToolCallId = session.pendingAskToolCallId
   if (pendingToolCallId) {
-    session.authoringIntent = appendAskAnswer(session.authoringIntent, session.pendingAskQuestion, message)
+    setSessionConversationHistory(session, conversationHistory, message)
     session.pendingAskToolCallId = undefined
     session.pendingAskQuestion = undefined
     session.messages.push({ role: "tool", tool_call_id: pendingToolCallId, content: message })
   } else {
-    session.authoringIntent = appendAuthoringIntent(session.authoringIntent, message)
+    setSessionConversationHistory(session, conversationHistory, message)
     const { prompt, authoringPolicy } = await buildAgentSystemPrompt(session.authoringIntent, session.jigId)
     session.authoringPolicy = authoringPolicy
     session.messages[0] = { role: "system", content: prompt }
@@ -498,6 +741,13 @@ export async function pushAgentMessage(sessionId: string, body: any): Promise<{ 
   runAgentLoop(session).catch((error) => {
     session.status = "error"
     session.events.push({ type: "text", content: error?.message ?? String(error) })
+    logSessionEvent({
+      source: "authoring.agent",
+      event: "fatal-error",
+      sessionId: session.sessionId,
+      jigId: session.jigId,
+      error,
+    })
   }).finally(() => {
     if (session.jigId) activeAgentJigs.delete(session.jigId)
   })

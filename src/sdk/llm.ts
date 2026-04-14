@@ -4,6 +4,7 @@ import type { JigTool } from "./jig.js"
 import { spinner } from "./spinner.js"
 import { runContext } from "./context.js"
 import { MAIN_MODEL } from "../config/models.js"
+import { logSessionEvent } from "../debug/session-log.js"
 
 const MAX_TOOL_ROUNDS = 30
 
@@ -35,6 +36,17 @@ export async function llm<T = string>(
 
   const maxTokens = options?.maxTokens ?? 4096
   const userContent = `${prompt}\n\nData:\n${JSON.stringify(data, null, 2)}`
+  logSessionEvent({
+    source: "sdk.llm",
+    event: "request",
+    mode: options?.schema ? "structured" : "plain",
+    model,
+    maxTokens,
+    prompt,
+    data,
+    userContent,
+    schema: options?.schema,
+  })
 
   if (options?.schema) {
     const properties: Record<string, any> = {}
@@ -66,7 +78,18 @@ export async function llm<T = string>(
     // Strip backtick fences — many models wrap JSON in ```json ... ```
     const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/)
     const text = fenced ? fenced[1].trim() : raw.trim()
-    return JSON.parse(text) as T
+    const parsed = JSON.parse(text) as T
+    logSessionEvent({
+      source: "sdk.llm",
+      event: "response",
+      mode: "structured",
+      model,
+      raw,
+      parsed,
+      finishReason: response.choices[0]?.finish_reason,
+      usage: response.usage,
+    })
+    return parsed
   }
 
   const response = await getClient().chat.completions.create({
@@ -77,6 +100,15 @@ export async function llm<T = string>(
 
   const text = response.choices[0]?.message?.content
   if (!text) throw new Error("LLM returned empty response")
+  logSessionEvent({
+    source: "sdk.llm",
+    event: "response",
+    mode: "plain",
+    model,
+    output: text,
+    finishReason: response.choices[0]?.finish_reason,
+    usage: response.usage,
+  })
   return text as T
 }
 
@@ -123,6 +155,19 @@ async function runAgent<T>(
 ): Promise<T> {
   const model = options?.model ?? MAIN_MODEL
   const maxTokens = options?.maxTokens ?? 4096
+  logSessionEvent({
+    source: "sdk.agent",
+    event: "start",
+    model,
+    maxTokens,
+    prompt,
+    schema: options?.schema,
+    tools: tools.map((tool) => ({
+      server: tool._serverName,
+      tool: tool._toolName,
+      readOnly: tool._readOnly ?? true,
+    })),
+  })
 
   // Build tool mapping and OpenAI tool definitions
   const toolMap = new Map<string, JigTool<any, any>>()
@@ -150,6 +195,14 @@ async function runAgent<T>(
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     if (spinner.aborted) throw new Error("Run cancelled")
+    logSessionEvent({
+      source: "sdk.agent",
+      event: "round-request",
+      model,
+      round,
+      messages,
+      tools: toolDefs,
+    })
 
     const response = await getClient().chat.completions.create({
       model,
@@ -160,6 +213,15 @@ async function runAgent<T>(
 
     const message = response.choices[0]?.message
     if (!message) throw new Error("LLM returned empty response")
+    logSessionEvent({
+      source: "sdk.agent",
+      event: "round-response",
+      model,
+      round,
+      message,
+      finishReason: response.choices[0]?.finish_reason,
+      usage: response.usage,
+    })
 
     messages.push(message)
 
@@ -168,6 +230,13 @@ async function runAgent<T>(
       if (options?.schema) {
         return await structureResponse(messages, options.schema, model, maxTokens)
       }
+      logSessionEvent({
+        source: "sdk.agent",
+        event: "done",
+        model,
+        round,
+        output: message.content ?? "",
+      })
       return (message.content ?? "") as T
     }
 
@@ -197,12 +266,30 @@ async function runAgent<T>(
         try {
           const args = JSON.parse(call.function.arguments)
           const result = await tool(args)
+          logSessionEvent({
+            source: "sdk.agent",
+            event: "tool-result",
+            model,
+            round,
+            tool: call.function.name,
+            args,
+            result,
+          })
           return {
             role: "tool" as const,
             tool_call_id: call.id,
             content: typeof result === "string" ? result : JSON.stringify(result),
           }
         } catch (e: any) {
+          logSessionEvent({
+            source: "sdk.agent",
+            event: "tool-error",
+            model,
+            round,
+            tool: call.function.name,
+            args: call.function.arguments,
+            error: e,
+          })
           return {
             role: "tool" as const,
             tool_call_id: call.id,
@@ -265,6 +352,14 @@ async function structureResponse<T>(
   const text = fenced ? fenced[1].trim() : raw.trim()
   try {
     const parsed = JSON.parse(text)
+    logSessionEvent({
+      source: "sdk.agent",
+      event: "structured-response",
+      model,
+      raw,
+      parsed,
+      usage: response.usage,
+    })
     const missing = Object.keys(schema).filter(k => parsed[k] === undefined || parsed[k] === null)
     if (missing.length > 0) {
       console.error(`[llm] structureResponse missing keys: ${missing.join(", ")} — raw: ${text.slice(0, 200)}`)

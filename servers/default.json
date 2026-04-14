@@ -4,7 +4,12 @@
     "repo": "https://github.com/gemini-cli-extensions/workspace",
     "entry": "workspace-server/dist/index.js",
     "build": "npm install && npm run build",
-    "description": "Gmail, Calendar, Drive, Docs, Sheets, Chat"
+    "description": "Google Workspace tools: Gmail, Calendar, Drive, Docs, Sheets, Chat",
+    "meta": {
+      "authoringHints": [
+        "Use for email, calendar, drive files, documents, spreadsheets, and internal Google Workspace workflows."
+      ]
+    }
   },
   "granola": {
     "type": "remote",
@@ -15,22 +20,31 @@
     "type": "remote",
     "url": "https://api.githubcopilot.com/mcp/",
     "auth": "gh auth token",
-    "description": "Repos, issues, PRs, commits"
+    "description": "GitHub repos, issues, pull requests, commits, and code-hosting workflows",
+    "meta": {
+      "authoringHints": [
+        "Use for repository data, PR review flows, issues, commits, and source-control automation."
+      ]
+    }
   },
   "apify": {
     "type": "remote",
     "url": "https://mcp.apify.com",
-    "description": "Apify Actors, web scraping, automation, docs",
+    "description": "Apify Store Actors for public-web scraping, extraction, and site-specific automation",
     "authoringDiscovery": "src/mcp/discover/apify.ts",
     "meta": {
       "docs": "https://docs.apify.com/platform/integrations/mcp",
-      "provider": "Apify"
+      "provider": "Apify",
+      "authoringHints": [
+        "Use when the user wants data from public websites, marketplaces, search results, listings, reviews, maps, social profiles, product pages, docs sites, or other web pages.",
+        "Assume Apify likely already has a purpose-built Actor for many scraping tasks; prefer selecting a concrete Actor at authoring time instead of writing generic browser logic."
+      ]
     }
   },
   "composio": {
     "type": "remote",
     "url": "https://connect.composio.dev/mcp",
-    "description": "Telegram, Slack, and 250+ integrations",
+    "description": "Telegram, Slack, and 250+ SaaS integrations via a proxy tool",
     "proxy": {
       "via": "COMPOSIO_MULTI_EXECUTE_TOOL",
       "connectDiscovery": "src/mcp/discover/composio.ts",
@@ -39,7 +53,10 @@
     "meta": {
       "pricing": "Free 20K calls/mo, $29/mo after",
       "docs": "https://docs.composio.dev",
-      "provider": "Composio"
+      "provider": "Composio",
+      "authoringHints": [
+        "Use when the workflow needs an app integration outside the built-in connections, especially messaging, CRM, or long-tail SaaS tools."
+      ]
     }
   }
 }

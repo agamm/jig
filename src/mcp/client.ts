@@ -297,20 +297,32 @@ export async function callTool(
     arguments: params,
   })
 
+  if (result.structuredContent != null) {
+    return result.structuredContent
+  }
+
   if (result.content && Array.isArray(result.content)) {
     const textParts = result.content
       .filter((c: any) => c.type === "text")
       .map((c: any) => c.text)
 
     if (textParts.length === 1) {
-      try {
-        return JSON.parse(textParts[0])
-      } catch {
-        return textParts[0]
-      }
+      return parseToolText(textParts[0])
     }
     if (textParts.length > 1) return textParts
   }
 
-  return result.structuredContent ?? result.content
+  return result.content
+}
+
+function parseToolText(text: string): unknown {
+  const trimmed = text.trim()
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)
+  const candidate = fenced?.[1]?.trim() ?? trimmed
+
+  try {
+    return JSON.parse(candidate)
+  } catch {
+    return text
+  }
 }

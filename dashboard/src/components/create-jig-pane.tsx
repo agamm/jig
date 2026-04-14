@@ -57,11 +57,13 @@ export function CreateJigPane({
   startToken = 0,
   onClose,
   onCreated,
+  onConnectionClick,
 }: {
   initialInstruction?: string;
   startToken?: number;
   onClose: () => void;
   onCreated?: (jigId?: string) => Promise<void> | void;
+  onConnectionClick?: (name: string) => void;
 }) {
   const [input, setInput] = useState(initialInstruction);
   const [detailTab, setDetailTab] = useState<"steps" | "code">("steps");
@@ -193,7 +195,15 @@ export function CreateJigPane({
 
       </div>
 
-      <AgentPanel events={agent.events} status={agent.status} onRetry={() => agent.sendMessage("Continue — retry the last step.")} />
+      <AgentPanel
+        events={agent.events}
+        status={agent.status}
+        requiredConnections={agent.requiredConnections}
+        suggestedConnections={agent.suggestedConnections}
+        metrics={agent.metrics}
+        onConnectionClick={onConnectionClick}
+        onRetry={() => agent.sendMessage("Continue — retry the last step.")}
+      />
 
       <div className="border-t border-[#1f1f23] p-3">
         <AgentInput
@@ -201,6 +211,8 @@ export function CreateJigPane({
           idlePlaceholder="Describe a jig to create..."
           variant="create"
           externalValue={input}
+          onExternalValueChange={setInput}
+          autoFocus
         />
       </div>
     </aside>

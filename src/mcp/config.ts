@@ -33,6 +33,7 @@ export type ServerMeta = {
   limits?: string
   docs?: string
   provider?: string
+  authoringHints?: string[]
 }
 
 export type ProxyConfig = {

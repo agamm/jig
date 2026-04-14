@@ -4,35 +4,14 @@
  * Handles the full lifecycle: import → validate → run → collect results.
  * Callers observe execution via the onEvent callback.
  */
-import { join } from "path"
-import { appendFile } from "node:fs/promises"
 import type { RunRecorder } from "./sdk/context.js"
 import { SkipError } from "./sdk/context.js"
 import type { RunEvent } from "./run-events.js"
 import { insertStep, completeStep, completeRun } from "./db.js"
 import { dryRunContext } from "./sdk/dryrun.js"
+import { logSessionEvent } from "./debug/session-log.js"
 import { checkStepStructure } from "./services/jig-checker.js"
 import { hasConsoleLogCall } from "./domain/source-analysis.js"
-
-// --- Debug log (async, queued) ---
-const LOG_PATH = join(import.meta.dir, "../jig_debug.log")
-let _logQueue: string[] = []
-let _logFlushPending = false
-
-function debug(msg: string) {
-  _logQueue.push(`${new Date().toISOString()} ${msg}\n`)
-  if (!_logFlushPending) {
-    _logFlushPending = true
-    queueMicrotask(flushLog)
-  }
-}
-
-async function flushLog() {
-  const batch = _logQueue
-  _logQueue = []
-  _logFlushPending = false
-  try { await appendFile(LOG_PATH, batch.join("")) } catch {}
-}
 
 // --- Runner ---
 export interface RunResult {
@@ -75,10 +54,17 @@ async function _runJig(
 ): Promise<RunResult> {
   const { dryRun, silent, signal } = opts
   const start = Date.now()
-  const tag = dryRun ? "[dry-run]" : "[run]"
-  const log = (msg: string) => debug(`${tag} ${msg}`)
+  const runType = dryRun ? "dry-run" : "run"
+  const log = (event: string, details: Record<string, unknown> = {}) =>
+    logSessionEvent({
+      type: "runner",
+      runType,
+      event,
+      jigPath,
+      ...details,
+    })
 
-  log(`start ${jigPath}`)
+  log("start", { params })
 
   // Wire spinner → onEvent for tool progress
   const { spinner } = await import("./sdk/spinner.js")
@@ -172,7 +158,7 @@ async function _runJig(
     }
 
     // --- Run ---
-    log(`executing handler (${def.name})`)
+    log("executing-handler", { jigName: def.name })
     const { run } = await import("./sdk/jig.js")
     const ctx = await run(def, params, { ...(silent && { silent: true }), recorder })
 
@@ -185,7 +171,7 @@ async function _runJig(
       onEvent({ type: "output", text: "[warn] Jig produced no output" })
     }
 
-    log(`done in ${(durationMs / 1000).toFixed(1)}s — ${tools.length} tools, ${output.length} chars output`)
+    log("done", { durationMs, toolCount: tools.length, outputLength: output.length })
     onEvent({ type: "done", tools, output, durationMs })
     return { output, tools, durationMs }
 
@@ -193,7 +179,7 @@ async function _runJig(
     // Skip — handler called ctx.skip(), run should not be persisted
     if (e instanceof SkipError) {
       const durationMs = Date.now() - start
-      log(`skipped: ${e.message}`)
+      log("skipped", { durationMs, reason: e.message })
       onEvent({ type: "skipped", reason: e.message })
       return { output: "", tools: [], durationMs, skipped: true }
     }
@@ -205,11 +191,14 @@ async function _runJig(
         ? (e.error.message || JSON.stringify(e.error))
         : String(e.error)
       error = `${e.status} ${detail}`
-      log(`LLM error (${e.status}): ${detail}`)
-      if (e.error?.metadata) log(`  metadata: ${JSON.stringify(e.error.metadata)}`)
+      log("llm-error", {
+        status: e.status,
+        detail,
+        metadata: e.error?.metadata,
+      })
     }
     const durationMs = Date.now() - start
-    log(`error after ${(durationMs / 1000).toFixed(1)}s: ${error}`)
+    log("error", { durationMs, error })
     onEvent({ type: "error", message: error })
     return { output: "", tools: [], durationMs, error }
 

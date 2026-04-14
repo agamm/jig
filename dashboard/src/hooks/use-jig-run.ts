@@ -5,6 +5,8 @@ import { cancelActiveRun, fetchRunStatus, startJigRun } from "@/lib/api";
 import { useDetectActiveRun } from "@/lib/swr";
 import type { RunDetail, RunStatus } from "@shared/api";
 
+const MIN_DRY_RUN_VISIBLE_MS = 500;
+
 function toRunSteps(data: Pick<RunDetail, "steps" | "output">): RunStep[] {
   const steps = data.steps.map((step, idx) => ({
     num: idx + 1,
@@ -41,6 +43,14 @@ function toActiveRunSteps(data: Pick<RunStatus, "steps">): RunStep[] {
 function isTerminalRunDetailError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
   return /Run not found|HTTP 404/i.test(message)
+}
+
+async function ensureMinimumVisibleRun(startTime: number, abort: AbortController, dryRun: boolean) {
+  if (!dryRun) return;
+  const remaining = MIN_DRY_RUN_VISIBLE_MS - (Date.now() - startTime);
+  if (remaining <= 0) return;
+  await new Promise((resolve) => setTimeout(resolve, remaining));
+  if (abort.signal.aborted) return;
 }
 
 export function useJigRun(jigId: string) {
@@ -96,6 +106,8 @@ export function useJigRun(jigId: string) {
         setToolReadOnly(data.readOnly ?? {});
 
         if (data.status !== "running") {
+          await ensureMinimumVisibleRun(startTime, abort, isDryRun);
+          if (runIdRef.current !== runId || abort.signal.aborted) return;
           clearInterval(timerRef.current!);
           timerRef.current = null;
           runIdRef.current = null;

@@ -19,8 +19,9 @@ import { writeJigSource } from "./services/jig-writer.js"
 import { buildCreatorJigPrompt } from "./services/jig-writing-prompt.js"
 import { generateTypeDeclaration, toolNameToIdentifier } from "./mcp/typegen.js"
 import { renderCodeFacingToolCatalogSection } from "./tool-catalog.js"
-import { connectServer, type McpConnection } from "./mcp/client.js"
+import { callTool, connectServer, type McpConnection } from "./mcp/client.js"
 import type { ConnectEvent } from "../shared/connect-flow.js"
+import { logSessionEvent } from "./debug/session-log.js"
 const MAX_FIX_ATTEMPTS = 3
 
 // ---------------------------------------------------------------------------
@@ -102,6 +103,8 @@ export interface BuildTimeResolution {
   requiredTools?: string[]
   includeTools?: string[]
   excludeTools?: string[]
+  resolvedTarget?: string
+  resolvedInputSchema?: unknown
 }
 
 export interface BuildTimeToolPolicyIssue {
@@ -142,6 +145,7 @@ export async function createJig(description: string, io: JigIO): Promise<CreateR
 
   // 3. Resolve dynamic sub-tools at build time, then select relevant runtime tools
   const buildResolutions = await resolveBuildTimeTargets(description, plan.servers, serverConfigs, io.ask)
+  ensureAuthoringDiscoveryResolved(description, plan.servers, serverConfigs, buildResolutions)
   const relevantTools = await selectTools(description, plan.servers, buildResolutions)
   io.emit({ type: "plan", servers: plan.servers, relevantTools, name: plan.name })
 
@@ -231,6 +235,7 @@ export async function editJig(
   }
 
   const buildResolutions = await resolveBuildTimeTargets(instruction, buildResolutionServers, serverConfigs, io.ask)
+  ensureAuthoringDiscoveryResolved(instruction, buildResolutionServers, serverConfigs, buildResolutions)
   const relevantTools = newServers.length > 0 || buildResolutions.length > 0
     ? await selectTools(instruction, allServers, buildResolutions)
     : []
@@ -297,6 +302,7 @@ export async function buildAuthoringState(
   }
 
   const buildResolutions = await resolveBuildTimeTargets(description, buildResolutionServers, serverConfigs, options.ask)
+  ensureAuthoringDiscoveryResolved(description, buildResolutionServers, serverConfigs, buildResolutions)
   const relevantTools = options.existingCode
     ? (newServers.length > 0 || buildResolutions.length > 0
         ? await selectTools(description, allServers, buildResolutions)
@@ -347,13 +353,21 @@ interface JigPlan {
   needsIntegration: boolean
 }
 
+function formatServerForAuthoring(name: string, cfg: any): string {
+  const lines = [`- ${name}: ${cfg?.description ?? ""}`]
+  for (const hint of cfg?.meta?.authoringHints ?? []) {
+    lines.push(`  Hint: ${hint}`)
+  }
+  return lines.join("\n")
+}
+
 async function planJig(
   description: string,
   serverConfigs: Record<string, any>
 ): Promise<JigPlan> {
   const entries = Object.entries(serverConfigs)
   const serverList = entries
-    .map(([name, cfg]) => `  "${name}": ${(cfg as any).description}`)
+    .map(([name, cfg]) => formatServerForAuthoring(name, cfg))
     .join("\n")
 
   const keywordHints = entries
@@ -381,7 +395,14 @@ For this workflow: "${description}"
 1. "servers": which server keys does this need?
 2. "unknownServers": services mentioned that don't match any server above
 3. "name": a short kebab-case filename, 2-3 words, descriptive
-4. "needsIntegration": true if the workflow clearly depends on an external service, MCP server, or provider integration; false only if it can be done with pure logic and no external service`,
+4. "needsIntegration": true if the workflow clearly depends on an external service, MCP server, or provider integration; false only if it can be done with pure logic and no external service
+
+Important:
+- Prefer the smallest sufficient server set
+- If the user explicitly names one of the available servers or clearly references that provider/connection, include that exact server in "servers"
+- If the user says to do something via/using/through a specific server, prefer that server and do not add another server just because the target website or data source matches its brand
+- Only include an additional server when the workflow truly needs that server's own authenticated API, write actions, or first-party tools beyond what the explicit provider can already do
+- Do not replace an explicitly named server with a different inferred alternative unless the named one is clearly impossible for the task`,
     {},
     { schema: { servers: "array", unknownServers: "array", name: "string", needsIntegration: "boolean" } as any }
   )
@@ -518,12 +539,21 @@ function checkConnections(
   }
 
   if (missing.length > 0 || unknownServers.length > 0) {
-    throw new CreatorError("missing-connections", "Required connections are not set up")
+    throw new CreatorError("missing-connections", "Required connections are not set up", {
+      suggestedConnections: servers.map((server) => server.name),
+      requiredConnections: missing.map((server) => server.name),
+      connectionStatuses: servers.map(({ name, connected }) => ({ name, connected })),
+      unknownConnections: unknownServers,
+    })
   }
 }
 
 export class CreatorError extends Error {
-  constructor(public code: string, message: string) {
+  constructor(
+    public code: string,
+    message: string,
+    public readonly details?: Record<string, unknown>
+  ) {
     super(message)
   }
 }
@@ -604,7 +634,16 @@ async function assembleContext(
 
   const configs = await loadServerConfigs()
   const serverDescriptions = servers
-    .map(s => `${s}: ${(configs as any)[s]?.description ?? ""}`)
+    .map((serverName) => {
+      const cfg = (configs as any)[serverName]
+      const lines = [`- ${serverName}: ${cfg?.description ?? ""}`]
+      for (const hint of cfg?.meta?.authoringHints ?? []) {
+        lines.push(`  Hint: ${hint}`)
+      }
+      if (cfg?.meta?.provider) lines.push(`  Provider: ${cfg.meta.provider}`)
+      if (cfg?.meta?.docs) lines.push(`  Docs: ${cfg.meta.docs}`)
+      return lines.join("\n")
+    })
     .join("\n")
 
   const buildHints = buildResolutions
@@ -619,7 +658,60 @@ type BuildDiscoverModule = {
     description: string
     connection: McpConnection
     ask?: (question: string) => Promise<string>
-  }) => Promise<{ context: string; requiredTools?: string[]; includeTools?: string[]; excludeTools?: string[] } | null>
+  }) => Promise<{ context: string; requiredTools?: string[]; includeTools?: string[]; excludeTools?: string[]; resolvedTarget?: string; resolvedInputSchema?: unknown } | null>
+  resolveForBuildWithOps?: (
+    args: {
+      description: string
+      connection: McpConnection
+      ask?: (question: string) => Promise<string>
+    },
+    ops: {
+      callTool: typeof callTool
+      llm: typeof llm
+    }
+  ) => Promise<{ context: string; requiredTools?: string[]; includeTools?: string[]; excludeTools?: string[]; resolvedTarget?: string; resolvedInputSchema?: unknown } | null>
+}
+
+function summarizeForLog(value: unknown, maxLength = 600): unknown {
+  if (typeof value === "string") {
+    return value.length > maxLength ? `${value.slice(0, maxLength)}…` : value
+  }
+  if (Array.isArray(value)) {
+    return value.slice(0, 10).map((item) => summarizeForLog(item, Math.floor(maxLength / 4)))
+  }
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>).slice(0, 12)
+    return Object.fromEntries(entries.map(([key, nested]) => [key, summarizeForLog(nested, Math.floor(maxLength / 2))]))
+  }
+  return value
+}
+
+function getMissingAuthoringDiscoveryServers(
+  servers: string[],
+  serverConfigs: Record<string, any>,
+  buildResolutions: BuildTimeResolution[]
+): string[] {
+  const resolvedServers = new Set(buildResolutions.map((resolution) => resolution.server))
+  return servers.filter((serverName) => Boolean(serverConfigs[serverName]?.authoringDiscovery) && !resolvedServers.has(serverName))
+}
+
+function ensureAuthoringDiscoveryResolved(
+  description: string,
+  servers: string[],
+  serverConfigs: Record<string, any>,
+  buildResolutions: BuildTimeResolution[]
+): void {
+  const missing = getMissingAuthoringDiscoveryServers(servers, serverConfigs, buildResolutions)
+  if (missing.length === 0) return
+
+  throw new CreatorError(
+    "authoring-discovery-unresolved",
+    `Authoring-time discovery could not resolve a concrete runtime target for: ${missing.join(", ")}. Add more detail about the exact site, dataset, or task before writing the jig.`,
+    {
+      description,
+      servers: missing,
+    }
+  )
 }
 
 async function resolveBuildTimeTargets(
@@ -629,6 +721,14 @@ async function resolveBuildTimeTargets(
   ask?: (question: string) => Promise<string>
 ): Promise<BuildTimeResolution[]> {
   const results: BuildTimeResolution[] = []
+  if (servers.length > 0) {
+    logSessionEvent({
+      source: "authoring.discovery",
+      event: "start",
+      description,
+      servers,
+    })
+  }
 
   for (const serverName of servers) {
     const discoverPath = serverConfigs[serverName]?.authoringDiscovery
@@ -639,13 +739,87 @@ async function resolveBuildTimeTargets(
 
     try {
       const mod = await import(join(PROJECT_ROOT, discoverPath)) as BuildDiscoverModule
-      if (typeof mod.resolveForBuild !== "function") continue
+      logSessionEvent({
+        source: "authoring.discovery",
+        event: "server-start",
+        server: serverName,
+        discoverPath,
+        description,
+      })
 
-      const resolved = await mod.resolveForBuild({
+      if (typeof mod.resolveForBuild !== "function" && typeof mod.resolveForBuildWithOps !== "function") continue
+
+      const wrappedOps = {
+        callTool: async (wrappedConnection: McpConnection, toolName: string, args: any) => {
+          logSessionEvent({
+            source: "authoring.discovery",
+            event: "tool-call",
+            server: serverName,
+            tool: toolName,
+            args: summarizeForLog(args),
+          })
+          try {
+            const result = await callTool(wrappedConnection, toolName, args)
+            logSessionEvent({
+              source: "authoring.discovery",
+              event: "tool-result",
+              server: serverName,
+              tool: toolName,
+              result: summarizeForLog(result),
+            })
+            return result
+          } catch (error) {
+            logSessionEvent({
+              source: "authoring.discovery",
+              event: "tool-error",
+              server: serverName,
+              tool: toolName,
+              args: summarizeForLog(args),
+              error,
+            })
+            throw error
+          }
+        },
+        llm: async <T>(prompt: string, data: Record<string, unknown>, options?: any): Promise<T> => {
+          logSessionEvent({
+            source: "authoring.discovery",
+            event: "llm-request",
+            server: serverName,
+            prompt: summarizeForLog(prompt),
+            data: summarizeForLog(data),
+            options: summarizeForLog(options),
+          })
+          try {
+            const result = await llm<T>(prompt, data, options)
+            logSessionEvent({
+              source: "authoring.discovery",
+              event: "llm-response",
+              server: serverName,
+              result: summarizeForLog(result),
+            })
+            return result
+          } catch (error) {
+            logSessionEvent({
+              source: "authoring.discovery",
+              event: "llm-error",
+              server: serverName,
+              prompt: summarizeForLog(prompt),
+              error,
+            })
+            throw error
+          }
+        },
+      }
+
+      const discoveryArgs = {
         description,
         connection,
         ask,
-      })
+      }
+
+      const resolved = typeof mod.resolveForBuildWithOps === "function"
+        ? await mod.resolveForBuildWithOps(discoveryArgs, wrappedOps)
+        : await mod.resolveForBuild?.(discoveryArgs)
 
       if (resolved) {
         results.push({
@@ -654,12 +828,49 @@ async function resolveBuildTimeTargets(
           requiredTools: resolved.requiredTools,
           includeTools: resolved.includeTools,
           excludeTools: resolved.excludeTools,
+          resolvedTarget: resolved.resolvedTarget,
+          resolvedInputSchema: resolved.resolvedInputSchema,
         })
       }
+      logSessionEvent({
+        source: "authoring.discovery",
+        event: "server-done",
+        server: serverName,
+        resolved: Boolean(resolved),
+        resolution: resolved
+          ? {
+              requiredTools: resolved.requiredTools,
+              includeTools: resolved.includeTools,
+              excludeTools: resolved.excludeTools,
+              resolvedTarget: resolved.resolvedTarget,
+              resolvedInputSchema: summarizeForLog(resolved.resolvedInputSchema),
+              context: summarizeForLog(resolved.context),
+            }
+          : null,
+      })
+    } catch (error) {
+      logSessionEvent({
+        source: "authoring.discovery",
+        event: "server-error",
+        server: serverName,
+        discoverPath,
+        error,
+      })
+      throw error
     } finally {
       await connection.transport.close().catch(() => {})
       await connection.client.close().catch(() => {})
     }
+  }
+
+  if (servers.length > 0) {
+    logSessionEvent({
+      source: "authoring.discovery",
+      event: "done",
+      description,
+      servers,
+      resolvedServers: results.map((result) => result.server),
+    })
   }
 
   return results
@@ -805,6 +1016,9 @@ export function collectBuildTimeToolPolicyIssues(
   buildResolutions: BuildTimeResolution[]
 ): BuildTimeToolPolicyIssue[] {
   const issues: BuildTimeToolPolicyIssue[] = []
+  const source = ts.createSourceFile("jig.ts", code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const variableInitializers = collectVariableInitializers(source)
+  const apifyCallArguments = collectConnectionToolCallArguments(source, "apify", "call_actor", variableInitializers)
 
   for (const resolution of buildResolutions) {
     const required = resolution.requiredTools ?? []
@@ -830,6 +1044,54 @@ export function collectBuildTimeToolPolicyIssues(
         message: `Do not use ${resolution.server}.${toolNameToIdentifier(toolName)} at runtime here. Build-time discovery already resolved the target, so keep runtime code on concrete execution tools only.`,
       })
     }
+
+    if (
+      resolution.server === "apify"
+      && resolution.resolvedTarget
+      && codeUsesConnectionTool(code, "apify", "call-actor")
+      && !codeUsesResolvedApifyActor(code, resolution.resolvedTarget)
+    ) {
+      issues.push({
+        server: resolution.server,
+        message: `Build-time discovery resolved the Apify actor to "${resolution.resolvedTarget}". This code must call that exact actor instead of substituting a different one or a placeholder.`,
+      })
+    }
+
+    if (resolution.server === "apify" && apifyCallArguments.length > 0) {
+      if (apifyCallArguments.some((call) => hasObjectProperty(call, "actorId"))) {
+        issues.push({
+          server: resolution.server,
+          message: "Use apify.call_actor with the MCP tool's exact params: pass `actor`, not `actorId`.",
+        })
+      }
+
+      if (apifyCallArguments.some((call) => !hasObjectProperty(call, "input"))) {
+        issues.push({
+          server: resolution.server,
+          message: "Use apify.call_actor with the MCP tool's exact params: include an `input` object.",
+        })
+      }
+
+      if (apifyCallArguments.some((call) => usesInvalidApifyInputValue(getObjectProperty(call, "input"), variableInitializers))) {
+        issues.push({
+          server: resolution.server,
+          message: "Use apify.call_actor with a real object for `input`. Do not pass JSON strings or JSON.stringify(...).",
+        })
+      }
+
+      const requiredInputFields = getRequiredInputFields(resolution.resolvedInputSchema)
+      if (requiredInputFields.length > 0) {
+        const missing = requiredInputFields.filter((field) =>
+          !apifyCallArguments.some((call) => objectContainsProperty(getObjectProperty(call, "input"), field, variableInitializers))
+        )
+        if (missing.length > 0) {
+          issues.push({
+            server: resolution.server,
+            message: `Build-time discovery resolved required Apify actor input fields: ${missing.join(", ")}. The apify.call_actor input must provide them directly or map them from jig params/context.`,
+          })
+        }
+      }
+    }
   }
 
   return issues
@@ -848,6 +1110,144 @@ function codeUsesConnectionTool(code: string, serverName: string, toolName: stri
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+function codeUsesResolvedApifyActor(code: string, actorName: string): boolean {
+  const escapedActor = escapeRegExp(actorName)
+  return (
+    new RegExp(`\\bactor(Id)?\\s*:\\s*["']${escapedActor}["']`).test(code)
+    || new RegExp(`\\bapify\\.call_actor\\s*\\(\\s*\\{[\\s\\S]*?["']${escapedActor}["']`, "m").test(code)
+  )
+}
+
+function collectVariableInitializers(source: ts.SourceFile): Map<string, ts.Expression> {
+  const initializers = new Map<string, ts.Expression>()
+
+  const visit = (node: ts.Node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      initializers.set(node.name.text, node.initializer)
+    }
+    ts.forEachChild(node, visit)
+  }
+
+  visit(source)
+  return initializers
+}
+
+function collectConnectionToolCallArguments(
+  source: ts.SourceFile,
+  serverName: string,
+  toolIdentifier: string,
+  variableInitializers: Map<string, ts.Expression>
+): ts.ObjectLiteralExpression[] {
+  const calls: ts.ObjectLiteralExpression[] = []
+
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isCallExpression(node)
+      && ts.isPropertyAccessExpression(node.expression)
+      && ts.isIdentifier(node.expression.expression)
+      && node.expression.expression.text === serverName
+      && node.expression.name.text === toolIdentifier
+    ) {
+      const resolved = resolveObjectExpression(node.arguments[0], variableInitializers)
+      if (resolved) calls.push(resolved)
+    }
+    ts.forEachChild(node, visit)
+  }
+
+  visit(source)
+  return calls
+}
+
+function resolveObjectExpression(
+  expression: ts.Expression | undefined,
+  variableInitializers: Map<string, ts.Expression>,
+  seen = new Set<string>()
+): ts.ObjectLiteralExpression | null {
+  if (!expression) return null
+  if (ts.isParenthesizedExpression(expression)) {
+    return resolveObjectExpression(expression.expression, variableInitializers, seen)
+  }
+  if (ts.isAsExpression(expression) || ts.isTypeAssertionExpression(expression)) {
+    return resolveObjectExpression(expression.expression, variableInitializers, seen)
+  }
+  if (ts.isObjectLiteralExpression(expression)) return expression
+  if (ts.isIdentifier(expression)) {
+    if (seen.has(expression.text)) return null
+    seen.add(expression.text)
+    return resolveObjectExpression(variableInitializers.get(expression.text), variableInitializers, seen)
+  }
+  return null
+}
+
+function getObjectProperty(node: ts.ObjectLiteralExpression, propertyName: string): ts.Expression | null {
+  for (const property of node.properties) {
+    if (ts.isPropertyAssignment(property)) {
+      const name = getPropertyNameText(property.name)
+      if (name === propertyName) return property.initializer
+      continue
+    }
+    if (ts.isShorthandPropertyAssignment(property) && property.name.text === propertyName) {
+      return property.name
+    }
+  }
+  return null
+}
+
+function hasObjectProperty(node: ts.ObjectLiteralExpression, propertyName: string): boolean {
+  return getObjectProperty(node, propertyName) !== null
+}
+
+function getPropertyNameText(name: ts.PropertyName): string | null {
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) return name.text
+  return null
+}
+
+function usesInvalidApifyInputValue(expression: ts.Expression | null, variableInitializers: Map<string, ts.Expression>): boolean {
+  if (!expression) return false
+  if (ts.isIdentifier(expression)) {
+    const resolved = resolveObjectExpression(expression, variableInitializers)
+    if (resolved) return false
+    const initializer = variableInitializers.get(expression.text)
+    if (!initializer || initializer === expression) return false
+    return usesInvalidApifyInputValue(initializer, variableInitializers)
+  }
+  if (ts.isStringLiteralLike(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) return true
+  if (
+    ts.isCallExpression(expression)
+    && ts.isPropertyAccessExpression(expression.expression)
+    && ts.isIdentifier(expression.expression.expression)
+    && expression.expression.expression.text === "JSON"
+    && expression.expression.name.text === "stringify"
+  ) {
+    return true
+  }
+  return false
+}
+
+function objectContainsProperty(
+  expression: ts.Expression | null,
+  propertyName: string,
+  variableInitializers: Map<string, ts.Expression>
+): boolean {
+  if (!expression) return false
+  const resolved = resolveObjectExpression(expression, variableInitializers)
+  if (resolved) {
+    return resolved.properties.some((property) =>
+      (ts.isPropertyAssignment(property) && getPropertyNameText(property.name) === propertyName)
+      || (ts.isShorthandPropertyAssignment(property) && property.name.text === propertyName)
+    )
+  }
+  return false
+}
+
+function getRequiredInputFields(schema: unknown): string[] {
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)) return []
+  const record = schema as Record<string, unknown>
+  if (record.type !== "object") return []
+  const required = Array.isArray(record.required) ? record.required : []
+  return required.filter((field): field is string => typeof field === "string")
 }
 
 // ---------------------------------------------------------------------------

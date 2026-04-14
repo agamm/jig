@@ -1,6 +1,7 @@
 import type {
   AddExampleJigResponse,
   AgentStatusResponse,
+  AgentConversationTurn,
   Connection,
   ConnectionDetail,
   ConnectConnectionResponse,
@@ -27,8 +28,15 @@ import type {
 async function fetchJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
   const res = await fetch(input, init)
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
-    throw new Error(error.error ?? `HTTP ${res.status}`)
+    const error = await res.json().catch(() => ({ error: `HTTP ${res.status}` })) as {
+      error?: string
+      details?: Record<string, unknown>
+    }
+    const wrapped = new Error(error.error ?? `HTTP ${res.status}`) as Error & {
+      details?: Record<string, unknown>
+    }
+    if (error.details) wrapped.details = error.details
+    throw wrapped
   }
   return res.json() as Promise<T>
 }
@@ -89,11 +97,15 @@ export function updateJigTrigger(jigId: string, trigger: string): Promise<Trigge
   })
 }
 
-export function startAgentSession(instruction: string, jigId?: string): Promise<StartAgentResponse> {
+export function startAgentSession(
+  instruction: string,
+  jigId?: string,
+  history?: AgentConversationTurn[]
+): Promise<StartAgentResponse> {
   return fetchJson("/api/agent", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ instruction, jigId }),
+    body: JSON.stringify({ instruction, jigId, history }),
   })
 }
 
@@ -101,11 +113,15 @@ export function fetchAgentStatus(sessionId: string, since = 0): Promise<AgentSta
   return fetchJson(`/api/agent/${sessionId}?since=${since}`)
 }
 
-export function sendAgentMessage(sessionId: string, message: string): Promise<{ ok: true }> {
+export function sendAgentMessage(
+  sessionId: string,
+  message: string,
+  history?: AgentConversationTurn[]
+): Promise<{ ok: true }> {
   return fetchJson(`/api/agent/${sessionId}/message`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, history }),
   })
 }
 

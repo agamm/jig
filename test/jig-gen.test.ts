@@ -87,40 +87,31 @@ describe("hasExplicitEmptyToolsArray", () => {
 })
 
 describe("collectBuildTimeToolPolicyIssues", () => {
-  const apifyResolution = {
-    server: "apify",
-    context: 'Resolved Apify Actor at build time for this workflow: community/github-trending-scraper.',
-    requiredTools: ["call-actor"],
-    includeTools: ["call-actor", "get-actor-run", "get-actor-output"],
-    excludeTools: ["search-actors", "fetch-actor-details"],
-    resolvedTarget: "community/github-trending-scraper",
-    resolvedInputSchema: {
-      type: "object",
-      properties: {
-        since: { type: "string" },
-        language: { type: "string" },
-      },
-      required: ["since"],
-    },
+  const genericResolution = {
+    server: "example",
+    context: "Resolved Example target at build time for this workflow.",
+    requiredTools: ["run-task"],
+    includeTools: ["run-task", "read-result"],
+    excludeTools: ["discover-task"],
   }
 
   it("flags runtime rediscovery tools after build-time resolution", () => {
     const code = `
 import { jig } from "@jig/sdk"
-import { apify } from "@jig/connections/apify.js"
+import { example } from "@jig/connections/example.js"
 
-export default jig("x", { tools: [apify.search_actors, apify.call_actor] }, async (ctx) => {
-  await ctx.step("Run", [apify.search_actors, apify.call_actor], async () => {
-    await apify.search_actors({ keywords: "github trending" })
-    await apify.call_actor({ actor: "community/github-trending-scraper", input: { since: "weekly" } })
+export default jig("x", { tools: [example.discover_task, example.run_task] }, async (ctx) => {
+  await ctx.step("Run", [example.discover_task, example.run_task], async () => {
+    await example.discover_task({ query: "github trending" })
+    await example.run_task({ target: "trending" })
   })
 })
 `
 
-    expect(collectBuildTimeToolPolicyIssues(code, [apifyResolution])).toEqual([
+    expect(collectBuildTimeToolPolicyIssues(code, [genericResolution])).toEqual([
       {
-        server: "apify",
-        message: "Do not use apify.search_actors at runtime here. Build-time discovery already resolved the target, so keep runtime code on concrete execution tools only.",
+        server: "example",
+        message: "Do not use example.discover_task at runtime here. Build-time discovery already resolved the target, so keep runtime code on concrete execution tools only.",
       },
     ])
   })
@@ -128,126 +119,50 @@ export default jig("x", { tools: [apify.search_actors, apify.call_actor] }, asyn
   it("flags code that never uses the required concrete runtime tool", () => {
     const code = `
 import { jig } from "@jig/sdk"
-import { apify } from "@jig/connections/apify.js"
+import { example } from "@jig/connections/example.js"
 
-export default jig("x", { tools: [apify.search_actors] }, async (ctx) => {
-  await ctx.step("Run", [apify.search_actors], async () => {
-    await apify.search_actors({ keywords: "github trending" })
+export default jig("x", { tools: [example.read_result] }, async (ctx) => {
+  await ctx.step("Run", [example.read_result], async () => {
+    await example.read_result({ target: "trending" })
   })
 })
 `
 
-    expect(collectBuildTimeToolPolicyIssues(code, [apifyResolution])).toContainEqual({
-      server: "apify",
-      message: "Build-time discovery already resolved the runtime target. This code must use the required runtime tools for apify: call-actor.",
+    expect(collectBuildTimeToolPolicyIssues(code, [genericResolution])).toContainEqual({
+      server: "example",
+      message: "Build-time discovery already resolved the runtime target. This code must use the required runtime tools for example: run-task.",
     })
   })
 
-  it("still requires call_actor even if a follow-up runtime tool is used", () => {
+  it("accepts code that uses an allowed runtime tool alongside the required one", () => {
     const code = `
 import { jig } from "@jig/sdk"
-import { apify } from "@jig/connections/apify.js"
+import { example } from "@jig/connections/example.js"
 
-export default jig("x", { tools: [apify.get_actor_output] }, async (ctx) => {
-  await ctx.step("Run", [apify.get_actor_output], async () => {
-    await apify.get_actor_output({ datasetId: "abc123" })
+export default jig("x", { tools: [example.run_task, example.read_result] }, async (ctx) => {
+  await ctx.step("Run", [example.run_task, example.read_result], async () => {
+    await example.run_task({ target: "trending" })
+    await example.read_result({ target: "trending" })
   })
 })
 `
 
-    expect(collectBuildTimeToolPolicyIssues(code, [apifyResolution])).toContainEqual({
-      server: "apify",
-      message: "Build-time discovery already resolved the runtime target. This code must use the required runtime tools for apify: call-actor.",
-    })
+    expect(collectBuildTimeToolPolicyIssues(code, [genericResolution])).toEqual([])
   })
 
-  it("accepts concrete runtime code that only uses the selected execution tool", () => {
+  it("accepts concrete runtime code that only uses the required execution tool", () => {
     const code = `
 import { jig } from "@jig/sdk"
-import { apify } from "@jig/connections/apify.js"
+import { example } from "@jig/connections/example.js"
 
-export default jig("x", { tools: [apify.call_actor] }, async (ctx) => {
-  await ctx.step("Run", [apify.call_actor], async () => {
-    await apify.call_actor({ actor: "community/github-trending-scraper", input: { since: "weekly" } })
+export default jig("x", { tools: [example.run_task] }, async (ctx) => {
+  await ctx.step("Run", [example.run_task], async () => {
+    await example.run_task({ target: "trending" })
   })
 })
 `
 
-    expect(collectBuildTimeToolPolicyIssues(code, [apifyResolution])).toEqual([])
-  })
-
-  it("accepts resolved Apify input fields passed through a local object variable", () => {
-    const code = `
-import { jig } from "@jig/sdk"
-import { apify } from "@jig/connections/apify.js"
-
-export default jig("x", { tools: [apify.call_actor] }, async (ctx) => {
-  await ctx.step("Run", [apify.call_actor], async () => {
-    const input = { since: ctx.params.since, language: "typescript" }
-    await apify.call_actor({ actor: "community/github-trending-scraper", input })
-  })
-})
-`
-
-    expect(collectBuildTimeToolPolicyIssues(code, [apifyResolution])).toEqual([])
-  })
-
-  it("rejects a different Apify actor when build-time discovery already resolved one", () => {
-    const code = `
-import { jig } from "@jig/sdk"
-import { apify } from "@jig/connections/apify.js"
-
-export default jig("x", { tools: [apify.call_actor] }, async (ctx) => {
-  await ctx.step("Run", [apify.call_actor], async () => {
-    await apify.call_actor({ actorId: "apify/hello-world", input: "{}" })
-  })
-})
-`
-
-    expect(collectBuildTimeToolPolicyIssues(code, [apifyResolution])).toContainEqual({
-      server: "apify",
-      message: 'Build-time discovery resolved the Apify actor to "community/github-trending-scraper". This code must call that exact actor instead of substituting a different one or a placeholder.',
-    })
-  })
-
-  it("rejects apify.call_actor calls that use the wrong top-level params", () => {
-    const code = `
-import { jig } from "@jig/sdk"
-import { apify } from "@jig/connections/apify.js"
-
-export default jig("x", { tools: [apify.call_actor] }, async (ctx) => {
-  await ctx.step("Run", [apify.call_actor], async () => {
-    await apify.call_actor({ actorId: "community/github-trending-scraper", input: JSON.stringify({ since: "weekly" }) })
-  })
-})
-`
-
-    expect(collectBuildTimeToolPolicyIssues(code, [apifyResolution])).toContainEqual({
-      server: "apify",
-      message: "Use apify.call_actor with the MCP tool's exact params: pass `actor`, not `actorId`.",
-    })
-    expect(collectBuildTimeToolPolicyIssues(code, [apifyResolution])).toContainEqual({
-      server: "apify",
-      message: "Use apify.call_actor with a real object for `input`. Do not pass JSON strings or JSON.stringify(...).",
-    })
-  })
-
-  it("rejects missing required Apify actor input fields from build-time discovery", () => {
-    const code = `
-import { jig } from "@jig/sdk"
-import { apify } from "@jig/connections/apify.js"
-
-export default jig("x", { tools: [apify.call_actor] }, async (ctx) => {
-  await ctx.step("Run", [apify.call_actor], async () => {
-    await apify.call_actor({ actor: "community/github-trending-scraper", input: { language: "typescript" } })
-  })
-})
-`
-
-    expect(collectBuildTimeToolPolicyIssues(code, [apifyResolution])).toContainEqual({
-      server: "apify",
-      message: "Build-time discovery resolved required Apify actor input fields: since. The apify.call_actor input must provide them directly or map them from jig params/context.",
-    })
+    expect(collectBuildTimeToolPolicyIssues(code, [genericResolution])).toEqual([])
   })
 })
 
@@ -315,7 +230,7 @@ describe("run()", () => {
 
   it("passes params to handler", async () => {
     let received: Record<string, string> = {}
-    const testJig = jig("test", { params: { name: "Your name" } }, async (ctx) => {
+    const testJig = jig("test", { trigger: { type: "manual" } }, async (ctx) => {
       received = ctx.params
     })
     await run(testJig, { name: "Alice" })

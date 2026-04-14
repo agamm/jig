@@ -88,15 +88,6 @@ export function prettifyId(id: string): string {
   return id.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
-export function extractParams(code: string): Record<string, string> {
-  const m = code.match(/params\s*:\s*\{([^}]*(?:\{[^}]*\}[^}]*)*)\}/s)
-  if (!m) return {}
-  const params: Record<string, string> = {}
-  const entries = m[1].matchAll(/(\w+)\s*:\s*["'`]([^"'`]*)["'`]/g)
-  for (const e of entries) params[e[1]] = e[2]
-  return params
-}
-
 export function extractConnections(code: string): string[] {
   return getImportedServers(code)
 }

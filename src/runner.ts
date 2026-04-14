@@ -26,7 +26,7 @@ export interface RunResult {
  * Run a jig file with the given params.
  *
  * @param jigPath  Absolute path to the jig .ts file
- * @param params   Resolved params (prompting is the caller's job)
+ * @param params   Runtime inputs passed through to ctx.params
  * @param onEvent  Callback for every run event — progress, steps, errors, completion
  * @param options  dryRun: stub tool calls; silent: suppress console output
  */
@@ -143,18 +143,6 @@ async function _runJig(
         const short = t._toolName.includes("__") ? t._toolName.split("__")[1] : t._toolName
         toolReadOnly[short] = t._readOnly ?? true
       }
-    }
-
-    // 4. Validate required params
-    const required = Object.keys(def.options?.params ?? {})
-    const missing = required.filter((k: string) => {
-      const v = params[k]
-      return v == null || (typeof v === "string" && !v.trim())
-    })
-    if (missing.length > 0) {
-      const error = `Missing required params: ${missing.join(", ")}`
-      onEvent({ type: "error", message: error })
-      return { output: "", tools: [], durationMs: Date.now() - start, error }
     }
 
     // --- Run ---

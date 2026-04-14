@@ -354,6 +354,18 @@ export function clearStepCache(jigId: string): void {
   db.prepare(`DELETE FROM step_cache WHERE jig_id = ?`).run(jigId)
 }
 
+export function deleteJigLocalState(jigId: string): void {
+  const db = openDb()
+  const runIds = db.prepare(`SELECT id FROM runs WHERE jig_id = ?`).all(jigId) as Array<{ id: number }>
+  if (runIds.length > 0) {
+    const placeholders = runIds.map(() => "?").join(",")
+    db.prepare(`DELETE FROM run_steps WHERE run_id IN (${placeholders})`).run(...runIds.map((row) => row.id))
+  }
+  db.prepare(`DELETE FROM runs WHERE jig_id = ?`).run(jigId)
+  db.prepare(`DELETE FROM step_cache WHERE jig_id = ?`).run(jigId)
+  db.prepare(`DELETE FROM schedules WHERE jig_id = ?`).run(jigId)
+}
+
 // ---------------------------------------------------------------------------
 // Schedules
 // ---------------------------------------------------------------------------

@@ -66,7 +66,6 @@ export interface JigData {
   running?: boolean
   sparkline: number[]
   steps: JigStep[]
-  params?: Record<string, string>
   code: string
   runs: JigRun[]
   schedule?: ScheduleInfo

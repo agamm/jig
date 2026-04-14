@@ -506,26 +506,12 @@ async function runJigFile(path: string, io: JigIO, jigId: string) {
 
   const db = openDb()
 
-  // Extract param definitions — lightweight import just for prompting
-  let paramDefs: Record<string, string> = {}
-  try {
-    const mod = await import(path)
-    paramDefs = mod.default?.options?.params ?? {}
-  } catch {
-    // Import errors will be caught and classified by runJig() below
-  }
-
-  const params: Record<string, string> = {}
-  for (const [name, desc] of Object.entries(paramDefs)) {
-    params[name] = await io.ask(`${name} (${desc})`)
-  }
-
   const isDry = dryRun
-  const runId = isDry ? -1 : insertRun(jigId, Object.keys(params).length > 0 ? params : undefined)
+  const runId = isDry ? -1 : insertRun(jigId)
   const start = Date.now()
   const persistHandler = !isDry ? persist(runId, start) : null
 
-  const result = await runJig(path, params, (event) => {
+  const result = await runJig(path, {}, (event) => {
     if (event.type === "error") console.error(event.message)
     persistHandler?.(event)
   })

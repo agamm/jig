@@ -1,6 +1,6 @@
 import { readFileSync } from "fs"
 import type { JigTool, ToolPermission } from "../../shared/api.js"
-import { extractConnections, extractParams, extractTrigger, getJigFilePath } from "../domain/jig-source.js"
+import { extractConnections, extractTrigger, getJigFilePath } from "../domain/jig-source.js"
 import { getToolPermission } from "../db.js"
 
 function dedupeTools(tools: JigTool[]): JigTool[] {
@@ -12,7 +12,6 @@ export interface IntrospectedJig {
   filePath: string | null
   code: string
   trigger: string
-  params: Record<string, string>
   tools: JigTool[]
   connections: string[]
   steps: import("../../shared/api.js").JigStep[]
@@ -26,7 +25,6 @@ export async function introspectJig(id: string, options: { includeSteps?: boolea
     if (filePath) code = readFileSync(filePath, "utf-8")
   } catch {}
 
-  let params: Record<string, string> = {}
   let trigger = code ? extractTrigger(code) : ""
   let tools: JigTool[] = []
   let steps: import("../../shared/api.js").JigStep[] = []
@@ -35,7 +33,6 @@ export async function introspectJig(id: string, options: { includeSteps?: boolea
     try {
       const mod = await import(`${filePath}?_t=${Date.now()}_${Math.random().toString(36).slice(2)}`)
       const def = mod.default
-      if (def?.options) params = def.options.params ?? {}
       if (def?.options?.tools?.length) {
         tools = dedupeTools(def.options.tools.map((tool: any) => ({
           connection: tool._serverName,
@@ -44,7 +41,6 @@ export async function introspectJig(id: string, options: { includeSteps?: boolea
         })))
       }
     } catch {
-      params = extractParams(code)
       trigger = extractTrigger(code)
     }
   }
@@ -69,7 +65,6 @@ export async function introspectJig(id: string, options: { includeSteps?: boolea
     filePath,
     code,
     trigger,
-    params,
     tools,
     connections,
     steps,

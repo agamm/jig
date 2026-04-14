@@ -113,4 +113,17 @@ describe("validateDefinitionObject", () => {
     const result = validateDefinitionObject("not an object")
     expect(result.ok).toBe(false)
   })
+
+  it("rejects declared jig params", () => {
+    const result = validateDefinitionObject({
+      name: "bad-params",
+      options: {
+        trigger: { type: "manual" },
+        params: { name: "Your name" },
+      },
+      handler: async () => {},
+    })
+    expect(result.ok).toBe(false)
+    expect(result.errors.some((error) => error.field === "options.params")).toBe(true)
+  })
 })

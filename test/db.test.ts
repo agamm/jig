@@ -6,6 +6,7 @@ import {
   openDb, closeDb,
   insertRun, completeRun, listRuns, getRun, getJigRuns, getLastRun,
   insertStep, completeStep,
+  clearStepCache, deleteJigLocalState, getSchedule, getStepCache, setStepCache, upsertSchedule,
   getSetting, setSetting,
   getToolPermission, listToolPermissions, setToolPermission,
 } from "../src/db.js"
@@ -145,6 +146,24 @@ describe("getJigRuns includes steps", () => {
     const runs = getJigRuns("test-jig")
     expect(runs).toHaveLength(1)
     expect(runs[0].steps).toHaveLength(2)
+  })
+})
+
+describe("deleteJigLocalState", () => {
+  it("removes runs, steps, cache, and schedules for a deleted jig id", () => {
+    const runId = insertRun("test-jig")
+    insertStep(runId, 1, "Gather data")
+    setStepCache("test-jig", "abc123", [{ num: 1, name: "Gather data", connections: [] }])
+    upsertSchedule("test-jig", "cron", "0 8 * * 1", "catch-up", 1234567890, null)
+    insertRun("other-jig")
+
+    deleteJigLocalState("test-jig")
+
+    expect(getJigRuns("test-jig")).toEqual([])
+    expect(getLastRun("test-jig")).toBeNull()
+    expect(getSchedule("test-jig")).toBeNull()
+    expect(getStepCache("test-jig", "abc123")).toBeNull()
+    expect(listRuns("other-jig")).toHaveLength(1)
   })
 })
 

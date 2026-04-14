@@ -268,7 +268,6 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
   const [expandedRun, setExpandedRun] = useState<number | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
-  const [paramsExpanded, setParamsExpanded] = useState(false);
   const [codeCopied, setCodeCopied] = useState(false);
   const [reviewedToolKeys, setReviewedToolKeys] = useState<Set<string>>(new Set());
   const [queuedRemovalTools, setQueuedRemovalTools] = useState<JigStepTool[]>([]);
@@ -283,11 +282,6 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
     // Revalidate steps after jig data refreshes — ensures new code hash is used
     await revalidateSteps();
   });
-
-  const hasParams = jig.params && Object.keys(jig.params).length > 0;
-  const [paramValues, setParamValues] = useState<Record<string, string>>(() =>
-    Object.fromEntries(Object.entries(jig.params ?? {}).map(([k, v]) => [k, ""]))
-  );
 
   // Fetch derived steps via SWR (cached server-side by code hash)
   const { data: stepsData, isValidating: derivingSteps, error: stepsError, mutate: revalidateSteps } = useJigSteps(jigId);
@@ -352,7 +346,7 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
 
   const handleRun = (dryRun: boolean) => {
     setDetailTab("steps");
-    startRun(dryRun, hasParams ? paramValues : undefined);
+    startRun(dryRun);
   };
 
   const retryDerivation = () => { revalidateSteps(); };
@@ -472,7 +466,7 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
           </div>
         </div>
 
-        <div className={hasParams && !paramsExpanded ? "grid gap-2 md:grid-cols-2" : "space-y-2"}>
+        <div className="space-y-2">
           {/* Model selector (disabled — coming soon) */}
           <div className="flex items-center justify-between rounded-lg border border-[#17171a] bg-[#0d0d0f] px-3 py-1.5">
             <div className="flex items-center gap-2 min-w-0">
@@ -487,39 +481,6 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
               Locked
             </span>
           </div>
-
-          {/* Parameter inputs */}
-          {hasParams && (
-            <div className="rounded-lg border border-[#17171a] bg-[#0d0d0f]">
-              <button
-                type="button"
-                onClick={() => setParamsExpanded((value) => !value)}
-                className="flex w-full items-center justify-between px-3 py-1.5 text-left"
-              >
-                <div className="flex items-center gap-2">
-                  <h3 className="text-[10px] font-medium uppercase tracking-wider text-[#3f3f45]">Parameters</h3>
-                  <span className="text-[10px] text-[#323238]">{Object.keys(jig.params!).length}</span>
-                </div>
-                <span className="text-[10px] text-[#4b4b51]">{paramsExpanded ? "Hide" : "Show"}</span>
-              </button>
-              {paramsExpanded && (
-                <div className="border-t border-[#17171a] px-3 pb-3 pt-2 space-y-1.5">
-                  {Object.entries(jig.params!).map(([key, hint]) => (
-                    <div key={key} className="grid grid-cols-[76px_minmax(0,1fr)] items-center gap-2">
-                      <label className="text-[10px] text-[#4f4f55] font-mono truncate" title={key}>{key}</label>
-                      <input
-                        type="text"
-                        value={paramValues[key] ?? ""}
-                        onChange={(e) => setParamValues(prev => ({ ...prev, [key]: e.target.value }))}
-                        placeholder={hint || key}
-                        className="h-7 rounded-md border border-[#151518] bg-[#0a0a0b] px-2 text-[10px] text-[#acacb1] placeholder:text-[#36363b] outline-none focus:border-[#222228] transition-colors"
-                      />
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
         </div>
 
         {/* Steps or Code */}

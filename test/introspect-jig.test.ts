@@ -20,12 +20,11 @@ describe("introspectJig", () => {
     invalidateJigsCache()
   })
 
-  it("returns params, tools, and backend permissions", async () => {
+  it("returns tools and backend permissions", async () => {
     writeFileSync(join(JIGS_DIR, "introspect-case.ts"), `
 export default {
   options: {
     trigger: { type: "manual" },
-    params: { name: "Your name" },
     tools: [
       { _serverName: "workspace", _toolName: "gmail_send", _readOnly: false },
       { _serverName: "workspace", _toolName: "gmail_search", _readOnly: true },
@@ -38,7 +37,6 @@ export default {
 
     const jig = await introspectJig("introspect-case")
     expect(jig.trigger).toBe("Manual")
-    expect(jig.params).toEqual({ name: "Your name" })
     expect(jig.tools).toEqual([
       { connection: "workspace", name: "gmail_send", readOnly: false },
       { connection: "workspace", name: "gmail_search", readOnly: true },

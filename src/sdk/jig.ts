@@ -18,7 +18,6 @@ export type JigTrigger =
 
 export type JigOptions = {
   trigger: JigTrigger
-  params?: Record<string, unknown>
   tools?: JigTool<any, any>[]
 }
 
@@ -41,7 +40,7 @@ export function jig(
 
 /**
  * Run a jig with the given params. Pure execution — no I/O.
- * Param prompting is the caller's responsibility (CLI and dashboard both use io.ask adapters).
+ * `params` are runtime inputs only (for example webhook/manual payloads).
  * Returns the context so callers can access captured output.
  */
 export async function run(

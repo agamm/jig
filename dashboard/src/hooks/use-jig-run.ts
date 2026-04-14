@@ -198,7 +198,7 @@ export function useJigRun(jigId: string) {
     pollUntilDone(activeRunData.runId, abort, activeRunData.startedAt ?? Date.now(), activeRunData.dryRun === true);
   }, [activeRunData, pollUntilDone]);
 
-  const startRun = useCallback(async (dryRun: boolean, params?: Record<string, string>) => {
+  const startRun = useCallback(async (dryRun: boolean) => {
     cleanup();
     const abort = new AbortController();
     abortRef.current = abort;
@@ -211,7 +211,7 @@ export function useJigRun(jigId: string) {
     const startTime = Date.now();
 
     try {
-      const data = await startJigRun(jigId, { dryRun, params });
+      const data = await startJigRun(jigId, { dryRun });
       runIdRef.current = data.runId;
       setAttached(true);
       void mutateCache(activeRunKey(jigId), {

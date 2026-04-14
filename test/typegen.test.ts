@@ -102,6 +102,14 @@ describe("generateRuntimeModule (direct)", () => {
     expect(code).toContain(`"search-actors": search_actors`)
     expect(code).toContain(`"apify--rag-web-browser": apify_rag_web_browser`)
   })
+
+  it("emits dry-run output instead of synthesizing schema-shaped results", () => {
+    const code = generateRuntimeModule("testsvc", sampleTools)
+    expect(code).toContain(`ctx?.output(\`[dry-run] Would call testsvc.\${name} with \${JSON.stringify(params ?? {})}\`)`)
+    expect(code).toContain("buildDryRunToolResult")
+    expect(code).toContain("shouldStubToolInDryRun")
+    expect(code).not.toContain("DRY_RUN_OUTPUT_SCHEMAS")
+  })
 })
 
 describe("generateProxyRuntimeModule", () => {
@@ -150,7 +158,14 @@ describe("generateProxyRuntimeModule", () => {
   it("keeps dry-run gating for non-readOnly tools", () => {
     const code = generateProxyRuntimeModule("testproxy", sampleTools, proxyCallCode)
     expect(code).toContain("isDryRun()")
-    expect(code).toContain("_dryRun: true")
+    expect(code).toContain("buildDryRunToolResult")
+    expect(code).toContain("shouldStubToolInDryRun")
+  })
+
+  it("emits dry-run output for proxy tools instead of embedding schemas", () => {
+    const code = generateProxyRuntimeModule("testproxy", sampleTools, proxyCallCode)
+    expect(code).toContain(`ctx?.output(\`[dry-run] Would call testproxy.\${name} with \${JSON.stringify(params ?? {})}\`)`)
+    expect(code).not.toContain("DRY_RUN_OUTPUT_SCHEMAS")
   })
 
   it("sets all _serverName, _toolName, _readOnly metadata", () => {

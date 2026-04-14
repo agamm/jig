@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "bun:test"
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "fs"
 import { join } from "path"
 import { getJigFilePath } from "../src/domain/jig-source.js"
-import { applyRunEvent, finishTrackedRun, getActiveRunStatusForJig, resetRunStoreForTests, startTrackedRun } from "../src/services/run-store.js"
+import { applyRunEvent, clearTrackedRunsForJig, finishTrackedRun, getActiveRunStatusForJig, resetRunStoreForTests, startTrackedRun } from "../src/services/run-store.js"
 import { getActiveRunSnapshot, getRunDetail, startJigRun } from "../src/services/run-api.js"
 import { closeDb, openDb } from "../src/db.js"
 import { invalidateJigsCache } from "../src/discover.js"
@@ -77,6 +77,22 @@ describe("active run snapshots", () => {
     expect(status.startedAt!).toBeLessThanOrEqual(Date.now())
 
     finishTrackedRun(1003)
+  })
+
+  it("clears recent tracked results for a deleted jig", () => {
+    startTrackedRun(1004, "deleted-jig", false)
+    finishTrackedRun(1004)
+    expect(getActiveRunStatusForJig("deleted-jig").runId).toBe(1004)
+
+    clearTrackedRunsForJig("deleted-jig")
+
+    expect(getActiveRunStatusForJig("deleted-jig")).toEqual({
+      active: false,
+      jigId: "deleted-jig",
+      completedTools: [],
+      activeTools: [],
+      steps: [],
+    })
   })
 })
 

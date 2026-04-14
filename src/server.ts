@@ -6,7 +6,7 @@
  */
 import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs"
 import { join } from "path"
-import { closeDb, openDb } from "./db.js"
+import { closeDb, deleteJigLocalState, openDb } from "./db.js"
 import { getModelCatalog } from "./config/models.js"
 import { CONNECTIONS_DIR, JIGS_DIR, PROJECT_ROOT, SCHEMAS_DIR, TYPES_DIR } from "./config/paths.js"
 import { extractConnections, getJigFilePath, resolveJigPath } from "./domain/jig-source.js"
@@ -205,6 +205,9 @@ async function handleDeleteJig(id: string): Promise<Response> {
   const filePath = getJigFilePath(id)
   if (!filePath) throw new ApiError(404, "Jig file not found")
   rmSync(filePath, { force: true })
+  deleteJigLocalState(id)
+  const { clearTrackedRunsForJig } = await import("./services/run-store.js")
+  clearTrackedRunsForJig(id)
 
   invalidateJigsCache()
   return json({ ok: true, jigId: id })

@@ -333,7 +333,6 @@ async function buildAgentSystemPrompt(instruction: string, jigId?: string): Prom
       jigId,
       skillMd: authoring.context.skillMd,
       typeDefs: authoring.context.typeDefs,
-      toolCatalog: authoring.context.toolCatalog,
       serverDescriptions: authoring.context.serverDescriptions,
       buildHints: authoring.context.buildHints,
       currentCode,

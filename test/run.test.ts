@@ -117,27 +117,7 @@ describe("run validation guards", () => {
   beforeEach(async () => { await ensureDb() })
   afterEach(() => { rmSync(testJigPath, { force: true }) })
 
-  it("rejects jig with missing required params", async () => {
-    const { runJig } = await import("../src/runner.js")
-    writeFileSync(testJigPath, `
-import { jig } from "@jig/sdk"
-
-export default jig("test-params", {
-  trigger: { type: "manual" },
-  connections: [],
-  params: { name: "Your name" },
-}, async (ctx) => {
-  await ctx.step("print", [], async () => { ctx.output(ctx.params.name) })
-})
-`)
-    const events: RunEvent[] = []
-    const result = await runJig(testJigPath, {}, (e) => events.push(e), { dryRun: true, silent: true })
-
-    expect(result.error).toContain("Missing required params")
-    expect(result.error).toContain("name")
-  })
-
-  it("passes when required params are provided", async () => {
+  it("passes runtime params through to ctx.params without declared jig params", async () => {
     const { runJig } = await import("../src/runner.js")
     writeFileSync(testJigPath, `
 import { jig } from "@jig/sdk"
@@ -145,7 +125,6 @@ import { jig } from "@jig/sdk"
 export default jig("test-params-ok", {
   trigger: { type: "manual" },
   connections: [],
-  params: { name: "Your name" },
 }, async (ctx) => {
   await ctx.step("greet", [], async () => { ctx.output("Hello " + ctx.params.name) })
 })
@@ -179,6 +158,47 @@ export default jig("test-params-ok", {
   })
 })
 
-// dry-run flag propagation is covered indirectly by connection module tests.
-// The internal `isDryRun()` helper is not part of the public @jig/sdk surface,
-// so jigs cannot import it directly.
+describe("dry-run tool skipping", () => {
+  const testJigPath = join(JIGS_DIR, "_test_dry_run_skip.ts")
+
+  beforeEach(async () => { await ensureDb() })
+  afterEach(() => { rmSync(testJigPath, { force: true }) })
+
+  it("skips non-read tools, continues execution, and skips dependent follow-up reads", async () => {
+    const { runJig } = await import("../src/runner.js")
+    writeFileSync(testJigPath, `
+import { jig } from "@jig/sdk"
+import { apify } from "@jig/connections/apify.js"
+
+export default jig("test-dry-run-skip", {
+  trigger: { type: "manual" },
+  tools: [apify.call_actor, apify.get_actor_output],
+}, async (ctx) => {
+  let datasetId: string | undefined
+
+  await ctx.step("Write tool", [apify.call_actor], async () => {
+    const result = await apify.call_actor({
+      actor: "automation-lab/github-trending-scraper",
+      input: { since: "weekly", maxRepos: 1 },
+    }) as Record<string, any>
+    datasetId = result.datasetId
+    ctx.output("after skipped write")
+  })
+
+  await ctx.step("Dependent read", [apify.get_actor_output], async () => {
+    await apify.get_actor_output({ datasetId, limit: 1 })
+    ctx.output("after skipped read")
+  })
+})
+`)
+
+    const events: RunEvent[] = []
+    const result = await runJig(testJigPath, {}, (e) => events.push(e), { dryRun: true, silent: true })
+
+    expect(result.error).toBeUndefined()
+    expect(result.output).toContain("[dry-run] Would call apify.call-actor")
+    expect(result.output).toContain("after skipped write")
+    expect(result.output).toContain("[dry-run] Skipping apify.get-actor-output because its params depend on a skipped tool result")
+    expect(result.output).toContain("after skipped read")
+  })
+})

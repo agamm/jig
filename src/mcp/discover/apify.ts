@@ -69,7 +69,6 @@ export async function resolveForBuildWithOps(
     const chosen = detailedCandidates[0]
     return {
       context: buildResolutionContext(
-        args.description,
         chosen,
         explicitActor ? "The user explicitly named this Apify Actor." : "This was the only strong Apify Actor match found."
       ),
@@ -92,7 +91,7 @@ export async function resolveForBuildWithOps(
 
   const chosen = rankedCandidates.find((candidate) => candidate.fullName === actorName) ?? rankedCandidates[0]
   return {
-    context: buildResolutionContext(args.description, chosen, selection.reason),
+    context: buildResolutionContext(chosen, selection.reason),
     requiredTools: ["call-actor"],
     includeTools: ["call-actor", "get-actor-run", "get-actor-output"],
     excludeTools: ["search-actors", "fetch-actor-details"],
@@ -278,11 +277,7 @@ function normalizeChoiceText(value: string): string {
     .replace(/\s+/g, " ")
 }
 
-function buildResolutionContext(
-  description: string,
-  candidate: ActorCard & { details: ActorDetails },
-  reason: string
-): string {
+function buildResolutionContext(candidate: ActorCard & { details: ActorDetails }, reason: string): string {
   const actorInfo = candidate.details.actorInfo
   const actorName = actorInfo?.fullName ?? candidate.fullName
   const title = actorInfo?.title ?? candidate.title ?? actorName
@@ -292,18 +287,86 @@ function buildResolutionContext(
 
   const parts = [
     `Resolved Apify Actor at build time for this workflow: ${actorName}.`,
-    `Use apify.call_actor at runtime with actor "${actorName}". Pass the exact MCP params: use \`actor\`, not \`actorId\`, and pass a real object to \`input\`, not a JSON string. Prefer the normal sync flow when the user wants results now: call apify.call_actor, then read \`items\` and \`datasetId\` from that response. The jig should return the actor's actual results, not just the raw apify.call_actor envelope. If the response includes a \`datasetId\`, use apify.get_actor_output with that datasetId to fetch the real dataset items and output those items to the user. Do not call apify.get_actor_run immediately after a normal sync apify.call_actor just to recover output. Use apify.get_actor_run only for async/background runs or when the user explicitly needs run metadata. Do not use apify.search_actors or apify.fetch_actor_details in the jig runtime unless the user explicitly wants dynamic rediscovery.`,
-    `Why this actor was chosen: ${reason}`,
+    `Tool contract: call \`apify.call_actor({ actor: "${actorName}", input: { ... } })\`. Use \`actor\`, not \`actorId\`, and pass a real object to \`input\`, not a JSON string. When the response includes \`datasetId\`, call \`apify.get_actor_output({ datasetId })\`. Important: \`apify.get_actor_output\` returns an object like \`{ datasetId, items, itemCount, totalItemCount }\`, not the items array directly. Read \`const output = await apify.get_actor_output(...)\` and then \`const items = output.items ?? []\`. If the second tool depends on the first tool's result, prefer a second \`ctx.step(...)\` for \`apify.get_actor_output\` rather than calling both tools inside one step. Do not call \`apify.get_actor_run\` immediately after a normal sync \`apify.call_actor\` just to recover output. Do not use \`apify.search_actors\` or \`apify.fetch_actor_details\` in the jig runtime unless the user explicitly wants dynamic rediscovery.`,
+    `Selection note: ${reason}`,
     summary ? `Actor summary: ${title} — ${summary}` : `Actor summary: ${title}`,
-    `Original workflow request: ${description}`,
-    `Actor input schema:\n${JSON.stringify(inputSchema, null, 2)}`,
+    `Relevant actor input fields:\n${summarizeInputSchema(inputSchema)}`,
   ]
 
   if (outputSchema) {
-    parts.push(`Actor output schema:\n${JSON.stringify(outputSchema, null, 2)}`)
+    parts.push(`Relevant actor output fields:\n${summarizeOutputSchema(outputSchema)}`)
   }
 
   return parts.join("\n\n")
+}
+
+function summarizeInputSchema(schema: unknown): string {
+  const properties = getSchemaProperties(schema)
+  if (properties.length === 0) return "- No structured input schema was provided."
+
+  const required = new Set(Array.isArray((schema as any)?.required) ? (schema as any).required : [])
+  const ordered = [
+    ...properties.filter(([name]) => required.has(name)),
+    ...properties.filter(([name]) => !required.has(name)),
+  ]
+
+  return ordered.slice(0, 8).map(([name, value]) => {
+    const parts = [`- ${name}: ${summarizeSchemaValue(value)}`]
+    const description = firstLineSummary(getSchemaDescription(value))
+    if (description) parts.push(` — ${description}`)
+    return parts.join("")
+  }).join("\n")
+}
+
+function summarizeOutputSchema(schema: unknown): string {
+  const properties = prioritizeOutputFields(getSchemaProperties(schema))
+  if (properties.length === 0) return "- No structured output schema was provided."
+
+  return properties.slice(0, 10).map(([name, value]) => {
+    const description = firstLineSummary(getSchemaDescription(value))
+    return `- ${name}: ${summarizeSchemaValue(value)}${description ? ` — ${description}` : ""}`
+  }).join("\n")
+}
+
+function getSchemaProperties(schema: unknown): Array<[string, any]> {
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)) return []
+  const record = schema as Record<string, any>
+  if (record.properties && typeof record.properties === "object" && !Array.isArray(record.properties)) {
+    return Object.entries(record.properties)
+  }
+  return Object.entries(record)
+}
+
+function summarizeSchemaValue(value: any): string {
+  if (Array.isArray(value?.enum) && value.enum.length > 0) {
+    return value.enum.map((entry: unknown) => JSON.stringify(entry)).join(" | ")
+  }
+  if (typeof value === "string") return value
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "array"
+    return `array<${summarizeSchemaValue(value[0])}>`
+  }
+  if (value && typeof value === "object") {
+    if (typeof value.type === "string") return value.type
+    if (value.items) return `array<${summarizeSchemaValue(value.items)}>`
+    return "object"
+  }
+  return "unknown"
+}
+
+function getSchemaDescription(value: any): string {
+  return typeof value?.description === "string" ? value.description : ""
+}
+
+function prioritizeOutputFields(properties: Array<[string, any]>): Array<[string, any]> {
+  const priority = ["items", "datasetId", "itemCount", "totalItemCount", "rank", "fullName", "name", "description", "language", "stars", "starsToday", "forks", "url"]
+  const rank = new Map(priority.map((field, index) => [field, index]))
+  return [...properties].sort(([a], [b]) => {
+    const aRank = rank.get(a) ?? Number.MAX_SAFE_INTEGER
+    const bRank = rank.get(b) ?? Number.MAX_SAFE_INTEGER
+    if (aRank !== bRank) return aRank - bRank
+    return a.localeCompare(b)
+  })
 }
 
 async function parseActorCardsFromMarkdown(markdown: string, ops: ApifyDiscoveryOps): Promise<ActorCard[]> {

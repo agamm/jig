@@ -14,7 +14,6 @@ export async function startJigRun(id: string, body: any): Promise<StartRunRespon
   const discovered = discoverAllJigs()
   if (!discovered.has(id)) throw new ApiError(404, `Jig not found: ${id}`)
 
-  const params = (body?.params ?? {}) as Record<string, string>
   const dryRun = body?.dryRun === true
   const jigPath = resolveJigPath(id)
 
@@ -24,7 +23,7 @@ export async function startJigRun(id: string, body: any): Promise<StartRunRespon
   }
   if (hasActiveRunForJig(id)) throw new ApiError(409, `A run is already in progress for ${id}`)
 
-  const runId = dryRun ? -Date.now() : insertRun(id, Object.keys(params).length > 0 ? params : undefined)
+  const runId = dryRun ? -Date.now() : insertRun(id)
   startTrackedRun(runId, id, dryRun)
 
   const startTime = Date.now()
@@ -33,7 +32,7 @@ export async function startJigRun(id: string, body: any): Promise<StartRunRespon
   ;(async () => {
     let skipped = false
     try {
-      const result = await runJig(jigPath, params, (event) => {
+      const result = await runJig(jigPath, {}, (event) => {
         if (event.type !== "skipped") applyRunEvent(runId, event)
         if (event.type !== "skipped") persistHandler?.(event)
       }, { dryRun, silent: true, signal: getSignalForRun(runId) })

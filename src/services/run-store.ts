@@ -124,6 +124,19 @@ export function discardTrackedRun(runId: number): void {
   activeAborts.delete(runId)
 }
 
+export function clearTrackedRunsForJig(jigId: string): void {
+  const activeRunId = activeRuns.get(jigId)
+  if (activeRunId != null) {
+    activeRuns.delete(jigId)
+    activeAborts.delete(activeRunId)
+    runs.delete(activeRunId)
+  }
+
+  for (const [runId, run] of recentResults) {
+    if (run.jigId === jigId) recentResults.delete(runId)
+  }
+}
+
 export function getRunStatus(runId: number): RunStatus | null {
   const run = runs.get(runId) ?? recentResults.get(runId)
   if (!run) return null

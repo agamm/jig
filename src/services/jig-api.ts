@@ -82,7 +82,6 @@ export async function buildJigResponse(
     steps: jig.steps,
     code: jig.code,
     runs: formatRuns(runs),
-    params: jig.params,
     schedule,
     settings: {
       trigger: jig.trigger,

@@ -123,12 +123,11 @@ describe("apify authoring discovery", () => {
       },
     })
     expect(result?.context).toContain('Resolved Apify Actor at build time for this workflow: community/github-trending-scraper.')
-    expect(result?.context).toContain('Use apify.call_actor at runtime with actor "community/github-trending-scraper".')
-    expect(result?.context).toContain("Prefer the normal sync flow when the user wants results now")
-    expect(result?.context).toContain("then read `items` and `datasetId` from that response")
-    expect(result?.context).toContain("If the response includes a `datasetId`, use apify.get_actor_output")
-    expect(result?.context).toContain("Do not call apify.get_actor_run immediately after a normal sync apify.call_actor")
-    expect(result?.context).toContain('"since"')
+    expect(result?.context).toContain('Tool contract: call `apify.call_actor({ actor: "community/github-trending-scraper", input: { ... } })`.')
+    expect(result?.context).toContain("call `apify.get_actor_output({ datasetId })`")
+    expect(result?.context).toContain("`apify.get_actor_output` returns an object like `{ datasetId, items, itemCount, totalItemCount }`, not the items array directly")
+    expect(result?.context).toContain("If the second tool depends on the first tool's result, prefer a second `ctx.step(...)`")
+    expect(result?.context).toContain("- since: string")
     expect(llmCalls.some((call) => call.prompt.includes("Choose one short Apify Store search query"))).toBe(true)
     expect(llmCalls.some((call) => call.prompt.includes("Extract structured Apify Actor search results from markdown"))).toBe(true)
     expect(llmCalls.some((call) => call.prompt.includes("Extract structured Apify Actor details from markdown"))).toBe(true)
@@ -215,7 +214,7 @@ describe("apify authoring discovery", () => {
     expect(askCount).toBe(1)
     expect(result).not.toBeNull()
     expect(result?.context).toContain("Resolved Apify Actor at build time for this workflow: best/trending-github.")
-    expect(result?.context).toContain('Use apify.call_actor at runtime with actor "best/trending-github".')
+    expect(result?.context).toContain('Tool contract: call `apify.call_actor({ actor: "best/trending-github", input: { ... } })`.')
   })
 
   it("uses the LLM fallback instead of substring matching for fuzzy user choices", async () => {
@@ -371,7 +370,7 @@ describe("apify authoring discovery", () => {
 
     expect(result).not.toBeNull()
     expect(result?.resolvedTarget).toBe("automation-lab/github-trending-scraper")
-    expect(result?.context).toContain('Use apify.call_actor at runtime with actor "automation-lab/github-trending-scraper".')
+    expect(result?.context).toContain('Tool contract: call `apify.call_actor({ actor: "automation-lab/github-trending-scraper", input: { ... } })`.')
   })
 
   it("accepts actor cards returned with actorId/name aliases and still resolves details", async () => {
@@ -453,6 +452,6 @@ describe("apify authoring discovery", () => {
 
     expect(result).not.toBeNull()
     expect(result?.resolvedTarget).toBe("automation-lab/github-trending-scraper")
-    expect(result?.context).toContain('Use apify.call_actor at runtime with actor "automation-lab/github-trending-scraper".')
+    expect(result?.context).toContain('Tool contract: call `apify.call_actor({ actor: "automation-lab/github-trending-scraper", input: { ... } })`.')
   })
 })

@@ -5,10 +5,11 @@
  * and can be run standalone: bun run src/validate.ts jigs/weekly-update.ts
  */
 import { existsSync } from "fs"
+import ts from "typescript"
 import type { JigDefinition, JigTrigger } from "./sdk/jig.js"
 import { PROJECT_ROOT } from "./config/paths.js"
 import { toolNameToIdentifier } from "./mcp/typegen.js"
-import { getConnectionToolReferences } from "./domain/source-analysis.js"
+import { getConnectionImportBindings, getConnectionToolReferences } from "./domain/source-analysis.js"
 
 // ---------------------------------------------------------------------------
 // Validation errors
@@ -95,11 +96,11 @@ function validateDefinition(def: unknown): ValidationError[] {
       }
     }
 
-    // params
     if (opts.params !== undefined) {
-      if (typeof opts.params !== "object" || opts.params === null) {
-        errors.push({ field: "options.params", message: "Params must be a Record<string, string>" })
-      }
+      errors.push({
+        field: "options.params",
+        message: "Jig options.params is no longer supported. Use runtime ctx.params from webhook/manual payloads without declaring params in the jig options.",
+      })
     }
   }
 
@@ -137,6 +138,136 @@ export function checkToolDeclarations(code: string, declaredToolNames: string[])
   return errors.filter(e => {
     if (seen.has(e.field)) return false
     seen.add(e.field)
+    return true
+  })
+}
+
+function isCtxStepCall(node: ts.Node): node is ts.CallExpression {
+  if (!ts.isCallExpression(node)) return false
+  const expr = node.expression
+  return ts.isPropertyAccessExpression(expr)
+    && ts.isIdentifier(expr.expression)
+    && expr.expression.text === "ctx"
+    && expr.name.text === "step"
+}
+
+function getConnectionToolReferenceFromExpression(
+  expr: ts.Expression,
+  bindings: Map<string, string>
+): { serverName: string; toolName: string } | null {
+  if (!ts.isPropertyAccessExpression(expr) || !ts.isIdentifier(expr.expression)) return null
+  const serverName = bindings.get(expr.expression.text)
+  if (!serverName) return null
+  return { serverName, toolName: expr.name.text }
+}
+
+function collectToolArrayInitializers(sf: ts.SourceFile): Map<string, ts.Expression> {
+  const vars = new Map<string, ts.Expression>()
+
+  const visit = (node: ts.Node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      vars.set(node.name.text, node.initializer)
+    }
+    ts.forEachChild(node, visit)
+  }
+
+  visit(sf)
+  return vars
+}
+
+function resolveStepToolArray(
+  expr: ts.Expression | undefined,
+  bindings: Map<string, string>,
+  vars: Map<string, ts.Expression>,
+  seen = new Set<string>()
+): Set<string> {
+  const resolved = new Set<string>()
+  if (!expr) return resolved
+
+  const addExpr = (child: ts.Expression | undefined) => {
+    for (const value of resolveStepToolArray(child, bindings, vars, seen)) {
+      resolved.add(value)
+    }
+  }
+
+  if (ts.isArrayLiteralExpression(expr)) {
+    for (const element of expr.elements) {
+      if (ts.isSpreadElement(element)) {
+        addExpr(element.expression)
+        continue
+      }
+      if (ts.isExpression(element)) {
+        addExpr(element)
+      }
+    }
+    return resolved
+  }
+
+  if (ts.isIdentifier(expr)) {
+    if (seen.has(expr.text)) return resolved
+    seen.add(expr.text)
+    addExpr(vars.get(expr.text))
+    seen.delete(expr.text)
+    return resolved
+  }
+
+  const ref = getConnectionToolReferenceFromExpression(expr, bindings)
+  if (ref) {
+    resolved.add(`${ref.serverName}.${ref.toolName}`)
+  }
+
+  return resolved
+}
+
+export function checkStepToolDeclarations(code: string, fileName = "jig.ts"): ValidationError[] {
+  const sf = ts.createSourceFile(fileName, code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const bindings = new Map(
+    getConnectionImportBindings(code, fileName).map((binding) => [binding.localName, binding.serverName])
+  )
+  const toolVars = collectToolArrayInitializers(sf)
+  const errors: ValidationError[] = []
+
+  const visitStep = (node: ts.Node) => {
+    if (!isCtxStepCall(node)) {
+      ts.forEachChild(node, visitStep)
+      return
+    }
+
+    const stepLabel = node.arguments[0] && ts.isStringLiteralLike(node.arguments[0])
+      ? node.arguments[0].text
+      : "(dynamic step)"
+    const allowedTools = resolveStepToolArray(node.arguments[1], bindings, toolVars)
+    const callback = node.arguments[2]
+    if (!callback || (!ts.isArrowFunction(callback) && !ts.isFunctionExpression(callback))) {
+      return
+    }
+
+    const scan = (child: ts.Node) => {
+      if (isCtxStepCall(child)) return
+      if (ts.isPropertyAccessExpression(child)) {
+        const ref = getConnectionToolReferenceFromExpression(child, bindings)
+        if (ref) {
+          const qualified = `${ref.serverName}.${ref.toolName}`
+          if (!allowedTools.has(qualified)) {
+            errors.push({
+              field: `steps.${stepLabel}.${qualified}`,
+              message: `Tool "${qualified}" is used inside step "${stepLabel}" but is not declared in that step's tools array. Add it to that ctx.step() call or move it into a separate step.`,
+            })
+          }
+        }
+      }
+      ts.forEachChild(child, scan)
+    }
+
+    scan(callback.body)
+  }
+
+  visitStep(sf)
+
+  const seen = new Set<string>()
+  return errors.filter((error) => {
+    if (seen.has(error.field)) return false
+    seen.add(error.field)
     return true
   })
 }
@@ -233,6 +364,7 @@ export async function validateJigFile(path: string): Promise<ValidationResult> {
         const declaredNames = tools.map((t: any) => t._toolName).filter(Boolean)
         errors.push(...checkToolDeclarations(code, declaredNames))
       }
+      errors.push(...checkStepToolDeclarations(code, path))
       errors.push(...checkPlaceholderJigPatterns(code))
     } catch {}
 

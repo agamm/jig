@@ -17,7 +17,6 @@ type AgentPromptInput = {
   jigId?: string
   skillMd: string
   typeDefs: string
-  toolCatalog: string
   serverDescriptions: string
   buildHints?: string
   currentCode?: string
@@ -46,6 +45,7 @@ function agentExecutionRules() {
 - Use ctx.output() for output, NEVER console.log()
 - End the file with: export default myJig
 - Do NOT use require() or CommonJS
+- Every connection tool used inside a ctx.step() callback MUST be declared in that same step's tools array. If one tool's result feeds another tool, prefer splitting that into two sequential ctx.step() blocks.
 - BEFORE writing any code, check: does this jig need the user's email, name, Slack channel, or any other personal constant? If yes, STOP and ask the user — do not write code until you have their answer. Do not use a tool call or agent() to discover it at runtime. Do not embed tricks like "find my email in sent mail". Just ask.
 - BEFORE writing any code, also check: is the trigger type obvious from the user's description? The three triggers are manual, cron, webhook.
 - Trigger precedence rule: explicit trigger wording wins over timing words that only describe the data window or content. Example: explicit manual wording still means manual even if the task mentions "last week", "daily", or "weekly" as content context.
@@ -55,6 +55,8 @@ function agentExecutionRules() {
 - If the user explicitly names a connection/provider/server, preserve that intent. Prefer that exact connection over inferred alternatives unless it is clearly impossible or mismatched for the task.
 - Prefer the smallest sufficient connection set. If the user explicitly wants to access a site or dataset via a provider like Apify, do not pull in that site's first-party connection unless the jig truly needs the first-party API or write actions as well.
 - For webhook jigs, the POST body becomes ctx.params as nested JSON. Telegram example: const text = (ctx.params.message as any)?.text. Cast to any for nested shapes.
+- Do NOT declare options.params in a jig. Human-configured jig params are no longer supported.
+- ctx.params still exists at runtime for webhook/manual payloads passed in externally. Use it only when the runtime input is intrinsic to the trigger payload, not as declared jig configuration.
 - ALWAYS run check_jig after writing code
 - If check_jig reports errors, fix them and check again until it passes
 - For Jig-specific behavior, prompts, validators, schemas, or generated code, use the repo context above as the source of truth. Do NOT browse or web-search for Jig docs or Jig behavior.
@@ -111,7 +113,6 @@ export function buildAgentJigSystemPrompt({
   jigId,
   skillMd,
   typeDefs,
-  toolCatalog,
   serverDescriptions,
   buildHints,
   currentCode,
@@ -124,7 +125,6 @@ IMPORTANT: Act immediately. Do NOT describe what you plan to do — just do it. 
     skillMd,
     typeDefs,
     section("Available Connections", serverDescriptions),
-    section("Tool Catalog", toolCatalog),
     section("Build-Time Resolved Runtime Targets", buildHints),
     currentCode ? section(`Current Jig Code (${jigId})`, `\`\`\`typescript\n${currentCode}\n\`\`\``) : null,
     exampleJig && jigId !== "weekly-update"

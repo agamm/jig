@@ -127,7 +127,6 @@ export function sendAgentMessage(
 
 export function startJigRun(jigId: string, payload: {
   dryRun: boolean
-  params?: Record<string, string>
 }): Promise<StartRunResponse> {
   return fetchJson(`/api/jigs/${encodeURIComponent(jigId)}/run`, {
     method: "POST",

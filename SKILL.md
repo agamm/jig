@@ -28,13 +28,10 @@ import { granola } from "@jig/connections/granola.js"
 import { workspace } from "@jig/connections/workspace.js"
 
 const myJig = jig("my-jig", {
-  params: {
-    company: "Company or project name",       // description, not type
-    recipient: "Email address for the draft",
-  },
   tools: [granola.list_meetings, workspace.gmail_createDraft],
 }, async (ctx) => {
-  const { company, recipient } = ctx.params
+  const company = "Acme"
+  const recipient = "client@example.com"
   // ...
 })
 
@@ -155,6 +152,8 @@ await ctx.step("Send Telegram", [telegram_send_message], async () => {
 Rules:
 - Wrap every logical group of tool calls in a `ctx.step()` block
 - Each step declares exactly which tools it uses — only those tools work inside the block
+- Every connection tool used inside a step callback MUST appear in that same step's tools array. If you call `apify.call_actor` and then `apify.get_actor_output`, either declare both tools in that step or, preferably, split them into two sequential steps.
+- If you violate the step tool allowlist, runtime fails with an error like: `Tool "apify.get-actor-output" is not allowed in step "Scrape GitHub trending repos". Declare it in the tools array of your ctx.step() call.`
 - **Steps MUST be flat — never nest `ctx.step()` inside another `ctx.step()` callback. The runtime AND the static validator throw if you do.**
 - Conditional early-return is fine, but the early-return path must NOT contain another `ctx.step()` — finish the current step, then branch in the outer handler.
 - `agent()` and `llm()` calls are always allowed inside any step — they don't need to be in the tools array
@@ -162,16 +161,16 @@ Rules:
 - ALL `ctx.output()` calls must be inside `ctx.step()` blocks — output is tied to the step it belongs to
 - Use `ctx.output()` inside steps to show progress
 
-### 3. Keep params minimal
-- Only add `params` when the user's description implies configurability
-- If the request already specifies the value, hardcode it
-- If the jig works without user input, omit `params` entirely
-- Do NOT invent placeholder params for values that are already implied by the request
+### 3. Do NOT declare jig params
+- Do NOT declare `options.params` in a jig. Human-configured jig params are no longer supported.
+- If the request already specifies the value, hardcode it.
+- If you need a constant that the user did not provide, ask the user, then hardcode their answer.
+- `ctx.params` still exists at runtime for incoming webhook/manual payloads passed in externally. Use it only for intrinsic runtime payload data, not for declared jig configuration.
 
 ### 4. Hardcode constants, don't discover them at runtime
 - If the jig needs a value that is constant across runs (the user's email, name, team, Slack channel, timezone, recipient list, etc.), prefer hardcoding it over discovering it at runtime
 - If you don't know a constant, ask the user before writing code. Keep the question short: "What email should I send the briefing to?" Then hardcode their answer.
-- Only use `params` for values that genuinely change between runs
+- Do not turn those constants into jig params
 
 ### 5. Use the right tools
 The available tools and probe results show what's available. Use multiple relevant tools when they materially improve the result.
@@ -268,13 +267,13 @@ Use `agent()` only where you genuinely need fuzzy judgment.
 - Conditional logic based on params
 - Combining or restructuring data between steps
 
-### Params
+### Runtime payloads
 
-Only add `params` when the user clearly wants to vary something between runs.
+Do not declare jig params. When a trigger naturally carries runtime data, read it from `ctx.params`.
 
-- If the request already specifies the value, hardcode it
-- If the workflow can run sensibly without any user input, omit `params`
-- Do not add placeholder params for things like limits, labels, time ranges, or recipients unless the request implies they should be editable
+- Webhook payloads arrive as nested JSON on `ctx.params`
+- Manual runs may also pass runtime payloads externally
+- If a value is really a constant, ask once and hardcode it instead of reading it from `ctx.params`
 
 Good:
 
@@ -289,11 +288,12 @@ const myJig = jig("weekly-update", {
 Also good:
 
 ```typescript
-const myJig = jig("client-update", {
-  params: { client: "Client or company name" },
+const myJig = jig("telegram-message", {
+  trigger: { type: "webhook" },
   tools: [workspace.gmail_search],
 }, async (ctx) => {
-  const emails = await workspace.gmail_search({ query: ctx.params.client })
+  const message = (ctx.params.message as any)?.text ?? ""
+  const emails = await workspace.gmail_search({ query: message })
 })
 ```
 
@@ -468,8 +468,8 @@ gathered meeting data with participant emails, it knows who the recipient is.
 
 Instead of asking the user for a recipient:
 ```typescript
-// Don't do this — forces the user to provide what the data already contains
-params: { recipient: "Email address" }
+// Don't do this — don't turn inferred constants into runtime payloads or config
+const recipient = (ctx.params as any).recipient
 ```
 
 Have the agent figure it out during its pass — it already has the data:

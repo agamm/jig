@@ -94,6 +94,28 @@ describe("active run snapshots", () => {
       steps: [],
     })
   })
+
+  it("treats dry-run stub failures as limited previews instead of hard failures", () => {
+    startTrackedRun(1005, "dry-run-jig", true)
+    applyRunEvent(1005, { type: "step-start", seq: 1, label: "Call write tool" })
+    applyRunEvent(1005, {
+      type: "step-done",
+      seq: 1,
+      status: "fail",
+      output: "[dry-run] Would call apify.call-actor with {}",
+      durationMs: 5,
+      connections: ["apify"],
+      error: "Cannot read properties of undefined",
+    })
+    applyRunEvent(1005, { type: "error", message: "Cannot read properties of undefined" })
+    finishTrackedRun(1005)
+
+    const status = getActiveRunStatusForJig("dry-run-jig")
+    expect(status.status).toBe("success")
+    expect(status.error).toBeUndefined()
+    expect(status.steps[0].status).toBe("healed")
+    expect(status.steps[0].output).toContain("Use Run for a real execution")
+  })
 })
 
 describe("run API invariants", () => {

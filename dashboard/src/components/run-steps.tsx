@@ -127,6 +127,7 @@ export function RunSteps({
           const hasOutput = !!step.output || (step.status === "fail" && !!modeError);
           const isExpanded = expandedStep === i;
           const stepRunning = step.status === "running";
+          const dryRunLimited = isDryRun && !!step.output?.includes("[dry-run]") && (step.status === "healed" || step.status === "fail");
           const groupedTools = step.tools ? groupToolsByConnection(step.tools) : [];
 
           // Status indicator
@@ -140,6 +141,9 @@ export function RunSteps({
                   <Spinner size={18} />
                 </span>
               );
+            }
+            if (dryRunLimited) {
+              return <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-[10px] text-amber-300 mt-0.5">~</span>;
             }
             if (step.status === "success" || step.status === "healed") {
               return <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500/15 text-[10px] text-emerald-400 mt-0.5">&#10003;</span>;
@@ -169,7 +173,15 @@ export function RunSteps({
               >
                 {statusEl}
                 <div className="flex-1 min-w-0">
-                  <p className={`text-[13px] font-medium ${stepRunning ? "text-[#ededed]" : step.status === "success" ? "text-[#999]" : "text-[#ddd]"}`}>{step.name}</p>
+                  <p className={`text-[13px] font-medium ${
+                    stepRunning
+                      ? "text-[#ededed]"
+                      : dryRunLimited
+                      ? "text-[#d6c29a]"
+                      : step.status === "success"
+                      ? "text-[#999]"
+                      : "text-[#ddd]"
+                  }`}>{step.name}</p>
                   {groupedTools.length > 0 && toolDisplay === "collapsed" ? (
                     <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                       {groupedTools.map(([connection, tools]) => (
@@ -357,8 +369,19 @@ export function RunSteps({
               {isExpanded && (step.output || (step.status === "fail" && modeError)) && (
                 <div className={`px-4 pb-3 pl-12 ${stepRunning ? "relative z-10" : ""}`} style={{ animation: "fade-up 0.1s ease" }}>
                   <div className="relative group/output">
-                    <div className={`rounded-md border max-h-[260px] overflow-y-auto p-3 pr-8 ${step.status === "fail" ? "bg-rose-500/5 border-rose-500/20" : "bg-[#0a0a0b] border-[#1f1f23]"}`}>
-                      {step.status === "fail" ? (
+                    <div className={`rounded-md border max-h-[260px] overflow-y-auto p-3 pr-8 ${
+                      dryRunLimited
+                        ? "bg-amber-500/[0.04] border-amber-500/20"
+                        : step.status === "fail"
+                        ? "bg-rose-500/5 border-rose-500/20"
+                        : "bg-[#0a0a0b] border-[#1f1f23]"
+                    }`}>
+                      {dryRunLimited ? (
+                        <div className="space-y-2">
+                          <p className="text-[10px] uppercase tracking-wider text-amber-300/85">Dry Run Limited</p>
+                          <pre className="text-[10px] font-mono whitespace-pre-wrap text-[#ccc]">{step.output || modeError || ""}</pre>
+                        </div>
+                      ) : step.status === "fail" ? (
                         <pre className="text-[10px] font-mono whitespace-pre-wrap text-[#ccc]">{step.output || modeError || ""}</pre>
                       ) : (
                         <MarkdownOutput markdown={step.output || modeError || ""} />

@@ -27,6 +27,10 @@ const runs = new Map<number, RunRecord>()
 /** runId → RunRecord for recently finished runs */
 const recentResults = new Map<number, RunRecord>()
 
+function isDryRunLimitedOutput(output?: string): boolean {
+  return typeof output === "string" && output.includes("[dry-run]")
+}
+
 export function hasActiveRunForJig(jigId: string): boolean {
   return activeRuns.has(jigId)
 }
@@ -71,11 +75,14 @@ export function applyRunEvent(runId: number, event: RunEvent): void {
   if (event.type === "step-done") {
     const step = run.steps.find((s) => s.seq === event.seq)
     if (step) {
-      step.status = event.status
-      step.output = event.output
+      const dryRunLimited = run.dryRun && event.status === "fail" && isDryRunLimitedOutput(event.output)
+      step.status = dryRunLimited ? "healed" : event.status
+      step.output = dryRunLimited
+        ? `${event.output}\n\n[dry-run] This preview stopped here because a later value depends on a skipped write tool. Use Run for a real execution.`
+        : event.output
       step.connections = event.connections
       step.durationMs = event.durationMs
-      step.error = event.error
+      step.error = dryRunLimited ? undefined : event.error
     }
     return
   }
@@ -95,6 +102,11 @@ export function applyRunEvent(runId: number, event: RunEvent): void {
   }
 
   if (event.type === "error") {
+    if (run.dryRun && run.steps.some((step) => step.status === "healed" && isDryRunLimitedOutput(step.output))) {
+      run.done = true
+      run.activeTools = []
+      return
+    }
     run.done = true
     run.error = event.message
     run.activeTools = []

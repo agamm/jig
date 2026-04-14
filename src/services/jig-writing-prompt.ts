@@ -43,6 +43,7 @@ function agentExecutionRules() {
 - Import connections: import { serverName } from "@jig/connections/serverName"
 - Do NOT use relative imports (../) — always use the "@jig/sdk" and "@jig/connections/" aliases
 - Use ctx.output() for output, NEVER console.log()
+- When outputting URLs or repo references with ctx.output(), prefer markdown links like [label](https://...) instead of bare URLs
 - End the file with: export default myJig
 - Do NOT use require() or CommonJS
 - Every connection tool used inside a ctx.step() callback MUST be declared in that same step's tools array. If one tool's result feeds another tool, prefer splitting that into two sequential ctx.step() blocks.

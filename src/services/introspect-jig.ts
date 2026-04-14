@@ -18,11 +18,18 @@ export interface IntrospectedJig {
   permissions: ToolPermission[]
 }
 
-export async function introspectJig(id: string, options: { includeSteps?: boolean } = {}): Promise<IntrospectedJig> {
-  const filePath = getJigFilePath(id)
-  let code = ""
+export async function introspectJig(
+  id: string,
+  options: {
+    includeSteps?: boolean
+    filePathOverride?: string | null
+    codeOverride?: string
+  } = {}
+): Promise<IntrospectedJig> {
+  const filePath = options.filePathOverride ?? getJigFilePath(id)
+  let code = options.codeOverride ?? ""
   try {
-    if (filePath) code = readFileSync(filePath, "utf-8")
+    if (!code && filePath) code = readFileSync(filePath, "utf-8")
   } catch {}
 
   let trigger = code ? extractTrigger(code) : ""

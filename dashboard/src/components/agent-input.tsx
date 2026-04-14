@@ -12,7 +12,7 @@ type AgentState = {
   canSend: boolean
   sendMessage: (msg: string) => Promise<boolean>
   startSession: (msg: string, jigId?: string) => Promise<boolean>
-  reset: () => void
+  reset: () => Promise<void>
 }
 
 export function AgentInput({
@@ -103,7 +103,7 @@ export function AgentInput({
           onClick={() => {
             input.clear()
             input.clearHistory()
-            agent.reset()
+            void agent.reset()
           }}
           variant="subtle"
           size="xs"

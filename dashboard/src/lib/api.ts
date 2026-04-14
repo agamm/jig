@@ -125,6 +125,18 @@ export function sendAgentMessage(
   })
 }
 
+export function approveAgentDraft(sessionId: string): Promise<{ ok: true }> {
+  return fetchJson(`/api/agent/${sessionId}/approve`, {
+    method: "POST",
+  })
+}
+
+export function closeAgentSession(sessionId: string): Promise<{ ok: true }> {
+  return fetchJson(`/api/agent/${sessionId}/close`, {
+    method: "DELETE",
+  })
+}
+
 export function startJigRun(jigId: string, payload: {
   dryRun: boolean
 }): Promise<StartRunResponse> {

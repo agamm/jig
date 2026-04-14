@@ -8,7 +8,7 @@ import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs
 import { join } from "path"
 import { closeDb, deleteJigLocalState, openDb } from "./db.js"
 import { getModelCatalog } from "./config/models.js"
-import { CONNECTIONS_DIR, JIGS_DIR, PROJECT_ROOT, SCHEMAS_DIR, TYPES_DIR } from "./config/paths.js"
+import { CONNECTIONS_DIR, DRAFT_JIGS_DIR, JIGS_DIR, PROJECT_ROOT, SCHEMAS_DIR, TYPES_DIR } from "./config/paths.js"
 import { extractConnections, getJigFilePath, resolveJigPath } from "./domain/jig-source.js"
 import { invalidateJigsCache } from "./discover.js"
 import {
@@ -20,7 +20,7 @@ import {
 } from "./domain/triggers.js"
 import { loadServerConfigs } from "./mcp/config.js"
 import { buildJigResponse, discoverAllJigs } from "./services/jig-api.js"
-import { getAgentSessionStatus, pushAgentMessage, startAgentSession } from "./services/agent-service.js"
+import { approveAgentDraft, closeAgentSession, getAgentSessionStatus, pushAgentMessage, startAgentSession } from "./services/agent-service.js"
 import { cancelActiveRun, getActiveRunSnapshot, getRunDetail, startJigRun } from "./services/run-api.js"
 import { getNotificationSettings, saveNotificationSettings, notify, type NotificationSettings } from "./services/notify.js"
 import { connectConfiguredServer } from "./services/connect-server.js"
@@ -38,6 +38,10 @@ import { firstLineSummary } from "./text.js"
 
 function ensureJigExists(id: string): void {
   if (!discoverAllJigs().has(id)) throw new ApiError(404, `Jig not found: ${id}`)
+}
+
+function removeStaleDraftFiles(): void {
+  rmSync(DRAFT_JIGS_DIR, { recursive: true, force: true })
 }
 
 async function handleGetVersions(jigId: string): Promise<Response> {
@@ -252,6 +256,7 @@ async function handleResetLocalState(): Promise<Response> {
 
 export function createApiServer(port: number) {
   openDb()
+  removeStaleDraftFiles()
   // Clear step cache on startup — ensures stale derivations from old SDK versions don't persist
   const { clearAllStepCache } = require("./db.js")
   clearAllStepCache()
@@ -339,6 +344,14 @@ export function createApiServer(port: number) {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
             const body = await req.json().catch(() => ({}))
             return json(await pushAgentMessage(route.params.sessionId, body))
+          }
+          case "agentApprove": {
+            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+            return json(await approveAgentDraft(route.params.sessionId))
+          }
+          case "agentClose": {
+            if (req.method !== "DELETE") return json({ error: "Method not allowed" }, 405)
+            return json(await closeAgentSession(route.params.sessionId))
           }
           case "getVersions":
             return handleGetVersions(route.params.id)

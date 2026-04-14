@@ -303,14 +303,31 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
           }))
           : derivedSteps
       }
-      // Merge humanized names from derivedSteps into liveSteps by step number
-      return liveSteps.map(live => {
-        const derived = derivedSteps.find(d => d.num === live.num);
-        if (!derived) return live;
-        const merged: RunStep = { ...live, tools: derived.tools ?? live.tools };
+
+      if (derivedSteps.length === 0) return liveSteps;
+
+      const liveByNum = new Map(liveSteps.map((step) => [step.num, step]));
+      const mergedSteps = derivedSteps.map((derived) => {
+        const live = liveByNum.get(derived.num);
+        if (!live) {
+          return {
+            ...derived,
+            status: mode.type === "running" ? "pending" as const : undefined,
+          };
+        }
+
+        const merged: RunStep = {
+          ...derived,
+          ...live,
+          tools: derived.tools ?? live.tools,
+          connections: derived.connections ?? live.connections,
+        };
         if (derived.name.length <= 60) merged.name = derived.name;
         return merged;
       });
+
+      const extraLiveSteps = liveSteps.filter((live) => !derivedSteps.some((derived) => derived.num === live.num));
+      return [...mergedSteps, ...extraLiveSteps];
     }
     return derivedSteps;
   }, [derivedSteps, mode, liveSteps]);
@@ -641,7 +658,7 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
         >
           <div className="rounded-lg border border-[#1f1f23] bg-[#111113] divide-y divide-[#1a1a1d] max-h-[300px] overflow-y-auto">
             {jig.runs.slice(0, 10).map((run, i) => {
-              const resultStep = run.steps?.find(s => s.output);
+              const resultStep = [...(run.steps ?? [])].reverse().find((s) => s.output?.trim());
               const runOutput = resultStep?.output ?? run.output;
               const outputPreview = runOutput?.slice(0, 80);
               const date = new Date(run.date);

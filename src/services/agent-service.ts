@@ -1,15 +1,18 @@
-import { existsSync, readFileSync } from "fs"
+import { existsSync, mkdirSync, readFileSync, rmSync } from "fs"
 import OpenAI from "openai"
 import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions"
-import type { AgentConversationTurn, AgentEvent, AgentMetrics, AgentStatusResponse, StartAgentResponse } from "../../shared/api.js"
+import type { AgentConversationTurn, AgentDraftApproval, AgentEvent, AgentMetrics, AgentStatusResponse, StartAgentResponse } from "../../shared/api.js"
 import { JIG_EDITOR_MODEL } from "../config/models.js"
+import { DRAFT_JIGS_DIR } from "../config/paths.js"
 import { isValidJigId } from "../domain/jig-id.js"
 import { resolveJigPath } from "../domain/jig-source.js"
+import { invalidateJigsCache } from "../discover.js"
 import { checkJigFile } from "./jig-checker.js"
 import { buildAgentJigSystemPrompt } from "./jig-writing-prompt.js"
 import { writeJigSource } from "./jig-writer.js"
 import { ApiError } from "../server/http.js"
 import { logSessionEvent } from "../debug/session-log.js"
+import { buildDraftJigResponse } from "./jig-api.js"
 import {
   buildAuthoringState,
   collectBuildTimeToolPolicyIssues,
@@ -17,6 +20,7 @@ import {
   hasExplicitEmptyToolsArray,
   type BuildTimeResolution,
 } from "../jig-gen.js"
+import { setToolPermission } from "../db.js"
 
 const MAX_AGENT_ROUNDS = 15
 const AGENT_SESSION_TTL = 30 * 60 * 1000
@@ -24,6 +28,7 @@ const AGENT_SESSION_TTL = 30 * 60 * 1000
 type AgentSession = {
   sessionId: string
   jigId?: string
+  creationMode: boolean
   authoringIntent: string
   conversationHistory: AgentConversationTurn[]
   authoringPolicy: {
@@ -37,10 +42,60 @@ type AgentSession = {
   createdAt: number
   pendingAskToolCallId?: string
   pendingAskQuestion?: string
+  draftFilePath?: string
+  draftApproval?: AgentDraftApproval
 }
 
 const agentSessions = new Map<string, AgentSession>()
 const activeAgentJigs = new Set<string>()
+
+function estimateTokens(value: unknown): number {
+  if (value == null) return 0
+  const text = typeof value === "string" ? value : JSON.stringify(value)
+  if (!text) return 0
+  return Math.ceil(text.length / 4)
+}
+
+function estimateRequestPromptTokens(messages: ChatCompletionMessageParam[], tools: ChatCompletionTool[]): number {
+  const messageTokens = messages.reduce((sum, message) => sum + estimateTokens(message), 0)
+  const toolTokens = tools.reduce((sum, tool) => sum + estimateTokens(tool), 0)
+  return messageTokens + toolTokens
+}
+
+function clearDraft(session: AgentSession): void {
+  if (session.draftFilePath) {
+    rmSync(session.draftFilePath, { force: true })
+  }
+  session.draftFilePath = undefined
+  session.draftApproval = undefined
+}
+
+function getDraftCode(session: AgentSession): string | null {
+  if (!session.draftFilePath || !existsSync(session.draftFilePath)) return null
+  return readFileSync(session.draftFilePath, "utf-8")
+}
+
+function getDraftFilePath(session: AgentSession, jigId: string): string {
+  return `${DRAFT_JIGS_DIR}/${session.sessionId}-${jigId}.ts`
+}
+
+async function getSessionCode(session: AgentSession, jigId?: string): Promise<string | null> {
+  const resolvedJigId = session.jigId ?? jigId
+  if (!resolvedJigId) return null
+  if (session.creationMode) {
+    const draftCode = getDraftCode(session)
+    if (draftCode) return draftCode
+  }
+  const filePath = resolveJigPath(resolvedJigId)
+  if (!existsSync(filePath)) return null
+  return readFileSync(filePath, "utf-8")
+}
+
+function releaseSession(session: AgentSession): void {
+  clearDraft(session)
+  if (session.jigId) activeAgentJigs.delete(session.jigId)
+  agentSessions.delete(session.sessionId)
+}
 
 function hasCompletedTool(session: AgentSession, tool: string): boolean {
   return session.events.some((event) =>
@@ -52,6 +107,7 @@ function pruneAgentSessions() {
   const now = Date.now()
   for (const [id, session] of agentSessions) {
     if (now - session.createdAt > AGENT_SESSION_TTL) {
+      clearDraft(session)
       if (session.jigId) activeAgentJigs.delete(session.jigId)
       agentSessions.delete(id)
     }
@@ -136,7 +192,7 @@ const AGENT_TOOL_DEFS: ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "write_jig_file",
-      description: "Write full TypeScript source code to a jig file. Auto-commits to version control.",
+      description: "Write full TypeScript source code to a jig file. New jigs are staged as drafts until approved; existing jigs are written directly.",
       parameters: {
         type: "object",
         properties: {
@@ -208,9 +264,9 @@ const AGENT_TOOL_DEFS: ChatCompletionTool[] = [
 async function toolReadJigFile(args: { jigId?: string }, session: AgentSession): Promise<string> {
   const jigId = session.jigId ?? args.jigId
   if (!jigId) return JSON.stringify({ error: "No jigId specified and no session jig" })
-  const filePath = resolveJigPath(jigId)
-  if (!existsSync(filePath)) return JSON.stringify({ error: `File not found: ${filePath}` })
-  return readFileSync(filePath, "utf-8")
+  const code = await getSessionCode(session, jigId)
+  if (!code) return JSON.stringify({ error: `File not found for jig: ${jigId}` })
+  return code
 }
 
 async function toolWriteJigFile(args: { code: string; jigId?: string; message?: string }, session: AgentSession): Promise<string> {
@@ -220,8 +276,20 @@ async function toolWriteJigFile(args: { code: string; jigId?: string; message?: 
 
   if (!session.jigId) {
     if (activeAgentJigs.has(jigId)) return JSON.stringify({ error: "Another session is already editing this jig" })
+    if (session.creationMode && existsSync(resolveJigPath(jigId))) {
+      return JSON.stringify({ error: `Jig already exists: ${jigId}` })
+    }
     session.jigId = jigId
     activeAgentJigs.add(jigId)
+  }
+
+  if (session.creationMode) {
+    mkdirSync(DRAFT_JIGS_DIR, { recursive: true })
+    const filePath = getDraftFilePath(session, jigId)
+    await writeJigSource(filePath, args.code, { jigId })
+    session.draftFilePath = filePath
+    session.draftApproval = undefined
+    return JSON.stringify({ ok: true, path: filePath, draft: true })
   }
 
   const filePath = resolveJigPath(jigId)
@@ -232,16 +300,17 @@ async function toolWriteJigFile(args: { code: string; jigId?: string; message?: 
     commitPrompt: session.authoringIntent,
   })
 
-  return JSON.stringify({ ok: true, path: filePath })
+  return JSON.stringify({ ok: true, path: filePath, draft: false })
 }
 
 async function toolCheckJig(args: { jigId?: string }, session: AgentSession): Promise<string> {
   const jigId = session.jigId ?? args.jigId
   if (!jigId) return JSON.stringify({ error: "No jigId specified" })
-  const filePath = resolveJigPath(jigId)
-  if (!existsSync(filePath)) return JSON.stringify({ error: `File not found: ${filePath}` })
-  const result = await checkJigFile(filePath)
-  const code = readFileSync(filePath, "utf-8")
+  const code = await getSessionCode(session, jigId)
+  if (!code) return JSON.stringify({ error: `File not found for jig: ${jigId}` })
+  const result = session.creationMode
+    ? await checkJigFile(session.draftFilePath!)
+    : await checkJigFile(resolveJigPath(jigId))
   const extraErrors: string[] = []
 
   if (session.authoringPolicy.requiresIntegration && hasExplicitEmptyToolsArray(code)) {
@@ -308,18 +377,29 @@ async function buildAgentSystemPrompt(instruction: string, jigId?: string): Prom
   prompt: string
   authoringPolicy: AgentSession["authoringPolicy"]
 }> {
-  let currentCode: string | undefined
-  if (jigId) {
+  return buildAgentSystemPromptWithCode(instruction, jigId)
+}
+
+async function buildAgentSystemPromptWithCode(
+  instruction: string,
+  jigId?: string,
+  currentCode?: string
+): Promise<{
+  prompt: string
+  authoringPolicy: AgentSession["authoringPolicy"]
+}> {
+  let nextCurrentCode = currentCode
+  if (!nextCurrentCode && jigId) {
     const filePath = resolveJigPath(jigId)
     if (existsSync(filePath)) {
-      currentCode = readFileSync(filePath, "utf-8")
+      nextCurrentCode = readFileSync(filePath, "utf-8")
     }
   }
 
   let authoring
   try {
     authoring = await buildAuthoringState(instruction, {
-      existingCode: currentCode,
+      existingCode: nextCurrentCode,
     })
   } catch (error: any) {
     if (error instanceof CreatorError) {
@@ -335,7 +415,7 @@ async function buildAgentSystemPrompt(instruction: string, jigId?: string): Prom
       typeDefs: authoring.context.typeDefs,
       serverDescriptions: authoring.context.serverDescriptions,
       buildHints: authoring.context.buildHints,
-      currentCode,
+      currentCode: nextCurrentCode,
       exampleJig: authoring.context.exampleJig,
     }),
     authoringPolicy: {
@@ -345,17 +425,70 @@ async function buildAgentSystemPrompt(instruction: string, jigId?: string): Prom
   }
 }
 
+async function buildDraftApproval(session: AgentSession): Promise<AgentDraftApproval> {
+  if (!session.jigId) {
+    throw new Error("No draft is available to approve")
+  }
+  const draftCode = getDraftCode(session)
+  if (!draftCode) {
+    throw new Error("No draft is available to approve")
+  }
+
+  return {
+    jig: await buildDraftJigResponse(session.jigId, draftCode, session.draftFilePath!, true),
+  }
+}
+
+async function approveDraft(session: AgentSession): Promise<void> {
+  if (!session.jigId || !session.draftApproval) {
+    throw new ApiError(409, "No pending draft approval")
+  }
+  const draftCode = getDraftCode(session)
+  if (!draftCode || !session.draftFilePath) {
+    throw new ApiError(409, "No pending draft approval")
+  }
+
+  const filePath = resolveJigPath(session.jigId)
+  if (existsSync(filePath)) {
+    throw new ApiError(409, `Jig already exists: ${session.jigId}`)
+  }
+  await writeJigSource(filePath, draftCode, {
+    jigId: session.jigId,
+    commit: true,
+    commitMessage: `jig: ${session.jigId} — create`,
+    commitPrompt: session.authoringIntent,
+  })
+
+  for (const tool of session.draftApproval.jig.settings.tools ?? []) {
+    setToolPermission(tool.connection, tool.name, "always")
+  }
+
+  invalidateJigsCache()
+  activeAgentJigs.delete(session.jigId)
+  clearDraft(session)
+  session.events.push({ type: "text", content: `Created ${session.jigId} and approved its toolset.` })
+  session.status = "done"
+  logSessionEvent({
+    source: "authoring.agent",
+    event: "draft-approved",
+    sessionId: session.sessionId,
+    jigId: session.jigId,
+  })
+}
+
 async function runAgentLoop(session: AgentSession): Promise<void> {
   const client = getAgentClient()
 
   let consecutiveErrors = 0
   for (let round = 0; round < MAX_AGENT_ROUNDS; round++) {
+    const estimatedPromptTokens = estimateRequestPromptTokens(session.messages, AGENT_TOOL_DEFS)
     session.status = "thinking"
     session.metrics = {
       ...session.metrics,
       model: JIG_EDITOR_MODEL,
       round: round + 1,
       activeTool: undefined,
+      estimatedPromptTokens,
       updatedAt: Date.now(),
     }
     logSessionEvent({
@@ -437,6 +570,7 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
       ...session.metrics,
       model: JIG_EDITOR_MODEL,
       round: round + 1,
+      estimatedPromptTokens: response.usage?.prompt_tokens ?? session.metrics.estimatedPromptTokens,
       promptTokens: response.usage?.prompt_tokens,
       completionTokens: response.usage?.completion_tokens,
       totalTokens: response.usage?.total_tokens,
@@ -591,6 +725,22 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
     }
 
     if (!roundHadToolError && roundHadSuccessfulCheck && hasCompletedTool(session, "write_jig_file")) {
+      if (session.creationMode && getDraftCode(session)) {
+        session.draftApproval = await buildDraftApproval(session)
+        session.events.push({
+          type: "text",
+          content: `Draft ready. Approve to create ${session.jigId}, or reply with changes to revise it.`,
+        })
+        session.status = "waiting"
+        logSessionEvent({
+          source: "authoring.agent",
+          event: "draft-ready",
+          sessionId: session.sessionId,
+          jigId: session.jigId,
+          round,
+        })
+        return
+      }
       session.events.push({
         type: "text",
         content: session.jigId
@@ -640,6 +790,7 @@ export async function startAgentSession(body: any): Promise<StartAgentResponse> 
   const session: AgentSession = {
     sessionId,
     jigId,
+    creationMode: !jigId,
     authoringIntent,
     conversationHistory,
     authoringPolicy,
@@ -681,8 +832,6 @@ export async function startAgentSession(body: any): Promise<StartAgentResponse> 
       jigId: session.jigId,
       error,
     })
-  }).finally(() => {
-    if (session.jigId) activeAgentJigs.delete(session.jigId)
   })
 
   return { sessionId, jigId }
@@ -698,7 +847,26 @@ export function getAgentSessionStatus(sessionId: string, sinceIndex: number): Ag
     events: session.events.slice(sinceIndex),
     totalEvents: session.events.length,
     metrics: session.metrics,
+    draftApproval: session.draftApproval,
   }
+}
+
+export async function approveAgentDraft(sessionId: string): Promise<{ ok: true }> {
+  const session = agentSessions.get(sessionId)
+  if (!session) throw new ApiError(404, "Session not found")
+  if (session.status !== "waiting" || !session.draftApproval) {
+    throw new ApiError(409, "No pending draft approval")
+  }
+
+  await approveDraft(session)
+  return { ok: true }
+}
+
+export async function closeAgentSession(sessionId: string): Promise<{ ok: true }> {
+  const session = agentSessions.get(sessionId)
+  if (!session) return { ok: true }
+  releaseSession(session)
+  return { ok: true }
 }
 
 export async function pushAgentMessage(sessionId: string, body: any): Promise<{ ok: true }> {
@@ -729,8 +897,13 @@ export async function pushAgentMessage(sessionId: string, body: any): Promise<{ 
     session.pendingAskQuestion = undefined
     session.messages.push({ role: "tool", tool_call_id: pendingToolCallId, content: message })
   } else {
+    session.draftApproval = undefined
     setSessionConversationHistory(session, conversationHistory, message)
-    const { prompt, authoringPolicy } = await buildAgentSystemPrompt(session.authoringIntent, session.jigId)
+    const { prompt, authoringPolicy } = await buildAgentSystemPromptWithCode(
+      session.authoringIntent,
+      session.jigId,
+      getDraftCode(session) ?? undefined,
+    )
     session.authoringPolicy = authoringPolicy
     session.messages[0] = { role: "system", content: prompt }
     session.messages.push({ role: "user", content: message })
@@ -747,8 +920,6 @@ export async function pushAgentMessage(sessionId: string, body: any): Promise<{ 
       jigId: session.jigId,
       error,
     })
-  }).finally(() => {
-    if (session.jigId) activeAgentJigs.delete(session.jigId)
   })
 
   return { ok: true }

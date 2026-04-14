@@ -15,3 +15,5 @@ Default servers expose the connected/generated `.d.ts` and schema tool surface d
 If a server needs special authoring behavior, it should come from config such as `.authoringDiscovery` or `.proxy.connectDiscovery`, not from a separate frontend-only path.
 
 When inspecting or transforming jig code, avoid brittle regex parsing when a syntax-aware or runtime-aware option exists. Prefer TypeScript/AST analysis, language tooling, or actual runtime properties first; use an LLM only when the structure is too fuzzy for a simple robust parser.
+
+For larger bug fixes or feature changes, do an explicit review pass before calling the work done. That review should look for correctness issues, edge cases, dead code, and unnecessary compatibility layers, not just typecheck/test success.

@@ -64,6 +64,11 @@ export function AgentPanel({
               tool {metrics.activeTool}
             </span>
           )}
+          {metrics.estimatedPromptTokens != null && metrics.promptTokens == null && (
+            <span className="rounded-full border border-[#2a2a2e] bg-[#151517] px-2 py-1">
+              ~{metrics.estimatedPromptTokens.toLocaleString()} in
+            </span>
+          )}
           {metrics.totalTokens != null && (
             <span className="rounded-full border border-[#2a2a2e] bg-[#151517] px-2 py-1">
               {metrics.totalTokens.toLocaleString()} tokens

@@ -51,6 +51,12 @@ export function matchRoute(pathname: string): { handler: string; params: Record<
   const agentMsgMatch = pathname.match(/^\/api\/agent\/([^/]+)\/message$/)
   if (agentMsgMatch) return { handler: "agentMessage", params: { sessionId: agentMsgMatch[1] } }
 
+  const agentApproveMatch = pathname.match(/^\/api\/agent\/([^/]+)\/approve$/)
+  if (agentApproveMatch) return { handler: "agentApprove", params: { sessionId: agentApproveMatch[1] } }
+
+  const agentCloseMatch = pathname.match(/^\/api\/agent\/([^/]+)\/close$/)
+  if (agentCloseMatch) return { handler: "agentClose", params: { sessionId: agentCloseMatch[1] } }
+
   const versionsMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/versions$/)
   if (versionsMatch) {
     if (!isValidJigId(decodeURIComponent(versionsMatch[1]))) return null

@@ -160,10 +160,15 @@ export interface AgentMetrics {
   model?: string
   round?: number
   activeTool?: string
+  estimatedPromptTokens?: number
   promptTokens?: number
   completionTokens?: number
   totalTokens?: number
   updatedAt?: number
+}
+
+export interface AgentDraftApproval {
+  jig: JigData
 }
 
 export interface StartAgentResponse {
@@ -177,6 +182,7 @@ export interface AgentStatusResponse {
   events: AgentEvent[]
   totalEvents: number
   metrics?: AgentMetrics
+  draftApproval?: AgentDraftApproval
 }
 
 export interface LiveRunStep {

@@ -11,8 +11,11 @@ type Block =
   | { type: "code"; code: string };
 
 function renderInline(text: string) {
-  const parts: Array<{ type: "text" | "code" | "strong"; value: string }> = [];
-  const pattern = /(`[^`]+`|\*\*[^*]+\*\*)/g;
+  const parts: Array<
+    | { type: "text" | "code" | "strong"; value: string }
+    | { type: "link"; label: string; href: string }
+  > = [];
+  const pattern = /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\((https?:\/\/[^)\s]+)\)|https?:\/\/[^\s)]+(?:\([^\s)]*\)[^\s)]*)*)/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
@@ -23,6 +26,20 @@ function renderInline(text: string) {
     const token = match[0];
     if (token.startsWith("`")) {
       parts.push({ type: "code", value: token.slice(1, -1) });
+    } else if (token.startsWith("[")) {
+      const linkMatch = token.match(/^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/);
+      if (linkMatch) {
+        parts.push({ type: "link", label: linkMatch[1], href: linkMatch[2] });
+      } else {
+        parts.push({ type: "text", value: token });
+      }
+    } else if (token.startsWith("http://") || token.startsWith("https://")) {
+      const href = token.replace(/[.,!?;:]+$/, "");
+      const suffix = token.slice(href.length);
+      parts.push({ type: "link", label: href, href });
+      if (suffix) {
+        parts.push({ type: "text", value: suffix });
+      }
     } else {
       parts.push({ type: "strong", value: token.slice(2, -2) });
     }
@@ -43,6 +60,19 @@ function renderInline(text: string) {
     }
     if (part.type === "strong") {
       return <strong key={index} className="font-semibold text-[#e7e7ea]">{part.value}</strong>;
+    }
+    if (part.type === "link") {
+      return (
+        <a
+          key={index}
+          href={part.href}
+          target="_blank"
+          rel="noreferrer"
+          className="text-[#8ec5ff] underline underline-offset-2 decoration-[#365a7a] hover:text-[#b6daff]"
+        >
+          {part.label}
+        </a>
+      );
     }
     return <Fragment key={index}>{part.value}</Fragment>;
   });

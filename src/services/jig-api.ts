@@ -94,6 +94,39 @@ export async function buildJigResponse(
   }
 }
 
+export async function buildDraftJigResponse(
+  id: string,
+  code: string,
+  filePath: string,
+  includeSteps = true,
+): Promise<JigData> {
+  const jig = await introspectJig(id, {
+    includeSteps,
+    filePathOverride: filePath,
+    codeOverride: code,
+  })
+
+  return {
+    id,
+    name: prettifyId(id),
+    trigger: jig.trigger,
+    status: "attention",
+    running: false,
+    sparkline: [],
+    steps: jig.steps,
+    code: jig.code,
+    runs: [],
+    settings: {
+      trigger: jig.trigger,
+      connections: jig.connections,
+      tools: jig.tools,
+      permissions: jig.permissions,
+    },
+    costMonth: "",
+    costLifetime: "",
+  }
+}
+
 export function discoverAllJigs(): Map<string, string[]> {
   return discoverJigs(JIGS_DIR)
 }

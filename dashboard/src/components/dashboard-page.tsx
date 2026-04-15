@@ -1,9 +1,11 @@
 "use client";
 
 import { DashboardShell } from "@/components/dashboard-shell";
+import { useJigListLiveUpdates } from "@/hooks/use-jig-list-live-updates";
 import { useExamples, useJigs } from "@/lib/swr";
 
 export function DashboardPage() {
+  useJigListLiveUpdates();
   const { data: jigs, isLoading, error } = useJigs({
     errorRetryInterval: 1000,
     errorRetryCount: 10,

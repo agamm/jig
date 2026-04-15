@@ -1,6 +1,7 @@
 import { isValidJigId } from "../domain/jig-id.js"
 
 export function matchRoute(pathname: string): { handler: string; params: Record<string, string> } | null {
+  if (pathname === "/api/events") return { handler: "liveUpdates", params: {} }
   if (pathname === "/api/models") return { handler: "getModels", params: {} }
   if (pathname === "/api/jigs") return { handler: "listJigs", params: {} }
   if (pathname === "/api/examples") return { handler: "listExamples", params: {} }

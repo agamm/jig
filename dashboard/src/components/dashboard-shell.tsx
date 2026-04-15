@@ -377,11 +377,6 @@ export function DashboardShell({
             </div>
             <div className="flex-1 overflow-y-auto px-6 py-6">
               <div className="max-w-2xl mx-auto space-y-6">
-                <div className="rounded-xl border border-[#1f1f23] bg-[#0d0d0f] px-4 py-4">
-                  <p className="text-[12px] leading-relaxed text-[#777]">
-                    Configure local behavior for this workspace. Changes here affect only this machine unless the setting is stored in your repo.
-                  </p>
-                </div>
                 <div className="space-y-3">
                   <h3 className="text-[12px] text-[#555] uppercase tracking-wider">LLM Provider</h3>
                   <div className="rounded-lg border border-[#1f1f23] bg-[#111113] px-4 py-3">

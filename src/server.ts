@@ -25,7 +25,7 @@ import { cancelActiveRun, getActiveRunSnapshot, getRunDetail, startJigRun } from
 import { getNotificationSettings, saveNotificationSettings, notify, type NotificationSettings } from "./services/notify.js"
 import { connectConfiguredServer } from "./services/connect-server.js"
 import { addExampleJig, listExampleJigs } from "./services/example-jigs.js"
-import { readNotificationManifest } from "./mcp/discover/notification-manifest.js"
+import { buildNotificationManifest } from "./mcp/discover/notification-manifest.js"
 import { handleWebhook } from "./scheduler/webhooks.js"
 import { getSchedule, listAllSchedules, setScheduleEnabled, listAuthorizedSenders, addAuthorizedSender, removeAuthorizedSender, listToolPermissions, setToolPermission, listCredentials, type ToolPermissionPolicy } from "./db.js"
 import { startScheduler } from "./scheduler/index.js"
@@ -33,6 +33,7 @@ import { syncSchedules } from "./scheduler/sync.js"
 import { getJigVersionDetail, listJigVersions, restoreJigVersion } from "./services/jig-versioning.js"
 import { resetSessionLog } from "./debug/session-log.js"
 import { ApiError, json } from "./server/http.js"
+import { broadcastJigsUpdated, createLiveUpdatesResponse, startLiveUpdateWatchers } from "./server/live-updates.js"
 import { matchRoute } from "./server/router.js"
 import { firstLineSummary } from "./text.js"
 
@@ -257,6 +258,7 @@ async function handleResetLocalState(): Promise<Response> {
 export function createApiServer(port: number) {
   openDb()
   removeStaleDraftFiles()
+  startLiveUpdateWatchers()
   // Clear step cache on startup — ensures stale derivations from old SDK versions don't persist
   const { clearAllStepCache } = require("./db.js")
   clearAllStepCache()
@@ -270,6 +272,8 @@ export function createApiServer(port: number) {
 
       try {
         switch (route.handler) {
+          case "liveUpdates":
+            return createLiveUpdatesResponse()
           case "getModels":
             return json(getModelCatalog())
           case "listJigs": {
@@ -379,6 +383,7 @@ export function createApiServer(port: number) {
             const body = await req.json().catch(() => ({}))
             if (typeof body?.enabled !== "boolean") throw new ApiError(400, "Missing 'enabled' boolean")
             setScheduleEnabled(route.params.jigId, body.enabled)
+            broadcastJigsUpdated("schedule")
             return json({ ok: true })
           }
           case "authorizedSenders": {
@@ -401,7 +406,7 @@ export function createApiServer(port: number) {
             if (req.method === "GET") {
               return json({
                 settings: getNotificationSettings(),
-                availableTools: readNotificationManifest(),
+                availableTools: buildNotificationManifest(),
               })
             }
             if (req.method === "PUT") {
@@ -414,7 +419,7 @@ export function createApiServer(port: number) {
                 triggerOn: { fail: body.triggerOn?.fail ?? true },
               }
               saveNotificationSettings(next)
-              return json({ settings: getNotificationSettings(), availableTools: readNotificationManifest() })
+              return json({ settings: getNotificationSettings(), availableTools: buildNotificationManifest() })
             }
             return json({ error: "Method not allowed" }, 405)
           }

@@ -135,6 +135,42 @@ describe("notify()", () => {
     expect(seen[0].subject).toBe("Jig alert")
   })
 
+  it("gmail channel defaults subject to the notification title when not configured", async () => {
+    const seen: any[] = []
+    await notify({
+      title: "Jig test notification", body: "Body", kind: "fail",
+      toolCaller: async (_conn, _tool, params) => { seen.push(params); return null },
+      settingsOverride: baseSettings({
+        channels: [{
+          connection: "workspace",
+          tool: "gmail_send",
+          recipient: "alerts@example.com",
+        }],
+      }),
+      manifestOverride: [gmailManifest],
+    })
+    expect(seen[0].subject).toBe("Jig test notification")
+  })
+
+  it("records tool error payloads as notification errors", async () => {
+    const report = await notify({
+      title: "Title", body: "Body", kind: "fail",
+      toolCaller: async () => ({ error: "Missing subject" }),
+      settingsOverride: baseSettings({
+        channels: [{
+          connection: "workspace",
+          tool: "gmail_send",
+          recipient: "alerts@example.com",
+          extraParams: { subject: "Jig alert" },
+        }],
+      }),
+      manifestOverride: [gmailManifest],
+    })
+    expect(report.sent).toEqual([])
+    expect(report.errors).toHaveLength(1)
+    expect(report.errors[0].error).toContain("Missing subject")
+  })
+
   it("multi-channel uses allSettled — partial success reported", async () => {
     const report = await notify({
       title: "T", body: "B", kind: "fail",

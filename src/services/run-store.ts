@@ -1,6 +1,7 @@
 import type { LiveRunStep, RunStatus } from "../../shared/api.js"
 import type { RunEvent } from "../run-events.js"
 import { isCancellationMessage, USER_CANCELLED_MESSAGE } from "../run-cancel.js"
+import { broadcastJigsUpdated } from "../server/live-updates.js"
 
 type RunRecord = {
   runId: number
@@ -62,6 +63,7 @@ export function startTrackedRun(runId: number, jigId: string, dryRun: boolean): 
     activeTools: [],
     steps: [],
   })
+  broadcastJigsUpdated("run-start")
 }
 
 export function applyRunEvent(runId: number, event: RunEvent): void {
@@ -129,6 +131,7 @@ export function finishTrackedRun(runId: number): void {
   }
   activeAborts.delete(runId)
   pruneRecentResults()
+  broadcastJigsUpdated("run-finish")
 }
 
 export function discardTrackedRun(runId: number): void {
@@ -139,6 +142,7 @@ export function discardTrackedRun(runId: number): void {
     activeRuns.delete(run.jigId)
   }
   activeAborts.delete(runId)
+  broadcastJigsUpdated("run-discard")
 }
 
 export function clearTrackedRunsForJig(jigId: string): void {
@@ -152,6 +156,7 @@ export function clearTrackedRunsForJig(jigId: string): void {
   for (const [runId, run] of recentResults) {
     if (run.jigId === jigId) recentResults.delete(runId)
   }
+  broadcastJigsUpdated("run-clear")
 }
 
 export function getRunStatus(runId: number): RunStatus | null {

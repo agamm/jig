@@ -9,7 +9,7 @@ const DashboardPage = dynamic(
     ssr: false,
     loading: () => (
       <main className="flex h-full items-center justify-center bg-[#0a0a0b] px-4">
-        <LoadingState message="Loading dashboard…" className="w-full max-w-md" />
+        <LoadingState message="Loading dashboard…" className="w-full max-w-md" lightFrame />
       </main>
     ),
   },

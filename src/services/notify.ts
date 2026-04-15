@@ -19,7 +19,7 @@
 import { join } from "node:path"
 import { PROJECT_ROOT } from "../config/paths.js"
 import { getSetting, setSetting } from "../db.js"
-import { readNotificationManifest, type NotificationCapableTool } from "../mcp/discover/notification-manifest.js"
+import { buildNotificationManifest, type NotificationCapableTool } from "../mcp/discover/notification-manifest.js"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -112,7 +112,7 @@ export async function notify(opts: {
 
   let manifest: NotificationCapableTool[]
   try {
-    manifest = opts.manifestOverride ?? readNotificationManifest()
+    manifest = opts.manifestOverride ?? buildNotificationManifest()
   } catch {
     manifest = []
   }
@@ -135,7 +135,12 @@ export async function notify(opts: {
         [def.textField]: `${opts.title}\n\n${opts.body}`,
         ...channel.extraParams,
       }
-      await caller(channel.connection, channel.tool, params)
+      if (def.extraRequired.includes("subject") && !hasConfiguredValue(params.subject)) {
+        params.subject = opts.title
+      }
+      const result = await caller(channel.connection, channel.tool, params)
+      const toolError = extractToolError(result)
+      if (toolError) throw new Error(toolError)
       return { channel: labelFor(channel, def) }
     })
   )
@@ -163,6 +168,18 @@ function key(connection: string, tool: string): string {
 
 function labelFor(channel: NotificationChannel, def: NotificationCapableTool | undefined): string {
   return def?.label ?? `${channel.connection}.${channel.tool}`
+}
+
+function hasConfiguredValue(value: unknown): boolean {
+  if (typeof value === "string") return value.trim().length > 0
+  return value != null
+}
+
+function extractToolError(result: unknown): string | null {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return null
+  const record = result as Record<string, unknown>
+  if (typeof record.error === "string" && record.error.trim()) return record.error.trim()
+  return null
 }
 
 // ---------------------------------------------------------------------------

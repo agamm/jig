@@ -50,6 +50,12 @@ export function buildNotificationManifest(
     for (const t of tools) {
       const hint = (t as any).annotations?.notificationHint as NotificationHint | undefined
       if (!hint) continue
+      const requiredFields = Array.isArray((t as any).inputSchema?.required)
+        ? ((t as any).inputSchema.required as unknown[]).filter((value): value is string => typeof value === "string")
+        : []
+      const extraRequired = requiredFields.filter(
+        (field) => field !== hint.textField && field !== hint.recipientField
+      )
       manifest.push({
         connection,
         tool: t.name,
@@ -57,7 +63,7 @@ export function buildNotificationManifest(
         description: firstLineSummary(t.description),
         textField: hint.textField,
         recipientField: hint.recipientField,
-        extraRequired: hint.extraRequired ?? [],
+        extraRequired: [...new Set([...(hint.extraRequired ?? []), ...extraRequired])],
       })
     }
   }

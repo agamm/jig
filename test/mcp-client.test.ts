@@ -46,6 +46,68 @@ describe("callTool result normalization", () => {
 
     expect(result).toEqual([{ id: 1, name: "example" }])
   })
+
+  it("rejects missing required tool parameters before the MCP call", async () => {
+    await expect(callTool({
+      client: {
+        callTool: async () => {
+          throw new Error("should not be called")
+        },
+        listTools: async () => ({
+          tools: [
+            {
+              name: "gmail_send",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  to: { type: "string" },
+                  subject: { type: "string" },
+                  body: { type: "string" },
+                },
+                required: ["to", "subject", "body"],
+              },
+            },
+          ],
+        }),
+      },
+      transport: {} as any,
+      serverName: "test-required",
+      config: {} as any,
+    } as any, "gmail_send", { to: "a@example.com", body: "hello" })).rejects.toThrow(
+      "Missing required parameter for test-required.gmail_send: subject"
+    )
+  })
+
+  it("throws when a tool returns an error payload", async () => {
+    await expect(callTool({
+      client: {
+        callTool: async () => ({
+          content: [
+            { type: "text", text: "{\"error\":\"Missing subject\"}" },
+          ],
+        }),
+      },
+      transport: {} as any,
+      serverName: "test-error",
+      config: {} as any,
+    } as any, "demo-tool", {})).rejects.toThrow("Missing subject")
+  })
+
+  it("throws when the MCP result is flagged as an error", async () => {
+    await expect(callTool({
+      client: {
+        callTool: async () => ({
+          content: [
+            { type: "text", text: "Bad request" },
+          ],
+          isError: true,
+        }),
+      },
+      transport: {} as any,
+      serverName: "test-is-error",
+      config: {} as any,
+    } as any, "demo-tool", {})).rejects.toThrow("Bad request")
+  })
 })
 
 describe("shouldReconnectMcpConnection", () => {

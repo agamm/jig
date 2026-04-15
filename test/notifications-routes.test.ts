@@ -18,6 +18,11 @@ afterEach(() => {
 })
 
 describe("notification settings routes", () => {
+  it("matches the live updates route", () => {
+    const r = matchRoute("/api/events")
+    expect(r?.handler).toBe("liveUpdates")
+  })
+
   it("matches the connection connect route", () => {
     const r = matchRoute("/api/connections/workspace/connect")
     expect(r?.handler).toBe("connectConnection")

@@ -100,6 +100,32 @@ describe("buildNotificationManifest", () => {
     expect(gmail.extraRequired).toEqual(["subject"])
   })
 
+  it("merges required schema fields into extraRequired when the hint omits them", () => {
+    writeSchema("workspace", [
+      {
+        name: "gmail_send",
+        description: "Send an email",
+        inputSchema: {
+          type: "object",
+          required: ["to", "subject", "body"],
+        },
+        annotations: {
+          readOnlyHint: false,
+          notificationHint: {
+            label: "Gmail",
+            textField: "body",
+            recipientField: "to",
+            extraRequired: [],
+          },
+        },
+      },
+    ])
+
+    const result = buildNotificationManifest(schemasDir, manifestPath)
+    expect(result).toHaveLength(1)
+    expect(result[0].extraRequired).toEqual(["subject"])
+  })
+
   it("readNotificationManifest returns the file contents", () => {
     writeSchema("composio", [
       {

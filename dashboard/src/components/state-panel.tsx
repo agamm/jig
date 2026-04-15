@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { RotatingFrame } from "@/components/rotating-frame";
 import { Spinner } from "@/components/spinner";
 
 type Tone = "neutral" | "info" | "success" | "warning" | "danger";
@@ -60,10 +61,29 @@ export function Notice({
 export function LoadingState({
   message,
   className = "",
+  lightFrame = false,
 }: {
   message: string;
   className?: string;
+  lightFrame?: boolean;
 }) {
+  if (lightFrame) {
+    return (
+      <RotatingFrame
+        active
+        className={`w-full rounded-lg border border-[var(--border)] ${className}`.trim()}
+        roundedClassName="rounded-lg"
+        innerRoundedClassName="rounded-[7px]"
+        surfaceClassName="bg-[var(--surface)]"
+      >
+        <div className="flex items-center justify-center gap-2 px-4 py-6">
+          <Spinner size={14} />
+          <span className="text-[11px] text-[var(--text-muted)]">{message}</span>
+        </div>
+      </RotatingFrame>
+    );
+  }
+
   return (
     <div className={`flex items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-4 py-6 ${className}`.trim()}>
       <Spinner size={14} />

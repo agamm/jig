@@ -1,4 +1,5 @@
 import { join } from "node:path"
+import { existsSync, readFileSync } from "node:fs"
 import { mkdir } from "node:fs/promises"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
@@ -18,6 +19,8 @@ export type McpConnection = {
   serverName: string
   config: ServerConfig
 }
+
+const toolSchemaCache = new Map<string, Map<string, Tool>>()
 
 /**
  * Connect to an MCP server. Handles stdio, remote (OAuth), and remote (token_command).
@@ -214,6 +217,7 @@ export async function discoverTools(connection: McpConnection): Promise<Tool[]> 
     join(SCHEMAS_DIR, `${connection.serverName}.json`),
     JSON.stringify(allTools, null, 2)
   )
+  cacheToolSchemas(connection.serverName, allTools)
 
   return allTools
 }
@@ -329,28 +333,19 @@ export async function callTool(
   params: Record<string, unknown>,
   options?: { signal?: AbortSignal }
 ): Promise<unknown> {
+  await validateRequiredToolArguments(connection, toolName, params)
+
   const signal = options?.signal ?? runContext.getStore()?.signal
   const result = await connection.client.callTool({
     name: toolName,
     arguments: params,
   }, undefined, signal ? { signal } : undefined)
-
-  if (result.structuredContent != null) {
-    return result.structuredContent
+  const normalized = normalizeToolResult(result)
+  const toolError = extractToolError(normalized)
+  if (result.isError || toolError) {
+    throw new Error(toolError ?? `Tool "${connection.serverName}.${toolName}" returned an error`)
   }
-
-  if (result.content && Array.isArray(result.content)) {
-    const textParts = result.content
-      .filter((c: any) => c.type === "text")
-      .map((c: any) => c.text)
-
-    if (textParts.length === 1) {
-      return parseToolText(textParts[0])
-    }
-    if (textParts.length > 1) return textParts
-  }
-
-  return result.content
+  return normalized
 }
 
 export function shouldReconnectMcpConnection(error: unknown): boolean {
@@ -381,6 +376,126 @@ function parseToolText(text: string): unknown {
   } catch {
     return text
   }
+}
+
+function normalizeToolResult(result: {
+  structuredContent?: unknown
+  content?: unknown
+}): unknown {
+  if (result.structuredContent != null) {
+    return result.structuredContent
+  }
+
+  if (result.content && Array.isArray(result.content)) {
+    const textParts = result.content
+      .filter((c: any) => c.type === "text")
+      .map((c: any) => c.text)
+
+    if (textParts.length === 1) {
+      return parseToolText(textParts[0])
+    }
+    if (textParts.length > 1) return textParts
+  }
+
+  return result.content
+}
+
+async function validateRequiredToolArguments(
+  connection: McpConnection,
+  toolName: string,
+  params: Record<string, unknown>
+): Promise<void> {
+  const tool = await getToolSchema(connection, toolName)
+  const schema = tool?.inputSchema as Record<string, unknown> | undefined
+  const required = Array.isArray(schema?.required)
+    ? schema.required.filter((value): value is string => typeof value === "string")
+    : []
+
+  if (required.length === 0) return
+
+  const properties = isRecord(schema?.properties) ? schema.properties : {}
+  const missing = required.filter((name) => isMissingRequiredValue(params[name], properties[name]))
+  if (missing.length === 0) return
+
+  throw new Error(
+    `Missing required parameter${missing.length === 1 ? "" : "s"} for ${connection.serverName}.${toolName}: ${missing.join(", ")}`
+  )
+}
+
+async function getToolSchema(connection: McpConnection, toolName: string): Promise<Tool | null> {
+  const cached = toolSchemaCache.get(connection.serverName)
+  if (cached) return cached.get(toolName) ?? null
+
+  const fromDisk = loadToolSchemasFromDisk(connection.serverName)
+  if (fromDisk) return fromDisk.get(toolName) ?? null
+
+  const client = connection.client as unknown as {
+    listTools?: (args?: { cursor?: string }) => Promise<{ tools?: Tool[]; nextCursor?: string }>
+  }
+  if (typeof client.listTools !== "function") return null
+
+  try {
+    const tools: Tool[] = []
+    let cursor: string | undefined
+    do {
+      const result = await client.listTools({ cursor })
+      tools.push(...(result.tools ?? []))
+      cursor = result.nextCursor
+    } while (cursor)
+    cacheToolSchemas(connection.serverName, tools)
+  } catch {
+    return null
+  }
+
+  return toolSchemaCache.get(connection.serverName)?.get(toolName) ?? null
+}
+
+function loadToolSchemasFromDisk(serverName: string): Map<string, Tool> | null {
+  const schemaPath = join(SCHEMAS_DIR, `${serverName}.json`)
+  if (!existsSync(schemaPath)) return null
+
+  try {
+    const tools = JSON.parse(readFileSync(schemaPath, "utf8")) as Tool[]
+    return cacheToolSchemas(serverName, tools)
+  } catch {
+    return null
+  }
+}
+
+function cacheToolSchemas(serverName: string, tools: Tool[]): Map<string, Tool> {
+  const index = new Map<string, Tool>(tools.map((tool) => [tool.name, tool]))
+  toolSchemaCache.set(serverName, index)
+  return index
+}
+
+function isMissingRequiredValue(value: unknown, schema: unknown): boolean {
+  if (value == null) return true
+  if (typeof value === "string" && schemaAllowsString(schema)) return value.trim().length === 0
+  return false
+}
+
+function schemaAllowsString(schema: unknown): boolean {
+  if (!isRecord(schema)) return false
+  if (schema.type === "string") return true
+  if (Array.isArray(schema.type) && schema.type.includes("string")) return true
+  if (Array.isArray(schema.anyOf) && schema.anyOf.some(schemaAllowsString)) return true
+  if (Array.isArray(schema.oneOf) && schema.oneOf.some(schemaAllowsString)) return true
+  return false
+}
+
+function isRecord(value: unknown): value is Record<string, any> {
+  return !!value && typeof value === "object" && !Array.isArray(value)
+}
+
+function extractToolError(result: unknown): string | null {
+  if (typeof result === "string") return result.trim() || null
+  if (Array.isArray(result)) {
+    const parts = result.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    return parts.length > 0 ? parts.join("\n") : null
+  }
+  if (!isRecord(result)) return null
+  if (typeof result.error === "string" && result.error.trim()) return result.error.trim()
+  return null
 }
 
 function collectErrorStrings(value: unknown, seen = new Set<unknown>()): string[] {

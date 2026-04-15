@@ -13,6 +13,8 @@ import { ConnectionPane } from "@/components/connection-pane";
 import { NotificationsSettings } from "@/components/notifications-settings";
 import { ServiceIcon } from "@/components/service-icon";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/resizable";
+import { Button } from "@/components/button";
+import { EmptyState, LoadingState, Notice } from "@/components/state-panel";
 import { useConnectionCatalog } from "@/lib/hooks";
 import { useModels, useConnections } from "@/lib/swr";
 import { addExampleJig } from "@/lib/api";
@@ -37,12 +39,16 @@ export function DashboardShell({
   jigs: initialJigs,
   examples = [],
   loading = false,
+  errorMessage,
+  examplesErrorMessage,
   phaseToggle = false,
   onPhaseChange,
 }: {
   jigs: Jig[];
   examples?: ExampleJig[];
   loading?: boolean;
+  errorMessage?: string;
+  examplesErrorMessage?: string;
   phaseToggle?: boolean;
   onPhaseChange?: (phase: Phase) => void;
 }) {
@@ -57,10 +63,10 @@ export function DashboardShell({
   const [createInstruction, setCreateInstruction] = useState("");
   const [createStartToken, setCreateStartToken] = useState(0);
   const { data: models } = useModels();
-  const { data: connections, isLoading: connectionsLoading } = useConnections();
+  const { data: connections, isLoading: connectionsLoading, error: connectionsError } = useConnections();
 
   const currentJig = jigs.find((j) => j.id === selectedJig) ?? null;
-  const showOnboarding = phaseToggle ? phase === "day1" : jigs.length === 0 && !loading;
+  const showOnboarding = !errorMessage && (phaseToggle ? phase === "day1" : jigs.length === 0 && !loading);
   const hasDetail = createOpen || (selectedJig && currentJig) || selectedConnection;
   const collapsed = sidebarMounted ? sidebarSlim : false;
   const {
@@ -136,8 +142,15 @@ export function DashboardShell({
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-4">
-        {loading && (
-          <div className="flex h-32 items-center justify-center text-sm text-[#555]">Loading...</div>
+        {loading && <LoadingState message="Loading workspace…" className="h-32" />}
+        {!loading && errorMessage && (
+          <Notice
+            tone="danger"
+            title="Couldn’t load jigs"
+            actions={<Button onClick={() => mutate("jigs")} variant="subtle" size="xs">Retry</Button>}
+          >
+            {errorMessage}
+          </Notice>
         )}
         {showOnboarding && (
           <OnboardingView
@@ -157,9 +170,10 @@ export function DashboardShell({
             connections={availableConnections}
             examples={examples}
             existingJigIds={jigs.map((jig) => jig.id)}
+            examplesErrorMessage={examplesErrorMessage}
           />
         )}
-        {!showOnboarding && !loading && (
+        {!showOnboarding && !loading && !errorMessage && (
           <JigList
             jigs={jigs}
             selectedJigId={selectedJig}
@@ -180,12 +194,22 @@ export function DashboardShell({
       <div className="flex-1 overflow-y-auto px-6 py-6">
         <div className="max-w-2xl mx-auto space-y-3">
           {connectionsLoading && availableConnections.length === 0 && (
-            <div className="py-8 text-center text-[11px] text-[#555]">Loading connections…</div>
+            <LoadingState message="Loading connections…" />
           )}
-          {!connectionsLoading && availableConnections.length === 0 && (
-            <div className="py-8 text-center text-[11px] text-[#555]">
-              No connections yet. Run <code className="text-[10px] bg-[#1a1a1d] px-1 py-0.5 rounded font-mono">jig connect &lt;server&gt;</code> to add one.
-            </div>
+          {!connectionsLoading && connectionsError && availableConnections.length === 0 && (
+            <Notice
+              tone="danger"
+              title="Couldn’t load connections"
+              actions={<Button onClick={() => mutate("connections")} variant="subtle" size="xs">Retry</Button>}
+            >
+              {connectionsError.message}
+            </Notice>
+          )}
+          {!connectionsLoading && !connectionsError && availableConnections.length === 0 && (
+            <EmptyState
+              title="No connections yet"
+              description={<><span>Run </span><code className="rounded bg-[var(--surface-muted)] px-1 py-0.5 font-mono text-[10px] text-[var(--text-secondary)]">jig connect &lt;server&gt;</code><span> to add one.</span></>}
+            />
           )}
           {availableConnections.map((c) => (
             <button
@@ -208,13 +232,15 @@ export function DashboardShell({
               <span className="text-[11px] text-[#555]">{c.connected ? "Connected" : "Available"}</span>
             </button>
           ))}
-          <button
-            onClick={() => firstDisconnectedConnection && setSelectedConnection(firstDisconnectedConnection.name)}
-            className="flex w-full items-center gap-2 rounded-lg border border-dashed border-[#2a2a2e] px-4 py-3 text-[12px] text-[#555] transition-colors duration-150 hover:text-emerald-400 hover:border-emerald-400/30"
-          >
-            <span className="flex h-5 w-5 items-center justify-center rounded-full border border-dashed border-[#2a2a2e] text-[11px]">+</span>
-            Connect a service
-          </button>
+          {firstDisconnectedConnection ? (
+            <button
+              onClick={() => setSelectedConnection(firstDisconnectedConnection.name)}
+              className="flex w-full items-center gap-2 rounded-lg border border-dashed border-[#2a2a2e] px-4 py-3 text-[12px] text-[#555] transition-colors duration-150 hover:text-emerald-400 hover:border-emerald-400/30"
+            >
+              <span className="flex h-5 w-5 items-center justify-center rounded-full border border-dashed border-[#2a2a2e] text-[11px]">+</span>
+              Connect a service
+            </button>
+          ) : null}
         </div>
       </div>
     </main>

@@ -130,7 +130,7 @@ export function useAgent(onComplete?: (jigId?: string) => void | Promise<void>) 
 
     try {
       const data = await startAgentSession(instruction, targetJigId, history)
-      if (generationRef.current !== generation) return
+      if (generationRef.current !== generation) return false
       setSessionId(data.sessionId)
       sessionIdRef.current = data.sessionId
       setJigId(data.jigId ?? null)

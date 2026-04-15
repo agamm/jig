@@ -82,7 +82,8 @@ describe("generateRuntimeModule (direct)", () => {
   it("generates direct callTool invocation (not proxied)", () => {
     const code = generateRuntimeModule("testsvc", sampleTools)
     // Direct modules call the MCP tool by name — not through a meta-tool
-    expect(code).toContain(`return callTool(await conn(), name, params ?? {})`)
+    expect(code).toContain(`return invokeWithReconnect(async () => callTool(await conn(), name, params ?? {}))`)
+    expect(code).toContain(`shouldReconnectMcpConnection`)
     // Must NOT contain any proxy-specific wrapping
     expect(code).not.toContain("tool_slug:")
     expect(code).not.toContain("COMPOSIO_MULTI_EXECUTE_TOOL")
@@ -125,6 +126,7 @@ describe("generateProxyRuntimeModule", () => {
     expect(code).toContain("META_EXECUTE")
     expect(code).toContain("tool_slug: slug")
     expect(code).toContain("name.toUpperCase()")
+    expect(code).toContain("invokeWithReconnect")
   })
 
   it("does NOT fall back to direct callTool invocation", () => {

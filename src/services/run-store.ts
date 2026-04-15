@@ -1,5 +1,6 @@
 import type { LiveRunStep, RunStatus } from "../../shared/api.js"
 import type { RunEvent } from "../run-events.js"
+import { isCancellationMessage, USER_CANCELLED_MESSAGE } from "../run-cancel.js"
 
 type RunRecord = {
   runId: number
@@ -107,8 +108,12 @@ export function applyRunEvent(runId: number, event: RunEvent): void {
       run.activeTools = []
       return
     }
+    const cancelled = isCancellationMessage(event.message)
     run.done = true
-    run.error = event.message
+    run.error = cancelled ? USER_CANCELLED_MESSAGE : event.message
+    if (cancelled) {
+      run.output = USER_CANCELLED_MESSAGE
+    }
     run.activeTools = []
   }
 }

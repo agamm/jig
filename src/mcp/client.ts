@@ -10,6 +10,7 @@ import type { ServerConfig } from "./config.js"
 import { resolveToken } from "./config.js"
 import { JigOAuthProvider } from "./auth.js"
 import { PROJECT_ROOT, SCHEMAS_DIR } from "../config/paths.js"
+import { runContext } from "../sdk/context.js"
 
 export type McpConnection = {
   client: Client
@@ -325,12 +326,14 @@ export async function closeAllConnections(): Promise<void> {
 export async function callTool(
   connection: McpConnection,
   toolName: string,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  options?: { signal?: AbortSignal }
 ): Promise<unknown> {
+  const signal = options?.signal ?? runContext.getStore()?.signal
   const result = await connection.client.callTool({
     name: toolName,
     arguments: params,
-  })
+  }, undefined, signal ? { signal } : undefined)
 
   if (result.structuredContent != null) {
     return result.structuredContent

@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks"
 import type { JigTool } from "./jig.js"
+import { isCancellationError, USER_CANCELLED_MESSAGE } from "../run-cancel.js"
 
 /** Thrown by ctx.skip() to short-circuit a handler. Run is NOT persisted. */
 export class SkipError extends Error {
@@ -73,8 +74,11 @@ export class Context {
 
   constructor(
     public readonly params: Record<string, unknown>,
-    private allowedTools: string[]
+    private allowedTools: string[],
+    private readonly _signal?: AbortSignal
   ) {}
+
+  get signal(): AbortSignal | undefined { return this._signal }
 
   /** Attach a recorder for step-level tracking (used by API server). */
   setRecorder(recorder: RunRecorder) { this._recorder = recorder }
@@ -152,9 +156,21 @@ export class Context {
     if (this._stepSeq > 0 && !this._stepFinalized) {
       this._stepFinalized = true
       const status = error ? "fail" : "success"
-      const errMsg = error instanceof Error ? error.message : error ? String(error) : undefined
+      const cancelled = isCancellationError(error)
+      const errMsg = cancelled
+        ? USER_CANCELLED_MESSAGE
+        : error instanceof Error
+        ? error.message
+        : error
+        ? String(error)
+        : undefined
       const durationMs = Date.now() - this._stepStart
-      const output = this._stepOutput.join("\n")
+      let output = this._stepOutput.join("\n")
+      if (cancelled) {
+        output = output.trim()
+          ? `${output}\n\n${USER_CANCELLED_MESSAGE}`
+          : USER_CANCELLED_MESSAGE
+      }
       this._recorder?.onStepDone(this._stepSeq, output, status, durationMs, Array.from(this._stepConnections), errMsg)
     }
   }

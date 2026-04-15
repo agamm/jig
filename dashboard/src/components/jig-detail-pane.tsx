@@ -12,12 +12,12 @@ import { AgentInput } from "@/components/agent-input";
 import { AgentPanel } from "@/components/agent-panel";
 import { Button } from "@/components/button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { TextArea } from "@/components/input";
 import { JigToolList } from "@/components/jig-tool-list";
 import { JigVersions } from "@/components/jig-versions";
 import { toast } from "@/components/toast";
 import { TRIGGER_SUGGESTIONS } from "@/mock/mock-data";
 import { useTriggerSave } from "@/hooks/use-trigger-save";
-import { Spinner } from "@/components/spinner";
 import { MarkdownOutput } from "@/components/markdown-output";
 import { useElapsed } from "@/hooks/use-elapsed";
 import { useJigToolApproval } from "@/lib/jig-tool-approval";
@@ -27,6 +27,8 @@ import { useJigSteps } from "@/lib/swr";
 import { PaneHeader } from "@/components/pane-header";
 import { PaneSection } from "@/components/pane-section";
 import { SegmentedControl } from "@/components/segmented-control";
+import { LoadingState, Notice } from "@/components/state-panel";
+import { TriggerEditor } from "@/components/trigger-editor";
 import { buildRemovalInstruction, getReviewableToolKeys, sameTool, toolKey } from "@/lib/tool-review";
 
 const statusDot = (s: string) =>
@@ -230,10 +232,10 @@ function WebhookUrlRow({ url }: { url: string }) {
       {testOpen && (
         <div className="mt-2 space-y-1.5">
           <label className="block text-[9px] text-[#444] uppercase tracking-wider">Test POST body (JSON)</label>
-          <textarea
+          <TextArea
             value={testBody}
             onChange={(e) => setTestBody(e.target.value)}
-            className="w-full h-32 rounded border border-[#2a2a2e] bg-[#0e0e10] px-2 py-1.5 text-[10px] font-mono text-[#ccc] outline-none focus:border-[#3a3a3e] resize-y"
+            className="h-32 resize-y font-mono text-[10px]"
             spellCheck={false}
           />
           <div className="flex items-center justify-end gap-2">
@@ -275,7 +277,7 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
   const toolApproval = useJigToolApproval(tools, jig.settings.permissions, onRefresh);
   const previousAutoRemovalRef = useRef("");
 
-  const { mode, liveSteps, completedTools, activeTools, toolReadOnly, startRun, dismiss, cancelRun, isRunning } = useJigRun(jigId);
+  const { mode, liveSteps, completedTools, activeTools, toolReadOnly, startRun, dismiss, cancelRun, isRunning, canCancel } = useJigRun(jigId);
 
   const agent = useAgent(async () => {
     await onRefresh?.();
@@ -453,10 +455,12 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
             {isRunning ? (
               <Button
                 onClick={cancelRun}
+                disabled={!canCancel}
                 variant="danger"
                 size="xs"
+                title={!canCancel ? "Waiting for the run to start on the server" : undefined}
               >
-                Cancel
+                {canCancel ? "Cancel" : "Starting…"}
               </Button>
             ) : (
               <>
@@ -504,25 +508,26 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
         {detailTab === "steps" ? (
           <div key="steps" className="flip-enter">
             {derivingSteps && runSteps.length === 0 ? (
-              <div className="flex items-center justify-center gap-2 py-8">
-                <Spinner size={14} />
-                <span className="text-[11px] text-[#666]">Analyzing steps… {formatElapsed(derivingElapsed)}</span>
-              </div>
+              <LoadingState message={`Analyzing steps… ${formatElapsed(derivingElapsed)}`} className="py-8" />
             ) : (
               <RunSteps
                 steps={runSteps}
                 mode={mode}
                 onClear={dismiss}
                 emptyAction={showDeriveFallback ? (
-                  <div className="mt-3 space-y-3 rounded-lg border border-amber-500/20 bg-amber-500/[0.04] p-3 text-left">
-                    <div>
-                      <p className="text-[10px] font-medium uppercase tracking-wider text-amber-300">Step derivation failed</p>
-                      <p className="mt-1 text-[11px] leading-relaxed text-amber-100/70">{deriveError}</p>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Button onClick={retryDerivation} variant="subtle" size="xs">Retry Derivation</Button>
-                      <Button onClick={() => setDetailTab("code")} variant="subtle" size="xs">View Code</Button>
-                    </div>
+                  <div className="mt-3 space-y-3 text-left">
+                    <Notice
+                      tone="warning"
+                      title="Step derivation failed"
+                      actions={
+                        <>
+                          <Button onClick={retryDerivation} variant="subtle" size="xs">Retry Derivation</Button>
+                          <Button onClick={() => setDetailTab("code")} variant="subtle" size="xs">View Code</Button>
+                        </>
+                      }
+                    >
+                      {deriveError}
+                    </Notice>
                     {tools.length > 0 && (
                       <div className="space-y-2">
                         <p className="text-[10px] text-amber-100/55">
@@ -530,12 +535,17 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
                         </p>
                         <JigToolList tools={tools} />
                         {toolApproval.reviewRequired && (
-                          <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-500/15 bg-[#111113] px-3 py-2">
-                            <span className="text-[10px] text-amber-100/60">Flat fallback review</span>
-                            <Button onClick={approveAllTools} disabled={toolApproval.saving} variant="success" size="xs">
-                              {toolApproval.saving ? "Approving…" : "Approve Tools"}
-                            </Button>
-                          </div>
+                          <Notice
+                            tone="warning"
+                            title="Flat fallback review"
+                            actions={
+                              <Button onClick={approveAllTools} disabled={toolApproval.saving} variant="success" size="xs">
+                                {toolApproval.saving ? "Approving…" : "Approve Tools"}
+                              </Button>
+                            }
+                          >
+                            Review and approve the detected tools so this jig can run.
+                          </Notice>
                         )}
                       </div>
                     )}
@@ -566,33 +576,33 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
               />
             )}
             {toolApproval.reviewRequired && runSteps.length > 0 && (
-              <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-amber-500/20 bg-amber-500/[0.04] px-3 py-2">
-                <div className="min-w-0">
-                  <p className="text-[10px] font-medium uppercase tracking-wider text-amber-300">Tool review required</p>
-                  <p className="mt-0.5 text-[10px] text-amber-100/60">
-                    Review the expanded tools in each step. Use ✓ to accept a tool and × to flag it for removal.
-                  </p>
-                </div>
-                <div className="flex items-center gap-3 shrink-0">
-                  <span className="text-[10px] text-amber-100/60">
-                    {reviewableToolCount > 0 ? `${reviewedToolCount}/${reviewableToolCount} reviewed` : `${tools.length} tools`}
-                  </span>
-                  <Button
-                    onClick={approveAllTools}
-                    disabled={!approvalReady || toolApproval.saving}
-                    variant="success"
-                    size="xs"
-                  >
-                    {toolApproval.saving ? "Approving…" : "Approve Tools"}
-                  </Button>
-                </div>
-              </div>
+              <Notice
+                tone="warning"
+                title="Tool review required"
+                className="mt-3"
+                actions={
+                  <div className="flex items-center gap-3">
+                    <span className="text-[10px] text-amber-100/60">
+                      {reviewableToolCount > 0 ? `${reviewedToolCount}/${reviewableToolCount} reviewed` : `${tools.length} tools`}
+                    </span>
+                    <Button
+                      onClick={approveAllTools}
+                      disabled={!approvalReady || toolApproval.saving}
+                      variant="success"
+                      size="xs"
+                    >
+                      {toolApproval.saving ? "Approving…" : "Approve Tools"}
+                    </Button>
+                  </div>
+                }
+              >
+                Review the expanded tools in each step. Use ✓ to accept a tool and × to flag it for removal.
+              </Notice>
             )}
             {runStartError && (
-              <div className="mt-3 rounded-lg border border-rose-500/20 bg-rose-500/[0.05] px-3 py-2">
-                <p className="text-[10px] font-medium uppercase tracking-wider text-rose-300">Run failed</p>
-                <p className="mt-1 text-[11px] leading-relaxed text-rose-100/70">{runStartError}</p>
-              </div>
+              <Notice tone="danger" title="Run failed" className="mt-3">
+                {runStartError}
+              </Notice>
             )}
           </div>
         ) : (
@@ -610,42 +620,7 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
         )}
 
         <PaneSection title="Trigger">
-          {trigger.editing ? (
-            <div className="rounded-lg border border-blue-500/30 bg-[#111113] p-3 space-y-2" style={{ animation: "fade-up 0.15s ease" }}>
-              <input
-                type="text"
-                value={trigger.value}
-                onChange={(e) => trigger.setValue(e.target.value)}
-                className="w-full rounded-md border border-[#1f1f23] bg-[#0a0a0b] px-3 py-1.5 text-[12px] text-[#ededed] outline-none focus:border-blue-500/50 transition-colors duration-150"
-                autoFocus
-              />
-              <p className="text-[10px] text-[#555]">Type naturally, e.g. &quot;every friday at 9am&quot;</p>
-              <div className="flex flex-wrap gap-1.5">
-                {TRIGGER_SUGGESTIONS.map(s => (
-                  <button key={s} onClick={() => trigger.setValue(s)} className="rounded-md border border-[#1f1f23] bg-[#0a0a0b] px-2 py-1 text-[10px] text-[#888] transition-colors duration-150 hover:border-[#2a2a2e] hover:text-[#ededed]">
-                    {s}
-                  </button>
-                ))}
-              </div>
-              <div className="flex gap-1.5 pt-1">
-                <Button
-                  disabled={trigger.saving}
-                  onClick={trigger.save}
-                  variant="accent"
-                  size="xs"
-                >{trigger.saving ? "Saving…" : "Save"}</Button>
-                <Button onClick={trigger.cancel} variant="subtle" size="xs">Cancel</Button>
-              </div>
-            </div>
-          ) : (
-            <button
-              onClick={trigger.startEditing}
-              className="inline-flex items-center gap-2 rounded-lg border border-[#2a2a2e] bg-[#1a1a1d] px-3 py-2 text-left transition-all duration-150 hover:border-[#3a3a3e] hover:bg-[#222]"
-            >
-              <span className="text-[12px] font-mono text-[#ccc]">{trigger.display || "No trigger"}</span>
-              <span className="text-[10px] text-[#444]">&#9998; edit</span>
-            </button>
-          )}
+          <TriggerEditor trigger={trigger} suggestions={TRIGGER_SUGGESTIONS} />
         </PaneSection>
 
         {jig.schedule && (

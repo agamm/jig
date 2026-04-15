@@ -3,13 +3,14 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "fs"
 import { join } from "path"
 import { getJigFilePath } from "../src/domain/jig-source.js"
 import { applyRunEvent, clearTrackedRunsForJig, finishTrackedRun, getActiveRunStatusForJig, resetRunStoreForTests, startTrackedRun } from "../src/services/run-store.js"
-import { getActiveRunSnapshot, getRunDetail, startJigRun } from "../src/services/run-api.js"
+import { cancelActiveRun, getActiveRunSnapshot, getRunDetail, startJigRun } from "../src/services/run-api.js"
 import { closeDb, openDb } from "../src/db.js"
 import { invalidateJigsCache } from "../src/discover.js"
 import { JIGS_DIR, PROJECT_ROOT } from "../src/config/paths.js"
 
 const CONNECTIONS_DIR = join(PROJECT_ROOT, ".jig/connections")
 const CONNECTIONS_INDEX = join(CONNECTIONS_DIR, "index.ts")
+const CANCELLED_MESSAGE = "This operation was aborted"
 
 async function waitFor(check: () => boolean, timeoutMs = 500): Promise<void> {
   const start = Date.now()
@@ -212,6 +213,85 @@ export default jig("skip-disappears-case", {
       expect(() => getRunDetail(started.runId)).toThrow("Run not found")
     } finally {
       rmSync(jigPath, { force: true })
+      if (createdConnectionsIndex) rmSync(CONNECTIONS_INDEX, { force: true })
+      closeDb()
+      invalidateJigsCache()
+    }
+  })
+
+  it("cancels a running tool call by propagating the run abort signal into MCP requests", async () => {
+    const jigPath = join(JIGS_DIR, "cancel-tool-case.ts")
+    const helperPath = join(JIGS_DIR, "_cancel_tool_helper.ts")
+    const createdConnectionsIndex = !existsSync(CONNECTIONS_INDEX)
+    closeDb()
+    openDb(":memory:")
+    invalidateJigsCache()
+    mkdirSync(JIGS_DIR, { recursive: true })
+    mkdirSync(CONNECTIONS_DIR, { recursive: true })
+    if (createdConnectionsIndex) writeFileSync(CONNECTIONS_INDEX, "export {}\n")
+    writeFileSync(helperPath, `
+import { callTool } from "../src/mcp/client"
+import type { JigTool } from "../src/sdk/jig"
+
+const connection = {
+  client: {
+    callTool: async (_request: any, _schema?: any, options?: { signal?: AbortSignal }) => {
+      await new Promise((_, reject) => {
+        if (options?.signal?.aborted) {
+          reject(new Error(${JSON.stringify(CANCELLED_MESSAGE)}))
+          return
+        }
+        options?.signal?.addEventListener("abort", () => reject(new Error(${JSON.stringify(CANCELLED_MESSAGE)})), { once: true })
+      })
+      return { structuredContent: { ok: true } }
+    },
+  },
+  transport: {} as any,
+  serverName: "cancelstub",
+  config: {} as any,
+}
+
+function tool(name: string) {
+  const fn = async (params: any) => callTool(connection as any, name, params ?? {})
+  fn._serverName = "cancelstub"
+  fn._toolName = name
+  fn._readOnly = true
+  return fn as JigTool<any, any>
+}
+
+export const wait = tool("wait")
+export const cancelstub = { wait }
+`)
+    writeFileSync(jigPath, `
+import { jig } from "@jig/sdk"
+import { cancelstub } from "./_cancel_tool_helper"
+
+export default jig("cancel-tool-case", {
+  trigger: { type: "manual" },
+  tools: [cancelstub.wait],
+}, async (ctx) => {
+  await ctx.step("Wait forever", [cancelstub.wait], async () => {
+    await cancelstub.wait({})
+    ctx.output("unreachable")
+  })
+})
+`)
+
+    try {
+      const started = await startJigRun("cancel-tool-case", {})
+      await waitFor(() => getActiveRunSnapshot("cancel-tool-case").active === true)
+      await cancelActiveRun("cancel-tool-case")
+      await waitFor(() => getActiveRunSnapshot("cancel-tool-case").active === false)
+
+      const detail = getRunDetail(started.runId)
+      expect(detail.status).toBe("fail")
+      expect(detail.error).toBe("Cancelled by user")
+      expect(detail.output).toBe("Cancelled by user")
+      expect(detail.steps[0]?.status).toBe("fail")
+      expect(detail.steps[0]?.output).toContain("Cancelled by user")
+    } finally {
+      rmSync(jigPath, { force: true })
+      rmSync(helperPath, { force: true })
       if (createdConnectionsIndex) rmSync(CONNECTIONS_INDEX, { force: true })
       closeDb()
       invalidateJigsCache()

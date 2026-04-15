@@ -4,13 +4,16 @@ import { useEffect, useRef, useState } from "react";
 import { AgentInput } from "@/components/agent-input";
 import { AgentPanel } from "@/components/agent-panel";
 import { Button } from "@/components/button";
+import { BusyFrame } from "@/components/busy-frame";
 import { ConnectionTag } from "@/components/connection-tag";
+import { DraftBanner } from "@/components/draft-banner";
 import { HighlightedCode } from "@/components/highlighted-code";
 import { RunSteps, type RunStep } from "@/components/run-steps";
 import { useAgent } from "@/hooks/use-agent";
 import { PaneHeader } from "@/components/pane-header";
 import { PaneSection } from "@/components/pane-section";
 import { SegmentedControl } from "@/components/segmented-control";
+import { EmptyState } from "@/components/state-panel";
 
 function prettifyJigName(value: string): string {
   return value.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
@@ -95,27 +98,9 @@ export function CreateJigPane({
     <aside
       className="flex h-full w-full flex-col bg-[#0e0e10] overflow-hidden"
     >
-      <div className="construction-stripe border-b border-amber-500/20 px-4 py-2 flex items-center gap-2">
-        <span className="text-amber-400 text-[11px]">&#9888;</span>
-        <span className="text-[11px] text-amber-400 font-medium">Draft &mdash; under construction</span>
-      </div>
+      <DraftBanner title="Draft under construction" />
 
-      <div className={`mx-3 my-3 flex-1 min-h-0 ${showAgentLoadingFrame ? "relative overflow-hidden rounded-lg border border-[#1f1f23]" : ""}`}>
-        {showAgentLoadingFrame && (
-          <>
-            <div className="absolute inset-0 overflow-hidden rounded-lg">
-              <div
-                className="absolute inset-[-200%]"
-                style={{
-                  animation: "spin-light 3s linear infinite",
-                  background: "conic-gradient(transparent 240deg, rgba(96,165,250,0.3) 260deg, rgba(96,165,250,0.7) 275deg, rgba(96,165,250,1) 280deg, rgba(96,165,250,0.7) 285deg, rgba(96,165,250,0.3) 300deg, transparent 320deg)",
-                }}
-              />
-            </div>
-            <div className="absolute inset-[1px] rounded-[7px] bg-[#0e0e10]" />
-          </>
-        )}
-        <div className={`flex h-full min-h-0 flex-col ${showAgentLoadingFrame ? "relative z-10" : ""}`}>
+      <BusyFrame busy={showAgentLoadingFrame} className="mx-3 my-3 flex-1 min-h-0" innerClassName="flex h-full min-h-0 flex-col">
           <PaneHeader
             title={
               <span key={displayName} style={{ animation: "fade-up 0.18s ease" }}>
@@ -140,14 +125,6 @@ export function CreateJigPane({
                   { value: "code", label: "Code", disabled: !hasData },
                 ]}
               />
-              <div className="flex items-center gap-1.5">
-                <Button variant="subtle" size="xs" className="bg-[#1a1a1d] text-[#444] hover:bg-[#1a1a1d] hover:text-[#444]" disabled>
-                  Run
-                </Button>
-                <Button variant="subtle" size="xs" className="text-[#444] hover:text-[#444]" disabled>
-                  Dry Run
-                </Button>
-              </div>
             </div>
 
             {detailTab === "steps" ? (
@@ -156,7 +133,7 @@ export function CreateJigPane({
                   <RunSteps steps={steps} mode={{ type: "idle" }} />
                 </div>
               ) : (
-                <SkeletonSteps />
+                showAgentLoadingFrame ? <SkeletonSteps /> : <EmptyState title="No draft steps yet" description="Describe the automation you want and the planner will build the first draft." />
               )
             ) : hasData ? (
               <div className="rounded-lg border border-[#1f1f23] bg-[#111113] p-4 font-mono overflow-x-auto" style={{ animation: "fade-up 0.15s ease" }}>
@@ -229,8 +206,7 @@ export function CreateJigPane({
               autoFocus
             />
           </div>
-        </div>
-      </div>
+      </BusyFrame>
     </aside>
   );
 }

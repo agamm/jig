@@ -1,8 +1,10 @@
 import { useState } from "react";
 import type { Connection, ExampleJig } from "@shared/api";
+import { Button } from "@/components/button";
 import { ServiceIcon } from "@/components/service-icon";
 import { ConnectionTag } from "@/components/connection-tag";
 import { RunSteps } from "@/components/run-steps";
+import { Notice } from "@/components/state-panel";
 
 const FEATURED_CONNECTIONS = [
   "workspace",
@@ -45,6 +47,7 @@ export function OnboardingView({
   connections = [],
   examples = [],
   existingJigIds = [],
+  examplesErrorMessage,
 }: {
   onCreate?: () => void;
   onConnectionClick?: (name: string) => void;
@@ -54,6 +57,7 @@ export function OnboardingView({
   connections?: Connection[];
   examples?: ExampleJig[];
   existingJigIds?: string[];
+  examplesErrorMessage?: string;
 }) {
   const [expandedExampleId, setExpandedExampleId] = useState<string | null>(null);
   const [addingExampleId, setAddingExampleId] = useState<string | null>(null);
@@ -108,10 +112,15 @@ export function OnboardingView({
             <h3 className="text-[12px] font-medium uppercase tracking-wider text-[#888]">Example Jigs</h3>
             <p className="mt-1 text-[11px] text-[#555]">These live in the repo&apos;s <code className="text-[#888]">examples/</code> directory, so reset leaves them intact.</p>
           </div>
+          {examplesErrorMessage ? (
+            <Notice tone="warning" title="Couldn’t load examples">
+              {examplesErrorMessage}
+            </Notice>
+          ) : null}
           {exampleStatus && (
-            <div className="rounded-lg border border-[#1f1f23] bg-[#111113] px-3 py-2 text-[11px] text-[#888]">
+            <Notice tone={exampleStatus.startsWith("Added ") ? "success" : "warning"}>
               {exampleStatus}
-            </div>
+            </Notice>
           )}
           <div className="space-y-3">
             {examples.map((example) => {
@@ -137,15 +146,16 @@ export function OnboardingView({
                       </div>
                     </div>
                     <div className="shrink-0 flex items-center gap-2">
-                      <button
+                      <Button
                         onClick={() => {
                           setExpandedExampleId(expanded ? null : example.id);
                         }}
-                        className="rounded-md border border-[#1f1f23] bg-[#0d0d0f] px-2.5 py-1 text-[11px] text-[#888] transition-colors hover:border-[#2a2a2e] hover:text-[#ededed]"
+                        variant="subtle"
+                        size="sm"
                       >
                         {expanded ? "Hide Steps" : "View Steps"}
-                      </button>
-                      <button
+                      </Button>
+                      <Button
                         onClick={async () => {
                           setExampleStatus(null);
                           if (exists) {
@@ -163,14 +173,11 @@ export function OnboardingView({
                           }
                         }}
                         disabled={adding}
-                        className={`rounded-md px-2.5 py-1 text-[11px] transition-colors ${
-                          exists
-                            ? "border border-[#2a2a2e] bg-[#17171a] text-[#ededed] hover:bg-[#1b1b1f]"
-                            : "border border-emerald-500/30 bg-emerald-500/[0.10] text-emerald-300 hover:bg-emerald-500/[0.16]"
-                        } disabled:opacity-60`}
+                        variant={exists ? "subtle" : "successOutline"}
+                        size="sm"
                       >
-                        {adding ? "Adding..." : exists ? "Open" : "Add Example"}
-                      </button>
+                        {adding ? "Adding…" : exists ? "Open" : "Add Example"}
+                      </Button>
                     </div>
                   </div>
                   {expanded && (

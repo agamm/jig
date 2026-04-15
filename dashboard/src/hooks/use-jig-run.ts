@@ -84,6 +84,8 @@ export function useJigRun(jigId: string) {
   useEffect(() => cleanup, [cleanup]);
 
   const pollUntilDone = useCallback(async (runId: number, abort: AbortController, startTime: number, isDryRun: boolean) => {
+    if (abort.signal.aborted) return;
+
     // Tick elapsed time
     timerRef.current = setInterval(() => {
       if (!abort.signal.aborted) {
@@ -212,6 +214,7 @@ export function useJigRun(jigId: string) {
 
     try {
       const data = await startJigRun(jigId, { dryRun });
+      if (abort.signal.aborted) return;
       runIdRef.current = data.runId;
       setAttached(true);
       void mutateCache(activeRunKey(jigId), {
@@ -258,5 +261,16 @@ export function useJigRun(jigId: string) {
     setActiveTools([]);
 }, [cleanup, jigId, setInactiveSnapshot]);
 
-  return { mode, liveSteps, completedTools, activeTools, toolReadOnly, startRun, dismiss, cancelRun, isRunning: mode.type === "running" };
+  return {
+    mode,
+    liveSteps,
+    completedTools,
+    activeTools,
+    toolReadOnly,
+    startRun,
+    dismiss,
+    cancelRun,
+    isRunning: mode.type === "running",
+    canCancel: attached,
+  };
 }

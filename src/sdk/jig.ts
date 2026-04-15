@@ -46,10 +46,10 @@ export function jig(
 export async function run(
   definition: JigDefinition,
   params: Record<string, unknown> = {},
-  options?: { silent?: boolean; recorder?: RunRecorder }
+  options?: { silent?: boolean; recorder?: RunRecorder; signal?: AbortSignal }
 ): Promise<Context> {
   const toolNames = (definition.options.tools ?? []).map((t) => t._toolName)
-  const ctx = new Context(params, toolNames)
+  const ctx = new Context(params, toolNames, options?.signal)
   if (options?.silent) ctx.setSink(() => {})
   if (options?.recorder) ctx.setRecorder(options.recorder)
   return runContext.run(ctx, async () => {

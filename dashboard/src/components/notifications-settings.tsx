@@ -1,7 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Button } from "@/components/button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { TextInput } from "@/components/input";
+import { LoadingState, Notice } from "@/components/state-panel";
 import { fetchNotificationSettings, resetLocalState, saveNotificationSettings, sendTestNotification } from "@/lib/api";
 import type {
   NotificationCapableTool,
@@ -153,7 +156,7 @@ export function NotificationsSettings({ onReset }: { onReset?: () => Promise<voi
   }
 
   if (loading) {
-    return <p className="text-[12px] text-[#555]">Loading…</p>;
+    return <LoadingState message="Loading notification settings…" />;
   }
 
   const tone = statusTone(status);
@@ -201,22 +204,21 @@ export function NotificationsSettings({ onReset }: { onReset?: () => Promise<voi
                       type="checkbox"
                       checked={draft.enabled}
                       onChange={(e) => updateDraft(key, { enabled: e.target.checked })}
-                      className="accent-white"
+                      className="ui-checkbox"
                     />
                     <span className="text-[13px] text-[#ededed]">{tool.label}</span>
                     <span className="rounded-full border border-[#232327] px-1.5 py-0.5 text-[10px] text-[#666]">{tool.connection}</span>
                   </label>
                   {draft.enabled && (
                     <div className="space-y-1.5 pl-6">
-                      <input
+                      <TextInput
                         type="text"
                         placeholder={tool.recipientField}
                         value={draft.recipient}
                         onChange={(e) => updateDraft(key, { recipient: e.target.value })}
-                        className="w-full bg-[#09090b] border border-[#1f1f23] rounded px-2 py-1.5 text-[12px] text-[#ededed] outline-none focus:border-[#333]"
                       />
                       {tool.extraRequired.map((field) => (
-                        <input
+                        <TextInput
                           key={field}
                           type="text"
                           placeholder={field}
@@ -224,7 +226,6 @@ export function NotificationsSettings({ onReset }: { onReset?: () => Promise<voi
                           onChange={(e) =>
                             updateDraft(key, { extra: { ...draft.extra, [field]: e.target.value } })
                           }
-                          className="w-full bg-[#09090b] border border-[#1f1f23] rounded px-2 py-1.5 text-[12px] text-[#ededed] outline-none focus:border-[#333]"
                         />
                       ))}
                     </div>
@@ -239,7 +240,7 @@ export function NotificationsSettings({ onReset }: { onReset?: () => Promise<voi
             type="checkbox"
             checked={triggerOnFail}
             onChange={(e) => setTriggerOnFail(e.target.checked)}
-            className="accent-white"
+            className="ui-checkbox"
           />
           <div>
             <span className="block text-[13px] text-[#ededed]">Notify on jig failure</span>
@@ -247,33 +248,17 @@ export function NotificationsSettings({ onReset }: { onReset?: () => Promise<voi
           </div>
         </label>
         <div className="flex items-center gap-2">
-          <button
-            onClick={onSave}
-            disabled={saving || !hasEditableChannels}
-            className="text-[12px] text-[#ededed] rounded-md border border-[#1f1f23] bg-[#1a1a1d] hover:bg-[#222] px-3 py-1.5 disabled:opacity-50"
-          >
+          <Button onClick={onSave} disabled={saving || !hasEditableChannels} variant="success" size="md">
             {saving ? "Saving…" : "Save"}
-          </button>
-          <button
-            onClick={onTest}
-            disabled={testing || !hasEditableChannels}
-            className="text-[12px] text-[#888] rounded-md border border-[#1f1f23] hover:text-[#ededed] hover:bg-[#111] px-3 py-1.5 disabled:opacity-50"
-          >
+          </Button>
+          <Button onClick={onTest} disabled={testing || !hasEditableChannels} variant="subtle" size="md">
             {testing ? "Sending…" : "Send test"}
-          </button>
+          </Button>
         </div>
         {status && (
-          <div
-            className={`rounded-lg px-3 py-2 text-[11px] ${
-              tone === "error"
-                ? "border border-rose-500/20 bg-rose-500/[0.06] text-rose-200"
-                : tone === "success"
-                  ? "border border-emerald-500/20 bg-emerald-500/[0.06] text-emerald-200"
-                  : "border border-[#1f1f23] bg-[#0d0d0f] text-[#888]"
-            }`}
-          >
+          <Notice tone={tone === "error" ? "danger" : tone === "success" ? "success" : "neutral"}>
             {status}
-          </div>
+          </Notice>
         )}
       </div>
 
@@ -286,13 +271,9 @@ export function NotificationsSettings({ onReset }: { onReset?: () => Promise<voi
               Deletes all local jigs, clears saved connection auth on this machine, and returns the dashboard to onboarding. Example jigs in <code className="text-rose-100/80">examples/</code> are preserved.
             </p>
           </div>
-          <button
-            onClick={() => setConfirmResetOpen(true)}
-            disabled={resetting}
-            className="text-[12px] rounded-md border border-rose-500/30 bg-rose-500/[0.08] px-3 py-1.5 text-rose-200 hover:bg-rose-500/[0.14] disabled:opacity-50"
-          >
+          <Button onClick={() => setConfirmResetOpen(true)} disabled={resetting} variant="danger" size="md">
             {resetting ? "Deleting…" : "Delete Local Data"}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

@@ -14,7 +14,7 @@ export function PaneSection({
   return (
     <div>
       <div className="mb-2 flex items-center justify-between gap-3">
-        <h3 className="text-[11px] font-medium text-[#555] uppercase tracking-wider">{title}</h3>
+        <h3 className="ui-kicker">{title}</h3>
         {meta}
       </div>
       {children}

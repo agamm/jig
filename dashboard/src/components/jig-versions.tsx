@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 import type { JigVersion, JigVersionDetail } from "@shared/api"
 import { Button } from "@/components/button"
 import { ConfirmDialog } from "@/components/confirm-dialog"
+import { EmptyState, LoadingState, Notice } from "@/components/state-panel"
 import { toast } from "@/components/toast"
 import { fetchJigVersionDetail, restoreJigVersion } from "@/lib/api"
 import { trimGitDiffHeaders } from "@/lib/git-diff"
@@ -128,16 +129,20 @@ export function JigVersions({
     }
   }
 
-  if (loading) return <p className="py-2 text-[10px] text-[#555]">Loading history...</p>
+  if (loading) return <LoadingState message="Loading history…" className="py-4" />
   if (error && !versions) {
     return (
-      <div className="space-y-2 py-2">
-        <p className="text-[10px] text-[#555]">{error?.message ?? "Failed to load"}</p>
-        <Button onClick={() => reloadVersions()} variant="subtle" size="xs">Retry</Button>
-      </div>
+      <Notice
+        tone="danger"
+        title="Couldn’t load history"
+        className="py-2"
+        actions={<Button onClick={() => reloadVersions()} variant="subtle" size="xs">Retry</Button>}
+      >
+        {error?.message ?? "Failed to load"}
+      </Notice>
     )
   }
-  if (!versions || versions.length === 0) return <p className="py-2 text-[10px] text-[#555]">No version history</p>
+  if (!versions || versions.length === 0) return <EmptyState title="No version history yet" className="py-4" />
 
   return (
     <>

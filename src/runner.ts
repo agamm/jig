@@ -12,6 +12,7 @@ import { dryRunContext } from "./sdk/dryrun.js"
 import { logSessionEvent } from "./debug/session-log.js"
 import { checkStepStructure } from "./services/jig-checker.js"
 import { hasConsoleLogCall } from "./domain/source-analysis.js"
+import { isCancellationMessage, USER_CANCELLED_MESSAGE } from "./run-cancel.js"
 
 // --- Runner ---
 export interface RunResult {
@@ -148,7 +149,7 @@ async function _runJig(
     // --- Run ---
     log("executing-handler", { jigName: def.name })
     const { run } = await import("./sdk/jig.js")
-    const ctx = await run(def, params, { ...(silent && { silent: true }), recorder })
+    const ctx = await run(def, params, { ...(silent && { silent: true }), recorder, signal })
 
     // --- Post-run ---
     const tools = spinner.getTools()
@@ -214,9 +215,17 @@ export function persist(runId: number, startTime: number): (e: RunEvent) => void
       case "done":
         completeRun(runId, "success", event.durationMs, undefined, event.output)
         break
-      case "error":
-        completeRun(runId, "fail", Date.now() - startTime, event.message)
+      case "error": {
+        const cancelled = isCancellationMessage(event.message)
+        completeRun(
+          runId,
+          "fail",
+          Date.now() - startTime,
+          cancelled ? USER_CANCELLED_MESSAGE : event.message,
+          cancelled ? USER_CANCELLED_MESSAGE : undefined
+        )
         break
+      }
     }
   }
 }

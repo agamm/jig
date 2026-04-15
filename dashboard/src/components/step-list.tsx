@@ -1,5 +1,5 @@
 import type { Jig } from "@/types/jig";
-import { ServiceIcon } from "@/components/service-icon";
+import { ConnectionTag } from "@/components/connection-tag";
 
 export function StepList({ steps, editable }: { steps: Jig["steps"]; editable?: boolean }) {
   return (
@@ -15,10 +15,7 @@ export function StepList({ steps, editable }: { steps: Jig["steps"]; editable?: 
             {step.connections && step.connections.length > 0 && (
               <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                 {[...new Set(step.connections)].map(c => (
-                  <span key={c} className="inline-flex items-center gap-1 rounded-full bg-[#1a1a1d] border border-[#2a2a2e] px-1.5 py-0.5">
-                    <ServiceIcon name={c} size={11} />
-                    <span className="text-[9px] text-[#666]">{c}</span>
-                  </span>
+                  <ConnectionTag key={c} name={c} />
                 ))}
               </div>
             )}

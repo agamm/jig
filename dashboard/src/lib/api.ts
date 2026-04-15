@@ -73,11 +73,16 @@ export function fetchConnection(name: string): Promise<ConnectionDetail> {
   return fetchJson(`/api/connections/${encodeURIComponent(name)}`)
 }
 
-export function connectConnection(name: string, credentials?: Record<string, string>): Promise<ConnectConnectionResponse> {
+export function connectConnection(
+  name: string,
+  credentials?: Record<string, string>,
+  init?: Pick<RequestInit, "signal">
+): Promise<ConnectConnectionResponse> {
   return fetchJson(`/api/connections/${encodeURIComponent(name)}/connect`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(credentials ? { credentials } : {}),
+    signal: init?.signal,
   })
 }
 

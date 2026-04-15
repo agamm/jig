@@ -2,12 +2,18 @@
 
 import { useState } from "react";
 import type { Jig } from "@/types/jig";
+import { SegmentedControl } from "@/components/segmented-control";
 import { ServiceIcon } from "@/components/service-icon";
 import { Sparkline } from "@/components/sparkline";
+import { EmptyState } from "@/components/state-panel";
+import { TextInput } from "@/components/input";
 import { useDragReorder } from "@/hooks/use-drag-reorder";
 
 const statusColor = (s: string) =>
   s === "healthy" ? "#34d399" : s === "attention" ? "#f59e0b" : "#f43f5e";
+
+const runStatusColor = (s: "success" | "fail") =>
+  s === "success" ? "#34d399" : "#f43f5e";
 
 function formatNextRun(iso: string): string {
   const d = new Date(iso);
@@ -33,14 +39,25 @@ export function JigList({ jigs, selectedJigId, onJigClick, onReorder, onCreate }
   onCreate: () => void;
 }) {
   const [jigSearch, setJigSearch] = useState("");
+  const [filter, setFilter] = useState<"all" | "running" | "attention" | "scheduled">("all");
   const { draggingIdx, dropTargetIdx, dropSide, getDragProps, handleDrop } = useDragReorder<Jig>();
 
-  const filteredJigs = jigSearch
-    ? jigs.filter((j) => {
-        const query = jigSearch.toLowerCase();
-        return j.name.toLowerCase().includes(query);
-      })
-    : jigs;
+  const filteredJigs = jigs.filter((jig) => {
+    const query = jigSearch.trim().toLowerCase();
+    const matchesQuery = !query || jig.name.toLowerCase().includes(query);
+    if (!matchesQuery) return false;
+
+    switch (filter) {
+      case "running":
+        return jig.running;
+      case "attention":
+        return jig.status !== "healthy";
+      case "scheduled":
+        return !!jig.schedule?.nextRunAt;
+      default:
+        return true;
+    }
+  });
   const jigIndexById = new Map(filteredJigs.map((jig, idx) => [jig.id, idx]));
 
   function renderJigRow(jig: Jig, idx: number) {
@@ -48,6 +65,7 @@ export function JigList({ jigs, selectedJigId, onJigClick, onReorder, onCreate }
     const isDragging = draggingIdx === idx;
     const isDropTarget = dropTargetIdx === idx;
     const dragProps = getDragProps(idx);
+    const sparklineColors = jig.runs.slice(0, 7).reverse().map((run) => runStatusColor(run.status));
 
     return (
       <div key={jig.id} className="relative">
@@ -106,7 +124,7 @@ export function JigList({ jigs, selectedJigId, onJigClick, onReorder, onCreate }
 
           <span className="flex-1" />
 
-          <Sparkline data={jig.sparkline} color={statusColor(jig.status)} />
+          <Sparkline data={jig.sparkline} color={statusColor(jig.status)} colors={sparklineColors} />
           {jig.costMonth && (
             <span className="group/cost relative text-[10px] text-[#444] font-mono shrink-0 cursor-default">
               {jig.costMonth}/mo
@@ -132,40 +150,44 @@ export function JigList({ jigs, selectedJigId, onJigClick, onReorder, onCreate }
 
   return (
     <div className="mx-auto max-w-3xl" style={{ animation: "fade-up 0.3s ease" }}>
-      {/* Jig filters + search inline */}
-      <div className="flex items-center gap-1.5 mb-3">
-        <div className="flex gap-1">
-          {["All", "Active", "Failed", "Scheduled"].map(f => (
-            <span key={f} className={`rounded-full px-2.5 py-0.5 text-[11px] cursor-pointer transition-colors duration-150 ${f === "All" ? "bg-[#1a1a1d] text-[#ededed]" : "text-[#555] hover:text-[#888]"}`}>
-              {f}
-            </span>
-          ))}
-        </div>
-        <span className="text-[10px] text-[#333]">&middot;</span>
-        <span className="text-[11px] text-[#444]">{filteredJigs.length} jigs</span>
-        <div className="ml-auto relative w-36">
-        <svg className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-[#333]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-        <input
+      <div className="mb-3 flex items-center gap-3">
+        <SegmentedControl
+          value={filter}
+          onChange={setFilter}
+          options={[
+            { value: "all", label: "All" },
+            { value: "running", label: "Running" },
+            { value: "attention", label: "Attention" },
+            { value: "scheduled", label: "Scheduled" },
+          ]}
+        />
+        <span className="text-[11px] text-[var(--text-dim)]">{filteredJigs.length} jigs</span>
+        <TextInput
+          className="ml-auto w-44"
+          inputClassName="py-1 pl-8 pr-2 text-[11px]"
           type="text"
           value={jigSearch}
           onChange={(e) => setJigSearch(e.target.value)}
-          placeholder="Filter..."
-          className="w-full rounded-md border-0 bg-transparent pl-7 pr-2 py-0.5 text-[11px] text-[#888] placeholder:text-[#333] outline-none transition-colors duration-150 focus:bg-[#111113] focus:text-[#ededed]"
+          placeholder="Search jigs…"
+          leading={
+            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <circle cx="11" cy="11" r="8" />
+              <path d="M21 21l-4.35-4.35" />
+            </svg>
+          }
         />
-        </div>
       </div>
 
-      {/* Jig list rows */}
       <div className="space-y-0.5">
         {filteredJigs.map((jig) => renderJigRow(jig, jigIndexById.get(jig.id) ?? 0))}
 
         {filteredJigs.length === 0 && (
-          <div className="text-center py-8 text-[#444] text-[12px]">
-            No jigs match your filter
-          </div>
+          <EmptyState
+            title="No jigs match this view"
+            description={jigSearch ? "Try a different search or filter." : "Change the filter or create a new jig."}
+          />
         )}
 
-        {/* + New Jig row */}
         <button
           onClick={onCreate}
           className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors duration-150 text-[#444] hover:text-emerald-400 hover:bg-[#111113] mt-1"

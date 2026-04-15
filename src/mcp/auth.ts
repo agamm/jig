@@ -277,6 +277,7 @@ export class JigOAuthProvider implements OAuthClientProvider {
           primaryHref: `${DASHBOARD_URL}/?view=connections&connection=${encodeURIComponent(this.serverName)}`,
           primaryLabel: "Back to connections",
         }))
+        setTimeout(() => this.stopCallbackServer(), 2000)
       }
     })
 

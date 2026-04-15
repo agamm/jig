@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { JigStepTool } from "@shared/api";
+import { RotatingFrame } from "@/components/rotating-frame";
 import { ServiceIcon } from "@/components/service-icon";
 import { formatElapsed } from "@/lib/format";
 import { Spinner } from "@/components/spinner";
@@ -152,21 +153,14 @@ export function RunSteps({
           })();
 
           return (
-            <div
+            <RotatingFrame
               key={i}
-              className={`relative ${stepRunning ? "step-running rounded-lg" : i < steps.length - 1 ? "border-b border-dashed border-[#1a1a1d]" : ""}`}
+              active={stepRunning}
+              className={`${stepRunning ? "step-running" : i < steps.length - 1 ? "border-b border-dashed border-[#1a1a1d]" : ""}`}
+              roundedClassName="rounded-lg"
+              innerRoundedClassName="rounded-[7px]"
+              surfaceClassName="bg-[#111113]"
             >
-              {/* Rotating border for running step */}
-              {stepRunning && (
-                <>
-                  <div className="absolute inset-0 overflow-hidden rounded-lg">
-                    <div className="absolute inset-[-200%]" style={{ animation: "spin-light 3s linear infinite", background: "conic-gradient(transparent 240deg, rgba(96,165,250,0.3) 260deg, rgba(96,165,250,0.7) 275deg, rgba(96,165,250,1) 280deg, rgba(96,165,250,0.7) 285deg, rgba(96,165,250,0.3) 300deg, transparent 320deg)" }} />
-                  </div>
-                  <div className="absolute inset-[1px] rounded-[7px] bg-[#111113]" />
-                </>
-              )}
-
-              {/* Step content */}
               <div
                 onClick={hasOutput ? () => setExpandedStep(isExpanded ? null : i) : undefined}
                 className={`flex items-start gap-3 px-4 py-3 transition-colors duration-150 ${!stepRunning ? "hover:bg-[#151517]" : ""} ${hasOutput ? "cursor-pointer" : ""} ${stepRunning ? "relative z-10" : ""}`}
@@ -193,6 +187,7 @@ export function RunSteps({
                               onConnectionClick?.(connection);
                             }}
                             className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-[#2a2a2e] bg-[#1a1a1d] px-1.5 py-0.5 transition-colors hover:border-[#3a3a3e] hover:bg-[#202024]"
+                            title={tools.map((tool) => `${tool.name} (${tool.readOnly ? "read" : "write"})`).join(", ")}
                           >
                             <ServiceIcon name={connection} size={11} />
                             <span className="text-[9px] text-[#888] font-mono max-w-[220px] truncate">
@@ -238,18 +233,16 @@ export function RunSteps({
                           }`}
                         >
                           {pending && (
-                            <>
-                              <span className="absolute inset-0 overflow-hidden rounded-full">
-                                <span
-                                  className="absolute inset-[-200%]"
-                                  style={{
-                                    animation: "spin-light 2.4s linear infinite",
-                                    background: "conic-gradient(transparent 240deg, rgba(96,165,250,0.24) 260deg, rgba(96,165,250,0.55) 275deg, rgba(96,165,250,0.95) 280deg, rgba(96,165,250,0.55) 285deg, rgba(96,165,250,0.24) 300deg, transparent 320deg)"
-                                  }}
-                                />
-                              </span>
-                              <span className="absolute inset-[1px] rounded-full bg-[#19191c]" />
-                            </>
+                            <RotatingFrame
+                              active
+                              roundedClassName="rounded-full"
+                              innerRoundedClassName="rounded-full"
+                              surfaceClassName="bg-[#19191c]"
+                              duration="2.4s"
+                              gradient="conic-gradient(transparent 240deg, rgba(96,165,250,0.24) 260deg, rgba(96,165,250,0.55) 275deg, rgba(96,165,250,0.95) 280deg, rgba(96,165,250,0.55) 285deg, rgba(96,165,250,0.24) 300deg, transparent 320deg)"
+                            >
+                              <span />
+                            </RotatingFrame>
                           )}
                           <button
                             type="button"
@@ -391,7 +384,7 @@ export function RunSteps({
                   </div>
                 </div>
               )}
-            </div>
+            </RotatingFrame>
           );
         })}
       </div>
@@ -410,7 +403,7 @@ function CopyButton({ text }: { text: string }) {
         setCopied(true);
         setTimeout(() => setCopied(false), 1500);
       }}
-      className="absolute top-1.5 right-1.5 rounded-md p-1 text-[#444] opacity-0 group-hover/output:opacity-100 hover:text-[#888] hover:bg-[#1a1a1d] transition-all duration-150"
+      className="absolute top-1.5 right-1.5 rounded-md p-1 text-[#444] opacity-60 hover:text-[#888] hover:bg-[#1a1a1d] group-hover/output:opacity-100 transition-all duration-150"
       title="Copy output"
     >
       {copied ? (

@@ -91,14 +91,14 @@ async function connectWithOAuth(
   const authProvider = new JigOAuthProvider(name)
   const url = new URL(config.url)
   const client = new Client({ name: "jig", version: "0.1.0" })
+  const transport = new StreamableHTTPClientTransport(url, { authProvider })
 
   try {
-    const transport = new StreamableHTTPClientTransport(url, { authProvider })
     await client.connect(transport)
     return { client, transport, serverName: name, config }
   } catch (error) {
     if (error instanceof UnauthorizedError) {
-      return handleOAuthRedirect(name, config, authProvider)
+      return finishOAuthAuthorization(name, config, authProvider, transport)
     }
     // StreamableHTTP failed for non-auth reason — try SSE
     try {
@@ -112,6 +112,41 @@ async function connectWithOAuth(
       }
       throw sseError
     }
+  }
+}
+
+async function finishOAuthAuthorization(
+  name: string,
+  config: ServerConfig & { type: "remote" },
+  authProvider: JigOAuthProvider,
+  transport: StreamableHTTPClientTransport
+): Promise<McpConnection> {
+  console.log(`[jig] ${name} requires authorization — opening browser...`)
+
+  const dots = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+  let dotIdx = 0
+  const spinner = setInterval(() => {
+    process.stdout.write(`\r${dots[dotIdx++ % dots.length]} Waiting for browser authorization...`)
+  }, 100)
+
+  try {
+    const authCode = await authProvider.waitForAuthCode()
+    clearInterval(spinner)
+    process.stdout.write("\r\x1b[K")
+    await transport.finishAuth(authCode)
+
+    const freshClient = new Client({ name: "jig", version: "0.1.0" })
+    const freshTransport = new StreamableHTTPClientTransport(new URL(config.url), {
+      authProvider,
+    })
+    await freshClient.connect(freshTransport)
+    authProvider.stopCallbackServer()
+    return { client: freshClient, transport: freshTransport, serverName: name, config }
+  } catch (error) {
+    clearInterval(spinner)
+    process.stdout.write("\r\x1b[K")
+    authProvider.stopCallbackServer()
+    throw error
   }
 }
 
@@ -315,6 +350,24 @@ export async function callTool(
   return result.content
 }
 
+export function shouldReconnectMcpConnection(error: unknown): boolean {
+  const haystack = collectErrorStrings(error).join("\n").toLowerCase()
+  if (!haystack) return false
+
+  const hasMissingSession =
+    haystack.includes("session id")
+    && haystack.includes("not found")
+
+  const hasClosedTransport =
+    haystack.includes("connection closed")
+    || haystack.includes("transport closed")
+    || haystack.includes("other side closed")
+    || haystack.includes("socket hang up")
+    || haystack.includes("econnreset")
+
+  return hasMissingSession || hasClosedTransport
+}
+
 function parseToolText(text: string): unknown {
   const trimmed = text.trim()
   const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)
@@ -325,4 +378,26 @@ function parseToolText(text: string): unknown {
   } catch {
     return text
   }
+}
+
+function collectErrorStrings(value: unknown, seen = new Set<unknown>()): string[] {
+  if (value == null) return []
+  if (typeof value === "string") return [value]
+  if (typeof value === "number" || typeof value === "boolean") return [String(value)]
+  if (seen.has(value)) return []
+  if (typeof value !== "object") return []
+
+  seen.add(value)
+  const out: string[] = []
+  if (value instanceof Error) {
+    out.push(value.name, value.message)
+    if ("cause" in value && value.cause) out.push(...collectErrorStrings(value.cause, seen))
+  }
+  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof nested === "string") out.push(nested)
+    else if (typeof nested === "number" || typeof nested === "boolean") out.push(String(nested))
+    else if (nested && typeof nested === "object") out.push(...collectErrorStrings(nested, seen))
+    if (key === "name" && typeof nested === "string") out.push(nested)
+  }
+  return out
 }

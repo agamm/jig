@@ -3,9 +3,12 @@
 import { useEffect, useRef, useState } from "react"
 import { mutate } from "swr"
 import { Button } from "@/components/button"
+import { TextInput } from "@/components/input"
 import { PaneHeader } from "@/components/pane-header"
 import { PaneSection } from "@/components/pane-section"
+import { RotatingFrame } from "@/components/rotating-frame"
 import { ServiceIcon } from "@/components/service-icon"
+import { EmptyState, LoadingState, Notice } from "@/components/state-panel"
 import { connectConnection, fetchConnections } from "@/lib/api"
 import { useConnection } from "@/lib/swr"
 import { runConnectFlow } from "@shared/connect-flow"
@@ -53,6 +56,8 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
     resolve: (value: string) => void
     reject: (error: Error) => void
   } | null>(null)
+  const connectAbortRef = useRef<AbortController | null>(null)
+  const connectRunRef = useRef(0)
 
   useEffect(() => {
     credentialValuesRef.current = credentialValues
@@ -65,6 +70,7 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
 
   useEffect(() => {
     return () => {
+      connectAbortRef.current?.abort()
       const pending = pendingCredentialRef.current
       if (!pending) return
       pendingCredentialRef.current = null
@@ -99,12 +105,17 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
   }
 
   async function handleConnect() {
+    if (connecting) return
     if (!conn) return
     if (continuePendingCredential()) return
     if (awaitingCredentialKey) {
       setConnectStatus(`Enter ${awaitingCredentialKey} to continue.`)
       return
     }
+    const controller = new AbortController()
+    connectAbortRef.current = controller
+    const runId = connectRunRef.current + 1
+    connectRunRef.current = runId
     setConnecting(true)
     setConnectStatus(null)
     setMissingCredentials([])
@@ -144,17 +155,33 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
         },
       }, {
         listConnections: fetchConnections,
-        connect: connectConnection,
+        connect: (name, credentials) => connectConnection(name, credentials, { signal: controller.signal }),
       })
+      if (connectRunRef.current !== runId) return
       setMissingCredentials([])
       setCredentialValues({})
       await mutate("connections")
       await reload()
     } catch (e: unknown) {
+      if (controller.signal.aborted) {
+        if (connectRunRef.current === runId) setConnectStatus("Connect cancelled.")
+        return
+      }
       setConnectStatus(formatConnectError(e))
     } finally {
-      setConnecting(false)
+      if (connectRunRef.current === runId) {
+        setConnecting(false)
+        connectAbortRef.current = null
+      }
     }
+  }
+
+  function handleCancelConnect() {
+    connectAbortRef.current?.abort()
+    connectAbortRef.current = null
+    cancelPendingCredential("Connect cancelled")
+    setConnecting(false)
+    setConnectStatus("Connect cancelled.")
   }
 
   return (
@@ -200,79 +227,81 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
       {/* Content */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
         {loading && (
-          <div className="flex items-center justify-center py-8 text-[#555] text-[11px]">Loading...</div>
+          <LoadingState message="Loading connection…" />
         )}
 
         {!loading && error && !conn && (
-          <div className="rounded-lg border border-[#1f1f23] bg-[#111113] px-4 py-4 space-y-3">
-            <p className="text-[12px] text-[#888]">{error?.message ?? "Failed to load"}</p>
-            <Button onClick={() => reload()} variant="subtle" size="xs">Retry</Button>
-          </div>
+          <Notice
+            tone="danger"
+            title="Couldn’t load connection"
+            actions={<Button onClick={() => reload()} variant="subtle" size="xs">Retry</Button>}
+          >
+            {error?.message ?? "Failed to load"}
+          </Notice>
         )}
 
         {conn && (
           <>
-            {/* Description */}
             {conn.description && (
-              <p className="text-[12px] text-[#888] leading-relaxed">{conn.description}</p>
+              <p className="text-[12px] text-[var(--text-muted)] leading-relaxed">{conn.description}</p>
             )}
 
-            <div className={`relative rounded-lg border border-[#1f1f23] bg-[#111113] px-4 py-3 space-y-3 ${connecting ? "overflow-hidden" : ""}`}>
-              {connecting && (
-                <>
-                  <div className="absolute inset-0 overflow-hidden rounded-lg">
-                    <div
-                      className="absolute inset-[-200%]"
-                      style={{
-                        animation: "spin-light 3s linear infinite",
-                        background: "conic-gradient(transparent 240deg, rgba(96,165,250,0.3) 260deg, rgba(96,165,250,0.7) 275deg, rgba(96,165,250,1) 280deg, rgba(96,165,250,0.7) 285deg, rgba(96,165,250,0.3) 300deg, transparent 320deg)",
-                      }}
-                    />
+            <RotatingFrame
+              active={connecting}
+              roundedClassName="rounded-lg"
+              innerRoundedClassName="rounded-[7px]"
+              surfaceClassName="bg-[#111113]"
+            >
+              <div className={`${connecting ? "" : "ui-card"} px-4 py-3 space-y-3`}>
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[12px] text-[var(--text-primary)]">{conn.connected ? "Connection ready" : "Connect this service"}</p>
+                    <p className="mt-1 text-[11px] text-[var(--text-dim)]">
+                      {conn.connected ? "Refresh tool discovery if the provider added new capabilities." : "Starts the same backend connect flow used by the CLI."}
+                    </p>
                   </div>
-                  <div className="absolute inset-[1px] rounded-[7px] bg-[#111113]" />
-                </>
-              )}
-              <div className={`flex items-center justify-between gap-3 ${connecting ? "relative z-10" : ""}`}>
-                <div>
-                  <p className="text-[12px] text-[#ededed]">{conn.connected ? "Connection ready" : "Connect this service"}</p>
-                  <p className="mt-1 text-[11px] text-[#666]">
-                    {conn.connected ? "Refresh tool discovery if the provider added new capabilities." : "Starts the same backend connect flow used by the CLI."}
-                  </p>
+                  <div className="flex items-center gap-2">
+                    {connecting && (
+                      <Button onClick={handleCancelConnect} variant="danger" size="sm">
+                        Cancel
+                      </Button>
+                    )}
+                    <Button
+                      onClick={handleConnect}
+                      variant={conn.connected ? "subtle" : "success"}
+                      size="sm"
+                      disabled={awaitingCredentialKey ? !credentialValues[awaitingCredentialKey]?.trim() : connecting}
+                    >
+                      {awaitingCredentialKey ? "Continue" : connecting ? "Connecting…" : conn.connected ? "Refresh Tools" : "Connect"}
+                    </Button>
+                  </div>
                 </div>
-                <Button
-                  onClick={handleConnect}
-                  variant={conn.connected ? "subtle" : "success"}
-                  size="sm"
-                  disabled={awaitingCredentialKey ? !credentialValues[awaitingCredentialKey]?.trim() : connecting}
-                >
-                  {awaitingCredentialKey ? "Continue" : connecting ? "Connecting..." : conn.connected ? "Refresh Tools" : "Connect"}
-                </Button>
+
+                {missingCredentials.length > 0 && (
+                  <Notice tone="neutral" title="Credentials required" className="bg-[var(--surface-input)]">
+                    <div className="space-y-2">
+                      <p>Additional credentials are required before this connection can start.</p>
+                      {missingCredentials.map((key) => (
+                        <TextInput
+                          key={key}
+                          type="password"
+                          placeholder={key}
+                          value={credentialValues[key] ?? ""}
+                          onChange={(e) => setCredentialValues((prev) => ({ ...prev, [key]: e.target.value }))}
+                        />
+                      ))}
+                    </div>
+                  </Notice>
+                )}
+
+                {connectStatus ? (
+                  <Notice tone={connectStatus.toLowerCase().startsWith("connected") ? "success" : connectStatus.toLowerCase().includes("failed") || connectStatus.toLowerCase().includes("error") ? "danger" : "neutral"}>
+                    <div className="whitespace-pre-wrap">{connectStatus}</div>
+                  </Notice>
+                ) : null}
               </div>
+            </RotatingFrame>
 
-              {missingCredentials.length > 0 && (
-                <div className={`space-y-2 rounded-lg border border-[#1f1f23] bg-[#0d0d0f] px-3 py-3 ${connecting ? "relative z-10" : ""}`}>
-                  <p className="text-[11px] text-[#888]">Additional credentials are required before this connection can start.</p>
-                  {missingCredentials.map((key) => (
-                    <input
-                      key={key}
-                      type="password"
-                      placeholder={key}
-                      value={credentialValues[key] ?? ""}
-                      onChange={(e) => setCredentialValues((prev) => ({ ...prev, [key]: e.target.value }))}
-                      className="w-full rounded-md border border-[#1f1f23] bg-[#09090b] px-2.5 py-1.5 text-[11px] text-[#ededed] placeholder:text-[#444] outline-none focus:border-[#2a2a2e] transition-colors"
-                    />
-                  ))}
-                </div>
-              )}
-
-              {connectStatus && (
-                <div className={`rounded-md border border-[#1f1f23] bg-[#0d0d0f] px-3 py-2 text-[11px] text-[#888] whitespace-pre-wrap ${connecting ? "relative z-10" : ""}`}>
-                  {connectStatus}
-                </div>
-              )}
-            </div>
-
-            {/* Proxy: add more connections at provider's dashboard */}
             {(() => {
               const dash = conn.proxyDashboardUrl ? safeExternalUrl(conn.proxyDashboardUrl) : null
               if (!dash) return null
@@ -294,18 +323,15 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
               meta={<span className="text-[10px] text-[#444]">{conn.toolCount}</span>}
             >
               {conn.tools.length === 0 ? (
-                <p className="text-[11px] text-[#555]">
-                  No tools discovered yet.
-                </p>
+                <EmptyState title="No tools discovered yet" description="Connect the service to load its tool catalog." />
               ) : (
                 <>
                   <div className="mb-2">
-                    <input
+                    <TextInput
                       type="text"
                       value={search}
                       onChange={(e) => setSearch(e.target.value)}
-                      placeholder="Filter tools..."
-                      className="w-full rounded-md border border-[#1f1f23] bg-[#111113] px-2.5 py-1.5 text-[11px] text-[#ededed] placeholder:text-[#444] outline-none focus:border-[#2a2a2e] transition-colors"
+                      placeholder="Filter tools…"
                     />
                   </div>
                   <div className="rounded-lg border border-[#1f1f23] bg-[#111113] divide-y divide-[#1a1a1d] max-h-[400px] overflow-y-auto">

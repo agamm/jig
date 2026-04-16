@@ -272,6 +272,159 @@ export function checkStepToolDeclarations(code: string, fileName = "jig.ts"): Va
   })
 }
 
+type ConnectionToolCall = {
+  serverName: string
+  toolName: string
+  start: number
+  end: number
+}
+
+let validationCompilerOptions: ts.CompilerOptions | null = null
+
+function getValidationCompilerOptions(): ts.CompilerOptions {
+  if (validationCompilerOptions) return validationCompilerOptions
+
+  const configPath = ts.findConfigFile(PROJECT_ROOT, ts.sys.fileExists, "tsconfig.json")
+  if (!configPath) {
+    validationCompilerOptions = {
+      module: ts.ModuleKind.ESNext,
+      moduleResolution: ts.ModuleResolutionKind.Bundler,
+      target: ts.ScriptTarget.ESNext,
+      strict: true,
+      noEmit: true,
+    }
+    return validationCompilerOptions
+  }
+
+  const parsed = ts.getParsedCommandLineOfConfigFile(
+    configPath,
+    { noEmit: true },
+    {
+      ...ts.sys,
+      onUnRecoverableConfigFileDiagnostic: () => {},
+    }
+  )
+
+  validationCompilerOptions = {
+    ...(parsed?.options ?? {}),
+    noEmit: true,
+  }
+  return validationCompilerOptions
+}
+
+function collectConnectionToolCalls(sf: ts.SourceFile): ConnectionToolCall[] {
+  const bindings = new Map(
+    getConnectionImportBindings(sf.text, sf.fileName).map((binding) => [binding.localName, binding.serverName])
+  )
+  const calls: ConnectionToolCall[] = []
+
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node)) {
+      const ref = ts.isPropertyAccessExpression(node.expression) && ts.isIdentifier(node.expression.expression)
+        ? {
+            serverName: bindings.get(node.expression.expression.text),
+            toolName: node.expression.name.text,
+          }
+        : ts.isElementAccessExpression(node.expression)
+            && ts.isIdentifier(node.expression.expression)
+            && node.expression.argumentExpression
+            && ts.isStringLiteralLike(node.expression.argumentExpression)
+          ? {
+              serverName: bindings.get(node.expression.expression.text),
+              toolName: node.expression.argumentExpression.text,
+            }
+          : null
+
+      if (ref?.serverName) {
+        calls.push({
+          serverName: ref.serverName,
+          toolName: ref.toolName,
+          start: node.getStart(sf),
+          end: node.getEnd(),
+        })
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+
+  visit(sf)
+  return calls
+}
+
+function normalizeDiagnosticMessage(messageText: string): string {
+  return messageText.replace(/\s+/g, " ").trim()
+}
+
+function extractMissingFields(message: string): string[] {
+  const single = message.match(/Property '([^']+)' is missing/)
+  if (single) return [single[1]]
+
+  const many = message.match(/missing the following properties from type [^:]+: (.+)$/i)
+  if (!many) return []
+
+  return many[1]
+    .split(",")
+    .map((part) => part.trim().replace(/^and\s+/i, ""))
+    .map((part) => part.replace(/\.$/, ""))
+    .filter(Boolean)
+}
+
+function formatTypedToolDiagnostic(call: ConnectionToolCall, diagnostic: ts.DiagnosticWithLocation): ValidationError[] {
+  const message = normalizeDiagnosticMessage(ts.flattenDiagnosticMessageText(diagnostic.messageText, " "))
+  const missingFields = extractMissingFields(message)
+  if (missingFields.length > 0) {
+    return missingFields.map((field) => ({
+      field: `params.${call.serverName}.${call.toolName}.${field}`,
+      message: `Tool "${call.serverName}.${call.toolName}" is called without required parameter "${field}".`,
+    }))
+  }
+
+  return [{
+    field: `params.${call.serverName}.${call.toolName}`,
+    message: `TypeScript validation failed for tool "${call.serverName}.${call.toolName}": ${message}`,
+  }]
+}
+
+function checkTypedToolCallDiagnostics(path: string): ValidationError[] {
+  const resolvedPath = ts.sys.resolvePath(path)
+  const program = ts.createProgram({
+    rootNames: [resolvedPath],
+    options: getValidationCompilerOptions(),
+  })
+  const sf = program.getSourceFile(resolvedPath)
+  if (!sf) return []
+
+  const toolCalls = collectConnectionToolCalls(sf)
+  if (toolCalls.length === 0) return []
+
+  const diagnostics = [
+    ...program.getSyntacticDiagnostics(sf),
+    ...program.getSemanticDiagnostics(sf),
+  ].filter((diagnostic): diagnostic is ts.DiagnosticWithLocation => (
+    diagnostic.file?.fileName === sf.fileName && typeof diagnostic.start === "number"
+  ))
+
+  const errors: ValidationError[] = []
+  for (const diagnostic of diagnostics) {
+    const start = diagnostic.start
+    const end = start + (diagnostic.length ?? 0)
+    const matchingCall = toolCalls
+      .filter((call) => start < call.end && end > call.start)
+      .sort((a, b) => (a.end - a.start) - (b.end - b.start))[0]
+
+    if (!matchingCall) continue
+    errors.push(...formatTypedToolDiagnostic(matchingCall, diagnostic))
+  }
+
+  const seen = new Set<string>()
+  return errors.filter((error) => {
+    const key = `${error.field}:${error.message}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
 /**
  * Reject instructional placeholder jigs that narrate setup instead of doing the work.
  */
@@ -365,6 +518,7 @@ export async function validateJigFile(path: string): Promise<ValidationResult> {
         errors.push(...checkToolDeclarations(code, declaredNames))
       }
       errors.push(...checkStepToolDeclarations(code, path))
+      errors.push(...checkTypedToolCallDiagnostics(path))
       errors.push(...checkPlaceholderJigPatterns(code))
     } catch {}
 

@@ -1,4 +1,5 @@
 import { getRun } from "../db.js"
+import { isCancellationMessage } from "../run-cancel.js"
 import { formatFailureBody, notify } from "./notify.js"
 
 export async function maybeNotifyRunFailure(
@@ -14,6 +15,7 @@ export async function maybeNotifyRunFailure(
 
   const run = (deps.getRun ?? getRun)(runId)
   if (!run || run.status !== "fail") return false
+  if (isCancellationMessage(run.error) || isCancellationMessage(run.output)) return false
 
   await (deps.notify ?? notify)({
     title: `Jig "${jigId}" failed`,

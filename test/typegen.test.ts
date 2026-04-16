@@ -70,8 +70,16 @@ const hyphenatedTools: Tool[] = [
 describe("generateRuntimeModule (direct)", () => {
   it("generates tool exports with correct readOnly flags from annotations", () => {
     const code = generateRuntimeModule("testsvc", sampleTools)
-    expect(code).toContain(`export const telegram_send_message = tool("telegram_send_message", false)`)
-    expect(code).toContain(`export const telegram_get_chat = tool("telegram_get_chat", true)`)
+    expect(code).toContain(`export const telegram_send_message = tool<telegram_send_message_params, any>("telegram_send_message", false)`)
+    expect(code).toContain(`export const telegram_get_chat = tool<telegram_get_chat_params, any>("telegram_get_chat", true)`)
+  })
+
+  it("embeds exact generated param types into the runtime exports", () => {
+    const code = generateRuntimeModule("testsvc", sampleTools)
+    expect(code).toContain("type telegram_send_message_params = {")
+    expect(code).toContain("chat_id: string")
+    expect(code).toContain('export const telegram_send_message = tool<telegram_send_message_params, any>("telegram_send_message", false)')
+    expect(code).not.toContain("JigTool<any, any>")
   })
 
   it("generates a barrel export with all tool names", () => {
@@ -82,7 +90,7 @@ describe("generateRuntimeModule (direct)", () => {
   it("generates direct callTool invocation (not proxied)", () => {
     const code = generateRuntimeModule("testsvc", sampleTools)
     // Direct modules call the MCP tool by name — not through a meta-tool
-    expect(code).toContain(`return invokeWithReconnect(async () => callTool(await conn(), name, params ?? {}))`)
+    expect(code).toContain(`await callTool(await conn(), name, (params ?? {}) as Record<string, unknown>)`)
     expect(code).toContain(`shouldReconnectMcpConnection`)
     // Must NOT contain any proxy-specific wrapping
     expect(code).not.toContain("tool_slug:")
@@ -98,8 +106,8 @@ describe("generateRuntimeModule (direct)", () => {
 
   it("sanitizes invalid tool names into valid export identifiers", () => {
     const code = generateRuntimeModule("apify", hyphenatedTools)
-    expect(code).toContain(`export const search_actors = tool("search-actors", true)`)
-    expect(code).toContain(`export const apify_rag_web_browser = tool("apify--rag-web-browser", false)`)
+    expect(code).toContain(`export const search_actors = tool<search_actors_params, any>("search-actors", true)`)
+    expect(code).toContain(`export const apify_rag_web_browser = tool<apify_rag_web_browser_params, any>("apify--rag-web-browser", false)`)
     expect(code).toContain(`"search-actors": search_actors`)
     expect(code).toContain(`"apify--rag-web-browser": apify_rag_web_browser`)
   })
@@ -137,8 +145,8 @@ describe("generateProxyRuntimeModule", () => {
 
   it("preserves tool names and readOnly annotations in exports", () => {
     const code = generateProxyRuntimeModule("testproxy", sampleTools, proxyCallCode)
-    expect(code).toContain(`export const telegram_send_message = tool("telegram_send_message", false)`)
-    expect(code).toContain(`export const telegram_get_chat = tool("telegram_get_chat", true)`)
+    expect(code).toContain(`export const telegram_send_message = tool<telegram_send_message_params, any>("telegram_send_message", false)`)
+    expect(code).toContain(`export const telegram_get_chat = tool<telegram_get_chat_params, any>("telegram_get_chat", true)`)
   })
 
   it("generates the same barrel export shape as direct modules", () => {
@@ -179,6 +187,16 @@ describe("generateProxyRuntimeModule", () => {
 })
 
 describe("generateTypeDeclaration", () => {
+  it("matches the runtime module export surface", () => {
+    const types = generateTypeDeclaration("testsvc", sampleTools)
+    expect(types).toContain("export declare function closeConnection(): Promise<void>")
+    expect(types).toContain("export declare const telegram_send_message: JigTool")
+    expect(types).toContain("export declare const telegram_get_chat: JigTool")
+    expect(types).toContain("export declare const testsvc: {")
+    expect(types).toContain("telegram_send_message: typeof telegram_send_message")
+    expect(types).toContain("telegram_get_chat: typeof telegram_get_chat")
+  })
+
   it("generates typed JigTool declarations for each tool", () => {
     const types = generateTypeDeclaration("testsvc", sampleTools)
     expect(types).toContain("telegram_send_message: JigTool")

@@ -4,7 +4,7 @@ import { Context, runContext, type RunRecorder } from "./context.js"
  * A typed MCP tool function. Generated at runtime by createConnection(),
  * typed at compile time by typegen.
  */
-export type JigTool<TInput = unknown, TOutput = unknown> = {
+export type JigTool<TInput = unknown, TOutput = any> = {
   _serverName: string
   _toolName: string
   _readOnly?: boolean

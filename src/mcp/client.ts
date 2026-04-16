@@ -379,6 +379,7 @@ function parseToolText(text: string): unknown {
 }
 
 function normalizeToolResult(result: {
+  [key: string]: unknown
   structuredContent?: unknown
   content?: unknown
 }): unknown {

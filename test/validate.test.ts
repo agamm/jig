@@ -1,5 +1,8 @@
 import { describe, it, expect } from "bun:test"
-import { validateDefinitionObject } from "../src/validate.js"
+import { join } from "path"
+import { PROJECT_ROOT } from "../src/config/paths.js"
+import { rmSync, writeFileSync } from "fs"
+import { validateDefinitionObject, validateJigFile } from "../src/validate.js"
 
 describe("validateDefinitionObject", () => {
   it("accepts a valid jig definition", () => {
@@ -125,5 +128,90 @@ describe("validateDefinitionObject", () => {
     })
     expect(result.ok).toBe(false)
     expect(result.errors.some((error) => error.field === "options.params")).toBe(true)
+  })
+})
+
+describe("validateJigFile", () => {
+  it("rejects required tool params missing from statically inspectable calls", async () => {
+    const jigPath = join(PROJECT_ROOT, "test", "_validate-missing-subject.ts")
+
+    try {
+      writeFileSync(jigPath, `
+import { jig } from "../src/index.js"
+import { workspace } from "../.jig/connections/workspace.js"
+
+export default jig("missing-subject", {
+  trigger: { type: "manual" },
+  tools: [workspace.gmail_send],
+}, async () => {
+  await workspace.gmail_send({ to: "alerts@example.com", body: "hello" })
+})
+`)
+
+      const result = await validateJigFile(jigPath)
+      expect(result.ok).toBe(false)
+      expect(result.errors).toContainEqual({
+        field: "params.workspace.gmail_send.subject",
+        message: 'Tool "workspace.gmail_send" is called without required parameter "subject".',
+      })
+    } finally {
+      rmSync(jigPath, { force: true })
+    }
+  })
+
+  it("rejects missing required params for sanitized tool identifiers via generated types", async () => {
+    const jigPath = join(PROJECT_ROOT, "test", "_validate-missing-apify-input.ts")
+
+    try {
+      writeFileSync(jigPath, `
+import { jig } from "../src/index.js"
+import { apify } from "../.jig/connections/apify.js"
+
+export default jig("missing-apify-input", {
+  trigger: { type: "manual" },
+  tools: [apify.call_actor],
+}, async () => {
+  await apify.call_actor({ actor: "apify/hello-world" })
+})
+`)
+
+      const result = await validateJigFile(jigPath)
+      expect(result.ok).toBe(false)
+      expect(result.errors.some((error) => error.message.includes("input"))).toBe(true)
+    } finally {
+      rmSync(jigPath, { force: true })
+    }
+  })
+
+  it("does not report missing params from unrelated shadowed variables", async () => {
+    const jigPath = join(PROJECT_ROOT, "test", "_validate-shadowed-email.ts")
+
+    try {
+      writeFileSync(jigPath, `
+import { jig } from "../src/index.js"
+import { workspace } from "../.jig/connections/workspace.js"
+
+const email = { to: "alerts@example.com", subject: "Alert", body: "outer" }
+
+function unrelated() {
+  const email = { to: "alerts@example.com", body: "inner" }
+  return email
+}
+
+export default jig("shadowed-email", {
+  trigger: { type: "manual" },
+  tools: [workspace.gmail_send],
+}, async () => {
+  unrelated()
+  await workspace.gmail_send(email)
+})
+`)
+
+      const result = await validateJigFile(jigPath)
+      expect(result.ok).toBe(true)
+      expect(result.errors).toEqual([])
+    } finally {
+      rmSync(jigPath, { force: true })
+    }
   })
 })

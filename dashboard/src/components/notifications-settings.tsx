@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { TextInput } from "@/components/input";
+import { ServiceIcon } from "@/components/service-icon";
 import { LoadingState, Notice } from "@/components/state-panel";
 import { fetchNotificationSettings, resetLocalState, saveNotificationSettings, sendTestNotification } from "@/lib/api";
 import type {
@@ -35,9 +36,23 @@ function statusTone(status: string | null): "error" | "success" | "neutral" {
   return "neutral";
 }
 
+function emptyDraftFor(tool: NotificationCapableTool): ChannelDraft {
+  return {
+    ...DEFAULT_DRAFT,
+    extra: Object.fromEntries(tool.extraRequired.map((key) => [key, ""])),
+  };
+}
+
+function formatFieldLabel(field: string): string {
+  return field
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 export function NotificationsSettings({ onReset }: { onReset?: () => Promise<void> | void } = {}) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [saveConfirmed, setSaveConfirmed] = useState(false);
   const [testing, setTesting] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [confirmResetOpen, setConfirmResetOpen] = useState(false);
@@ -66,7 +81,7 @@ export function NotificationsSettings({ onReset }: { onReset?: () => Promise<voi
                   t.extraRequired.map((k) => [k, String(saved.extraParams?.[k] ?? "")]),
                 ),
               }
-            : { ...DEFAULT_DRAFT, extra: Object.fromEntries(t.extraRequired.map((k) => [k, ""])) };
+            : emptyDraftFor(t);
         }
         setDrafts(next);
         setTriggerOnFail(data.settings.triggerOn?.fail ?? true);
@@ -77,6 +92,12 @@ export function NotificationsSettings({ onReset }: { onReset?: () => Promise<voi
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!saveConfirmed) return;
+    const timer = window.setTimeout(() => setSaveConfirmed(false), 1800);
+    return () => window.clearTimeout(timer);
+  }, [saveConfirmed]);
 
   function buildSettings(): NotificationSettings {
     const channels: NotificationChannel[] = [];
@@ -100,9 +121,11 @@ export function NotificationsSettings({ onReset }: { onReset?: () => Promise<voi
 
   async function onSave() {
     setSaving(true);
+    setSaveConfirmed(false);
     setStatus(null);
     try {
       await saveNotificationSettings(buildSettings());
+      setSaveConfirmed(true);
       setStatus("Saved.");
     } catch (e: unknown) {
       setStatus(`Save failed: ${(e as Error)?.message ?? String(e)}`);
@@ -130,6 +153,7 @@ export function NotificationsSettings({ onReset }: { onReset?: () => Promise<voi
   }
 
   function updateDraft(key: string, patch: Partial<ChannelDraft>) {
+    setSaveConfirmed(false);
     setDrafts((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
   }
 
@@ -175,13 +199,45 @@ export function NotificationsSettings({ onReset }: { onReset?: () => Promise<voi
         onClose={() => !resetting && setConfirmResetOpen(false)}
       />
 
-      <div className="rounded-xl border border-[#1f1f23] bg-[#111113] px-4 py-4 space-y-4">
-        <div className="space-y-1">
-          <h4 className="text-[13px] font-medium text-[#ededed]">Notifications</h4>
-          <p className="text-[11px] leading-relaxed text-[#666]">
-            Configure failure alerts and test delivery. Available channels come from connected tools classified as notification-capable.
-          </p>
+      <div className="rounded-xl border border-[#1f1f23] bg-[#111113] px-4 py-4 space-y-3.5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <h4 className="text-[13px] font-medium text-[#ededed]">Notifications</h4>
+            <p className="text-[11px] leading-relaxed text-[#666]">
+              Configure failure alerts and test delivery. Available channels come from connected tools classified as notification-capable.
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface-input)] px-2 py-1">
+            <span className="text-[10px] text-[var(--text-dim)]">Notify on failures</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={triggerOnFail}
+              aria-label="Notify on jig failure"
+              onClick={() => {
+                setSaveConfirmed(false);
+                setTriggerOnFail((current) => !current);
+              }}
+              className={`relative inline-flex h-[18px] w-8 rounded-full border transition-colors duration-150 ${
+                triggerOnFail
+                  ? "border-emerald-400/35 bg-emerald-500/80"
+                  : "border-[var(--border-strong)] bg-[var(--surface-muted)]"
+              }`}
+            >
+              <span
+                className={`absolute top-[1px] h-[14px] w-[14px] rounded-full bg-white transition-transform duration-150 ${
+                  triggerOnFail ? "translate-x-[15px]" : "translate-x-[1px]"
+                }`}
+              />
+            </button>
+          </div>
         </div>
+
+        {!triggerOnFail ? (
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-input)] px-3 py-2.5 text-[11px] text-[var(--text-muted)]">
+            Delivery is paused. Channel settings stay saved here and will resume when you turn failure notifications back on.
+          </div>
+        ) : null}
 
         {tools.length === 0 ? (
           <div className="rounded-lg border border-dashed border-[#242428] bg-[#0d0d0f] px-4 py-6 text-center">
@@ -190,44 +246,98 @@ export function NotificationsSettings({ onReset }: { onReset?: () => Promise<voi
             </p>
           </div>
         ) : (
-          <div className="space-y-2">
+          <div
+            className={`space-y-1.5 transition-[opacity,filter] duration-200 ${
+              triggerOnFail ? "" : "opacity-60 saturate-[0.35]"
+            }`}
+          >
             {tools.map((tool) => {
               const key = channelKey(tool.connection, tool.tool);
-              const draft = drafts[key] ?? { ...DEFAULT_DRAFT };
+              const draft = drafts[key] ?? emptyDraftFor(tool);
+              const fields = [tool.recipientField, ...tool.extraRequired];
               return (
                 <div
                   key={key}
-                  className="rounded-lg border border-[#1f1f23] bg-[#0d0d0f] px-4 py-3 space-y-2"
+                  className={`overflow-hidden rounded-xl border transition-colors ${
+                    draft.enabled
+                      ? triggerOnFail
+                        ? "border-emerald-500/16 bg-[var(--surface)]"
+                        : "border-[var(--border-strong)] bg-[var(--surface)]"
+                      : "border-[#1f1f23] bg-[#0d0d0f]"
+                  }`}
                 >
-                  <label className="flex items-center gap-2 cursor-pointer">
+                  <label className="flex cursor-pointer items-start gap-3 px-3 py-2.5">
                     <input
                       type="checkbox"
                       checked={draft.enabled}
                       onChange={(e) => updateDraft(key, { enabled: e.target.checked })}
-                      className="ui-checkbox"
+                      className="peer sr-only"
                     />
-                    <span className="text-[13px] text-[#ededed]">{tool.label}</span>
-                    <span className="rounded-full border border-[#232327] px-1.5 py-0.5 text-[10px] text-[#666]">{tool.connection}</span>
+                    <span className="mt-1 flex h-4 w-4 shrink-0 items-center justify-center rounded-[5px] border border-[var(--border-strong)] bg-[var(--surface-input)] text-white transition-[background-color,border-color,box-shadow] duration-150 peer-checked:border-emerald-500/50 peer-checked:bg-emerald-500 peer-focus-visible:shadow-[0_0_0_1px_rgba(16,185,129,0.35)]">
+                      <svg
+                        viewBox="0 0 16 16"
+                        className="h-3 w-3 opacity-0 transition-opacity duration-150 peer-checked:opacity-100"
+                        fill="none"
+                        aria-hidden="true"
+                      >
+                        <path
+                          d="M3.5 8.25 6.5 11 12.5 5"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </span>
+                    <div className="flex min-w-0 flex-1 items-start gap-3">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--surface-muted)]">
+                        <ServiceIcon name={tool.connection} size={14} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-[12px] font-medium text-[#ededed]">{tool.label}</span>
+                          <span className="rounded-full border border-[#232327] bg-[var(--surface-muted)] px-1.5 py-0.5 text-[9px] text-[#666]">
+                            {tool.connection}
+                          </span>
+                        </div>
+                        {tool.description ? (
+                          <p className="mt-0.5 text-[10px] leading-relaxed text-[var(--text-dim)]">{tool.description}</p>
+                        ) : null}
+                      </div>
+                    </div>
                   </label>
                   {draft.enabled && (
-                    <div className="space-y-1.5 pl-6">
-                      <TextInput
-                        type="text"
-                        placeholder={tool.recipientField}
-                        value={draft.recipient}
-                        onChange={(e) => updateDraft(key, { recipient: e.target.value })}
-                      />
-                      {tool.extraRequired.map((field) => (
-                        <TextInput
-                          key={field}
-                          type="text"
-                          placeholder={field}
-                          value={draft.extra[field] ?? ""}
-                          onChange={(e) =>
-                            updateDraft(key, { extra: { ...draft.extra, [field]: e.target.value } })
-                          }
-                        />
-                      ))}
+                    <div className="border-t border-[var(--border)] bg-[var(--surface-input)]/55 px-3 py-2">
+                      <div className={`grid gap-2 ${fields.length > 1 ? "md:grid-cols-2" : ""}`}>
+                        <label className="space-y-1">
+                          <span className="block text-[9px] font-medium uppercase tracking-[0.14em] text-[var(--text-dim)]">
+                            {formatFieldLabel(tool.recipientField)}
+                          </span>
+                          <TextInput
+                            type="text"
+                            value={draft.recipient}
+                            placeholder={formatFieldLabel(tool.recipientField)}
+                            inputClassName="ui-input-compact"
+                            onChange={(e) => updateDraft(key, { recipient: e.target.value })}
+                          />
+                        </label>
+                        {tool.extraRequired.map((field) => (
+                          <label key={field} className="space-y-1">
+                            <span className="block text-[9px] font-medium uppercase tracking-[0.14em] text-[var(--text-dim)]">
+                              {formatFieldLabel(field)}
+                            </span>
+                            <TextInput
+                              type="text"
+                              value={draft.extra[field] ?? ""}
+                              placeholder={formatFieldLabel(field)}
+                              inputClassName="ui-input-compact"
+                              onChange={(e) =>
+                                updateDraft(key, { extra: { ...draft.extra, [field]: e.target.value } })
+                              }
+                            />
+                          </label>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -235,21 +345,14 @@ export function NotificationsSettings({ onReset }: { onReset?: () => Promise<voi
             })}
           </div>
         )}
-        <label className="flex items-center gap-2 cursor-pointer rounded-lg border border-[#1f1f23] bg-[#0d0d0f] px-3 py-3">
-          <input
-            type="checkbox"
-            checked={triggerOnFail}
-            onChange={(e) => setTriggerOnFail(e.target.checked)}
-            className="ui-checkbox"
-          />
-          <div>
-            <span className="block text-[13px] text-[#ededed]">Notify on jig failure</span>
-            <span className="block text-[11px] text-[#666]">Send alerts when a jig run finishes with a failure.</span>
-          </div>
-        </label>
         <div className="flex items-center gap-2">
-          <Button onClick={onSave} disabled={saving || !hasEditableChannels} variant="success" size="md">
-            {saving ? "Saving…" : "Save"}
+          <Button
+            onClick={onSave}
+            disabled={saving || !hasEditableChannels}
+            variant={saveConfirmed ? "successOutline" : "success"}
+            size="md"
+          >
+            {saving ? "Saving…" : saveConfirmed ? "Saved" : "Save"}
           </Button>
           <Button onClick={onTest} disabled={testing || !hasEditableChannels} variant="subtle" size="md">
             {testing ? "Sending…" : "Send test"}

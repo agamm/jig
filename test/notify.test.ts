@@ -249,6 +249,18 @@ describe("settings persistence", () => {
     expect(s.triggerOn).toEqual({ fail: true })
   })
 
+  it("defaults fail notifications to true when a persisted row omits the trigger flag", () => {
+    const db = openDb()
+    db.prepare(
+      `INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('notifications', ?, datetime('now'))`
+    ).run(JSON.stringify({
+      channels: [{ connection: "composio", tool: "telegram_send_message", recipient: "42" }],
+    }))
+
+    const s = getNotificationSettings()
+    expect(s.triggerOn).toEqual({ fail: true })
+  })
+
   it("round-trips a saved settings row", () => {
     saveNotificationSettings({
       channels: [{ connection: "composio", tool: "telegram_send_message", recipient: "42" }],

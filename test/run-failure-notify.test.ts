@@ -63,4 +63,30 @@ describe("maybeNotifyRunFailure", () => {
     expect(successSent).toBe(false)
     expect(notifications).toHaveLength(0)
   })
+
+  it("skips notifications for user-cancelled runs", async () => {
+    const notifications: any[] = []
+
+    const sent = await maybeNotifyRunFailure("weekly-update", 42, false, {
+      getRun: () => ({
+        id: 42,
+        jig_id: "weekly-update",
+        started_at: "2026-04-13 10:00:00",
+        finished_at: "2026-04-13 10:00:05",
+        status: "fail",
+        duration_ms: 5000,
+        error: "Cancelled by user",
+        output: "Cancelled by user",
+        params: null,
+        steps: [],
+      }),
+      notify: async (payload) => {
+        notifications.push(payload)
+        return { sent: [], errors: [] }
+      },
+    })
+
+    expect(sent).toBe(false)
+    expect(notifications).toHaveLength(0)
+  })
 })

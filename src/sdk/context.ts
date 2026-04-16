@@ -84,7 +84,7 @@ export class Context {
   setRecorder(recorder: RunRecorder) { this._recorder = recorder }
 
   /** Block-scoped step: sets allowed tools, runs fn, clears tools on exit. */
-  async step<T>(label: string, tools: JigTool[], fn: () => Promise<T>): Promise<T> {
+  async step<T>(label: string, tools: JigTool<any, any>[], fn: () => Promise<T>): Promise<T> {
     // Reject nested steps — they hide structure from the dashboard and break tool scoping.
     if (this._currentStepLabel !== null) {
       throw new Error(

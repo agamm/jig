@@ -1,7 +1,8 @@
 import { join } from "path"
 import { homedir } from "os"
 import { existsSync } from "fs"
-import { PROJECT_ROOT } from "../config/paths.js"
+import { mkdir } from "fs/promises"
+import { CUSTOM_SERVERS_PATH, PROJECT_ROOT } from "../config/paths.js"
 import { getCredential } from "../db.js"
 
 export type StdioServerConfig = {
@@ -144,13 +145,70 @@ async function ensureRepo(name: string, config: RepoServerConfig): Promise<strin
 export async function loadServerConfigs(): Promise<ServerRegistry> {
   const file = Bun.file(join(PROJECT_ROOT, "servers/default.json"))
   const raw = await file.json() as ServerRegistry
+  const custom = await loadCustomServerConfigs()
+  const merged = { ...raw, ...custom }
 
-  for (const config of Object.values(raw)) {
+  for (const config of Object.values(merged)) {
     if (config.type === "stdio") {
       config.args = config.args.map(expandHome)
     }
   }
-  return raw
+  return merged
+}
+
+export async function loadCustomServerConfigs(): Promise<ServerRegistry> {
+  if (!existsSync(CUSTOM_SERVERS_PATH)) return {}
+
+  const file = Bun.file(CUSTOM_SERVERS_PATH)
+  const raw = await file.json().catch(() => ({})) as ServerRegistry
+  return raw && typeof raw === "object" ? raw : {}
+}
+
+export async function createCustomRemoteServer(input: {
+  name: string
+  url: string
+  description?: string
+}): Promise<{ name: string; config: RemoteServerConfig }> {
+  const name = input.name.trim()
+  const url = input.url.trim()
+  const description = input.description?.trim() || "Custom MCP server"
+
+  if (!/^[a-z0-9][a-z0-9_-]*$/.test(name)) {
+    throw new Error("Connection name must use lowercase letters, numbers, underscores, or hyphens")
+  }
+  if (name === "custom") {
+    throw new Error("Connection name \"custom\" is reserved")
+  }
+  let parsedUrl: URL
+  try {
+    parsedUrl = new URL(url)
+  } catch {
+    throw new Error("Custom MCP URL must be a valid absolute URL")
+  }
+  if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+    throw new Error("Custom MCP URL must start with http:// or https://")
+  }
+
+  const defaultConfigs = await Bun.file(join(PROJECT_ROOT, "servers/default.json")).json() as ServerRegistry
+  const customConfigs = await loadCustomServerConfigs()
+  if (defaultConfigs[name] || customConfigs[name]) {
+    throw new Error(`Connection already exists: ${name}`)
+  }
+
+  const config: RemoteServerConfig = {
+    type: "remote",
+    url: parsedUrl.toString(),
+    description,
+  }
+
+  const nextConfigs = Object.fromEntries(
+    Object.entries({ ...customConfigs, [name]: config }).sort(([a], [b]) => a.localeCompare(b))
+  )
+
+  await mkdir(join(PROJECT_ROOT, ".jig"), { recursive: true })
+  await Bun.write(CUSTOM_SERVERS_PATH, JSON.stringify(nextConfigs, null, 2) + "\n")
+
+  return { name, config }
 }
 
 /**

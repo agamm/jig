@@ -27,6 +27,66 @@
       ]
     }
   },
+  "notion": {
+    "type": "remote",
+    "url": "https://mcp.notion.com/mcp",
+    "description": "Notion pages, databases, users, and AI-optimized workspace workflows"
+  },
+  "linear": {
+    "type": "remote",
+    "url": "https://mcp.linear.app/mcp",
+    "description": "Linear issues, projects, comments, and team workflows"
+  },
+  "figma": {
+    "type": "remote",
+    "url": "https://mcp.figma.com/mcp",
+    "description": "Figma design context, code generation, code-to-canvas, and canvas editing"
+  },
+  "sentry": {
+    "type": "remote",
+    "url": "https://mcp.sentry.dev",
+    "description": "Sentry issues, events, traces, and debugging workflows"
+  },
+  "intercom": {
+    "type": "remote",
+    "url": "https://mcp.intercom.com/mcp",
+    "description": "Intercom conversations, contacts, and support workflows"
+  },
+  "neon": {
+    "type": "remote",
+    "url": "https://mcp.neon.tech/mcp",
+    "description": "Neon Postgres projects, branches, schema, queries, and migrations"
+  },
+  "supabase": {
+    "type": "remote",
+    "url": "https://mcp.supabase.com/mcp",
+    "description": "Supabase database, Edge Functions, logs, docs, and project workflows"
+  },
+  "ahrefs": {
+    "type": "remote",
+    "url": "https://api.ahrefs.com/mcp/mcp",
+    "description": "Ahrefs SEO, keywords, backlinks, traffic, and web analytics data"
+  },
+  "globalping": {
+    "type": "remote",
+    "url": "https://mcp.globalping.dev/mcp",
+    "description": "Global network measurements: ping, traceroute, DNS, HTTP, and MTR from worldwide probes"
+  },
+  "atlassian": {
+    "type": "remote",
+    "url": "https://mcp.atlassian.com/v1/mcp",
+    "description": "Jira, Confluence, and Compass search, summaries, and content workflows"
+  },
+  "webflow": {
+    "type": "remote",
+    "url": "https://mcp.webflow.com/mcp",
+    "description": "Webflow sites, CMS, Designer, pages, assets, styles, and publishing workflows"
+  },
+  "wix": {
+    "type": "remote",
+    "url": "https://mcp.wix.com/mcp",
+    "description": "Wix sites, apps, CMS, commerce, bookings, payments, and business workflows"
+  },
   "apify": {
     "type": "remote",
     "url": "https://mcp.apify.com",

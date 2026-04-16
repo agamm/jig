@@ -200,6 +200,11 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
             <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-medium ${conn.connected ? "bg-emerald-500/10 text-emerald-400" : "bg-[#1a1a1d] text-[#555]"}`}>
               {conn.connected ? "Connected" : "Not connected"}
             </span>
+            {conn.custom && (
+              <span className="rounded-full border border-blue-500/20 bg-blue-500/[0.08] px-1.5 py-0.5 text-[9px] font-medium text-blue-300">
+                custom
+              </span>
+            )}
             {conn.proxyVia && (
               <span
                 className="rounded-full border border-[#2a2a2e] bg-[#1a1a1d] px-1.5 py-0.5 text-[9px] font-medium text-[#888]"

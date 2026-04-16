@@ -6,8 +6,10 @@
  * credentials are runtime state, env is static config).
  */
 import { describe, it, expect, beforeEach, afterEach } from "bun:test"
+import { existsSync, readFileSync, rmSync, writeFileSync } from "fs"
 import { openDb, closeDb, setCredential } from "../src/db.js"
-import { resolveCredentials, checkMissingCredentials } from "../src/mcp/config.js"
+import { CUSTOM_SERVERS_PATH } from "../src/config/paths.js"
+import { resolveCredentials, checkMissingCredentials, createCustomRemoteServer, loadCustomServerConfigs, loadServerConfigs } from "../src/mcp/config.js"
 
 beforeEach(() => {
   closeDb()
@@ -120,5 +122,58 @@ describe("checkMissingCredentials", () => {
       headers: { "x-api-key": "$MY_KEY" },
     } as any)
     expect(missing).toEqual([])
+  })
+})
+
+describe("custom server configs", () => {
+  let customServersBackup: string | null = null
+
+  beforeEach(() => {
+    customServersBackup = existsSync(CUSTOM_SERVERS_PATH) ? readFileSync(CUSTOM_SERVERS_PATH, "utf-8") : null
+    rmSync(CUSTOM_SERVERS_PATH, { force: true })
+  })
+
+  afterEach(() => {
+    if (customServersBackup == null) {
+      rmSync(CUSTOM_SERVERS_PATH, { force: true })
+      return
+    }
+    writeFileSync(CUSTOM_SERVERS_PATH, customServersBackup)
+  })
+
+  it("creates and persists a custom remote MCP server", async () => {
+    const result = await createCustomRemoteServer({
+      name: "custom-test",
+      url: "https://example.com/mcp",
+      description: "Test MCP",
+    })
+
+    expect(result.name).toBe("custom-test")
+    expect(result.config).toEqual({
+      type: "remote",
+      url: "https://example.com/mcp",
+      description: "Test MCP",
+    })
+
+    const custom = await loadCustomServerConfigs()
+    expect(custom["custom-test"]).toEqual(result.config)
+  })
+
+  it("merges custom servers into the main server catalog", async () => {
+    writeFileSync(CUSTOM_SERVERS_PATH, JSON.stringify({
+      "catalog-merge-test": {
+        type: "remote",
+        url: "https://merge.example/mcp",
+        description: "Merged custom MCP",
+      },
+    }, null, 2))
+
+    const configs = await loadServerConfigs()
+    expect(configs["catalog-merge-test"]).toEqual({
+      type: "remote",
+      url: "https://merge.example/mcp",
+      description: "Merged custom MCP",
+    })
+    expect(configs.github).toBeDefined()
   })
 })

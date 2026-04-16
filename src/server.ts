@@ -18,7 +18,7 @@ import {
   textToTriggerLLM,
   triggerToSource,
 } from "./domain/triggers.js"
-import { loadServerConfigs } from "./mcp/config.js"
+import { createCustomRemoteServer, loadCustomServerConfigs, loadServerConfigs } from "./mcp/config.js"
 import { buildJigResponse, discoverAllJigs } from "./services/jig-api.js"
 import { approveAgentDraft, closeAgentSession, getAgentSessionStatus, pushAgentMessage, startAgentSession } from "./services/agent-service.js"
 import { cancelActiveRun, getActiveRunSnapshot, getRunDetail, startJigRun } from "./services/run-api.js"
@@ -126,6 +126,7 @@ async function handleUpdateTrigger(id: string, body: any): Promise<Response> {
 
 async function handleGetConnections(): Promise<Response> {
   const configs = await loadServerConfigs()
+  const customConfigs = await loadCustomServerConfigs()
   const connections = await Promise.all(
     Object.entries(configs).map(async ([name, config]) => {
       const schemaPath = `${SCHEMAS_DIR}/${name}.json`
@@ -142,6 +143,7 @@ async function handleGetConnections(): Promise<Response> {
         connected,
         toolCount,
         description: config.description,
+        custom: Boolean(customConfigs[name]),
         proxyVia: config.proxy?.via,
         proxyDashboardUrl: config.proxy?.dashboardUrl,
       }
@@ -153,6 +155,7 @@ async function handleGetConnections(): Promise<Response> {
 async function handleGetConnection(name: string): Promise<Response> {
   if (!/^[a-zA-Z0-9_-]+$/.test(name)) throw new ApiError(400, "Invalid connection name")
   const configs = await loadServerConfigs()
+  const customConfigs = await loadCustomServerConfigs()
   const config = (configs as Record<string, any>)[name]
   if (!config) throw new ApiError(404, `Connection not found: ${name}`)
 
@@ -192,11 +195,39 @@ async function handleGetConnection(name: string): Promise<Response> {
     connected,
     toolCount: tools.length,
     description: config.description ?? "",
+    custom: Boolean(customConfigs[name]),
     proxyVia: config.proxy?.via,
     proxyDashboardUrl: config.proxy?.dashboardUrl,
     tools,
     usedBy,
   })
+}
+
+async function handleCreateCustomConnection(body: any): Promise<Response> {
+  const name = typeof body?.name === "string" ? body.name : ""
+  const url = typeof body?.url === "string" ? body.url : ""
+  const description = typeof body?.description === "string" ? body.description : ""
+
+  if (!name.trim()) throw new ApiError(400, "Missing connection name")
+  if (!url.trim()) throw new ApiError(400, "Missing MCP URL")
+
+  try {
+    const result = await createCustomRemoteServer({ name, url, description })
+    return json({
+      ok: true,
+      connection: {
+        name: result.name,
+        connected: false,
+        toolCount: 0,
+        description: result.config.description,
+        custom: true,
+      },
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to create custom connection"
+    if (message.startsWith("Connection already exists")) throw new ApiError(409, message)
+    throw new ApiError(400, message)
+  }
 }
 
 async function handleDeleteJig(id: string): Promise<Response> {
@@ -320,6 +351,11 @@ export function createApiServer(port: number) {
           }
           case "connections":
             return handleGetConnections()
+          case "createCustomConnection": {
+            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+            const body = await req.json().catch(() => ({}))
+            return handleCreateCustomConnection(body)
+          }
           case "getConnection":
             return handleGetConnection(route.params.name)
           case "connectConnection": {

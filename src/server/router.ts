@@ -10,6 +10,7 @@ export function matchRoute(pathname: string): { handler: string; params: Record<
   if (addExampleMatch) return { handler: "addExample", params: { id: decodeURIComponent(addExampleMatch[1]) } }
 
   if (pathname === "/api/connections") return { handler: "connections", params: {} }
+  if (pathname === "/api/connections/custom") return { handler: "createCustomConnection", params: {} }
 
   const connectMatch = pathname.match(/^\/api\/connections\/([^/]+)\/connect$/)
   if (connectMatch) return { handler: "connectConnection", params: { name: decodeURIComponent(connectMatch[1]) } }

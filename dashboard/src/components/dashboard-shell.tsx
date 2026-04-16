@@ -14,10 +14,12 @@ import { NotificationsSettings } from "@/components/notifications-settings";
 import { ServiceIcon } from "@/components/service-icon";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/resizable";
 import { Button } from "@/components/button";
+import { TextInput } from "@/components/input";
 import { EmptyState, LoadingState, Notice } from "@/components/state-panel";
+import { isRecommendedConnection, sortConnectionsForDisplay } from "@/lib/connection-catalog";
 import { useConnectionCatalog } from "@/lib/hooks";
 import { useModels, useConnections } from "@/lib/swr";
-import { addExampleJig } from "@/lib/api";
+import { addExampleJig, createCustomConnection } from "@/lib/api";
 import type { ExampleJig } from "@shared/api";
 
 function useLocalStorage(key: string, initial: boolean): [boolean, (v: boolean) => void, boolean] {
@@ -62,6 +64,12 @@ export function DashboardShell({
   const [createOpen, setCreateOpen] = useState(false);
   const [createInstruction, setCreateInstruction] = useState("");
   const [createStartToken, setCreateStartToken] = useState(0);
+  const [showCustomConnectionForm, setShowCustomConnectionForm] = useState(false);
+  const [creatingCustomConnection, setCreatingCustomConnection] = useState(false);
+  const [customConnectionName, setCustomConnectionName] = useState("");
+  const [customConnectionUrl, setCustomConnectionUrl] = useState("");
+  const [customConnectionDescription, setCustomConnectionDescription] = useState("");
+  const [customConnectionStatus, setCustomConnectionStatus] = useState<{ tone: "success" | "danger"; message: string } | null>(null);
   const { data: models } = useModels();
   const { data: connections, isLoading: connectionsLoading, error: connectionsError } = useConnections();
 
@@ -74,6 +82,7 @@ export function DashboardShell({
     connectedCount,
     firstDisconnectedConnection,
   } = useConnectionCatalog(connections);
+  const displayedConnections = sortConnectionsForDisplay(availableConnections);
 
   function openJigDetail(jigId: string) {
     setCreateOpen(false);
@@ -117,6 +126,31 @@ export function DashboardShell({
     setPhase(p);
     closeDetail();
     onPhaseChange?.(p);
+  }
+
+  async function handleCreateCustomConnection() {
+    if (creatingCustomConnection) return;
+    setCreatingCustomConnection(true);
+    setCustomConnectionStatus(null);
+    try {
+      const result = await createCustomConnection({
+        name: customConnectionName,
+        url: customConnectionUrl,
+        description: customConnectionDescription,
+      });
+      setCustomConnectionStatus({ tone: "success", message: `Added ${result.connection.name}.` });
+      setCustomConnectionName("");
+      setCustomConnectionUrl("");
+      setCustomConnectionDescription("");
+      setShowCustomConnectionForm(false);
+      await mutate("connections");
+      setSelectedConnection(result.connection.name);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to add custom connection";
+      setCustomConnectionStatus({ tone: "danger", message });
+    } finally {
+      setCreatingCustomConnection(false);
+    }
   }
 
   const jigsPane = (
@@ -193,6 +227,87 @@ export function DashboardShell({
       </div>
       <div className="flex-1 overflow-y-auto px-6 py-6">
         <div className="max-w-2xl mx-auto space-y-3">
+          <div className="rounded-lg border border-[#1f1f23] bg-[#111113] p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[13px] font-medium text-[#ededed]">Add custom MCP</p>
+                <p className="mt-1 text-[11px] text-[#666]">Register any remote HTTP MCP server with a name, URL, and optional description.</p>
+              </div>
+              <Button
+                onClick={() => {
+                  setCustomConnectionStatus(null);
+                  setShowCustomConnectionForm((prev) => !prev);
+                }}
+                variant={showCustomConnectionForm ? "subtle" : "accent"}
+                size="sm"
+              >
+                {showCustomConnectionForm ? "Hide" : "Add custom"}
+              </Button>
+            </div>
+            {showCustomConnectionForm && (
+              <div className="mt-4 space-y-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="space-y-1.5">
+                    <span className="text-[11px] text-[#888]">Connection name</span>
+                    <TextInput
+                      value={customConnectionName}
+                      onChange={(event) => setCustomConnectionName(event.target.value)}
+                      placeholder="my-mcp"
+                      autoCapitalize="off"
+                      autoCorrect="off"
+                      spellCheck={false}
+                    />
+                  </label>
+                  <label className="space-y-1.5">
+                    <span className="text-[11px] text-[#888]">MCP URL</span>
+                    <TextInput
+                      value={customConnectionUrl}
+                      onChange={(event) => setCustomConnectionUrl(event.target.value)}
+                      placeholder="https://example.com/mcp"
+                      autoCapitalize="off"
+                      autoCorrect="off"
+                      spellCheck={false}
+                    />
+                  </label>
+                </div>
+                <label className="space-y-1.5 block">
+                  <span className="text-[11px] text-[#888]">Description</span>
+                  <TextInput
+                    value={customConnectionDescription}
+                    onChange={(event) => setCustomConnectionDescription(event.target.value)}
+                    placeholder="Optional description"
+                  />
+                </label>
+                <p className="text-[10px] leading-relaxed text-[#555]">Names must use lowercase letters, numbers, underscores, or hyphens. URLs must be absolute `http://` or `https://` MCP endpoints.</p>
+                {customConnectionStatus && (
+                  <Notice tone={customConnectionStatus.tone}>
+                    {customConnectionStatus.message}
+                  </Notice>
+                )}
+                <div className="flex items-center gap-2">
+                  <Button
+                    onClick={handleCreateCustomConnection}
+                    variant="successOutline"
+                    size="sm"
+                    disabled={creatingCustomConnection || !customConnectionName.trim() || !customConnectionUrl.trim()}
+                  >
+                    {creatingCustomConnection ? "Adding…" : "Save custom MCP"}
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      setShowCustomConnectionForm(false);
+                      setCustomConnectionStatus(null);
+                    }}
+                    variant="subtle"
+                    size="sm"
+                    disabled={creatingCustomConnection}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
           {connectionsLoading && availableConnections.length === 0 && (
             <LoadingState message="Loading connections…" />
           )}
@@ -211,7 +326,7 @@ export function DashboardShell({
               description={<><span>Run </span><code className="rounded bg-[var(--surface-muted)] px-1 py-0.5 font-mono text-[10px] text-[var(--text-secondary)]">jig connect &lt;server&gt;</code><span> to add one.</span></>}
             />
           )}
-          {availableConnections.map((c) => (
+          {displayedConnections.map((c) => (
             <button
               key={c.name}
               onClick={() => setSelectedConnection(c.name)}
@@ -222,6 +337,16 @@ export function DashboardShell({
               )}
               <ServiceIcon name={c.name} size={18} />
               <span className="text-[13px] text-[#ededed] capitalize">{c.name}</span>
+              {c.custom && (
+                <span className="rounded-full border border-blue-500/20 bg-blue-500/[0.08] px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-blue-300">
+                  custom
+                </span>
+              )}
+              {isRecommendedConnection(c.name) && (
+                <span className="rounded-full border border-emerald-500/20 bg-emerald-500/[0.08] px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-emerald-300">
+                  recommended
+                </span>
+              )}
               {c.proxyVia && (
                 <span className="rounded-full border border-[#2a2a2e] bg-[#1a1a1d] px-1.5 py-0.5 text-[9px] font-medium text-[#888]" title={`Tools proxied via ${c.proxyVia}`}>
                   proxy

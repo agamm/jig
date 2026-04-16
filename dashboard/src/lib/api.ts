@@ -5,6 +5,7 @@ import type {
   Connection,
   ConnectionDetail,
   ConnectConnectionResponse,
+  CreateCustomConnectionResponse,
   ExampleJig,
   JigData,
   JigVersionDetail,
@@ -83,6 +84,18 @@ export function connectConnection(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(credentials ? { credentials } : {}),
     signal: init?.signal,
+  })
+}
+
+export function createCustomConnection(input: {
+  name: string
+  url: string
+  description?: string
+}): Promise<CreateCustomConnectionResponse> {
+  return fetchJson("/api/connections/custom", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
   })
 }
 

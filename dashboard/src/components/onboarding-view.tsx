@@ -5,25 +5,10 @@ import { ServiceIcon } from "@/components/service-icon";
 import { ConnectionTag } from "@/components/connection-tag";
 import { RunSteps } from "@/components/run-steps";
 import { Notice } from "@/components/state-panel";
-
-const FEATURED_CONNECTIONS = [
-  "workspace",
-  "granola",
-  "apify",
-  "composio",
-  "gmail",
-  "calendar",
-  "drive",
-];
+import { isRecommendedConnection, sortConnectionsForDisplay } from "@/lib/connection-catalog";
 
 function pickConnectionCards(connections: Connection[]) {
-  const byName = new Map(connections.map((connection) => [connection.name.toLowerCase(), connection]));
-  const featured = FEATURED_CONNECTIONS
-    .map((name) => byName.get(name))
-    .filter((connection): connection is Connection => !!connection);
-
-  if (featured.length > 0) return featured.slice(0, 5);
-  return connections.slice(0, 5);
+  return sortConnectionsForDisplay(connections).slice(0, 5);
 }
 
 function prettifyConnectionName(name: string): string {
@@ -90,6 +75,11 @@ export function OnboardingView({
                 <p className="text-[13px] font-medium text-[#ededed]">
                   {connection.connected ? prettifyConnectionName(connection.name) : `Connect ${prettifyConnectionName(connection.name)}`}
                 </p>
+                {isRecommendedConnection(connection.name) && (
+                  <span className="rounded-full border border-emerald-500/20 bg-emerald-500/[0.08] px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-emerald-300">
+                    recommended
+                  </span>
+                )}
               </div>
               <p className="text-[11px] text-[#555] mt-0.5">{connection.description || "Connect this service to make its tools available in Jig."}</p>
             </div>

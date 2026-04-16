@@ -84,6 +84,7 @@ export interface Connection {
   connected: boolean
   toolCount: number
   description: string
+  custom?: boolean
   /** If set, tools are proxied through this meta-tool (e.g. COMPOSIO_MULTI_EXECUTE_TOOL) */
   proxyVia?: string
   /** URL to provider's dashboard for adding more connections (only set for proxy connections) */
@@ -124,6 +125,11 @@ export type ConnectConnectionResponse =
       missingCredentials: string[]
       setup?: string
     }
+
+export interface CreateCustomConnectionResponse {
+  ok: true
+  connection: Connection
+}
 
 export interface ModelInfo {
   id: string

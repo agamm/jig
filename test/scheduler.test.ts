@@ -15,6 +15,7 @@ import {
 import { invalidateJigsCache } from "../src/discover.js"
 import { JIGS_DIR, PROJECT_ROOT } from "../src/config/paths.js"
 import { recoverMissedRuns } from "../src/scheduler/recover.js"
+import { millisecondsUntilNextSchedulerTick } from "../src/scheduler/index.js"
 import { syncSchedules } from "../src/scheduler/sync.js"
 import { tick } from "../src/scheduler/tick.js"
 
@@ -146,6 +147,15 @@ describe("scheduler recovery", () => {
     expect(schedule).not.toBeNull()
     expect(schedule!.next_run_at).toBeGreaterThan(Math.floor(Date.now() / 1000))
     expect(schedule!.last_run_at).toBeNull()
+  })
+})
+
+describe("scheduler alignment", () => {
+  it("computes the remaining delay to the next minute boundary", () => {
+    expect(millisecondsUntilNextSchedulerTick(0)).toBe(60_000)
+    expect(millisecondsUntilNextSchedulerTick(30_000)).toBe(30_000)
+    expect(millisecondsUntilNextSchedulerTick(59_999)).toBe(1)
+    expect(millisecondsUntilNextSchedulerTick(60_001)).toBe(59_999)
   })
 })
 

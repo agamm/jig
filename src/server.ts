@@ -36,6 +36,7 @@ import { ApiError, json } from "./server/http.js"
 import { broadcastJigsUpdated, createLiveUpdatesResponse, startLiveUpdateWatchers } from "./server/live-updates.js"
 import { matchRoute } from "./server/router.js"
 import { firstLineSummary } from "./text.js"
+import { isCancellationError, USER_CANCELLED_MESSAGE } from "./run-cancel.js"
 
 function ensureJigExists(id: string): void {
   if (!discoverAllJigs().has(id)) throw new ApiError(404, `Jig not found: ${id}`)
@@ -296,6 +297,9 @@ export function createApiServer(port: number) {
 
   return Bun.serve({
     port,
+    // /api/events sends SSE heartbeats every 15s, so Bun's 10s default would
+    // close the stream first and produce noisy "failed to pipe response" logs.
+    idleTimeout: 30,
     async fetch(req) {
       const url = new URL(req.url)
       const route = matchRoute(url.pathname)
@@ -361,7 +365,7 @@ export function createApiServer(port: number) {
           case "connectConnection": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
             const body = await req.json().catch(() => ({})) as { credentials?: Record<string, string> }
-            return json(await connectConfiguredServer(route.params.name, { credentials: body?.credentials }))
+            return json(await connectConfiguredServer(route.params.name, { credentials: body?.credentials, signal: req.signal }))
           }
           case "getSteps": {
             return handleGetSteps(route.params.id)
@@ -505,6 +509,9 @@ export function createApiServer(port: number) {
             return json({ error: "Unknown handler" }, 404)
         }
       } catch (error: any) {
+        if (req.signal.aborted || isCancellationError(error)) {
+          return json({ error: USER_CANCELLED_MESSAGE }, 499)
+        }
         if (error instanceof ApiError) {
           return json({
             error: error.message,

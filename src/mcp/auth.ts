@@ -2,6 +2,7 @@ import { createServer, type Server } from "node:http"
 import open from "open"
 import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js"
 import { getCredential, setCredential } from "../db.js"
+import { USER_CANCELLED_MESSAGE } from "../run-cancel.js"
 
 type OAuthClientMetadata = OAuthClientProvider["clientMetadata"]
 type OAuthClientInformationMixed = NonNullable<Awaited<ReturnType<OAuthClientProvider["clientInformation"]>>>
@@ -232,9 +233,29 @@ export class JigOAuthProvider implements OAuthClientProvider {
     return value
   }
 
-  waitForAuthCode(): Promise<string> {
-    return new Promise((resolve) => {
-      this._authResolve = resolve
+  waitForAuthCode(signal?: AbortSignal): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const cleanup = () => {
+        signal?.removeEventListener("abort", onAbort)
+      }
+
+      const onAbort = () => {
+        cleanup()
+        this._authResolve = undefined
+        reject(new Error(USER_CANCELLED_MESSAGE))
+      }
+
+      this._authResolve = (code: string) => {
+        cleanup()
+        resolve(code)
+      }
+
+      if (signal?.aborted) {
+        onAbort()
+        return
+      }
+
+      signal?.addEventListener("abort", onAbort, { once: true })
     })
   }
 

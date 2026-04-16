@@ -23,7 +23,7 @@ export type ConnectServerResult = ConnectServerSuccess | ConnectServerNeedsCrede
 
 export async function connectConfiguredServer(
   serverName: string,
-  input: { credentials?: Record<string, string> } = {}
+  input: { credentials?: Record<string, string>; signal?: AbortSignal } = {}
 ): Promise<ConnectServerResult> {
   const configs = await loadServerConfigs()
   const rawConfig = configs[serverName]
@@ -51,17 +51,17 @@ export async function connectConfiguredServer(
   }
 
   const config = await getServerConfig(serverName)
-  const connection = await connectServer(serverName, config)
+  const connection = await connectServer(serverName, config, { signal: input.signal })
 
   try {
-    let tools = await discoverTools(connection)
+    let tools = await discoverTools(connection, { signal: input.signal })
 
     if (rawConfig.proxy?.connectDiscovery) {
       const { discover } = await import(join(PROJECT_ROOT, rawConfig.proxy.connectDiscovery))
       tools = await discover(connection)
     }
 
-    await ensureAnnotations(tools)
+    await ensureAnnotations(tools, { signal: input.signal })
     await Bun.write(join(SCHEMAS_DIR, `${serverName}.json`), JSON.stringify(tools, null, 2))
     await generateConnectionArtifacts()
 

@@ -10,6 +10,11 @@ import { recoverMissedRuns } from "./recover.js"
 
 const TICK_INTERVAL_MS = 60_000
 
+export function millisecondsUntilNextSchedulerTick(nowMs: number = Date.now()): number {
+  const remainder = nowMs % TICK_INTERVAL_MS
+  return remainder === 0 ? TICK_INTERVAL_MS : TICK_INTERVAL_MS - remainder
+}
+
 export async function startScheduler(): Promise<{ stop: () => void }> {
   // Initial sync — reconcile jig trigger configs with schedules table
   await syncSchedules()
@@ -18,6 +23,9 @@ export async function startScheduler(): Promise<{ stop: () => void }> {
   recoverMissedRuns()
 
   let tickInFlight = false
+  let stopped = false
+  let timer: ReturnType<typeof setTimeout> | null = null
+
   const runLoop = async () => {
     if (tickInFlight) return
     tickInFlight = true
@@ -31,9 +39,25 @@ export async function startScheduler(): Promise<{ stop: () => void }> {
     }
   }
 
-  // Tick loop — re-sync triggers and fire due cron runs every 60s
-  const timer = setInterval(() => { void runLoop() }, TICK_INTERVAL_MS)
+  const scheduleNextTick = () => {
+    if (stopped) return
+    const delay = millisecondsUntilNextSchedulerTick()
+    timer = setTimeout(() => {
+      timer = null
+      void runLoop().finally(() => {
+        scheduleNextTick()
+      })
+    }, delay)
+  }
 
-  console.log("[scheduler] started (60s tick interval)")
-  return { stop: () => clearInterval(timer) }
+  // Align ticks to the top of the next minute instead of 60s from process start.
+  scheduleNextTick()
+
+  console.log("[scheduler] started (minute-aligned tick)")
+  return {
+    stop: () => {
+      stopped = true
+      if (timer) clearTimeout(timer)
+    },
+  }
 }

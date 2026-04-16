@@ -29,6 +29,14 @@ function formatConnectError(error: unknown): string {
   if (message === "Unknown API route") {
     return "The running Jig API is older than this dashboard build. Restart `jig start` and try connecting again."
   }
+  if (
+    message === "Cancelled by user"
+    || message === "Request was aborted."
+    || message === "This operation was aborted"
+    || message === "Connect cancelled"
+  ) {
+    return "Connect cancelled."
+  }
   return message || "Failed to connect"
 }
 
@@ -77,6 +85,18 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
       pending.reject(new Error("Connect cancelled"))
     }
   }, [])
+
+  useEffect(() => {
+    connectRunRef.current += 1
+    connectAbortRef.current?.abort()
+    connectAbortRef.current = null
+    cancelPendingCredential("Connect cancelled")
+    setConnecting(false)
+    setConnectStatus(null)
+    setMissingCredentials([])
+    setCredentialValues({})
+    setAwaitingCredentialKey(null)
+  }, [name])
 
   function prettifyUsedByLabel(jigId: string): string {
     return jigId
@@ -218,6 +238,9 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
         actions={
           <Button
             onClick={() => {
+              connectAbortRef.current?.abort()
+              connectAbortRef.current = null
+              setConnecting(false)
               cancelPendingCredential("Connect cancelled")
               onClose()
             }}

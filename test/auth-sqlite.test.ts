@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test"
 import { closeDb, openDb, getCredential, listCredentials } from "../src/db.js"
 import { JigOAuthProvider } from "../src/mcp/auth.js"
+import { USER_CANCELLED_MESSAGE } from "../src/run-cancel.js"
 
 beforeEach(() => {
   closeDb()
@@ -119,5 +120,15 @@ describe("JigOAuthProvider SQLite storage", () => {
 
     const provider = new JigOAuthProvider("composio")
     expect(await provider.tokens()).toBeUndefined()
+  })
+
+  it("rejects waitForAuthCode when the request is cancelled", async () => {
+    const provider = new JigOAuthProvider("globalping")
+    const controller = new AbortController()
+
+    const pending = provider.waitForAuthCode(controller.signal)
+    controller.abort()
+
+    await expect(pending).rejects.toThrow(USER_CANCELLED_MESSAGE)
   })
 })

@@ -12,6 +12,7 @@ import { resolveToken } from "./config.js"
 import { JigOAuthProvider } from "./auth.js"
 import { PROJECT_ROOT, SCHEMAS_DIR } from "../config/paths.js"
 import { runContext } from "../sdk/context.js"
+import { USER_CANCELLED_MESSAGE } from "../run-cancel.js"
 
 export type McpConnection = {
   client: Client
@@ -22,13 +23,75 @@ export type McpConnection = {
 
 const toolSchemaCache = new Map<string, Map<string, Tool>>()
 
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new Error(USER_CANCELLED_MESSAGE)
+}
+
+function bindAbortCleanup(
+  signal: AbortSignal | undefined,
+  cleanup: () => Promise<void> | void
+): () => void {
+  if (!signal) return () => {}
+
+  const onAbort = () => {
+    void Promise.resolve(cleanup()).catch(() => {})
+  }
+
+  if (signal.aborted) {
+    onAbort()
+    return () => {}
+  }
+
+  signal.addEventListener("abort", onAbort, { once: true })
+  return () => signal.removeEventListener("abort", onAbort)
+}
+
+function buildRequestInit(input: {
+  signal?: AbortSignal
+  headers?: Record<string, string>
+}): RequestInit | undefined {
+  const requestInit: RequestInit = {}
+  if (input.signal) requestInit.signal = input.signal
+  if (input.headers && Object.keys(input.headers).length > 0) {
+    requestInit.headers = input.headers
+  }
+  return requestInit.signal || requestInit.headers ? requestInit : undefined
+}
+
+async function connectClient(
+  client: Client,
+  transport: StdioClientTransport | StreamableHTTPClientTransport | SSEClientTransport,
+  options: {
+    signal?: AbortSignal
+    cleanup?: () => Promise<void> | void
+  } = {}
+): Promise<void> {
+  const releaseAbort = bindAbortCleanup(options.signal, async () => {
+    await options.cleanup?.()
+    await transport.close().catch(() => {})
+    await client.close().catch(() => {})
+  })
+
+  try {
+    await client.connect(transport, options.signal ? { signal: options.signal } : undefined)
+    throwIfAborted(options.signal)
+  } catch (error) {
+    throwIfAborted(options.signal)
+    throw error
+  } finally {
+    releaseAbort()
+  }
+}
+
 /**
  * Connect to an MCP server. Handles stdio, remote (OAuth), and remote (token_command).
  */
 export async function connectServer(
   name: string,
-  config: ServerConfig & { type: "stdio" | "remote" }
+  config: ServerConfig & { type: "stdio" | "remote" },
+  options: { signal?: AbortSignal } = {}
 ): Promise<McpConnection> {
+  throwIfAborted(options.signal)
   const client = new Client({ name: "jig", version: "0.1.0" })
 
   if (config.type === "stdio") {
@@ -37,17 +100,17 @@ export async function connectServer(
       args: config.args,
       stderr: "ignore",
     })
-    await client.connect(transport)
+    await connectClient(client, transport, { signal: options.signal })
     return { client, transport, serverName: name, config }
   }
 
   // Remote server with token_command or custom headers
   if (config.auth || config.headers) {
-    return connectWithHeaders(name, config)
+    return connectWithHeaders(name, config, options)
   }
 
   // Remote server with browser OAuth
-  return connectWithOAuth(name, config)
+  return connectWithOAuth(name, config, options)
 }
 
 /**
@@ -55,8 +118,10 @@ export async function connectServer(
  */
 async function connectWithHeaders(
   name: string,
-  config: ServerConfig & { type: "remote" }
+  config: ServerConfig & { type: "remote" },
+  options: { signal?: AbortSignal } = {}
 ): Promise<McpConnection> {
+  throwIfAborted(options.signal)
   const headers: Record<string, string> = {}
   if (config.auth) {
     const token = await resolveToken(config.auth)
@@ -70,17 +135,18 @@ async function connectWithHeaders(
 
   try {
     const transport = new StreamableHTTPClientTransport(url, {
-      requestInit: { headers },
+      requestInit: buildRequestInit({ headers, signal: options.signal }),
     })
-    await client.connect(transport)
+    await connectClient(client, transport, { signal: options.signal })
     return { client, transport, serverName: name, config }
   } catch {
     // Fall back to SSE
+    throwIfAborted(options.signal)
     const sseClient = new Client({ name: "jig", version: "0.1.0" })
     const transport = new SSEClientTransport(url, {
-      requestInit: { headers },
+      requestInit: buildRequestInit({ headers, signal: options.signal }),
     })
-    await sseClient.connect(transport)
+    await connectClient(sseClient, transport, { signal: options.signal })
     return { client: sseClient, transport, serverName: name, config }
   }
 }
@@ -90,29 +156,44 @@ async function connectWithHeaders(
  */
 async function connectWithOAuth(
   name: string,
-  config: ServerConfig & { type: "remote" }
+  config: ServerConfig & { type: "remote" },
+  options: { signal?: AbortSignal } = {}
 ): Promise<McpConnection> {
+  throwIfAborted(options.signal)
   const authProvider = new JigOAuthProvider(name)
   const url = new URL(config.url)
   const client = new Client({ name: "jig", version: "0.1.0" })
-  const transport = new StreamableHTTPClientTransport(url, { authProvider })
+  const transport = new StreamableHTTPClientTransport(url, {
+    authProvider,
+    requestInit: buildRequestInit({ signal: options.signal }),
+  })
 
   try {
-    await client.connect(transport)
+    await connectClient(client, transport, {
+      signal: options.signal,
+      cleanup: () => authProvider.stopCallbackServer(),
+    })
     return { client, transport, serverName: name, config }
   } catch (error) {
     if (error instanceof UnauthorizedError) {
-      return finishOAuthAuthorization(name, config, authProvider, transport)
+      return finishOAuthAuthorization(name, config, authProvider, transport, options)
     }
     // StreamableHTTP failed for non-auth reason — try SSE
     try {
+      throwIfAborted(options.signal)
       const sseClient = new Client({ name: "jig", version: "0.1.0" })
-      const transport = new SSEClientTransport(url, { authProvider })
-      await sseClient.connect(transport)
+      const transport = new SSEClientTransport(url, {
+        authProvider,
+        requestInit: buildRequestInit({ signal: options.signal }),
+      })
+      await connectClient(sseClient, transport, {
+        signal: options.signal,
+        cleanup: () => authProvider.stopCallbackServer(),
+      })
       return { client: sseClient, transport, serverName: name, config }
     } catch (sseError) {
       if (sseError instanceof UnauthorizedError) {
-        return handleOAuthRedirect(name, config, authProvider)
+        return handleOAuthRedirect(name, config, authProvider, options)
       }
       throw sseError
     }
@@ -123,8 +204,10 @@ async function finishOAuthAuthorization(
   name: string,
   config: ServerConfig & { type: "remote" },
   authProvider: JigOAuthProvider,
-  transport: StreamableHTTPClientTransport
+  transport: StreamableHTTPClientTransport,
+  options: { signal?: AbortSignal } = {}
 ): Promise<McpConnection> {
+  throwIfAborted(options.signal)
   console.log(`[jig] ${name} requires authorization — opening browser...`)
 
   const dots = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
@@ -134,16 +217,21 @@ async function finishOAuthAuthorization(
   }, 100)
 
   try {
-    const authCode = await authProvider.waitForAuthCode()
+    const authCode = await authProvider.waitForAuthCode(options.signal)
     clearInterval(spinner)
     process.stdout.write("\r\x1b[K")
+    throwIfAborted(options.signal)
     await transport.finishAuth(authCode)
 
     const freshClient = new Client({ name: "jig", version: "0.1.0" })
     const freshTransport = new StreamableHTTPClientTransport(new URL(config.url), {
       authProvider,
+      requestInit: buildRequestInit({ signal: options.signal }),
     })
-    await freshClient.connect(freshTransport)
+    await connectClient(freshClient, freshTransport, {
+      signal: options.signal,
+      cleanup: () => authProvider.stopCallbackServer(),
+    })
     authProvider.stopCallbackServer()
     return { client: freshClient, transport: freshTransport, serverName: name, config }
   } catch (error) {
@@ -157,8 +245,10 @@ async function finishOAuthAuthorization(
 async function handleOAuthRedirect(
   name: string,
   config: ServerConfig & { type: "remote" },
-  authProvider: JigOAuthProvider
+  authProvider: JigOAuthProvider,
+  options: { signal?: AbortSignal } = {}
 ): Promise<McpConnection> {
+  throwIfAborted(options.signal)
   console.log(`[jig] ${name} requires authorization — opening browser...`)
 
   const dots = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
@@ -167,51 +257,63 @@ async function handleOAuthRedirect(
     process.stdout.write(`\r${dots[dotIdx++ % dots.length]} Waiting for browser authorization...`)
   }, 100)
 
-  const codePromise = authProvider.waitForAuthCode()
   const client = new Client({ name: "jig", version: "0.1.0" })
   const transport = new StreamableHTTPClientTransport(new URL(config.url), {
     authProvider,
+    requestInit: buildRequestInit({ signal: options.signal }),
   })
 
   try {
-    await client.connect(transport)
-    clearInterval(spinner)
-    process.stdout.write("\r\x1b[K")
+    await connectClient(client, transport, {
+      signal: options.signal,
+      cleanup: () => authProvider.stopCallbackServer(),
+    })
     return { client, transport, serverName: name, config }
   } catch (error) {
     if (error instanceof UnauthorizedError) {
-      const authCode = await codePromise
-      clearInterval(spinner)
-      process.stdout.write("\r\x1b[K")
+      const authCode = await authProvider.waitForAuthCode(options.signal)
+      throwIfAborted(options.signal)
       await transport.finishAuth(authCode)
 
       const freshClient = new Client({ name: "jig", version: "0.1.0" })
       const freshTransport = new StreamableHTTPClientTransport(new URL(config.url), {
         authProvider,
+        requestInit: buildRequestInit({ signal: options.signal }),
       })
-      await freshClient.connect(freshTransport)
+      await connectClient(freshClient, freshTransport, {
+        signal: options.signal,
+        cleanup: () => authProvider.stopCallbackServer(),
+      })
       authProvider.stopCallbackServer()
       return { client: freshClient, transport: freshTransport, serverName: name, config }
     }
+    authProvider.stopCallbackServer()
+    throw error
+  } finally {
     clearInterval(spinner)
     process.stdout.write("\r\x1b[K")
-    throw error
   }
 }
 
 /**
  * Discover all tools from a connected MCP server. Caches schemas to .jig/schemas/.
  */
-export async function discoverTools(connection: McpConnection): Promise<Tool[]> {
+export async function discoverTools(connection: McpConnection, options: { signal?: AbortSignal } = {}): Promise<Tool[]> {
+  throwIfAborted(options.signal)
   const allTools: Tool[] = []
   let cursor: string | undefined
 
   do {
-    const result = await connection.client.listTools({ cursor })
+    throwIfAborted(options.signal)
+    const result = await connection.client.listTools(
+      { cursor },
+      options.signal ? { signal: options.signal } : undefined
+    )
     allTools.push(...result.tools)
     cursor = result.nextCursor
   } while (cursor)
 
+  throwIfAborted(options.signal)
   await mkdir(SCHEMAS_DIR, { recursive: true })
   await Bun.write(
     join(SCHEMAS_DIR, `${connection.serverName}.json`),
@@ -235,8 +337,9 @@ export interface NotificationHint {
  * existing ones. Called once during `jig connect`, not on subsequent runtime
  * connections.
  */
-export async function ensureAnnotations(tools: Tool[]): Promise<void> {
+export async function ensureAnnotations(tools: Tool[], options: { signal?: AbortSignal } = {}): Promise<void> {
   const { llm } = await import("../sdk/llm.js")
+  throwIfAborted(options.signal)
 
   const toolList = tools.map(t => {
     const ann = (t as any).annotations
@@ -281,8 +384,9 @@ ${toolList}
 Input schemas (for notification field selection):
 ${schemaHints}`,
     {},
-    { schema: { readOnly: "array", destructive: "array", notification: "array" } as any }
+    { schema: { readOnly: "array", destructive: "array", notification: "array" } as any, signal: options.signal }
   )
+  throwIfAborted(options.signal)
 
   const readOnlySet = new Set(result.readOnly ?? [])
   const destructiveSet = new Set(result.destructive ?? [])

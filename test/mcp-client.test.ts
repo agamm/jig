@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test"
-import { callTool, shouldReconnectMcpConnection } from "../src/mcp/client.js"
+import { callTool, discoverTools, shouldReconnectMcpConnection } from "../src/mcp/client.js"
+import { USER_CANCELLED_MESSAGE } from "../src/run-cancel.js"
 
 describe("callTool result normalization", () => {
   it("prefers structuredContent over prose content blocks", async () => {
@@ -130,5 +131,31 @@ describe("shouldReconnectMcpConnection", () => {
 
   it("does not retry normal tool failures", () => {
     expect(shouldReconnectMcpConnection(new Error("Actor input validation failed"))).toBe(false)
+  })
+})
+
+describe("discoverTools cancellation", () => {
+  it("stops pagination when the request is cancelled", async () => {
+    const controller = new AbortController()
+    let calls = 0
+
+    await expect(discoverTools({
+      client: {
+        listTools: async (_params: { cursor?: string }, options?: { signal?: AbortSignal }) => {
+          calls += 1
+          expect(options?.signal).toBe(controller.signal)
+          controller.abort()
+          return {
+            tools: [{ name: "ping", inputSchema: { type: "object", properties: {} } }],
+            nextCursor: "page-2",
+          }
+        },
+      },
+      transport: {} as any,
+      serverName: "test-discovery-cancel",
+      config: {} as any,
+    } as any, { signal: controller.signal })).rejects.toThrow(USER_CANCELLED_MESSAGE)
+
+    expect(calls).toBe(1)
   })
 })

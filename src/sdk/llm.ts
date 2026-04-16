@@ -28,11 +28,12 @@ export function getClient(): OpenAI {
 export async function llm<T = string>(
   prompt: string,
   data: Record<string, any>,
-  options?: { schema?: Record<string, string>; model?: string; maxTokens?: number }
+  options?: { schema?: Record<string, string>; model?: string; maxTokens?: number; signal?: AbortSignal }
 ): Promise<T> {
   const ctx = runContext.getStore()
   const model = options?.model ?? MAIN_MODEL
   ctx?.addTool("llm", `llm(${model})`, true)
+  const signal = options?.signal ?? ctx?.signal
 
   const maxTokens = options?.maxTokens ?? 4096
   const userContent = `${prompt}\n\nData:\n${JSON.stringify(data, null, 2)}`
@@ -71,7 +72,7 @@ export async function llm<T = string>(
           },
         },
       },
-    }, { signal: spinner.signal })
+    }, signal ? { signal } : undefined)
 
     const raw = response.choices[0]?.message?.content
     if (!raw) throw new Error("LLM returned empty response")
@@ -96,7 +97,7 @@ export async function llm<T = string>(
     model,
     max_tokens: maxTokens,
     messages: [{ role: "user", content: userContent }],
-  }, { signal: spinner.signal })
+  }, signal ? { signal } : undefined)
 
   const text = response.choices[0]?.message?.content
   if (!text) throw new Error("LLM returned empty response")

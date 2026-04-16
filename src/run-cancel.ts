@@ -6,6 +6,8 @@ export function isCancellationMessage(message?: string | null): boolean {
   return (
     normalized === "run cancelled"
     || normalized === "this operation was aborted"
+    || normalized === "request was aborted."
+    || normalized === "request was aborted"
     || normalized === "cancelled by user"
     || normalized.includes("aborterror")
   )

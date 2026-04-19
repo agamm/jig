@@ -81,7 +81,8 @@ export function textToTrigger(text: string): { type: string; cron?: string } | n
 }
 
 export async function textToTriggerLLM(text: string): Promise<TriggerResult | null> {
-  const apiKey = process.env.OPENROUTER_API_KEY
+  const { getOpenRouterApiKey } = await import("../config/openrouter.js")
+  const apiKey = getOpenRouterApiKey()
   if (!apiKey) return null
   try {
     const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {

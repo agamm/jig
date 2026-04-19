@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "bun run jigs/weekly-update.ts",
     "jig": "bun run src/cli.ts",
+    "start": "bun run src/cli.ts start",
     "typegen": "bun run src/mcp/typegen.ts",
     "test": "bun test"
   },

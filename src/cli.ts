@@ -339,8 +339,31 @@ try {
       break
     }
 
+    case "deploy": {
+      const { runDeploy } = await import("./cli-deploy/index.js")
+      await runDeploy(rest[0])
+      break
+    }
+
+    case "doctor": {
+      const { runDoctor } = await import("./cli-doctor/index.js")
+      const jsonFlag = rest.includes("--json")
+      const positional = rest.find((a) => !a.startsWith("--"))
+      await runDoctor({ handle: positional, json: jsonFlag })
+      break
+    }
+
     case "update": {
-      await update()
+      // Prefer remote update when a manifest exists; otherwise fall back to
+      // the local git-pull path so developers working from a clone are
+      // unaffected.
+      const { listRemotes } = await import("./cli-remote/manifest.js")
+      if (listRemotes().length > 0) {
+        const { runUpdate } = await import("./cli-remote/update.js")
+        await runUpdate(rest[0])
+      } else {
+        await update()
+      }
       break
     }
 
@@ -352,7 +375,9 @@ try {
       console.log(`  jig run <name> [args]  Run a jig`)
       console.log(`  jig new [description]  AI generates a new jig`)
       console.log(`  jig edit <name> [ent]  AI modifies an existing jig`)
-      console.log(`  jig update             Pull latest from upstream`)
+      console.log(`  jig deploy             Provision a new Railway-hosted instance (interactive)`)
+      console.log(`  jig update [handle]    Update a deployed jig to the latest tag (rolls back on failure)`)
+      console.log(`  jig doctor [handle]    Health-check deployed instances`)
       break
   }
 } catch (e: any) {

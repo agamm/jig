@@ -8,7 +8,7 @@ import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs
 import { join } from "path"
 import { closeDb, deleteJigLocalState, openDb } from "./db.js"
 import { getModelCatalog } from "./config/models.js"
-import { CONNECTIONS_DIR, DRAFT_JIGS_DIR, JIGS_DIR, PROJECT_ROOT, SCHEMAS_DIR, TYPES_DIR } from "./config/paths.js"
+import { CONNECTIONS_DIR, DB_PATH, DRAFT_JIGS_DIR, JIGS_DIR, NOTIFICATION_TOOLS_PATH, SCHEMAS_DIR, TYPES_DIR } from "./config/paths.js"
 import { extractConnections, getJigFilePath, resolveJigPath } from "./domain/jig-source.js"
 import { invalidateJigsCache } from "./discover.js"
 import {
@@ -37,6 +37,15 @@ import { broadcastJigsUpdated, createLiveUpdatesResponse, startLiveUpdateWatcher
 import { matchRoute } from "./server/router.js"
 import { firstLineSummary } from "./text.js"
 import { isCancellationError, USER_CANCELLED_MESSAGE } from "./run-cancel.js"
+import { isServiceMode, publicUrl } from "./config/runtime.js"
+import { isPasswordSet, isUnlocked, setPassword, unlock } from "./crypto/password.js"
+import { checkAccess } from "./auth/lock-middleware.js"
+import { issueToken, setCookieHeader } from "./auth/session.js"
+import { completePendingOAuth, getPendingOAuthUrl, renderOAuthErrorPage, renderOAuthSuccessPage } from "./mcp/auth.js"
+import packageJson from "../package.json"
+
+const PACKAGE_VERSION: string = packageJson.version
+const SERVER_STARTED_AT = Date.now()
 
 function ensureJigExists(id: string): void {
   if (!discoverAllJigs().has(id)) throw new ApiError(404, `Jig not found: ${id}`)
@@ -271,12 +280,12 @@ async function handleResetLocalState(): Promise<Response> {
     }
   }
 
-  for (const file of ["jig.db", "jig.db-shm", "jig.db-wal"]) {
-    rmSync(join(PROJECT_ROOT, file), { force: true })
+  for (const ext of ["", "-shm", "-wal"]) {
+    rmSync(`${DB_PATH}${ext}`, { force: true })
   }
 
   // Remove generated local MCP artifacts too so onboarding is truly fresh.
-  rmSync(join(PROJECT_ROOT, ".jig", "notification-tools.json"), { force: true })
+  rmSync(NOTIFICATION_TOOLS_PATH, { force: true })
   rmSync(SCHEMAS_DIR, { recursive: true, force: true })
   rmSync(TYPES_DIR, { recursive: true, force: true })
   rmSync(CONNECTIONS_DIR, { recursive: true, force: true })
@@ -285,6 +294,69 @@ async function handleResetLocalState(): Promise<Response> {
   openDb()
 
   return json({ ok: true, deletedJigs, disconnectedConnections })
+}
+
+function handleOAuthCallback(url: URL): Response {
+  const state = url.searchParams.get("state")
+  const code = url.searchParams.get("code")
+  const error = url.searchParams.get("error")
+  if (error) {
+    return new Response(renderOAuthErrorPage("the service", error), {
+      status: 400,
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+    })
+  }
+  if (!state || !code) {
+    return new Response(renderOAuthErrorPage("the service", "Missing state or code in callback"), {
+      status: 400,
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+    })
+  }
+  const matched = completePendingOAuth(state, code)
+  if (!matched) {
+    return new Response(
+      renderOAuthErrorPage("the service", "No pending authorization matched this callback. Try connecting again."),
+      { status: 404, headers: { "Content-Type": "text/html; charset=utf-8" } },
+    )
+  }
+  // Server name isn't directly known here; completePendingOAuth returns
+  // boolean. Render a generic success page — the dashboard link is the
+  // same for any server.
+  return new Response(renderOAuthSuccessPage("your service"), {
+    status: 200,
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+  })
+}
+
+async function handleSetupPassword(req: Request): Promise<Response> {
+  if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+  if (isPasswordSet()) return json({ error: "Password already set." }, 409)
+  const body = (await req.json().catch(() => ({}))) as { password?: unknown }
+  if (typeof body.password !== "string") return json({ error: "password is required" }, 400)
+  try {
+    setPassword(body.password)
+  } catch (e: any) {
+    return json({ error: e?.message ?? "Failed to set password" }, 400)
+  }
+  const token = issueToken()
+  return new Response(JSON.stringify({ ok: true }), {
+    status: 200,
+    headers: { "Content-Type": "application/json", "Set-Cookie": setCookieHeader(token) },
+  })
+}
+
+async function handleUnlock(req: Request): Promise<Response> {
+  if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+  if (!isPasswordSet()) return json({ error: "No password set. Set one first via /api/setup-password." }, 409)
+  const body = (await req.json().catch(() => ({}))) as { password?: unknown }
+  if (typeof body.password !== "string") return json({ error: "password is required" }, 400)
+  const ok = unlock(body.password)
+  if (!ok) return json({ error: "Wrong password" }, 401)
+  const token = issueToken()
+  return new Response(JSON.stringify({ ok: true }), {
+    status: 200,
+    headers: { "Content-Type": "application/json", "Set-Cookie": setCookieHeader(token) },
+  })
 }
 
 export function createApiServer(port: number) {
@@ -305,8 +377,26 @@ export function createApiServer(port: number) {
       const route = matchRoute(url.pathname)
       if (!route) return json({ error: "Unknown API route" }, 404)
 
+      const blocked = checkAccess(req, route.handler)
+      if (blocked) return blocked
+
       try {
         switch (route.handler) {
+          case "health":
+            return json({
+              version: PACKAGE_VERSION,
+              mode: isServiceMode() ? "service" : "local",
+              public_url: publicUrl() ?? null,
+              locked: isServiceMode() && isPasswordSet() && !isUnlocked(),
+              password_set: isPasswordSet(),
+              uptime_s: Math.floor((Date.now() - SERVER_STARTED_AT) / 1000),
+            })
+          case "setupPassword":
+            return handleSetupPassword(req)
+          case "unlock":
+            return handleUnlock(req)
+          case "oauthCallback":
+            return handleOAuthCallback(url)
           case "liveUpdates":
             return createLiveUpdatesResponse()
           case "getModels":

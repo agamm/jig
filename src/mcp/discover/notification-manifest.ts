@@ -11,7 +11,7 @@
 import { join } from "node:path"
 import { readdirSync, existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs"
 import type { Tool } from "@modelcontextprotocol/sdk/types.js"
-import { PROJECT_ROOT, SCHEMAS_DIR } from "../../config/paths.js"
+import { NOTIFICATION_TOOLS_PATH, SCHEMAS_DIR } from "../../config/paths.js"
 import type { NotificationHint } from "../client.js"
 import { firstLineSummary } from "../../text.js"
 
@@ -25,7 +25,7 @@ export interface NotificationCapableTool {
   extraRequired: string[]
 }
 
-const DEFAULT_MANIFEST_PATH = join(PROJECT_ROOT, ".jig", "notification-tools.json")
+const DEFAULT_MANIFEST_PATH = NOTIFICATION_TOOLS_PATH
 
 export function buildNotificationManifest(
   schemasDir: string = SCHEMAS_DIR,

@@ -6,7 +6,7 @@
  * This module only stores execution history.
  */
 import { Database } from "bun:sqlite"
-import { PROJECT_ROOT } from "./config/paths.js"
+import { DB_PATH } from "./config/paths.js"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -147,6 +147,10 @@ const MIGRATIONS: string[] = [
    CREATE UNIQUE INDEX IF NOT EXISTS idx_step_cache_jig ON step_cache(jig_id);`,
   // v7: persist run-level output for historical run previews/fallbacks
   `ALTER TABLE runs ADD COLUMN output TEXT;`,
+  // v8: per-row encryption flag on credentials. 0 = plaintext (legacy), 1 = ciphertext.
+  // Row values are encrypted in service mode once a system password is set;
+  // getCredential/setCredential wrap/unwrap transparently via src/crypto/password.ts.
+  `ALTER TABLE credentials ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0;`,
 ]
 
 // ---------------------------------------------------------------------------
@@ -156,22 +160,31 @@ const MIGRATIONS: string[] = [
 function runMigrations(db: Database) {
   const current = (db.prepare("PRAGMA user_version").get() as any)?.user_version ?? 0
   for (let i = current; i < MIGRATIONS.length; i++) {
+    // Each migration runs atomically: either the schema change AND the version
+    // bump land together, or the DB is rolled back to its pre-migration state.
+    // A failed migration therefore crashes boot cleanly — Railway marks the
+    // deploy failed and `jig update` auto-rolls back. No partial state.
+    db.exec("BEGIN")
     try {
       db.exec(MIGRATIONS[i])
+      db.exec(`PRAGMA user_version = ${i + 1}`)
+      db.exec("COMMIT")
     } catch (e: any) {
-      // Expected: column/table already exists from a partial prior run
+      db.exec("ROLLBACK")
       const msg = e?.message ?? ""
+      // Some historical migrations were written to be re-runnable (IF NOT EXISTS
+      // etc.). The "already exists"/"duplicate column" paths below bump the
+      // version forward so a re-entrant migration doesn't block boot.
       if (
-        !msg.includes("duplicate column") &&
-        !msg.includes("already exists") &&
-        !msg.includes("no such column")
+        msg.includes("duplicate column") ||
+        msg.includes("already exists") ||
+        msg.includes("no such column")
       ) {
-        throw e
+        db.exec(`PRAGMA user_version = ${i + 1}`)
+        continue
       }
+      throw new Error(`Migration ${i + 1} failed: ${msg}`)
     }
-  }
-  if (MIGRATIONS.length > current) {
-    db.exec(`PRAGMA user_version = ${MIGRATIONS.length}`)
   }
 }
 
@@ -179,7 +192,7 @@ let _db: Database | null = null
 
 export function openDb(path?: string): Database {
   if (_db) return _db
-  const dbPath = path ?? `${PROJECT_ROOT}/jig.db`
+  const dbPath = path ?? DB_PATH
   try {
     _db = new Database(dbPath)
     _db.exec("PRAGMA journal_mode = WAL")
@@ -466,15 +479,41 @@ export function setScheduleError(jigId: string, error: string | null): void {
 // Credentials
 // ---------------------------------------------------------------------------
 
+/**
+ * Read a credential. If the row is encrypted, decrypt with the in-memory
+ * data key; throws LockedError if jig is locked. Plaintext rows (legacy) are
+ * returned as-is so fresh-install OAuth flows work before a password is set.
+ */
 export function getCredential(key: string): string | null {
+  const { isUnlocked, decrypt, LockedError } = require("./crypto/password.js") as typeof import("./crypto/password.js")
   const db = openDb()
-  const row = db.prepare(`SELECT value FROM credentials WHERE key = ?`).get(key) as { value: string } | null
-  return row?.value ?? null
+  const row = db
+    .prepare(`SELECT value, encrypted FROM credentials WHERE key = ?`)
+    .get(key) as { value: string; encrypted: number } | null
+  if (!row) return null
+  if (row.encrypted === 0) return row.value
+  if (!isUnlocked()) throw new LockedError()
+  return decrypt(row.value)
 }
 
+/**
+ * Write a credential. Encrypts the value if jig is unlocked; stores plaintext
+ * otherwise (pre-password-set state). A later setPassword() migrates any
+ * plaintext rows to encrypted in place.
+ */
 export function setCredential(key: string, value: string, server: string): void {
+  const { isUnlocked, encrypt } = require("./crypto/password.js") as typeof import("./crypto/password.js")
   const db = openDb()
-  db.prepare(`INSERT OR REPLACE INTO credentials (key, value, server) VALUES (?, ?, ?)`).run(key, value, server)
+  if (isUnlocked()) {
+    const ct = encrypt(value)
+    db.prepare(
+      `INSERT OR REPLACE INTO credentials (key, value, server, encrypted) VALUES (?, ?, ?, 1)`,
+    ).run(key, ct, server)
+  } else {
+    db.prepare(
+      `INSERT OR REPLACE INTO credentials (key, value, server, encrypted) VALUES (?, ?, ?, 0)`,
+    ).run(key, value, server)
+  }
 }
 
 export function listCredentials(server?: string): { key: string; server: string; created_at: string }[] {

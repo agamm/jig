@@ -5,18 +5,17 @@ import { spinner } from "./spinner.js"
 import { runContext } from "./context.js"
 import { MAIN_MODEL } from "../config/models.js"
 import { logSessionEvent } from "../debug/session-log.js"
+import { requireOpenRouterApiKey } from "../config/openrouter.js"
 
 const MAX_TOOL_ROUNDS = 30
 
-let _client: OpenAI | null = null
-
+// Don't cache the OpenAI client across calls: the API key can change at
+// runtime (user updates it in the dashboard), and the credentials table read
+// is cheap. Fresh client per call also avoids holding a stale key across an
+// unlock/re-lock cycle.
 export function getClient(): OpenAI {
-  if (!_client) {
-    const apiKey = process.env.OPENROUTER_API_KEY
-    if (!apiKey) throw new Error("OPENROUTER_API_KEY not set. Get one at https://openrouter.ai/keys and add to .env")
-    _client = new OpenAI({ baseURL: "https://openrouter.ai/api/v1", apiKey })
-  }
-  return _client
+  const apiKey = requireOpenRouterApiKey()
+  return new OpenAI({ baseURL: "https://openrouter.ai/api/v1", apiKey })
 }
 
 /**

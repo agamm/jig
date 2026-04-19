@@ -4,6 +4,11 @@
  * Bun API server runs on an internal port (handles /api/*).
  * Next.js runs on the user-facing port and rewrites /api/* to the Bun server.
  * Single URL for the user, no CORS.
+ *
+ * Two modes:
+ *   - local: `next dev`, auto-open browser, interactive port-kill prompt.
+ *   - service (Railway/Fly): lazy dashboard build, `next start` in
+ *     production mode, no browser, bind to process.env.PORT.
  */
 import { existsSync } from "fs"
 import { createInterface } from "node:readline/promises"
@@ -11,6 +16,7 @@ import { createApiServer } from "./server.js"
 import { CONNECTIONS_DIR, DASHBOARD_DIR, PROJECT_ROOT } from "./config/paths.js"
 import { resetSessionLog } from "./debug/session-log.js"
 import { startScheduler } from "./scheduler/index.js"
+import { isServiceMode } from "./config/runtime.js"
 
 /** Check if a port is free by briefly listening, then closing. */
 async function isPortFree(port: number): Promise<boolean> {
@@ -36,8 +42,8 @@ async function findPidOnPort(port: number): Promise<number | null> {
   }
 }
 
-/** Ensure a port is available — ask user to kill the occupier if needed. */
-async function ensurePort(port: number): Promise<number> {
+/** Local-mode only: ensure a port is available, ask user to kill if needed. */
+async function ensurePortLocal(port: number): Promise<number> {
   if (await isPortFree(port)) return port
 
   const pid = await findPidOnPort(port)
@@ -49,7 +55,6 @@ async function ensurePort(port: number): Promise<number> {
 
     if (!answer || answer.toLowerCase().startsWith("y")) {
       process.kill(pid, "SIGTERM")
-      // Wait briefly for the process to release the port
       for (let i = 0; i < 10; i++) {
         await new Promise(r => setTimeout(r, 300))
         if (await isPortFree(port)) return port
@@ -60,7 +65,6 @@ async function ensurePort(port: number): Promise<number> {
     console.log(`\n  Port ${port} is in use.`)
   }
 
-  // Fall back to finding a free port
   for (let p = port + 1; p < port + 20; p++) {
     if (await isPortFree(p)) {
       console.log(`  Using port ${p} instead.`)
@@ -82,19 +86,40 @@ function tryServe(start: number): ReturnType<typeof createApiServer> {
   throw new Error(`No free port found starting from ${start}`)
 }
 
+/** Install dashboard node_modules if missing. */
+async function ensureDashboardInstalled(): Promise<void> {
+  if (existsSync(`${DASHBOARD_DIR}/node_modules`)) return
+  console.log("Installing dashboard dependencies...")
+  const install = Bun.spawn(["pnpm", "install", "--prefer-offline"], {
+    cwd: DASHBOARD_DIR,
+    stdout: "inherit",
+    stderr: "inherit",
+  })
+  const code = await install.exited
+  if (code !== 0) {
+    throw new Error("Failed to install dashboard dependencies. Is pnpm installed? (npm install -g pnpm)")
+  }
+}
+
+/** Run `pnpm build` in dashboard if no production build exists. */
+async function ensureDashboardBuilt(): Promise<void> {
+  if (existsSync(`${DASHBOARD_DIR}/.next/standalone`) || existsSync(`${DASHBOARD_DIR}/.next/BUILD_ID`)) return
+  console.log("Building dashboard for production...")
+  const build = Bun.spawn(["pnpm", "run", "build"], {
+    cwd: DASHBOARD_DIR,
+    stdout: "inherit",
+    stderr: "inherit",
+  })
+  const code = await build.exited
+  if (code !== 0) {
+    throw new Error("Dashboard build failed")
+  }
+}
+
 export async function startServer(options?: { port?: number }) {
   await resetSessionLog()
 
-  // Auto-install dashboard deps if missing
-  if (!existsSync(`${DASHBOARD_DIR}/node_modules`)) {
-    console.log("Installing dashboard dependencies...")
-    const install = Bun.spawn(["pnpm", "install"], { cwd: DASHBOARD_DIR, stdout: "inherit", stderr: "inherit" })
-    const code = await install.exited
-    if (code !== 0) {
-      console.error("Failed to install dashboard dependencies. Is pnpm installed? (npm install -g pnpm)")
-      process.exit(1)
-    }
-  }
+  await ensureDashboardInstalled()
 
   // Verify connection files are up-to-date (regenerate if they reference missing modules)
   const connectionsDir = CONNECTIONS_DIR
@@ -115,11 +140,19 @@ export async function startServer(options?: { port?: number }) {
     }
   }
 
+  const service = isServiceMode()
   const envPort = parseInt(process.env.PORT ?? "0")
   const preferredPort = options?.port ?? (envPort || 3141)
 
-  // 1. Ensure dashboard port is available
-  const userPort = await ensurePort(preferredPort)
+  // 1. Resolve the user-facing port
+  let userPort: number
+  if (service) {
+    // Trust the platform; bind exactly to $PORT. No interactive prompts.
+    if (!envPort) throw new Error("Service mode detected but $PORT is not set. Check platform config.")
+    userPort = envPort
+  } else {
+    userPort = await ensurePortLocal(preferredPort)
+  }
   process.env.JIG_DASHBOARD_PORT = String(userPort)
 
   // 2. Start Bun API server on an internal port
@@ -130,24 +163,45 @@ export async function startServer(options?: { port?: number }) {
     return null
   })
 
-  // 3. Start Next.js on the free user-facing port
-  const nextProcess = Bun.spawn(["pnpm", "run", "dev", "--port", String(userPort)], {
-    cwd: DASHBOARD_DIR,
-    stdout: "inherit",
-    stderr: "inherit",
-    env: { ...process.env, JIG_API_PORT: String(apiPort) },
-  })
+  // 3. Start Next.js. In service mode build + start for production.
+  let nextProcess: ReturnType<typeof Bun.spawn>
+  if (service) {
+    await ensureDashboardBuilt()
+    nextProcess = Bun.spawn(
+      ["pnpm", "exec", "next", "start", "--hostname", "0.0.0.0", "--port", String(userPort)],
+      {
+        cwd: DASHBOARD_DIR,
+        stdout: "inherit",
+        stderr: "inherit",
+        env: { ...process.env, JIG_API_PORT: String(apiPort) },
+      },
+    )
+  } else {
+    nextProcess = Bun.spawn(["pnpm", "run", "dev", "--port", String(userPort)], {
+      cwd: DASHBOARD_DIR,
+      stdout: "inherit",
+      stderr: "inherit",
+      env: { ...process.env, JIG_API_PORT: String(apiPort) },
+    })
+  }
 
-  console.log(`\n  jig dashboard: http://localhost:${userPort}`)
-  console.log(`  jig api:       http://localhost:${apiPort} (internal)\n`)
+  if (service) {
+    console.log(`\n  jig dashboard: http://0.0.0.0:${userPort} (service mode)`)
+    console.log(`  jig api:       http://localhost:${apiPort} (internal)\n`)
+  } else {
+    console.log(`\n  jig dashboard: http://localhost:${userPort}`)
+    console.log(`  jig api:       http://localhost:${apiPort} (internal)\n`)
+  }
 
-  // 4. Open browser after Next.js is ready
-  setTimeout(async () => {
-    try {
-      const open = (await import("open")).default
-      await open(`http://localhost:${userPort}`)
-    } catch {}
-  }, 2000)
+  // 4. Open browser on local only
+  if (!service) {
+    setTimeout(async () => {
+      try {
+        const open = (await import("open")).default
+        await open(`http://localhost:${userPort}`)
+      } catch {}
+    }, 2000)
+  }
 
   // 5. Clean shutdown
   const cleanup = async () => {

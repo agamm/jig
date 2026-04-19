@@ -3,15 +3,67 @@ import open from "open"
 import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js"
 import { getCredential, setCredential } from "../db.js"
 import { USER_CANCELLED_MESSAGE } from "../run-cancel.js"
+import { isServiceMode, publicUrl } from "../config/runtime.js"
 
 type OAuthClientMetadata = OAuthClientProvider["clientMetadata"]
 type OAuthClientInformationMixed = NonNullable<Awaited<ReturnType<OAuthClientProvider["clientInformation"]>>>
 type OAuthTokens = NonNullable<Awaited<ReturnType<OAuthClientProvider["tokens"]>>>
 
 const CALLBACK_PORT = 9876
-const REDIRECT_URL = `http://localhost:${CALLBACK_PORT}/callback`
-const DASHBOARD_PORT = process.env.JIG_DASHBOARD_PORT ?? "3141"
-const DASHBOARD_URL = `http://localhost:${DASHBOARD_PORT}`
+const LOCAL_REDIRECT_URL = `http://localhost:${CALLBACK_PORT}/callback`
+const SERVICE_CALLBACK_PATH = "/api/oauth/callback"
+
+/** Derive the OAuth redirect URL jig is listening on. */
+export function oauthRedirectUrl(): string {
+  if (isServiceMode()) {
+    const base = publicUrl()
+    if (!base) throw new Error("Service mode detected but publicUrl() returned undefined")
+    return `${base}${SERVICE_CALLBACK_PATH}`
+  }
+  return LOCAL_REDIRECT_URL
+}
+
+function dashboardBaseUrl(): string {
+  if (isServiceMode()) return publicUrl() ?? ""
+  const port = process.env.JIG_DASHBOARD_PORT ?? "3141"
+  return `http://localhost:${port}`
+}
+
+/**
+ * Service-mode registry: providers waiting for an OAuth callback, keyed by
+ * the `state` parameter from the authorization URL. The Bun API server's
+ * /api/oauth/callback handler looks up the provider by state and resolves
+ * its pending `waitForAuthCode` promise.
+ */
+const pendingProvidersByState = new Map<string, JigOAuthProvider>()
+
+/** Called by the /api/oauth/callback route handler. */
+export function completePendingOAuth(state: string, code: string): boolean {
+  const provider = pendingProvidersByState.get(state)
+  if (!provider) return false
+  pendingProvidersByState.delete(state)
+  provider.resolveAuthCode(code)
+  return true
+}
+
+/**
+ * Pending OAuth URLs indexed by server name. Dashboard polls the API for
+ * the current pending URL on a connect-in-progress to show a "Click to
+ * authorize" button. Cleared when the callback completes.
+ */
+const pendingUrlByServer = new Map<string, { url: string; state: string }>()
+
+export function getPendingOAuthUrl(serverName: string): { url: string; state: string } | null {
+  return pendingUrlByServer.get(serverName) ?? null
+}
+
+function extractState(authUrl: string): string | null {
+  try {
+    return new URL(authUrl).searchParams.get("state")
+  } catch {
+    return null
+  }
+}
 
 function escapeHtml(value: string): string {
   return value.replace(/[<>&"']/g, (c) =>
@@ -163,6 +215,31 @@ function renderCallbackPage(input: {
 </html>`
 }
 
+export function renderOAuthSuccessPage(serverName: string): string {
+  return renderCallbackPage({
+    tone: "success",
+    eyebrow: `${serverName} connected`,
+    title: "Authorization complete",
+    message: "Your account is connected. Return to Jig to finish setup and refresh the tool catalog.",
+    detail: `Connected service: ${serverName}`,
+    primaryHref: `${dashboardBaseUrl()}/?view=connections&connection=${encodeURIComponent(serverName)}`,
+    primaryLabel: "Return to Jig",
+    autoClose: true,
+  })
+}
+
+export function renderOAuthErrorPage(serverName: string, error: string): string {
+  return renderCallbackPage({
+    tone: "error",
+    eyebrow: `${serverName} failed`,
+    title: "Authorization failed",
+    message: "Jig could not finish connecting this service. Return to the dashboard and try again.",
+    detail: error,
+    primaryHref: `${dashboardBaseUrl()}/?view=connections&connection=${encodeURIComponent(serverName)}`,
+    primaryLabel: "Back to connections",
+  })
+}
+
 /**
  * SQLite-backed OAuth provider for Jig MCP connections.
  * Persists tokens in the `credentials` table under keys
@@ -171,16 +248,17 @@ function renderCallbackPage(input: {
 export class JigOAuthProvider implements OAuthClientProvider {
   private _authResolve?: (code: string) => void
   private _callbackServer?: Server
+  private _activeState?: string
 
   constructor(private serverName: string) {}
 
   get redirectUrl(): string {
-    return REDIRECT_URL
+    return oauthRedirectUrl()
   }
 
   get clientMetadata(): OAuthClientMetadata {
     return {
-      redirect_uris: [REDIRECT_URL],
+      redirect_uris: [oauthRedirectUrl()],
       token_endpoint_auth_method: "none",
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
@@ -217,8 +295,25 @@ export class JigOAuthProvider implements OAuthClientProvider {
   }
 
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
+    const url = authorizationUrl.toString()
+    const state = extractState(url) ?? `${this.serverName}-${Date.now()}`
+    this._activeState = state
+
+    if (isServiceMode()) {
+      // Headless: don't open a browser or a loopback server. Register ourselves
+      // so /api/oauth/callback can find us by state, surface the URL for the
+      // dashboard, and log it so it's also visible in platform log viewers.
+      pendingProvidersByState.set(state, this)
+      pendingUrlByServer.set(this.serverName, { url, state })
+      console.log(
+        `[jig][oauth] ${this.serverName}: click to authorize → ${url}`,
+      )
+      return
+    }
+
+    // Local dev: preserve the existing loopback + auto-open flow.
     await this.startCallbackServer()
-    await open(authorizationUrl.toString())
+    await open(url)
   }
 
   async saveCodeVerifier(codeVerifier: string): Promise<void> {
@@ -233,6 +328,16 @@ export class JigOAuthProvider implements OAuthClientProvider {
     return value
   }
 
+  /** Called by the /api/oauth/callback handler after matching by state. */
+  resolveAuthCode(code: string): void {
+    this._authResolve?.(code)
+    this._authResolve = undefined
+    if (this._activeState) {
+      pendingUrlByServer.delete(this.serverName)
+      this._activeState = undefined
+    }
+  }
+
   waitForAuthCode(signal?: AbortSignal): Promise<string> {
     return new Promise((resolve, reject) => {
       const cleanup = () => {
@@ -242,6 +347,11 @@ export class JigOAuthProvider implements OAuthClientProvider {
       const onAbort = () => {
         cleanup()
         this._authResolve = undefined
+        if (this._activeState) {
+          pendingProvidersByState.delete(this._activeState)
+          pendingUrlByServer.delete(this.serverName)
+          this._activeState = undefined
+        }
         reject(new Error(USER_CANCELLED_MESSAGE))
       }
 
@@ -275,29 +385,12 @@ export class JigOAuthProvider implements OAuthClientProvider {
 
       if (code) {
         res.writeHead(200, { "Content-Type": "text/html" })
-        res.end(renderCallbackPage({
-          tone: "success",
-          eyebrow: `${this.serverName} connected`,
-          title: "Authorization complete",
-          message: "Your account is connected. Return to Jig to finish setup and refresh the tool catalog.",
-          detail: `Connected service: ${this.serverName}`,
-          primaryHref: `${DASHBOARD_URL}/?view=connections&connection=${encodeURIComponent(this.serverName)}`,
-          primaryLabel: "Return to Jig",
-          autoClose: true,
-        }))
+        res.end(renderOAuthSuccessPage(this.serverName))
         this._authResolve?.(code)
         setTimeout(() => this.stopCallbackServer(), 2000)
       } else {
         res.writeHead(400, { "Content-Type": "text/html" })
-        res.end(renderCallbackPage({
-          tone: "error",
-          eyebrow: `${this.serverName} failed`,
-          title: "Authorization failed",
-          message: "Jig could not finish connecting this service. Return to the dashboard and try again.",
-          detail: error ?? "Unknown error",
-          primaryHref: `${DASHBOARD_URL}/?view=connections&connection=${encodeURIComponent(this.serverName)}`,
-          primaryLabel: "Back to connections",
-        }))
+        res.end(renderOAuthErrorPage(this.serverName, error ?? "Unknown error"))
         setTimeout(() => this.stopCallbackServer(), 2000)
       }
     })

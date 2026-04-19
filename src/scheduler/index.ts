@@ -7,6 +7,8 @@
 import { syncSchedules } from "./sync.js"
 import { tick } from "./tick.js"
 import { recoverMissedRuns } from "./recover.js"
+import { isServiceMode } from "../config/runtime.js"
+import { isPasswordSet, isUnlocked } from "../crypto/password.js"
 
 const TICK_INTERVAL_MS = 60_000
 
@@ -28,6 +30,10 @@ export async function startScheduler(): Promise<{ stop: () => void }> {
 
   const runLoop = async () => {
     if (tickInFlight) return
+    // In service mode, pause ticks until the user has unlocked the instance.
+    // Credentials are encrypted and inaccessible until then, so a tick that
+    // fires a jig would only crash on first credential access.
+    if (isServiceMode() && isPasswordSet() && !isUnlocked()) return
     tickInFlight = true
     try {
       await syncSchedules()

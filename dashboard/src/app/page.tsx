@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { LoadingState } from "@/components/state-panel";
+import { UnlockGate } from "@/components/unlock-gate";
 
 const DashboardPage = dynamic(
   () => import("@/components/dashboard-page").then((mod) => mod.DashboardPage),
@@ -16,5 +17,9 @@ const DashboardPage = dynamic(
 );
 
 export default function Page() {
-  return <DashboardPage />;
+  return (
+    <UnlockGate>
+      <DashboardPage />
+    </UnlockGate>
+  );
 }

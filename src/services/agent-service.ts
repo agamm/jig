@@ -11,6 +11,7 @@ import { checkJigFile } from "./jig-checker.js"
 import { buildAgentJigSystemPrompt } from "./jig-writing-prompt.js"
 import { writeJigSource } from "./jig-writer.js"
 import { ApiError } from "../server/http.js"
+import { requireOpenRouterApiKey } from "../config/openrouter.js"
 import { logSessionEvent } from "../debug/session-log.js"
 import { buildDraftJigResponse } from "./jig-api.js"
 import {
@@ -169,9 +170,12 @@ function setSessionConversationHistory(
 }
 
 function getAgentClient(): OpenAI {
-  const apiKey = process.env.OPENROUTER_API_KEY
-  if (!apiKey) throw new ApiError(500, "OPENROUTER_API_KEY not set")
-  return new OpenAI({ baseURL: "https://openrouter.ai/api/v1", apiKey })
+  try {
+    const apiKey = requireOpenRouterApiKey()
+    return new OpenAI({ baseURL: "https://openrouter.ai/api/v1", apiKey })
+  } catch (e: any) {
+    throw new ApiError(500, e?.message ?? "OpenRouter API key not set")
+  }
 }
 
 const AGENT_TOOL_DEFS: ChatCompletionTool[] = [

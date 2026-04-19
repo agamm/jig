@@ -1,0 +1,20 @@
+# Railway deployment config for jig.
+# Intentionally minimal — jig holds no env-var secrets. Set OpenRouter API
+# key and any integration credentials in the dashboard after first unlock.
+#
+# Before deploying, attach a volume:
+#   railway volume add jig-data --mount-path /data
+#
+# jig will store everything under /data/ on that volume.
+
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+# /api/health is always unauthenticated; returns 200 once the server is up,
+# even before the user has set a password (health is the unlock signal).
+healthcheckPath = "/api/health"
+healthcheckTimeout = 300
+restartPolicyType = "ALWAYS"
+restartPolicyMaxRetries = 10
+startCommand = "bun run src/cli.ts start"

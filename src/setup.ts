@@ -75,10 +75,15 @@ async function setupJigsGit() {
 
 function checkEnv() {
   console.log("\nEnvironment")
-  if (process.env.OPENROUTER_API_KEY) {
-    log("\u2713", "OPENROUTER_API_KEY set")
+  // getOpenRouterApiKey prefers the credentials table, falls back to env.
+  // Importing async to avoid pulling db dependencies into setup's top level.
+  const { getOpenRouterApiKey } = require("./config/openrouter.js") as typeof import("./config/openrouter.js")
+  const key = getOpenRouterApiKey()
+  if (key) {
+    const source = process.env.OPENROUTER_API_KEY === key ? ".env" : "credentials"
+    log("\u2713", `OpenRouter API key set (${source})`)
   } else {
-    log("!", "OPENROUTER_API_KEY not set — add to .env")
+    log("!", "OpenRouter API key not set — add one in the dashboard or set OPENROUTER_API_KEY in .env")
   }
 }
 

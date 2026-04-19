@@ -111,9 +111,9 @@ async function gitStashPop(ref: string | null): Promise<void> {
 }
 
 async function railwayDeploy(): Promise<boolean> {
-  // `railway up` without --detach blocks until build + deploy complete,
-  // and exits non-zero if the deploy fails. Ideal for our purposes.
-  const code = await railwayInteractive(["up"])
+  // `--ci` streams build logs and exits when the build terminates. Gives the
+  // user live progress AND a reliable exit code (non-zero on build failure).
+  const code = await railwayInteractive(["up", "--ci"])
   return code === 0
 }
 

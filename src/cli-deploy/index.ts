@@ -119,18 +119,23 @@ export async function runDeploy(targetArg?: string): Promise<void> {
     console.log("  (volume attach reported non-zero; continuing — may already exist or need manual attach)")
   }
 
-  // Step 6: deploy
-  console.log("\nUploading and deploying (Nixpacks; first build ~2 min)...")
-  const upCode = await railwayInteractive(["up", "--detach"])
+  // Step 6: deploy. `--ci` streams build logs then exits with the build
+  // result code — we get live progress AND a clean finish signal.
+  console.log("\nUploading and deploying (Nixpacks; streams build logs, first build ~2 min)...")
+  const upCode = await railwayInteractive(["up", "--ci"])
   if (upCode !== 0) {
-    console.error("railway up failed.")
+    console.error("railway up failed during build.")
     process.exit(1)
   }
 
-  // Step 7: resolve public URL + (best-effort) IDs
-  // `railway status --json` isn't supported by every CLI version; we save
-  // whatever we can and fall back to cwd-based linking for `jig update`.
-  const status = await getStatus()
+  // Step 7: resolve public URL + (best-effort) IDs. status may lag briefly
+  // after `up` returns — retry a few times before giving up.
+  let status = null
+  for (let i = 0; i < 5; i++) {
+    status = await getStatus()
+    if (status) break
+    await new Promise((r) => setTimeout(r, 2000))
+  }
   console.log("\nGenerating a public domain...")
   await railwayInteractive(["domain"]).catch(() => -1)
   const publicUrl = await getPublicUrl()

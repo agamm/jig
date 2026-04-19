@@ -112,11 +112,11 @@ export async function runDeploy(targetArg?: string): Promise<void> {
     process.exit(1)
   }
 
-  // Step 5: volume
-  console.log("\nAttaching /data volume...")
-  const volumeCode = await railwayInteractive(["volume", "add", `${slug}-data`, "--mount-path", "/data"])
+  // Step 5: volume (v4 CLI: `railway volume add --mount-path <path>`; name is prompted)
+  console.log("\nAttaching /data volume (enter any name when prompted)...")
+  const volumeCode = await railwayInteractive(["volume", "add", "--mount-path", "/data"])
   if (volumeCode !== 0) {
-    console.log("(volume attach reported non-zero; continuing — may already exist)")
+    console.log("  (volume attach reported non-zero; continuing — may already exist or need manual attach)")
   }
 
   // Step 6: deploy
@@ -127,12 +127,10 @@ export async function runDeploy(targetArg?: string): Promise<void> {
     process.exit(1)
   }
 
-  // Step 7: resolve public URL + IDs
+  // Step 7: resolve public URL + (best-effort) IDs
+  // `railway status --json` isn't supported by every CLI version; we save
+  // whatever we can and fall back to cwd-based linking for `jig update`.
   const status = await getStatus()
-  if (!status) {
-    console.error("Couldn't read `railway status --json`. The CLI may be linked to the wrong project.")
-    process.exit(1)
-  }
   console.log("\nGenerating a public domain...")
   await railwayInteractive(["domain"]).catch(() => -1)
   const publicUrl = await getPublicUrl()
@@ -149,18 +147,21 @@ export async function runDeploy(targetArg?: string): Promise<void> {
     console.log(`Continuing anyway. Your instance may still come up. Dashboard: ${publicUrl}`)
   }
 
-  // Step 9: save manifest
+  // Step 9: save manifest. Railway IDs are optional — without them, `jig
+  // update` falls back to cwd-based linking (run from this checkout).
   const manifest: RemoteManifest = {
     handle: slug,
     target: "railway",
     public_url: publicUrl,
     created_at: new Date().toISOString(),
-    railway: {
-      project_id: status.projectId,
-      service_id: status.serviceId,
-      environment_id: status.environmentId,
-      token: "", // CLI handles auth; tokens are not stored.
-    },
+    railway: status
+      ? {
+          project_id: status.projectId,
+          service_id: status.serviceId,
+          environment_id: status.environmentId,
+          token: "",
+        }
+      : undefined,
   }
   saveRemote(manifest)
 

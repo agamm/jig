@@ -87,35 +87,53 @@ function tryServe(start: number): ReturnType<typeof createApiServer> {
 }
 
 /**
- * Prefer pnpm (the dev-time convention per CLAUDE.md) when it's on PATH.
- * On production containers (e.g., Railway Bun), pnpm is not installed —
- * fall back to `bun install`, which works for Next.js 16 and produces a
- * compatible node_modules layout.
+ * Resolve the `pnpm` binary, installing it via `bun install -g pnpm` if the
+ * container doesn't ship one. Matches CLAUDE.md's "dashboard uses pnpm" rule
+ * so node_modules resolution is identical between dev and prod.
  */
-async function hasOnPath(bin: string): Promise<boolean> {
+async function commandV(name: string): Promise<string | null> {
   try {
-    const proc = Bun.spawn(["sh", "-c", `command -v ${bin}`], { stdout: "pipe", stderr: "pipe" })
+    const proc = Bun.spawn(["sh", "-c", `command -v ${name}`], { stdout: "pipe", stderr: "pipe" })
+    const out = await new Response(proc.stdout).text()
     await proc.exited
-    return proc.exitCode === 0
-  } catch {
-    return false
-  }
+    if (proc.exitCode === 0 && out.trim()) return out.trim()
+  } catch {}
+  return null
+}
+
+async function resolvePnpm(): Promise<string> {
+  const fromPath = await commandV("pnpm")
+  if (fromPath) return fromPath
+
+  console.log("pnpm not found — installing globally via bun...")
+  const install = Bun.spawn(["bun", "install", "-g", "pnpm"], { stdout: "inherit", stderr: "inherit" })
+  const code = await install.exited
+  if (code !== 0) throw new Error("bun install -g pnpm failed")
+
+  // After install, try PATH again, then fall back to known global bin dirs.
+  const afterPath = await commandV("pnpm")
+  if (afterPath) return afterPath
+  const candidates = [
+    process.env.BUN_INSTALL ? `${process.env.BUN_INSTALL}/bin/pnpm` : null,
+    `${process.env.HOME ?? ""}/.bun/bin/pnpm`,
+  ].filter((p): p is string => Boolean(p))
+  for (const p of candidates) if (existsSync(p)) return p
+  throw new Error("Installed pnpm but couldn't locate the binary")
 }
 
 /** Install dashboard node_modules if missing. */
 async function ensureDashboardInstalled(): Promise<void> {
   if (existsSync(`${DASHBOARD_DIR}/node_modules`)) return
-  const usePnpm = await hasOnPath("pnpm")
-  const cmd = usePnpm ? ["pnpm", "install", "--prefer-offline"] : ["bun", "install"]
-  console.log(`Installing dashboard dependencies (${cmd[0]})...`)
-  const install = Bun.spawn(cmd, {
+  const pnpm = await resolvePnpm()
+  console.log("Installing dashboard dependencies (pnpm)...")
+  const install = Bun.spawn([pnpm, "install", "--prefer-offline"], {
     cwd: DASHBOARD_DIR,
     stdout: "inherit",
     stderr: "inherit",
   })
   const code = await install.exited
   if (code !== 0) {
-    throw new Error(`Failed to install dashboard dependencies via ${cmd[0]}.`)
+    throw new Error("Failed to install dashboard dependencies via pnpm.")
   }
 }
 

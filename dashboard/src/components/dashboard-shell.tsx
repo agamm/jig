@@ -19,6 +19,7 @@ import { EmptyState, LoadingState, Notice } from "@/components/state-panel";
 import { isRecommendedConnection, sortConnectionsForDisplay } from "@/lib/connection-catalog";
 import { useConnectionCatalog } from "@/lib/hooks";
 import { useModels, useConnections } from "@/lib/swr";
+import { APP_VERSION } from "@/lib/version";
 import { addExampleJig, createCustomConnection } from "@/lib/api";
 import type { ExampleJig } from "@shared/api";
 
@@ -422,6 +423,12 @@ export function DashboardShell({
             <div className="flex items-center gap-2">
               <span className="h-[7px] w-[7px] rounded-full bg-emerald-400 shrink-0" />
               <span className="text-[13px] font-semibold text-[#ededed]">Jig</span>
+              <span
+                className="mt-px rounded-sm bg-[#111113] px-1.5 py-0.5 text-[8px] font-mono tracking-[0.12em] text-[#555]"
+                title={`Version ${APP_VERSION}`}
+              >
+                v{APP_VERSION}
+              </span>
             </div>
           ) : null}
           {!collapsed ? (

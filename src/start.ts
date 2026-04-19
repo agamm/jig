@@ -86,26 +86,50 @@ function tryServe(start: number): ReturnType<typeof createApiServer> {
   throw new Error(`No free port found starting from ${start}`)
 }
 
+/**
+ * Prefer pnpm (the dev-time convention per CLAUDE.md) when it's on PATH.
+ * On production containers (e.g., Railway Bun), pnpm is not installed —
+ * fall back to `bun install`, which works for Next.js 16 and produces a
+ * compatible node_modules layout.
+ */
+async function hasOnPath(bin: string): Promise<boolean> {
+  try {
+    const proc = Bun.spawn(["sh", "-c", `command -v ${bin}`], { stdout: "pipe", stderr: "pipe" })
+    await proc.exited
+    return proc.exitCode === 0
+  } catch {
+    return false
+  }
+}
+
 /** Install dashboard node_modules if missing. */
 async function ensureDashboardInstalled(): Promise<void> {
   if (existsSync(`${DASHBOARD_DIR}/node_modules`)) return
-  console.log("Installing dashboard dependencies...")
-  const install = Bun.spawn(["pnpm", "install", "--prefer-offline"], {
+  const usePnpm = await hasOnPath("pnpm")
+  const cmd = usePnpm ? ["pnpm", "install", "--prefer-offline"] : ["bun", "install"]
+  console.log(`Installing dashboard dependencies (${cmd[0]})...`)
+  const install = Bun.spawn(cmd, {
     cwd: DASHBOARD_DIR,
     stdout: "inherit",
     stderr: "inherit",
   })
   const code = await install.exited
   if (code !== 0) {
-    throw new Error("Failed to install dashboard dependencies. Is pnpm installed? (npm install -g pnpm)")
+    throw new Error(`Failed to install dashboard dependencies via ${cmd[0]}.`)
   }
 }
 
-/** Run `pnpm build` in dashboard if no production build exists. */
+/** Build dashboard for production if no .next output exists. */
 async function ensureDashboardBuilt(): Promise<void> {
   if (existsSync(`${DASHBOARD_DIR}/.next/standalone`) || existsSync(`${DASHBOARD_DIR}/.next/BUILD_ID`)) return
   console.log("Building dashboard for production...")
-  const build = Bun.spawn(["pnpm", "run", "build"], {
+  // Invoke the locally-installed `next` binary directly — avoids depending on
+  // pnpm being available in the container.
+  const nextBin = `${DASHBOARD_DIR}/node_modules/.bin/next`
+  if (!existsSync(nextBin)) {
+    throw new Error(`next binary not found at ${nextBin}. Dashboard install may have failed.`)
+  }
+  const build = Bun.spawn([nextBin, "build"], {
     cwd: DASHBOARD_DIR,
     stdout: "inherit",
     stderr: "inherit",
@@ -163,12 +187,17 @@ export async function startServer(options?: { port?: number }) {
     return null
   })
 
-  // 3. Start Next.js. In service mode build + start for production.
+  // 3. Start Next.js. In service mode: build + `next start`. In local: `next dev`.
+  // Invoke the locally-installed `next` binary directly — portable across pnpm/bun installs.
+  const nextBin = `${DASHBOARD_DIR}/node_modules/.bin/next`
+  if (!existsSync(nextBin)) {
+    throw new Error(`next binary missing at ${nextBin} after install. Check dashboard install logs.`)
+  }
   let nextProcess: ReturnType<typeof Bun.spawn>
   if (service) {
     await ensureDashboardBuilt()
     nextProcess = Bun.spawn(
-      ["pnpm", "exec", "next", "start", "--hostname", "0.0.0.0", "--port", String(userPort)],
+      [nextBin, "start", "--hostname", "0.0.0.0", "--port", String(userPort)],
       {
         cwd: DASHBOARD_DIR,
         stdout: "inherit",
@@ -177,7 +206,7 @@ export async function startServer(options?: { port?: number }) {
       },
     )
   } else {
-    nextProcess = Bun.spawn(["pnpm", "run", "dev", "--port", String(userPort)], {
+    nextProcess = Bun.spawn([nextBin, "dev", "--port", String(userPort)], {
       cwd: DASHBOARD_DIR,
       stdout: "inherit",
       stderr: "inherit",

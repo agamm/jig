@@ -131,30 +131,42 @@ export async function isLoggedIn(): Promise<boolean> {
 }
 
 /**
- * Read the currently-linked project. Best-effort: `railway status --json`
- * works on some CLI versions; others only emit human text (or no IDs at
- * all). Returns null on any failure; callers must tolerate it.
+ * Read the currently-linked project. `railway status --json` returns the
+ * full project payload; we pick the first environment + its first service
+ * instance to derive the IDs we need.
  */
+interface StatusPayload {
+  id: string
+  name: string
+  environments?: {
+    edges?: {
+      node?: {
+        id: string
+        name: string
+        serviceInstances?: {
+          edges?: { node?: { serviceId: string; serviceName: string; environmentId: string } }[]
+        }
+      }
+    }[]
+  }
+}
+
 export async function getStatus(cwd = process.cwd()): Promise<RailwayStatus | null> {
   try {
     const raw = await railwayText(["status", "--json"], cwd)
-    const data = JSON.parse(raw) as {
-      project?: { id: string; name: string }
-      service?: { id: string }
-      environment?: { id: string }
-    }
-    if (data.project?.id && data.service?.id && data.environment?.id) {
-      return {
-        projectId: data.project.id,
-        serviceId: data.service.id,
-        environmentId: data.environment.id,
-        projectName: data.project.name,
-      }
+    const data = JSON.parse(raw) as StatusPayload
+    const envNode = data.environments?.edges?.[0]?.node
+    const svcNode = envNode?.serviceInstances?.edges?.[0]?.node
+    if (!data.id || !envNode?.id || !svcNode?.serviceId) return null
+    return {
+      projectId: data.id,
+      projectName: data.name,
+      serviceId: svcNode.serviceId,
+      environmentId: envNode.id,
     }
   } catch {
-    // falls through to text parsing
+    return null
   }
-  return null
 }
 
 /** Best-effort public URL detection via `railway domain`. */

@@ -6,14 +6,24 @@
  * `JIG_SERVICE_MODE` toggle — the public-URL presence IS the signal.
  */
 
-/** True when jig is running as a remote service (Railway/Fly/etc. or explicit JIG_PUBLIC_URL). */
+/**
+ * True when jig is running as a remote service. Detected from platform-set
+ * env vars that exist independently of whether a public domain has been
+ * generated yet — so the lock-flow + service-mode start.ts branches are
+ * active from first boot, not only once networking is live.
+ */
 export function isServiceMode(): boolean {
-  return !!publicUrl()
+  if (process.env.JIG_PUBLIC_URL) return true
+  if (process.env.RAILWAY_ENVIRONMENT_ID || process.env.RAILWAY_PROJECT_ID) return true
+  if (process.env.RENDER) return true
+  if (process.env.FLY_APP_NAME) return true
+  return false
 }
 
 /**
  * The public HTTPS URL the dashboard + OAuth callbacks are reachable at.
- * Returns undefined in local mode.
+ * Returns undefined when service mode is active but no domain has been
+ * provisioned yet (common during the initial deploy).
  */
 export function publicUrl(): string | undefined {
   const explicit = process.env.JIG_PUBLIC_URL

@@ -4,6 +4,7 @@ export function matchRoute(pathname: string): { handler: string; params: Record<
   if (pathname === "/api/health") return { handler: "health", params: {} }
   if (pathname === "/api/unlock") return { handler: "unlock", params: {} }
   if (pathname === "/api/setup-password") return { handler: "setupPassword", params: {} }
+  if (pathname === "/api/onboarding/complete") return { handler: "completeOnboarding", params: {} }
   if (pathname === "/api/oauth/callback") return { handler: "oauthCallback", params: {} }
   if (pathname === "/api/events") return { handler: "liveUpdates", params: {} }
   if (pathname === "/api/models") return { handler: "getModels", params: {} }

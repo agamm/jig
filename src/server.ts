@@ -41,7 +41,8 @@ import { isServiceMode, publicUrl } from "./config/runtime.js"
 import { isPasswordSet, isUnlocked, setPassword, unlock } from "./crypto/password.js"
 import { checkAccess } from "./auth/lock-middleware.js"
 import { issueToken, setCookieHeader } from "./auth/session.js"
-import { completePendingOAuth, getPendingOAuthUrl, renderOAuthErrorPage, renderOAuthSuccessPage } from "./mcp/auth.js"
+import { completePendingOAuth, renderOAuthErrorPage, renderOAuthSuccessPage } from "./mcp/auth.js"
+import { getCredential, setCredential } from "./db.js"
 import packageJson from "../package.json"
 
 const PACKAGE_VERSION: string = packageJson.version
@@ -328,6 +329,41 @@ function handleOAuthCallback(url: URL): Response {
   })
 }
 
+function isOnboardingComplete(): boolean {
+  const db = openDb()
+  const row = db.prepare(`SELECT value FROM settings WHERE key = ?`).get("onboarding_complete") as
+    | { value: string }
+    | undefined
+  return row?.value === "true"
+}
+
+function markOnboardingComplete(): void {
+  const db = openDb()
+  db.prepare(
+    `INSERT INTO settings (key, value) VALUES (?, 'true')
+     ON CONFLICT(key) DO UPDATE SET value = 'true', updated_at = datetime('now')`,
+  ).run("onboarding_complete")
+}
+
+function hasOpenRouterKey(): boolean {
+  if (!isUnlocked()) return false
+  try {
+    return !!getCredential("openrouter:api_key")
+  } catch {
+    return false
+  }
+}
+
+async function handleCompleteOnboarding(req: Request): Promise<Response> {
+  if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+  const body = (await req.json().catch(() => ({}))) as { openrouter_key?: unknown }
+  if (typeof body.openrouter_key === "string" && body.openrouter_key.trim()) {
+    setCredential("openrouter:api_key", body.openrouter_key.trim(), "openrouter")
+  }
+  markOnboardingComplete()
+  return json({ ok: true })
+}
+
 async function handleSetupPassword(req: Request): Promise<Response> {
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
   if (isPasswordSet()) return json({ error: "Password already set." }, 409)
@@ -387,10 +423,18 @@ export function createApiServer(port: number) {
               version: PACKAGE_VERSION,
               mode: isServiceMode() ? "service" : "local",
               public_url: publicUrl() ?? null,
-              locked: isServiceMode() && isPasswordSet() && !isUnlocked(),
+              // In service mode, "locked" means credentials are unreachable —
+              // whether because no password has been set yet OR because the
+              // key isn't in memory. UnlockGate uses this to decide between
+              // the set-password form, the unlock form, and the dashboard.
+              locked: isServiceMode() && (!isPasswordSet() || !isUnlocked()),
               password_set: isPasswordSet(),
+              onboarding_complete: isOnboardingComplete(),
+              has_openrouter_key: hasOpenRouterKey(),
               uptime_s: Math.floor((Date.now() - SERVER_STARTED_AT) / 1000),
             })
+          case "completeOnboarding":
+            return handleCompleteOnboarding(req)
           case "setupPassword":
             return handleSetupPassword(req)
           case "unlock":

@@ -17,7 +17,6 @@ export interface RailwayStatus {
   serviceId: string
   environmentId: string
   projectName: string
-  publicDomain?: string
 }
 
 let _railwayBin: string | null | undefined = undefined

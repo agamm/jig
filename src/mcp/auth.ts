@@ -46,17 +46,6 @@ export function completePendingOAuth(state: string, code: string): boolean {
   return true
 }
 
-/**
- * Pending OAuth URLs indexed by server name. Dashboard polls the API for
- * the current pending URL on a connect-in-progress to show a "Click to
- * authorize" button. Cleared when the callback completes.
- */
-const pendingUrlByServer = new Map<string, { url: string; state: string }>()
-
-export function getPendingOAuthUrl(serverName: string): { url: string; state: string } | null {
-  return pendingUrlByServer.get(serverName) ?? null
-}
-
 function extractState(authUrl: string): string | null {
   try {
     return new URL(authUrl).searchParams.get("state")
@@ -304,7 +293,6 @@ export class JigOAuthProvider implements OAuthClientProvider {
       // so /api/oauth/callback can find us by state, surface the URL for the
       // dashboard, and log it so it's also visible in platform log viewers.
       pendingProvidersByState.set(state, this)
-      pendingUrlByServer.set(this.serverName, { url, state })
       console.log(
         `[jig][oauth] ${this.serverName}: click to authorize → ${url}`,
       )
@@ -332,10 +320,7 @@ export class JigOAuthProvider implements OAuthClientProvider {
   resolveAuthCode(code: string): void {
     this._authResolve?.(code)
     this._authResolve = undefined
-    if (this._activeState) {
-      pendingUrlByServer.delete(this.serverName)
-      this._activeState = undefined
-    }
+    this._activeState = undefined
   }
 
   waitForAuthCode(signal?: AbortSignal): Promise<string> {
@@ -349,7 +334,6 @@ export class JigOAuthProvider implements OAuthClientProvider {
         this._authResolve = undefined
         if (this._activeState) {
           pendingProvidersByState.delete(this._activeState)
-          pendingUrlByServer.delete(this.serverName)
           this._activeState = undefined
         }
         reject(new Error(USER_CANCELLED_MESSAGE))

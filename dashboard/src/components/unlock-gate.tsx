@@ -6,25 +6,33 @@ type HealthResponse = {
   mode: "service" | "local";
   locked: boolean;
   password_set: boolean;
+  onboarding_complete: boolean;
+  has_openrouter_key: boolean;
 };
 
 /**
- * Blocks the dashboard until the server reports unlocked. In local mode
- * the server returns `mode: "local"` and we skip the gate entirely.
+ * Blocks the dashboard until the server reports a usable state.
+ *
+ * Three possible gates shown in sequence, each appearing only when needed:
+ *   1. Set-password form — if no password has been set yet.
+ *   2. Unlock form — if a password exists but the in-memory key is gone.
+ *   3. Onboarding — if unlocked but onboarding has not been marked complete.
+ *      Currently one step: add the OpenRouter API key (or skip).
+ *
+ * In local mode the server reports mode: "local" and we skip the gate.
  */
 export function UnlockGate({ children }: { children: ReactNode }) {
   const [health, setHealth] = useState<HealthResponse | null>(null);
-  const [healthError, setHealthError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
       const res = await fetch("/api/health", { cache: "no-store" });
       if (!res.ok) throw new Error(`Health check failed: ${res.status}`);
-      const data = (await res.json()) as HealthResponse;
-      setHealth(data);
-      setHealthError(null);
+      setHealth((await res.json()) as HealthResponse);
+      setError(null);
     } catch (e: any) {
-      setHealthError(e?.message ?? "Failed to reach server");
+      setError(e?.message ?? "Failed to reach server");
     }
   }, []);
 
@@ -32,16 +40,15 @@ export function UnlockGate({ children }: { children: ReactNode }) {
     void refresh();
   }, [refresh]);
 
-  if (healthError) {
+  if (error) {
     return (
       <Frame>
         <h1>Can't reach jig</h1>
-        <p>The server didn't respond to /api/health. Check logs and try again.</p>
-        <p className="text-[#777]">{healthError}</p>
+        <p>The server didn't respond to /api/health. Check the logs and retry.</p>
+        <p className="text-[#777]">{error}</p>
       </Frame>
     );
   }
-
   if (!health) {
     return (
       <Frame>
@@ -50,43 +57,40 @@ export function UnlockGate({ children }: { children: ReactNode }) {
     );
   }
 
-  if (health.mode === "local" || !health.locked) {
-    return <>{children}</>;
-  }
-
-  return <UnlockForm passwordSet={health.password_set} onUnlocked={refresh} />;
+  if (health.mode === "local") return <>{children}</>;
+  if (!health.password_set) return <PasswordForm mode="set" onDone={refresh} />;
+  if (health.locked) return <PasswordForm mode="unlock" onDone={refresh} />;
+  if (!health.onboarding_complete) return <OnboardingForm onDone={refresh} />;
+  return <>{children}</>;
 }
 
-function UnlockForm({ passwordSet, onUnlocked }: { passwordSet: boolean; onUnlocked: () => void }) {
+function PasswordForm({ mode, onDone }: { mode: "set" | "unlock"; onDone: () => void }) {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
-  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const isSetup = !passwordSet;
+  const [err, setErr] = useState<string | null>(null);
+  const isSet = mode === "set";
 
-  const onSubmit = async (e: FormEvent) => {
+  const submit = async (e: FormEvent) => {
     e.preventDefault();
-    setError(null);
-    if (isSetup) {
-      if (password.length < 8) return setError("Password must be at least 8 characters.");
-      if (password !== confirm) return setError("Passwords don't match.");
+    setErr(null);
+    if (isSet) {
+      if (password.length < 8) return setErr("Password must be at least 8 characters.");
+      if (password !== confirm) return setErr("Passwords don't match.");
     }
     setBusy(true);
     try {
-      const url = isSetup ? "/api/setup-password" : "/api/unlock";
-      const res = await fetch(url, {
+      const res = await fetch(isSet ? "/api/setup-password" : "/api/unlock", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ password }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        setError(body.error ?? `Request failed: ${res.status}`);
+        setErr(body.error ?? `Request failed: ${res.status}`);
         return;
       }
-      onUnlocked();
-    } catch (e: any) {
-      setError(e?.message ?? "Request failed");
+      onDone();
     } finally {
       setBusy(false);
     }
@@ -94,23 +98,23 @@ function UnlockForm({ passwordSet, onUnlocked }: { passwordSet: boolean; onUnloc
 
   return (
     <Frame>
-      <h1>{isSetup ? "Welcome to jig" : "Jig is locked"}</h1>
+      <h1>{isSet ? "Welcome to jig" : "Jig is locked"}</h1>
       <p>
-        {isSetup
-          ? "Set a password to protect your credentials. It's never stored on disk — you'll enter it again after any service restart."
+        {isSet
+          ? "Set a password to encrypt your credentials. It's never stored on disk — you'll re-enter it after any service restart."
           : "Enter your password to unlock the dashboard and resume scheduled jigs."}
       </p>
-      <form onSubmit={onSubmit} className="mt-5 flex flex-col gap-3">
+      <form onSubmit={submit} className="mt-5 flex flex-col gap-3">
         <input
           type="password"
           autoFocus
-          autoComplete={isSetup ? "new-password" : "current-password"}
+          autoComplete={isSet ? "new-password" : "current-password"}
           placeholder="Password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           className="rounded-md border border-[#222226] bg-[#111113] px-3 py-2 text-[14px] text-[#ededed] placeholder-[#555] outline-none focus:border-[#3f3f46]"
         />
-        {isSetup && (
+        {isSet && (
           <input
             type="password"
             autoComplete="new-password"
@@ -120,14 +124,94 @@ function UnlockForm({ passwordSet, onUnlocked }: { passwordSet: boolean; onUnloc
             className="rounded-md border border-[#222226] bg-[#111113] px-3 py-2 text-[14px] text-[#ededed] placeholder-[#555] outline-none focus:border-[#3f3f46]"
           />
         )}
-        {error && <p className="text-[13px] text-[#fb7185]">{error}</p>}
+        {err && <p className="text-[13px] text-[#fb7185]">{err}</p>}
         <button
           type="submit"
           disabled={busy || !password}
           className="mt-1 rounded-md bg-emerald-500 px-3 py-2 text-[14px] font-semibold text-white transition disabled:opacity-40"
         >
-          {busy ? "Working…" : isSetup ? "Set password" : "Unlock"}
+          {busy ? "Working…" : isSet ? "Set password" : "Unlock"}
         </button>
+      </form>
+    </Frame>
+  );
+}
+
+function OnboardingForm({ onDone }: { onDone: () => void }) {
+  const [apiKey, setApiKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const complete = async (withKey: boolean) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await fetch("/api/onboarding/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(withKey ? { openrouter_key: apiKey.trim() } : {}),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setErr(body.error ?? `Request failed: ${res.status}`);
+        return;
+      }
+      onDone();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Frame>
+      <h1>Add your OpenRouter key</h1>
+      <p>
+        Jigs that call <code className="text-[#ededed]">llm()</code> or{" "}
+        <code className="text-[#ededed]">agent()</code> need an OpenRouter API
+        key. Grab one from{" "}
+        <a
+          className="text-emerald-400 underline"
+          href="https://openrouter.ai/keys"
+          target="_blank"
+          rel="noreferrer"
+        >
+          openrouter.ai/keys
+        </a>
+        . You can always add or change it later in Settings.
+      </p>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void complete(true);
+        }}
+        className="mt-5 flex flex-col gap-3"
+      >
+        <input
+          type="password"
+          autoFocus
+          placeholder="sk-or-v1-..."
+          value={apiKey}
+          onChange={(e) => setApiKey(e.target.value)}
+          className="rounded-md border border-[#222226] bg-[#111113] px-3 py-2 font-mono text-[13px] text-[#ededed] placeholder-[#555] outline-none focus:border-[#3f3f46]"
+        />
+        {err && <p className="text-[13px] text-[#fb7185]">{err}</p>}
+        <div className="mt-1 flex gap-2">
+          <button
+            type="submit"
+            disabled={busy || !apiKey.trim()}
+            className="rounded-md bg-emerald-500 px-3 py-2 text-[14px] font-semibold text-white transition disabled:opacity-40"
+          >
+            {busy ? "Saving…" : "Save key"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void complete(false)}
+            disabled={busy}
+            className="rounded-md border border-[#222226] bg-[#111113] px-3 py-2 text-[14px] text-[#aaa] transition hover:text-[#ededed]"
+          >
+            Skip for now
+          </button>
+        </div>
       </form>
     </Frame>
   );

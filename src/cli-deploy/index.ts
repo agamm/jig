@@ -29,6 +29,7 @@ import {
   isLoggedIn,
   isRailwayInstalled,
   linkService,
+  listProjects,
   railwayInteractive,
 } from "./railway-cli.js"
 
@@ -109,22 +110,42 @@ export async function runDeploy(targetArg?: string): Promise<void> {
 
   // Step 3b: collision check — prior failed attempts tend to leave orphan
   // projects with the same name. Offer to delete them before re-creating.
-  const existing = await findProjectsByName(slug)
-  if (existing.length > 0) {
-    console.log(
-      `\nFound ${existing.length} existing Railway project(s) named "${slug}":`,
-    )
-    for (const p of existing) console.log(`  - ${p.id}`)
-    const doDelete = await confirm("Delete them and continue?", true)
-    if (!doDelete) {
-      console.error("Aborted. Pick a different project name and re-run `jig deploy`.")
-      process.exit(1)
-    }
-    for (const p of existing) {
-      console.log(`  Deleting ${p.id}...`)
-      const ok = await deleteProject(p.id)
-      if (!ok) {
-        console.error(`  Failed to delete ${p.id}. Delete it manually from the Railway dashboard and retry.`)
+  // The Railway CLI's delete is quirky (may pop an interactive picker, may
+  // return non-zero after a successful delete, may stale-cache), so after
+  // each attempt we re-query list --json and trust the server's view.
+  {
+    const existing = await findProjectsByName(slug)
+    if (existing.length > 0) {
+      console.log(
+        `\nFound ${existing.length} existing Railway project(s) named "${slug}":`,
+      )
+      for (const p of existing) console.log(`  - ${p.id}`)
+      const doDelete = await confirm("Delete them and continue?", true)
+      if (!doDelete) {
+        console.error("Aborted. Pick a different project name and re-run `jig deploy`.")
+        process.exit(1)
+      }
+      for (const p of existing) {
+        // Refetch before acting — a prior iteration (or the interactive
+        // picker during the previous delete) may have already removed this.
+        const fresh = await listProjects()
+        if (!fresh.find((cp) => cp.id === p.id)) {
+          console.log(`  Already gone: ${p.id}`)
+          continue
+        }
+        console.log(`  Deleting ${p.id}...`)
+        await deleteProject(p.id).catch(() => false)
+        // Authoritative check: is it actually gone?
+        const after = await listProjects()
+        if (after.find((ap) => ap.id === p.id)) {
+          console.error(`  Delete didn't take effect for ${p.id}. Remove it via the Railway dashboard and retry.`)
+          process.exit(1)
+        }
+      }
+      // Final check: no remaining collisions.
+      const remaining = await findProjectsByName(slug)
+      if (remaining.length > 0) {
+        console.error(`  Still found projects named "${slug}" after delete (${remaining.map((r) => r.id).join(", ")}). Investigate in the Railway dashboard.`)
         process.exit(1)
       }
     }

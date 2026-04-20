@@ -186,12 +186,20 @@ export interface RailwayProjectSummary {
   name: string
 }
 
-/** List all projects in the logged-in account. Returns [] on failure. */
+/**
+ * List all LIVE projects in the logged-in account. Returns [] on failure.
+ *
+ * Railway's `list --json` includes soft-deleted projects (`deletedAt` set)
+ * for ~30 days after deletion. We filter them out so orphan-detection,
+ * collision-checks, and rollback logic don't chase phantom records.
+ */
 export async function listProjects(): Promise<RailwayProjectSummary[]> {
   try {
     const raw = await railwayText(["list", "--json"])
-    const data = JSON.parse(raw) as Array<{ id: string; name: string }>
-    return data.map((p) => ({ id: p.id, name: p.name }))
+    const data = JSON.parse(raw) as Array<{ id: string; name: string; deletedAt?: string | null }>
+    return data
+      .filter((p) => !p.deletedAt)
+      .map((p) => ({ id: p.id, name: p.name }))
   } catch {
     return []
   }

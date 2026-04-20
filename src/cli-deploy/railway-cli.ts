@@ -180,3 +180,37 @@ export async function getPublicUrl(cwd = process.cwd()): Promise<string | null> 
     return null
   }
 }
+
+export interface RailwayProjectSummary {
+  id: string
+  name: string
+}
+
+/** List all projects in the logged-in account. Returns [] on failure. */
+export async function listProjects(): Promise<RailwayProjectSummary[]> {
+  try {
+    const raw = await railwayText(["list", "--json"])
+    const data = JSON.parse(raw) as Array<{ id: string; name: string }>
+    return data.map((p) => ({ id: p.id, name: p.name }))
+  } catch {
+    return []
+  }
+}
+
+/** Find projects with the given exact name. Used to detect collisions before init. */
+export async function findProjectsByName(name: string): Promise<RailwayProjectSummary[]> {
+  const all = await listProjects()
+  return all.filter((p) => p.name === name)
+}
+
+/** Delete a project by ID without confirmation. */
+export async function deleteProject(id: string): Promise<boolean> {
+  const code = await railwayInteractive(["delete", "-p", id, "-y"])
+  return code === 0
+}
+
+/** Link the current cwd to a named service inside the current linked project. */
+export async function linkService(serviceName: string, cwd = process.cwd()): Promise<boolean> {
+  const code = await railwayInteractive(["service", "link", serviceName], cwd)
+  return code === 0
+}

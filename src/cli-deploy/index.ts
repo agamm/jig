@@ -21,11 +21,14 @@
 import { createInterface } from "node:readline/promises"
 import { saveRemote, getRemote, type RemoteManifest } from "../cli-remote/manifest.js"
 import {
+  deleteProject,
+  findProjectsByName,
   getPublicUrl,
   getStatus,
   installRailway,
   isLoggedIn,
   isRailwayInstalled,
+  linkService,
   railwayInteractive,
 } from "./railway-cli.js"
 
@@ -104,6 +107,29 @@ export async function runDeploy(targetArg?: string): Promise<void> {
     process.exit(1)
   }
 
+  // Step 3b: collision check — prior failed attempts tend to leave orphan
+  // projects with the same name. Offer to delete them before re-creating.
+  const existing = await findProjectsByName(slug)
+  if (existing.length > 0) {
+    console.log(
+      `\nFound ${existing.length} existing Railway project(s) named "${slug}":`,
+    )
+    for (const p of existing) console.log(`  - ${p.id}`)
+    const doDelete = await confirm("Delete them and continue?", true)
+    if (!doDelete) {
+      console.error("Aborted. Pick a different project name and re-run `jig deploy`.")
+      process.exit(1)
+    }
+    for (const p of existing) {
+      console.log(`  Deleting ${p.id}...`)
+      const ok = await deleteProject(p.id)
+      if (!ok) {
+        console.error(`  Failed to delete ${p.id}. Delete it manually from the Railway dashboard and retry.`)
+        process.exit(1)
+      }
+    }
+  }
+
   // Step 4: init
   console.log(`\nCreating Railway project "${slug}"...`)
   const initCode = await railwayInteractive(["init", "--name", slug])
@@ -111,6 +137,14 @@ export async function runDeploy(targetArg?: string): Promise<void> {
     console.error("railway init failed.")
     process.exit(1)
   }
+
+  // Step 4b: link the newly-created service so subsequent volume/up calls
+  // target it without interactive prompts. Railway creates a service named
+  // after the project during init.
+  console.log(`  Linking cwd to service "${slug}"...`)
+  await linkService(slug).catch(() => {
+    console.log(`  (service link non-zero; continuing — may already be linked)`)
+  })
 
   // Step 5: volume (v4 CLI: `railway volume add --mount-path <path>`; name is prompted)
   console.log("\nAttaching /data volume (enter any name when prompted)...")

@@ -6,6 +6,8 @@
  * This module only stores execution history.
  */
 import { Database } from "bun:sqlite"
+import { existsSync, mkdirSync } from "node:fs"
+import { dirname } from "node:path"
 import { DB_PATH } from "./config/paths.js"
 
 // ---------------------------------------------------------------------------
@@ -193,16 +195,44 @@ let _db: Database | null = null
 export function openDb(path?: string): Database {
   if (_db) return _db
   const dbPath = path ?? DB_PATH
+
+  // Ensure the data directory exists before bun:sqlite tries to open a file
+  // in it. On Railway without a volume attached, /data doesn't exist and
+  // Bun's error message "unable to open database file" is opaque.
+  if (dbPath !== ":memory:") {
+    const dir = dirname(dbPath)
+    if (!existsSync(dir)) {
+      try {
+        mkdirSync(dir, { recursive: true })
+      } catch (e: any) {
+        throw new Error(
+          `Can't create data directory ${dir}: ${e?.message ?? e}. ` +
+            `On Railway, make sure a volume is mounted at that path.`,
+        )
+      }
+    }
+  }
+
   try {
     _db = new Database(dbPath)
     _db.exec("PRAGMA journal_mode = WAL")
     _db.exec("PRAGMA foreign_keys = ON")
     _db.exec(SCHEMA)
     runMigrations(_db)
-  } catch (e) {
-    // If DB is corrupted, delete and retry once
+  } catch (e: any) {
+    const msg = e?.message ?? String(e)
+    // A genuine file-not-openable error on first boot is NOT corruption —
+    // don't wipe-and-retry or we'll loop. Surface the error so the process
+    // exits cleanly and Railway reports deploy failed with a useful log.
+    if (/unable to open database file/i.test(msg)) {
+      throw new Error(
+        `Can't open SQLite database at ${dbPath}: ${msg}. ` +
+          `Check that the parent directory is writable (Railway: volume mounted at ${dirname(dbPath)}).`,
+      )
+    }
     if (dbPath !== ":memory:") {
-      console.warn("DB error, recreating:", (e as Error)?.message)
+      // Treat remaining errors as likely corruption; wipe once and retry.
+      console.warn("DB error, recreating:", msg)
       try { require("fs").unlinkSync(dbPath) } catch {}
       try { require("fs").unlinkSync(dbPath + "-shm") } catch {}
       try { require("fs").unlinkSync(dbPath + "-wal") } catch {}

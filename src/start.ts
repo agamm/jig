@@ -74,16 +74,27 @@ async function ensurePortLocal(port: number): Promise<number> {
   throw new Error(`No free port found near ${port}`)
 }
 
-/** Try creating the API server, scanning ports if needed. */
+/**
+ * Try creating the API server, scanning ports if needed. Only port-binding
+ * errors get the fallback treatment; anything else (DB open failure,
+ * migration error, etc.) is propagated immediately so the real cause
+ * reaches the container logs instead of being masked as "no free port".
+ */
 function tryServe(start: number): ReturnType<typeof createApiServer> {
+  let firstPortError: unknown = null
   for (let port = start; port < start + 20; port++) {
     try {
       return createApiServer(port)
-    } catch {
-      continue
+    } catch (e: any) {
+      const msg = e?.message ?? String(e)
+      if (/EADDRINUSE|address in use|listen .* failed/i.test(msg)) {
+        firstPortError ??= e
+        continue
+      }
+      throw e
     }
   }
-  throw new Error(`No free port found starting from ${start}`)
+  throw firstPortError ?? new Error(`No free port found starting from ${start}`)
 }
 
 /**

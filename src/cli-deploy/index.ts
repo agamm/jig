@@ -19,7 +19,7 @@
  * and connects services from the dashboard.
  */
 import { createInterface } from "node:readline/promises"
-import { saveRemote, getRemote, type RemoteManifest } from "../cli-remote/manifest.js"
+import { deleteRemote, getRemote, saveRemote, type RemoteManifest } from "../cli-remote/manifest.js"
 import {
   deleteProject,
   findProjectsByName,
@@ -103,9 +103,18 @@ export async function runDeploy(targetArg?: string): Promise<void> {
   const defaultSlug = slugify(`jig-${Date.now().toString(36).slice(-4)}`)
   const rawSlug = await prompt("Project name", defaultSlug)
   const slug = slugify(rawSlug)
-  if (getRemote(slug)) {
-    console.error(`A remote named "${slug}" already exists at ~/.config/jig/remotes/${slug}.json. Pick another name.`)
-    process.exit(1)
+  const existingManifest = getRemote(slug)
+  if (existingManifest) {
+    console.log(
+      `\nA local remote named "${slug}" already exists (${existingManifest.public_url || "no url"}).`,
+    )
+    const overwrite = await confirm("Remove it and redeploy from scratch?", true)
+    if (!overwrite) {
+      console.error("Aborted. Pick a different project name and re-run `jig deploy`.")
+      process.exit(1)
+    }
+    deleteRemote(slug)
+    console.log(`  Removed ~/.config/jig/remotes/${slug}.json`)
   }
 
   // Step 3b: collision check — prior failed attempts tend to leave orphan

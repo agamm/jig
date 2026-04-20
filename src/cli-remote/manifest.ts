@@ -6,7 +6,7 @@
  * File mode is 600 — it holds the admin-key equivalent (platform API token,
  * such as a Railway token) that lets the CLI redeploy the service.
  */
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, chmodSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, chmodSync } from "node:fs"
 import { join } from "node:path"
 import { homedir } from "node:os"
 
@@ -55,6 +55,11 @@ export function saveRemote(manifest: RemoteManifest): void {
   const path = join(remotesDir(), `${manifest.handle}.json`)
   writeFileSync(path, JSON.stringify(manifest, null, 2))
   chmodSync(path, 0o600)
+}
+
+export function deleteRemote(handle: string): void {
+  const path = join(remotesDir(), `${handle}.json`)
+  rmSync(path, { force: true })
 }
 
 /** Pick the single active remote; exits if zero or asks if multiple. */

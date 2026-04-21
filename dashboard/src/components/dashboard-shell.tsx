@@ -489,11 +489,11 @@ export function DashboardShell({
         {view === "connections" && (
           selectedConnection && detailPane ? (
             <ResizablePanelGroup direction="horizontal" className="flex-1">
-              <ResizablePanel defaultSize="52%" minSize="0%">
+              <ResizablePanel defaultSize="52%" minSize="34%">
                 {connectionsMain}
               </ResizablePanel>
               <ResizableHandle />
-              <ResizablePanel defaultSize="48%" minSize="28%" maxSize="100%">
+              <ResizablePanel defaultSize="48%" minSize="34%" maxSize="66%">
                 {detailPane}
               </ResizablePanel>
             </ResizablePanelGroup>
@@ -539,11 +539,11 @@ export function DashboardShell({
         {(!view || view === "jigs") && (
           hasDetail && detailPane ? (
             <ResizablePanelGroup direction="horizontal" className="flex-1">
-              <ResizablePanel defaultSize="52%" minSize="0%">
+              <ResizablePanel defaultSize="52%" minSize="34%">
                 {jigsPane}
               </ResizablePanel>
               <ResizableHandle />
-              <ResizablePanel defaultSize="48%" minSize="28%" maxSize="100%">
+              <ResizablePanel defaultSize="48%" minSize="34%" maxSize="66%">
                 {detailPane}
               </ResizablePanel>
             </ResizablePanelGroup>

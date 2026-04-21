@@ -340,8 +340,8 @@ try {
     }
 
     case "deploy": {
-      const { runDeploy } = await import("./cli-deploy/index.js")
-      await runDeploy(rest[0])
+      const { runDeployArgs } = await import("./cli-deploy/index.js")
+      await runDeployArgs(rest)
       break
     }
 
@@ -376,6 +376,7 @@ try {
       console.log(`  jig new [description]  AI generates a new jig`)
       console.log(`  jig edit <name> [ent]  AI modifies an existing jig`)
       console.log(`  jig deploy             Provision a new Railway-hosted instance (interactive)`)
+      console.log(`  jig deploy --update    Redeploy current code to the linked Railway project`)
       console.log(`  jig update [handle]    Update a deployed jig to the latest tag (rolls back on failure)`)
       console.log(`  jig doctor [handle]    Health-check deployed instances`)
       break

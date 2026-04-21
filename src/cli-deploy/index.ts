@@ -71,6 +71,65 @@ function slugify(input: string): string {
   return input.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "jig"
 }
 
+export async function runDeployArgs(args: string[]): Promise<void> {
+  if (args.includes("--update")) {
+    await runUpdateInPlace()
+    return
+  }
+  const target = args.find((a) => !a.startsWith("--"))
+  await runDeploy(target)
+}
+
+/**
+ * Re-upload the current working directory to the already-linked Railway
+ * project. Faster than the full wizard — no project creation, no volume
+ * attach, no domain generation. Used for dev iteration: `jig deploy --update`.
+ */
+async function runUpdateInPlace(): Promise<void> {
+  console.log("jig deploy --update — redeploy current code to the linked Railway project.\n")
+
+  if (!(await isRailwayInstalled())) {
+    console.error("Railway CLI not found. Run `jig deploy` without --update first to provision an instance.")
+    process.exit(1)
+  }
+  if (!(await isLoggedIn())) {
+    console.error("Not logged in to Railway. Run `railway login` and retry.")
+    process.exit(1)
+  }
+
+  const status = await getStatus()
+  if (!status) {
+    console.error("This directory isn't linked to a Railway project. Run `railway link` or `jig deploy` first.")
+    process.exit(1)
+  }
+  console.log(`  Linked to: ${status.projectName} / ${status.serviceId.slice(0, 8)}\n`)
+
+  console.log("Uploading and deploying (Nixpacks; streams build logs)...")
+  const code = await railwayInteractive(["up", "--ci"])
+  if (code !== 0) {
+    console.error("\nrailway up failed — see logs above.")
+    process.exit(1)
+  }
+
+  // Best-effort health probe: find the manifest for this project, ping it.
+  const { listRemotes } = await import("../cli-remote/manifest.js")
+  const manifest = listRemotes().find((r) => r.public_url.length > 0 && r.target === "railway")
+  if (manifest) {
+    console.log(`\nWaiting for ${manifest.public_url}/api/health...`)
+    for (let i = 0; i < 60; i++) {
+      try {
+        const res = await fetch(`${manifest.public_url}/api/health`, { cache: "no-store" })
+        if (res.ok) {
+          console.log("  ✓ Healthy.")
+          break
+        }
+      } catch {}
+      await new Promise((r) => setTimeout(r, 2000))
+    }
+  }
+  console.log("\n  ✓ Redeploy complete.")
+}
+
 export async function runDeploy(targetArg?: string): Promise<void> {
   if (targetArg && targetArg !== "railway") {
     console.error(`Unknown target "${targetArg}". Only "railway" is supported in v1.`)

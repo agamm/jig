@@ -306,10 +306,6 @@ export async function buildAuthoringState(
 
   ensureResolvedIntegration(plan.needsIntegration, allServers, plan.unknownServers)
 
-  if (allServers.length > 0 || plan.unknownServers.length > 0) {
-    checkConnections(allServers, plan.unknownServers, serverConfigs)
-  }
-
   const buildResolutions = await resolveBuildTimeTargets(description, buildResolutionServers, serverConfigs, options.ask)
   ensureAuthoringDiscoveryResolved(description, buildResolutionServers, serverConfigs, buildResolutions)
   const relevantTools = options.existingCode

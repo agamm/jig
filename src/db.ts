@@ -409,6 +409,17 @@ export function deleteJigLocalState(jigId: string): void {
   db.prepare(`DELETE FROM schedules WHERE jig_id = ?`).run(jigId)
 }
 
+export function renameJigLocalState(oldJigId: string, newJigId: string): void {
+  if (oldJigId === newJigId) return
+  const db = openDb()
+  db.prepare(`DELETE FROM runs WHERE jig_id = ?`).run(newJigId)
+  db.prepare(`DELETE FROM step_cache WHERE jig_id = ?`).run(newJigId)
+  db.prepare(`DELETE FROM schedules WHERE jig_id = ?`).run(newJigId)
+  db.prepare(`UPDATE runs SET jig_id = ? WHERE jig_id = ?`).run(newJigId, oldJigId)
+  db.prepare(`UPDATE step_cache SET jig_id = ? WHERE jig_id = ?`).run(newJigId, oldJigId)
+  db.prepare(`UPDATE schedules SET jig_id = ? WHERE jig_id = ?`).run(newJigId, oldJigId)
+}
+
 // ---------------------------------------------------------------------------
 // Schedules
 // ---------------------------------------------------------------------------

@@ -1,15 +1,17 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from "fs"
+import { join } from "path"
 import OpenAI from "openai"
 import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions"
 import type { AgentConversationTurn, AgentDraftApproval, AgentEvent, AgentMetrics, AgentStatusResponse, StartAgentResponse } from "../../shared/api.js"
 import { JIG_EDITOR_MODEL } from "../config/models.js"
-import { DRAFT_JIGS_DIR } from "../config/paths.js"
+import { DRAFT_JIGS_DIR, SCHEMAS_DIR } from "../config/paths.js"
 import { isValidJigId } from "../domain/jig-id.js"
+import { getImportedServers } from "../domain/source-analysis.js"
 import { resolveJigPath } from "../domain/jig-source.js"
 import { invalidateJigsCache } from "../discover.js"
 import { checkJigFile } from "./jig-checker.js"
 import { buildAgentJigSystemPrompt } from "./jig-writing-prompt.js"
-import { writeJigSource } from "./jig-writer.js"
+import { renameJigFile, writeJigSource } from "./jig-writer.js"
 import { ApiError } from "../server/http.js"
 import { requireOpenRouterApiKey } from "../config/openrouter.js"
 import { logSessionEvent } from "../debug/session-log.js"
@@ -21,7 +23,7 @@ import {
   hasExplicitEmptyToolsArray,
   type BuildTimeResolution,
 } from "../jig-gen.js"
-import { setToolPermission } from "../db.js"
+import { renameJigLocalState, setToolPermission } from "../db.js"
 
 const MAX_AGENT_ROUNDS = 15
 const AGENT_SESSION_TTL = 30 * 60 * 1000
@@ -224,6 +226,20 @@ const AGENT_TOOL_DEFS: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "rename_jig",
+      description: "Rename the session's jig. Moves the file, updates the jig() name string in code, carries over run history and schedules, and commits. Use this for rename requests instead of read+write.",
+      parameters: {
+        type: "object",
+        properties: {
+          newJigId: { type: "string", description: "New jig ID (lowercase letters, numbers, dashes, underscores)" },
+        },
+        required: ["newJigId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "ask_user",
       description: "Ask the user a question and wait for their response. Use this to collect information needed to write the jig — e.g. their email address, team name, Slack channel, or any other constant that should be hardcoded. The agent loop pauses until the user replies.",
       parameters: {
@@ -278,6 +294,14 @@ async function toolWriteJigFile(args: { code: string; jigId?: string; message?: 
   if (!jigId) return JSON.stringify({ error: "No jigId specified — provide jigId for new jigs" })
   if (!isValidJigId(jigId)) return JSON.stringify({ error: "Invalid jigId. Use lowercase letters, numbers, dashes, or underscores." })
 
+  const disconnected = findDisconnectedImports(args.code)
+  if (disconnected.length > 0) {
+    return JSON.stringify({
+      error: `Code imports unconnected servers: ${disconnected.join(", ")}. Either ask the user to run 'jig connect <server>' and wait, or rewrite the jig to not depend on those servers.`,
+      disconnectedServers: disconnected,
+    })
+  }
+
   if (!session.jigId) {
     if (activeAgentJigs.has(jigId)) return JSON.stringify({ error: "Another session is already editing this jig" })
     if (session.creationMode && existsSync(resolveJigPath(jigId))) {
@@ -328,6 +352,71 @@ async function toolCheckJig(args: { jigId?: string }, session: AgentSession): Pr
   return [result === "ok" ? null : result, ...extraErrors].filter(Boolean).join("\n")
 }
 
+async function toolRenameJig(args: { newJigId: string }, session: AgentSession): Promise<string> {
+  const oldJigId = session.jigId
+  if (!oldJigId) return JSON.stringify({ error: "No jig in this session to rename" })
+  const newJigId = args.newJigId
+  if (!isValidJigId(newJigId)) {
+    return JSON.stringify({ error: "Invalid newJigId. Use lowercase letters, numbers, dashes, or underscores." })
+  }
+  if (newJigId === oldJigId) return JSON.stringify({ error: "newJigId matches current jigId" })
+
+  if (session.creationMode) {
+    if (!session.draftFilePath || !existsSync(session.draftFilePath)) {
+      return JSON.stringify({ error: "No draft file to rename" })
+    }
+    const newDraftPath = getDraftFilePath(session, newJigId)
+    if (existsSync(newDraftPath)) return JSON.stringify({ error: `Draft already exists: ${newJigId}` })
+    if (existsSync(resolveJigPath(newJigId))) return JSON.stringify({ error: `Jig already exists: ${newJigId}` })
+
+    const code = readFileSync(session.draftFilePath, "utf-8")
+    const renamed = rewriteJigIdentifier(code, newJigId)
+    await writeJigSource(newDraftPath, renamed, { jigId: newJigId })
+    rmSync(session.draftFilePath, { force: true })
+    activeAgentJigs.delete(oldJigId)
+    activeAgentJigs.add(newJigId)
+    session.draftFilePath = newDraftPath
+    session.jigId = newJigId
+    session.draftApproval = undefined
+    return JSON.stringify({ ok: true, oldJigId, newJigId, draft: true })
+  }
+
+  const oldPath = resolveJigPath(oldJigId)
+  if (!existsSync(oldPath)) return JSON.stringify({ error: `File not found for jig: ${oldJigId}` })
+  if (existsSync(resolveJigPath(newJigId))) return JSON.stringify({ error: `Jig already exists: ${newJigId}` })
+  if (activeAgentJigs.has(newJigId)) {
+    return JSON.stringify({ error: "Another session is already editing this jig" })
+  }
+
+  const code = readFileSync(oldPath, "utf-8")
+  const renamed = rewriteJigIdentifier(code, newJigId)
+
+  await renameJigFile(oldJigId, newJigId, renamed, {
+    commitMessage: `jig: ${oldJigId} → ${newJigId}`,
+    commitPrompt: session.authoringIntent,
+  })
+  renameJigLocalState(oldJigId, newJigId)
+  invalidateJigsCache()
+  activeAgentJigs.delete(oldJigId)
+  activeAgentJigs.add(newJigId)
+  session.jigId = newJigId
+  return JSON.stringify({ ok: true, oldJigId, newJigId, draft: false })
+}
+
+function findDisconnectedImports(code: string): string[] {
+  const servers = getImportedServers(code)
+  return servers.filter((server) => !existsSync(join(SCHEMAS_DIR, `${server}.json`)))
+}
+
+function rewriteJigIdentifier(code: string, newJigId: string): string {
+  let replaced = false
+  return code.replace(/jig\(\s*(["'`])([^"'`]+)\1/, (match, quote: string) => {
+    if (replaced) return match
+    replaced = true
+    return `jig(${quote}${newJigId}${quote}`
+  })
+}
+
 async function toolBrowse(args: { url: string }): Promise<string> {
   const timeout = new Promise<string>((_, reject) =>
     setTimeout(() => reject(new Error("Browse timed out after 45s")), 45_000)
@@ -370,6 +459,7 @@ async function executeAgentTool(name: string, args: Record<string, any>, session
     case "read_jig_file": return toolReadJigFile(args, session)
     case "write_jig_file": return toolWriteJigFile(args as any, session)
     case "check_jig": return toolCheckJig(args, session)
+    case "rename_jig": return toolRenameJig(args as any, session)
     case "ask_user": return ASK_USER_SENTINEL
     case "browse": return toolBrowse(args as any)
     case "web_search": return toolWebSearch(args as any)

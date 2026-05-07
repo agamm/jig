@@ -358,12 +358,39 @@ interface JigPlan {
   needsIntegration: boolean
 }
 
-function formatServerForAuthoring(name: string, cfg: any): string {
-  const lines = [`- ${name}: ${cfg?.description ?? ""}`]
+function formatServerForAuthoring(
+  name: string,
+  cfg: any,
+  opts: { connected: boolean; connectedToolkits?: string[] }
+): string {
+  const status = opts.connected ? "connected" : "not connected"
+  let description = cfg?.description ?? ""
+  if (name === "composio" && opts.connectedToolkits?.length) {
+    description += `. Connected toolkits: ${opts.connectedToolkits.join(", ")}`
+  }
+  const lines = [`- ${name} [${status}]: ${description}`]
   for (const hint of cfg?.meta?.authoringHints ?? []) {
     lines.push(`  Hint: ${hint}`)
   }
   return lines.join("\n")
+}
+
+function readConnectedToolkitsFromComposio(): string[] {
+  const schemaPath = join(SCHEMAS_DIR, "composio.json")
+  if (!existsSync(schemaPath)) return []
+  try {
+    const tools: Array<{ name?: string }> = JSON.parse(readFileSync(schemaPath, "utf-8"))
+    const prefixes = new Set<string>()
+    for (const tool of tools) {
+      const name = tool?.name
+      if (typeof name !== "string") continue
+      const prefix = name.split("_")[0]
+      if (prefix) prefixes.add(prefix)
+    }
+    return [...prefixes].sort()
+  } catch {
+    return []
+  }
 }
 
 async function planJig(
@@ -371,8 +398,14 @@ async function planJig(
   serverConfigs: Record<string, any>
 ): Promise<JigPlan> {
   const entries = Object.entries(serverConfigs)
+  const composioToolkits = readConnectedToolkitsFromComposio()
   const serverList = entries
-    .map(([name, cfg]) => formatServerForAuthoring(name, cfg))
+    .map(([name, cfg]) =>
+      formatServerForAuthoring(name, cfg, {
+        connected: existsSync(join(SCHEMAS_DIR, `${name}.json`)),
+        connectedToolkits: name === "composio" ? composioToolkits : undefined,
+      })
+    )
     .join("\n")
 
   const keywordHints = entries
@@ -390,6 +423,7 @@ async function planJig(
     `Plan a workflow automation.
 
 ## Available servers (use ONLY these key names)
+Each entry is tagged [connected] or [not connected]. "Connected" means credentials are already set up; "not connected" means the user would have to run a connect flow before the jig can run.
 ${serverList}
 
 ${keywordHints}
@@ -404,6 +438,8 @@ For this workflow: "${description}"
 
 Important:
 - Prefer the smallest sufficient server set
+- Strongly prefer servers tagged [connected]. If a [connected] server can cover the task (including via composio's listed connected toolkits), pick it instead of a [not connected] alternative — do not pick a [not connected] server when a [connected] one suffices
+- Only pick a [not connected] server when no [connected] server can do the task
 - If the user explicitly names one of the available servers or clearly references that provider/connection, include that exact server in "servers"
 - If the user says to do something via/using/through a specific server, prefer that server and do not add another server just because the target website or data source matches its brand
 - Only include an additional server when the workflow truly needs that server's own authenticated API, write actions, or first-party tools beyond what the explicit provider can already do

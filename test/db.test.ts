@@ -207,6 +207,7 @@ describe("agent sessions", () => {
       pending_ask_question: null,
       draft_file_path: "/tmp/draft-jig.ts",
       draft_approval: null,
+      last_event_seq: 0,
     })
 
     const row = getAgentSession("session-1")

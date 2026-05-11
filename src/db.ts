@@ -210,6 +210,31 @@ const MIGRATIONS: string[] = [
      draft_approval TEXT
    );
    CREATE INDEX IF NOT EXISTS idx_agent_sessions_jig_id ON agent_sessions(jig_id);`,
+  // v12: code-as-versions rehaul. Jig source moves out of filesystem files
+  // into jig_versions. Each jig has a pointer to the active version and
+  // optionally a pointer to a pending (unapproved) version. Approve moves
+  // active to pending. Drafts during one session overwrite; only approved
+  // versions become durable history. SSE resume cursor added to sessions.
+  `CREATE TABLE IF NOT EXISTS jigs (
+     id TEXT PRIMARY KEY,
+     name TEXT NOT NULL,
+     active_version_id INTEGER REFERENCES jig_versions(id),
+     pending_version_id INTEGER REFERENCES jig_versions(id),
+     created_at INTEGER NOT NULL,
+     archived_at INTEGER
+   );
+   CREATE TABLE IF NOT EXISTS jig_versions (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     jig_id TEXT NOT NULL,
+     code TEXT NOT NULL,
+     message TEXT,
+     prompt TEXT,
+     author TEXT NOT NULL,
+     parent_version_id INTEGER REFERENCES jig_versions(id),
+     created_at INTEGER NOT NULL
+   );
+   CREATE INDEX IF NOT EXISTS idx_jig_versions_jig ON jig_versions(jig_id, id DESC);
+   ALTER TABLE agent_sessions ADD COLUMN last_event_seq INTEGER NOT NULL DEFAULT 0;`,
 ]
 
 // ---------------------------------------------------------------------------
@@ -498,8 +523,12 @@ export interface AgentSessionRow {
   updated_at: number
   pending_ask_tool_call_id: string | null
   pending_ask_question: string | null
+  /** @deprecated v12: drafts live in jig_versions now. Column kept for back-compat. */
   draft_file_path: string | null
+  /** @deprecated v12: drafts live in jig_versions now. Column kept for back-compat. */
   draft_approval: string | null
+  /** SSE replay cursor — events with seq <= this have been flushed to the client at least once. */
+  last_event_seq: number
 }
 
 export function upsertAgentSession(row: AgentSessionRow): void {
@@ -509,8 +538,8 @@ export function upsertAgentSession(row: AgentSessionRow): void {
        session_id, jig_id, creation_mode, authoring_intent,
        conversation_history, authoring_policy, messages, events,
        status, metrics, created_at, updated_at,
-       pending_ask_tool_call_id, pending_ask_question, draft_file_path, draft_approval
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       pending_ask_tool_call_id, pending_ask_question, draft_file_path, draft_approval, last_event_seq
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(session_id) DO UPDATE SET
        jig_id = excluded.jig_id,
        creation_mode = excluded.creation_mode,
@@ -526,7 +555,8 @@ export function upsertAgentSession(row: AgentSessionRow): void {
        pending_ask_tool_call_id = excluded.pending_ask_tool_call_id,
        pending_ask_question = excluded.pending_ask_question,
        draft_file_path = excluded.draft_file_path,
-       draft_approval = excluded.draft_approval`
+       draft_approval = excluded.draft_approval,
+       last_event_seq = excluded.last_event_seq`
   ).run(
     row.session_id,
     row.jig_id,
@@ -544,6 +574,7 @@ export function upsertAgentSession(row: AgentSessionRow): void {
     row.pending_ask_question,
     row.draft_file_path,
     row.draft_approval,
+    row.last_event_seq,
   )
 }
 

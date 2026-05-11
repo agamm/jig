@@ -56,6 +56,8 @@ type AgentSession = {
   pendingAskQuestion?: string
   draftFilePath?: string
   draftApproval?: AgentDraftApproval
+  /** SSE replay cursor — events with seq <= this have been emitted to a stream client at least once. */
+  lastEventSeq: number
 }
 
 const agentSessions = new Map<string, AgentSession>()
@@ -89,6 +91,7 @@ function serializeSession(session: AgentSession): AgentSessionRow {
     pending_ask_question: session.pendingAskQuestion ?? null,
     draft_file_path: session.draftFilePath ?? null,
     draft_approval: session.draftApproval ? JSON.stringify(session.draftApproval) : null,
+    last_event_seq: session.lastEventSeq,
   }
 }
 
@@ -112,6 +115,7 @@ function hydrateSession(row: AgentSessionRow): AgentSession {
     pendingAskQuestion: row.pending_ask_question ?? undefined,
     draftFilePath: row.draft_file_path ?? undefined,
     draftApproval: parseJson<AgentDraftApproval | undefined>(row.draft_approval, undefined),
+    lastEventSeq: row.last_event_seq ?? 0,
   }
 }
 
@@ -1265,6 +1269,7 @@ export async function startAgentSession(body: any): Promise<StartAgentResponse> 
       updatedAt: Date.now(),
     },
     createdAt: Date.now(),
+    lastEventSeq: 0,
   }
 
   pruneAgentSessions()

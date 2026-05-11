@@ -4,10 +4,13 @@
  * Route parsing and side-effect orchestration live here; domain logic lives in
  * dedicated services under src/services and src/domain.
  */
-import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs"
+process.env.JIG_LOG_SOURCE = process.env.JIG_LOG_SOURCE ?? "server"
+import "./server/log-buffer.js" // side-effect import — must be first, installs console capture
+import { existsSync, readFileSync, readdirSync, rmSync } from "fs"
 import { join } from "path"
 import { closeDb, deleteJigLocalState, openDb } from "./db.js"
-import { getModelCatalog } from "./config/models.js"
+import { getModelCatalog, setModelOverrides } from "./config/models.js"
+import { fetchOpenRouterModels } from "./services/openrouter-catalog.js"
 import { CONNECTIONS_DIR, DB_PATH, DRAFT_JIGS_DIR, JIGS_DIR, NOTIFICATION_TOOLS_PATH, SCHEMAS_DIR, TYPES_DIR } from "./config/paths.js"
 import { extractConnections, getJigFilePath, resolveJigPath } from "./domain/jig-source.js"
 import { invalidateJigsCache } from "./discover.js"
@@ -20,10 +23,11 @@ import {
 } from "./domain/triggers.js"
 import { createCustomRemoteServer, loadCustomServerConfigs, loadServerConfigs } from "./mcp/config.js"
 import { buildJigResponse, discoverAllJigs } from "./services/jig-api.js"
-import { approveAgentDraft, closeAgentSession, getAgentSessionStatus, pushAgentMessage, startAgentSession } from "./services/agent-service.js"
+import { approveAgentDraft, closeAgentSession, getAgentSessionStatus, listUnderConstructionJigs, pushAgentMessage, startAgentSession } from "./services/agent-service.js"
 import { cancelActiveRun, getActiveRunSnapshot, getRunDetail, startJigRun } from "./services/run-api.js"
-import { getNotificationSettings, saveNotificationSettings, notify, type NotificationSettings } from "./services/notify.js"
-import { connectConfiguredServer } from "./services/connect-server.js"
+import { getNotificationHealth, getNotificationSettings, getNotificationTestStatus, saveNotificationSettings, saveNotificationTestStatus, notify, type NotificationSettings } from "./services/notify.js"
+import { connectConfiguredServer, disconnectConfiguredServer } from "./services/connect-server.js"
+import { getDataStorageHealth } from "./services/data-storage.js"
 import { addExampleJig, listExampleJigs } from "./services/example-jigs.js"
 import { buildNotificationManifest } from "./mcp/discover/notification-manifest.js"
 import { handleWebhook } from "./scheduler/webhooks.js"
@@ -31,17 +35,26 @@ import { getSchedule, listAllSchedules, setScheduleEnabled, listAuthorizedSender
 import { startScheduler } from "./scheduler/index.js"
 import { syncSchedules } from "./scheduler/sync.js"
 import { getJigVersionDetail, listJigVersions, restoreJigVersion } from "./services/jig-versioning.js"
+import { writeJigSource } from "./services/jig-writer.js"
 import { resetSessionLog } from "./debug/session-log.js"
-import { ApiError, json } from "./server/http.js"
+import { ApiError, apiJson, apiJsonWithHeaders, json } from "./server/http.js"
 import { broadcastJigsUpdated, createLiveUpdatesResponse, startLiveUpdateWatchers } from "./server/live-updates.js"
 import { matchRoute } from "./server/router.js"
 import { firstLineSummary } from "./text.js"
 import { isCancellationError, USER_CANCELLED_MESSAGE } from "./run-cancel.js"
 import { isServiceMode, publicUrl } from "./config/runtime.js"
-import { isPasswordSet, isUnlocked, setPassword, unlock } from "./crypto/password.js"
-import { checkAccess } from "./auth/lock-middleware.js"
+import { getSystemSettings, saveSystemSettings, seedSystemSettingsDefaults } from "./config/timezone.js"
+import { changePassword, isPasswordSet, isUnlocked, setPassword, unlock } from "./crypto/password.js"
+import { checkAccess, requireAdminAccess } from "./auth/lock-middleware.js"
 import { issueToken, setCookieHeader } from "./auth/session.js"
-import { completePendingOAuth, renderOAuthErrorPage, renderOAuthSuccessPage } from "./mcp/auth.js"
+import {
+  checkUnlockLimit,
+  clientIpFromRequest,
+  recordUnlockFailure,
+  recordUnlockSuccess,
+} from "./auth/unlock-rate-limit.js"
+import { completePendingOAuth, completePendingOAuthStateless, renderOAuthErrorPage, renderOAuthSuccessPage } from "./mcp/auth.js"
+import { clearLogs, getLogs } from "./server/log-buffer.js"
 import { getCredential, setCredential } from "./db.js"
 import packageJson from "../package.json"
 
@@ -59,10 +72,10 @@ function removeStaleDraftFiles(): void {
 async function handleGetVersions(jigId: string): Promise<Response> {
   ensureJigExists(jigId)
   try {
-    return json(await listJigVersions(jigId))
+    return apiJson("getVersions", await listJigVersions(jigId))
   } catch (error) {
     if (error instanceof ApiError && error.status === 404 && error.message === "No version history") {
-      return json([])
+      return apiJson("getVersions", [])
     }
     throw error
   }
@@ -70,7 +83,7 @@ async function handleGetVersions(jigId: string): Promise<Response> {
 
 async function handleGetVersionCode(jigId: string, sha: string): Promise<Response> {
   ensureJigExists(jigId)
-  return json(await getJigVersionDetail(jigId, sha))
+  return apiJson("getVersionCode", await getJigVersionDetail(jigId, sha))
 }
 
 async function handleRestoreVersion(jigId: string, sha: string): Promise<Response> {
@@ -79,7 +92,7 @@ async function handleRestoreVersion(jigId: string, sha: string): Promise<Respons
   if (hasActiveRunForJig(jigId)) {
     throw new ApiError(409, "Cannot restore a jig version while it is running")
   }
-  return json(await restoreJigVersion(jigId, sha))
+  return apiJson("restoreVersion", await restoreJigVersion(jigId, sha))
 }
 
 async function handleGetSteps(id: string): Promise<Response> {
@@ -89,7 +102,7 @@ async function handleGetSteps(id: string): Promise<Response> {
   const code = readFileSync(filePath, "utf-8")
   const { deriveSteps } = await import("./derive-steps.js")
   const steps = await deriveSteps(id, code)
-  return json({ steps })
+  return apiJson("getSteps", { steps })
 }
 
 async function handleUpdateTrigger(id: string, body: any): Promise<Response> {
@@ -116,23 +129,29 @@ async function handleUpdateTrigger(id: string, body: any): Promise<Response> {
   const updated = replaceTriggerInSource(code, triggerToSource(trigger))
   if (!updated) throw new ApiError(400, "Could not find trigger in source file")
 
-  try {
-    writeFileSync(filePath, updated)
-  } catch {
-    throw new ApiError(500, "Failed to write trigger to source file")
-  }
+  await writeJigSource(filePath, updated, {
+    jigId: id,
+    commit: true,
+    commitMessage: `jig: ${id} — update trigger`,
+    commitPrompt: `Update trigger to: ${triggerText}`,
+  })
 
   const newTriggerText = trigger.type === "cron" && trigger.cron ? cronToText(trigger.cron)
     : trigger.type === "manual" ? "Manual"
     : trigger.type === "webhook" ? "Webhook"
     : triggerText
 
-  const result: Record<string, any> = { ok: true, trigger: newTriggerText }
+  const result = { ok: true, trigger: newTriggerText } as {
+    ok: true
+    trigger: string
+    warning?: string
+  }
   if ("approximate" in trigger && trigger.approximate) {
-    result.warning = ("note" in trigger && trigger.note) || "This is an approximation — cron cannot express the exact schedule"
+    result.warning = ("note" in trigger && typeof trigger.note === "string" && trigger.note)
+      || "This is an approximation — cron cannot express the exact schedule"
   }
   await syncSchedules()
-  return json(result)
+  return apiJson("updateTrigger", result)
 }
 
 async function handleGetConnections(): Promise<Response> {
@@ -160,7 +179,7 @@ async function handleGetConnections(): Promise<Response> {
       }
     })
   )
-  return json(connections)
+  return apiJson("connections", connections)
 }
 
 async function handleGetConnection(name: string): Promise<Response> {
@@ -201,7 +220,7 @@ async function handleGetConnection(name: string): Promise<Response> {
     } catch {}
   }
 
-  return json({
+  return apiJson("getConnection", {
     name,
     connected,
     toolCount: tools.length,
@@ -224,7 +243,7 @@ async function handleCreateCustomConnection(body: any): Promise<Response> {
 
   try {
     const result = await createCustomRemoteServer({ name, url, description })
-    return json({
+    return apiJson("createCustomConnection", {
       ok: true,
       connection: {
         name: result.name,
@@ -257,7 +276,7 @@ async function handleDeleteJig(id: string): Promise<Response> {
   clearTrackedRunsForJig(id)
 
   invalidateJigsCache()
-  return json({ ok: true, jigId: id })
+  return apiJson("deleteJig", { ok: true, jigId: id })
 }
 
 async function handleResetLocalState(): Promise<Response> {
@@ -294,7 +313,7 @@ async function handleResetLocalState(): Promise<Response> {
   invalidateJigsCache()
   openDb()
 
-  return json({ ok: true, deletedJigs, disconnectedConnections })
+  return apiJson("resetLocalState", { ok: true, deletedJigs, disconnectedConnections })
 }
 
 function handleOAuthCallback(url: URL): Response {
@@ -307,16 +326,23 @@ function handleOAuthCallback(url: URL): Response {
       headers: { "Content-Type": "text/html; charset=utf-8" },
     })
   }
-  if (!state || !code) {
-    return new Response(renderOAuthErrorPage("the service", "Missing state or code in callback"), {
+  if (!code) {
+    return new Response(renderOAuthErrorPage("the service", "Missing code in callback"), {
       status: 400,
       headers: { "Content-Type": "text/html; charset=utf-8" },
     })
   }
-  const matched = completePendingOAuth(state, code)
+  // Prefer state-based routing; fall back to single-pending-provider match
+  // for OAuth servers that drop state on the return leg (seen with some
+  // MCP servers that build authorize URLs without forwarding state).
+  const matched = state
+    ? completePendingOAuth(state, code)
+    : completePendingOAuthStateless(code)
   if (!matched) {
     return new Response(
-      renderOAuthErrorPage("the service", "No pending authorization matched this callback. Try connecting again."),
+      renderOAuthErrorPage("the service", state
+        ? "No pending authorization matched this callback. Try connecting again."
+        : "Callback dropped the state parameter and more than one authorization is in flight. Try connecting one service at a time."),
       { status: 404, headers: { "Content-Type": "text/html; charset=utf-8" } },
     )
   }
@@ -361,7 +387,7 @@ async function handleCompleteOnboarding(req: Request): Promise<Response> {
     setCredential("openrouter:api_key", body.openrouter_key.trim(), "openrouter")
   }
   markOnboardingComplete()
-  return json({ ok: true })
+  return apiJson("completeOnboarding", { ok: true })
 }
 
 async function handleSetupPassword(req: Request): Promise<Response> {
@@ -375,28 +401,59 @@ async function handleSetupPassword(req: Request): Promise<Response> {
     return json({ error: e?.message ?? "Failed to set password" }, 400)
   }
   const token = issueToken()
-  return new Response(JSON.stringify({ ok: true }), {
-    status: 200,
-    headers: { "Content-Type": "application/json", "Set-Cookie": setCookieHeader(token) },
-  })
+  return apiJsonWithHeaders("setupPassword", { ok: true }, { "Set-Cookie": setCookieHeader(token) })
+}
+
+async function handleChangePassword(req: Request): Promise<Response> {
+  if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+  if (!isPasswordSet()) return json({ error: "No password is set yet." }, 409)
+  if (!isUnlocked()) return json({ error: "Unlock first, then change your password." }, 423)
+  const body = (await req.json().catch(() => ({}))) as { newPassword?: unknown }
+  if (typeof body.newPassword !== "string") return json({ error: "newPassword is required" }, 400)
+  try {
+    changePassword(body.newPassword)
+  } catch (e: any) {
+    return json({ error: e?.message ?? "Failed to change password" }, 400)
+  }
+  const token = issueToken()
+  return apiJsonWithHeaders("changePassword", { ok: true }, { "Set-Cookie": setCookieHeader(token) })
 }
 
 async function handleUnlock(req: Request): Promise<Response> {
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
   if (!isPasswordSet()) return json({ error: "No password set. Set one first via /api/setup-password." }, 409)
+
+  // Only enforce rate limits when exposed to the internet. Local `jig start`
+  // has no proxy, so every request looks like the same "unknown" IP; rate-
+  // limiting the loopback serves nobody.
+  const enforceLimit = isServiceMode()
+  const ip = enforceLimit ? clientIpFromRequest(req) : ""
+  if (enforceLimit) {
+    const check = checkUnlockLimit(ip)
+    if (!check.ok) {
+      return new Response(
+        JSON.stringify({ error: "Too many failed attempts. Try again later.", retry_after_s: check.retryAfterS }),
+        { status: 429, headers: { "Content-Type": "application/json", "Retry-After": String(check.retryAfterS) } },
+      )
+    }
+  }
+
   const body = (await req.json().catch(() => ({}))) as { password?: unknown }
   if (typeof body.password !== "string") return json({ error: "password is required" }, 400)
+
   const ok = unlock(body.password)
-  if (!ok) return json({ error: "Wrong password" }, 401)
+  if (!ok) {
+    if (enforceLimit) recordUnlockFailure(ip)
+    return json({ error: "Wrong password" }, 401)
+  }
+  if (enforceLimit) recordUnlockSuccess(ip)
   const token = issueToken()
-  return new Response(JSON.stringify({ ok: true }), {
-    status: 200,
-    headers: { "Content-Type": "application/json", "Set-Cookie": setCookieHeader(token) },
-  })
+  return apiJsonWithHeaders("unlock", { ok: true }, { "Set-Cookie": setCookieHeader(token) })
 }
 
 export function createApiServer(port: number) {
   openDb()
+  seedSystemSettingsDefaults()
   removeStaleDraftFiles()
   startLiveUpdateWatchers()
   // Clear step cache on startup — ensures stale derivations from old SDK versions don't persist
@@ -418,10 +475,17 @@ export function createApiServer(port: number) {
 
       try {
         switch (route.handler) {
-          case "health":
-            return json({
+          case "health": {
+            // `health` is the only /api/* route that's reachable without auth
+            // in service mode — the dashboard calls it to decide which
+            // onboarding screen to show. Only emit the fields UnlockGate
+            // actually needs there; put admin-only fields (uptime, has-key)
+            // behind auth so an unauthenticated attacker can't fingerprint
+            // the instance's OpenRouter state or last restart time.
+            const authed = !isServiceMode() || checkAccess(req, "serverLogs") === null
+            const base = {
               version: PACKAGE_VERSION,
-              mode: isServiceMode() ? "service" : "local",
+              mode: isServiceMode() ? "service" as const : "local" as const,
               public_url: publicUrl() ?? null,
               // In service mode, "locked" means credentials are unreachable —
               // whether because no password has been set yet OR because the
@@ -430,34 +494,60 @@ export function createApiServer(port: number) {
               locked: isServiceMode() && (!isPasswordSet() || !isUnlocked()),
               password_set: isPasswordSet(),
               onboarding_complete: isOnboardingComplete(),
+              data_storage: await getDataStorageHealth(),
+            }
+            if (!authed) return apiJson("health", base)
+            return apiJson("health", {
+              ...base,
               has_openrouter_key: hasOpenRouterKey(),
               uptime_s: Math.floor((Date.now() - SERVER_STARTED_AT) / 1000),
             })
+          }
           case "completeOnboarding":
             return handleCompleteOnboarding(req)
           case "setupPassword":
             return handleSetupPassword(req)
           case "unlock":
             return handleUnlock(req)
+          case "changePassword":
+            return handleChangePassword(req)
           case "oauthCallback":
             return handleOAuthCallback(url)
           case "liveUpdates":
             return createLiveUpdatesResponse()
-          case "getModels":
-            return json(getModelCatalog())
+          case "models": {
+            if (req.method === "PUT") {
+              const body = (await req.json().catch(() => ({}))) as {
+                main?: unknown; editor?: unknown; fast?: unknown
+              }
+              const patch: { main?: string; editor?: string; fast?: string } = {}
+              for (const k of ["main", "editor", "fast"] as const) {
+                const v = body[k]
+                if (v === undefined) continue
+                if (typeof v !== "string") throw new ApiError(400, `${k} must be a string`)
+                patch[k] = v
+              }
+              return apiJson("models", setModelOverrides(patch))
+            }
+            return apiJson("models", getModelCatalog())
+          }
+          case "modelsCatalog":
+            return apiJson("modelsCatalog", await fetchOpenRouterModels())
           case "listJigs": {
             const jigs = await Promise.all(
               [...discoverAllJigs().keys()].map((id) => buildJigResponse(id, 10, true))
             )
-            return json(jigs)
+            const existingIds = new Set(jigs.map((jig) => jig.id))
+            const drafts = (await listUnderConstructionJigs()).filter((jig) => !existingIds.has(jig.id))
+            return apiJson("listJigs", [...drafts, ...jigs])
           }
           case "listExamples":
-            return json(listExampleJigs())
+            return apiJson("listExamples", listExampleJigs())
           case "addExample": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
             try {
               const jigId = await addExampleJig(route.params.id)
-              return json({ ok: true, jigId })
+              return apiJson("addExample", { ok: true, jigId })
             } catch (error: any) {
               if (error?.message?.startsWith("Jig already exists:")) {
                 throw new ApiError(409, error.message)
@@ -471,21 +561,21 @@ export function createApiServer(port: number) {
           case "getJig": {
             if (req.method === "DELETE") return handleDeleteJig(route.params.id)
             ensureJigExists(route.params.id)
-            return json(await buildJigResponse(route.params.id, 20, true))
+            return apiJson("getJig", await buildJigResponse(route.params.id, 20, true))
           }
           case "runJig": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
             const body = await req.json().catch(() => ({}))
-            return json(await startJigRun(route.params.id, body))
+            return apiJson("runJig", await startJigRun(route.params.id, body))
           }
           case "getRun":
-            return json(getRunDetail(parseInt(route.params.id)))
+            return apiJson("getRun", getRunDetail(parseInt(route.params.id)))
           case "activeRun":
-            return json(getActiveRunSnapshot(url.searchParams.get("jigId") ?? undefined))
+            return apiJson("activeRun", getActiveRunSnapshot(url.searchParams.get("jigId") ?? undefined))
           case "cancelRun": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
             const body = await req.json().catch(() => ({}))
-            return json(await cancelActiveRun(body?.jigId))
+            return apiJson("cancelRun", await cancelActiveRun(body?.jigId))
           }
           case "connections":
             return handleGetConnections()
@@ -499,7 +589,11 @@ export function createApiServer(port: number) {
           case "connectConnection": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
             const body = await req.json().catch(() => ({})) as { credentials?: Record<string, string> }
-            return json(await connectConfiguredServer(route.params.name, { credentials: body?.credentials, signal: req.signal }))
+            return apiJson("connectConnection", await connectConfiguredServer(route.params.name, { credentials: body?.credentials, signal: req.signal }))
+          }
+          case "disconnectConnection": {
+            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+            return apiJson("disconnectConnection", await disconnectConfiguredServer(route.params.name))
           }
           case "getSteps": {
             return handleGetSteps(route.params.id)
@@ -512,24 +606,24 @@ export function createApiServer(port: number) {
           case "startAgent": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
             const body = await req.json().catch(() => ({}))
-            return json(await startAgentSession(body))
+            return apiJson("startAgent", await startAgentSession(body))
           }
           case "agentStatus": {
             const since = parseInt(url.searchParams.get("since") ?? "0")
-            return json(getAgentSessionStatus(route.params.sessionId, since))
+            return apiJson("agentStatus", getAgentSessionStatus(route.params.sessionId, since))
           }
           case "agentMessage": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
             const body = await req.json().catch(() => ({}))
-            return json(await pushAgentMessage(route.params.sessionId, body))
+            return apiJson("agentMessage", await pushAgentMessage(route.params.sessionId, body))
           }
           case "agentApprove": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
-            return json(await approveAgentDraft(route.params.sessionId))
+            return apiJson("agentApprove", await approveAgentDraft(route.params.sessionId))
           }
           case "agentClose": {
             if (req.method !== "DELETE") return json({ error: "Method not allowed" }, 405)
-            return json(await closeAgentSession(route.params.sessionId))
+            return apiJson("agentClose", await closeAgentSession(route.params.sessionId))
           }
           case "getVersions":
             return handleGetVersions(route.params.id)
@@ -540,10 +634,11 @@ export function createApiServer(port: number) {
             return handleRestoreVersion(route.params.id, route.params.sha)
           }
           case "listSchedules":
-            return json(listAllSchedules().map(s => ({
+            return apiJson("listSchedules", listAllSchedules().map(s => ({
               jigId: s.jig_id,
               triggerType: s.trigger_type,
               cronExpr: s.cron_expr,
+              timezone: s.timezone,
               missedStrategy: s.missed_strategy,
               nextRunAt: s.next_run_at ? new Date(s.next_run_at * 1000).toISOString() : null,
               lastRunAt: s.last_run_at ? new Date(s.last_run_at * 1000).toISOString() : null,
@@ -558,15 +653,15 @@ export function createApiServer(port: number) {
             if (typeof body?.enabled !== "boolean") throw new ApiError(400, "Missing 'enabled' boolean")
             setScheduleEnabled(route.params.jigId, body.enabled)
             broadcastJigsUpdated("schedule")
-            return json({ ok: true })
+            return apiJson("updateSchedule", { ok: true })
           }
           case "authorizedSenders": {
-            if (req.method === "GET") return json(listAuthorizedSenders())
+            if (req.method === "GET") return apiJson("authorizedSenders", listAuthorizedSenders())
             if (req.method === "POST") {
               const body = await req.json().catch(() => ({}))
               if (!body?.channel || !body?.sender_id) throw new ApiError(400, "Missing 'channel' and 'sender_id'")
               addAuthorizedSender(body.channel, body.sender_id)
-              return json({ ok: true })
+              return apiJson("addAuthorizedSender", { ok: true })
             }
             return json({ error: "Method not allowed" }, 405)
           }
@@ -574,13 +669,17 @@ export function createApiServer(port: number) {
             if (req.method !== "DELETE") return json({ error: "Method not allowed" }, 405)
             const removed = removeAuthorizedSender(route.params.channel, route.params.senderId)
             if (!removed) throw new ApiError(404, "Sender not found")
-            return json({ ok: true })
+            return apiJson("deleteAuthorizedSender", { ok: true })
           }
           case "notificationSettings": {
             if (req.method === "GET") {
-              return json({
-                settings: getNotificationSettings(),
-                availableTools: buildNotificationManifest(),
+              const settings = getNotificationSettings()
+              const availableTools = buildNotificationManifest()
+              return apiJson("notificationSettings", {
+                settings,
+                availableTools,
+                health: getNotificationHealth(settings, availableTools),
+                testStatus: getNotificationTestStatus(),
               })
             }
             if (req.method === "PUT") {
@@ -593,7 +692,14 @@ export function createApiServer(port: number) {
                 triggerOn: { fail: body.triggerOn?.fail ?? true },
               }
               saveNotificationSettings(next)
-              return json({ settings: getNotificationSettings(), availableTools: buildNotificationManifest() })
+              const settings = getNotificationSettings()
+              const availableTools = buildNotificationManifest()
+              return apiJson("notificationSettings", {
+                settings,
+                availableTools,
+                health: getNotificationHealth(settings, availableTools),
+                testStatus: getNotificationTestStatus(),
+              })
             }
             return json({ error: "Method not allowed" }, 405)
           }
@@ -605,11 +711,23 @@ export function createApiServer(port: number) {
               kind: "fail",
               ignoreTriggerGate: true,
             })
-            return json(report)
+            saveNotificationTestStatus(report)
+            return apiJson("notificationSettingsTest", report)
+          }
+          case "systemSettings": {
+            if (req.method === "GET") return apiJson("systemSettings", getSystemSettings())
+            if (req.method === "PUT") {
+              const body = await req.json().catch(() => ({}))
+              const settings = saveSystemSettings({ timezone: body?.timezone })
+              await syncSchedules()
+              broadcastJigsUpdated("system-settings")
+              return apiJson("systemSettings", settings)
+            }
+            return json({ error: "Method not allowed" }, 405)
           }
           case "toolPermissions": {
             if (req.method === "GET") {
-              return json(listToolPermissions())
+              return apiJson("toolPermissions", listToolPermissions())
             }
             if (req.method === "PUT") {
               const body = await req.json().catch(() => ({})) as {
@@ -624,13 +742,27 @@ export function createApiServer(port: number) {
                 throw new ApiError(400, "Invalid policy. Expected always, ask, or never.")
               }
               setToolPermission(body.connection, body.tool, body.policy)
-              return json({ ok: true })
+              return apiJson("saveToolPermission", { ok: true })
             }
             return json({ error: "Method not allowed" }, 405)
           }
           case "resetLocalState": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
             return handleResetLocalState()
+          }
+          case "serverLogs": {
+            // Defense in depth: logs are admin-only even if the global route
+            // allow-list changes later. Railway CLI should use platform logs;
+            // this endpoint exists only for the authenticated dashboard.
+            const denied = requireAdminAccess(req)
+            if (denied) return denied
+            if (req.method === "DELETE") {
+              clearLogs()
+              return apiJson("clearServerLogs", { ok: true })
+            }
+            if (req.method !== "GET") return json({ error: "Method not allowed" }, 405)
+            const since = parseInt(url.searchParams.get("since") ?? "0")
+            return apiJson("serverLogs", { entries: getLogs(Number.isFinite(since) ? since : 0) })
           }
           case "webhook": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)

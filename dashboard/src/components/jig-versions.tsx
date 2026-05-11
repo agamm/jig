@@ -10,7 +10,7 @@ import { fetchJigVersionDetail, restoreJigVersion } from "@/lib/api"
 import { trimGitDiffHeaders } from "@/lib/git-diff"
 import { useJigVersions } from "@/lib/swr"
 
-const DEFAULT_VISIBLE_HISTORY_ROWS = 0
+const DEFAULT_VISIBLE_HISTORY_ROWS = 3
 
 function DiffOutput({ diff }: { diff: string }) {
   const normalizedDiff = trimGitDiffHeaders(diff)
@@ -46,9 +46,11 @@ function PromptOutput({ prompt }: { prompt: string }) {
 export function JigVersions({
   jigId,
   onRestored,
+  refreshKey,
 }: {
   jigId: string
   onRestored?: () => Promise<void> | void
+  refreshKey?: string
 }) {
   const [selectedSha, setSelectedSha] = useState<string | null>(null)
   const [detailsBySha, setDetailsBySha] = useState<Record<string, JigVersionDetail | undefined>>({})
@@ -69,6 +71,10 @@ export function JigVersions({
     setRestoring(false)
     setShowAll(false)
   }, [jigId])
+
+  useEffect(() => {
+    void reloadVersions()
+  }, [refreshKey, reloadVersions])
 
   const currentVersion = versions?.[0] ?? null
   const historicalVersions = useMemo(() => {
@@ -142,7 +148,7 @@ export function JigVersions({
       </Notice>
     )
   }
-  if (!versions || versions.length === 0) return <EmptyState title="No version history yet" className="py-4" />
+  if (!versions || versions.length === 0) return <EmptyState title="No saved versions yet" className="py-4" />
 
   return (
     <>

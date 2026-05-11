@@ -5,7 +5,7 @@ import { JIGS_DIR } from "../config/paths.js"
 import { getJigFilePath, getJigRelativePath, resolveJigPath } from "../domain/jig-source.js"
 import { invalidateJigsCache } from "../discover.js"
 import { ApiError } from "../server/http.js"
-import { writeJigSource } from "./jig-writer.js"
+import { ensureJigsGitRepo, writeJigSource } from "./jig-writer.js"
 
 export function extractPromptFromCommitBody(body: string): string | null {
   const metaLine = body
@@ -24,8 +24,8 @@ export function extractPromptFromCommitBody(body: string): string | null {
   }
 }
 
-function ensureGitHistory() {
-  if (!existsSync(join(JIGS_DIR, ".git"))) {
+async function ensureGitHistory() {
+  if (!existsSync(join(JIGS_DIR, ".git")) && !(await ensureJigsGitRepo())) {
     throw new ApiError(404, "No version history")
   }
 }
@@ -60,11 +60,12 @@ async function readVersionPrompt(sha: string): Promise<string | null> {
 }
 
 export async function listJigVersions(jigId: string): Promise<JigVersion[]> {
-  ensureGitHistory()
+  await ensureGitHistory()
   const relPath = getJigRelativePath(jigId)
   if (!relPath) throw new ApiError(400, "Invalid jig path")
 
-  const { stdout } = await runGit(["git", "log", "--format=%H|%aI|%s", "--", relPath])
+  const { stdout, exitCode } = await runGit(["git", "log", "--format=%H|%aI|%s", "--", relPath])
+  if (exitCode !== 0) return []
   return stdout
     .trim()
     .split("\n")
@@ -76,7 +77,7 @@ export async function listJigVersions(jigId: string): Promise<JigVersion[]> {
 }
 
 export async function getJigVersionDetail(jigId: string, sha: string): Promise<JigVersionDetail> {
-  ensureGitHistory()
+  await ensureGitHistory()
   ensureSha(sha)
 
   const relPath = getJigRelativePath(jigId)
@@ -97,7 +98,7 @@ export async function getJigVersionDetail(jigId: string, sha: string): Promise<J
 }
 
 export async function restoreJigVersion(jigId: string, sha: string): Promise<RestoreJigVersionResult> {
-  ensureGitHistory()
+  await ensureGitHistory()
   ensureSha(sha)
 
   const relPath = getJigRelativePath(jigId)

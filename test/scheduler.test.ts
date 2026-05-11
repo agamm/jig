@@ -14,10 +14,12 @@ import {
 } from "../src/db.js"
 import { invalidateJigsCache } from "../src/discover.js"
 import { JIGS_DIR, PROJECT_ROOT } from "../src/config/paths.js"
+import { schedulerTimeZone } from "../src/config/timezone.js"
 import { recoverMissedRuns } from "../src/scheduler/recover.js"
 import { millisecondsUntilNextSchedulerTick } from "../src/scheduler/index.js"
 import { syncSchedules } from "../src/scheduler/sync.js"
 import { tick } from "../src/scheduler/tick.js"
+import { startBackgroundRun } from "../src/services/background-run.js"
 
 const CONNECTIONS_DIR = join(PROJECT_ROOT, ".jig/connections")
 const CONNECTIONS_INDEX = join(CONNECTIONS_DIR, "index.ts")
@@ -25,6 +27,7 @@ const TEST_JIGS = [
   join(JIGS_DIR, "scheduler-sync-case.ts"),
   join(JIGS_DIR, "scheduler-bad-trigger-case.ts"),
   join(JIGS_DIR, "scheduler-tick-case.ts"),
+  join(JIGS_DIR, "scheduler-missing-connection-case.ts"),
 ]
 let createdConnectionsIndex = false
 
@@ -70,6 +73,7 @@ export default jig("scheduler-sync-case", {
     expect(initial).not.toBeNull()
     expect(initial!.error).toBeNull()
     expect(initial!.cron_expr).toBe("*/5 * * * *")
+    expect(initial!.timezone).toBe(schedulerTimeZone())
     expect(initial!.next_run_at).not.toBeNull()
 
     setScheduleEnabled("scheduler-sync-case", false)
@@ -189,5 +193,40 @@ export default jig("scheduler-tick-case", {
     expect(schedule!.last_run_at).toBeGreaterThanOrEqual(dueAt)
     expect(schedule!.next_run_at).toBeGreaterThan(dueAt)
     expect(schedule!.error).toBeNull()
+  })
+
+  it("records and surfaces scheduled preflight failures as failed runs", async () => {
+    const jigPath = join(JIGS_DIR, "scheduler-missing-connection-case.ts")
+    writeFileSync(jigPath, `
+import { jig } from "@jig/sdk"
+import { definitely_missing_connection } from "@jig/connections/definitely_missing_connection"
+
+export default jig("scheduler-missing-connection-case", {
+  trigger: { type: "cron", cron: "* * * * *" },
+}, async () => {
+  void definitely_missing_connection
+})
+`)
+
+    upsertSchedule(
+      "scheduler-missing-connection-case",
+      "cron",
+      "* * * * *",
+      "catch-up",
+      Math.floor(Date.now() / 1000) - 1,
+      null,
+    )
+
+    const started = await startBackgroundRun("scheduler-missing-connection-case")
+
+    expect(started).toBe(false)
+    const runs = listRuns("scheduler-missing-connection-case")
+    expect(runs).toHaveLength(1)
+    expect(runs[0].status).toBe("fail")
+    expect(runs[0].error).toContain("Connection required: definitely_missing_connection")
+
+    const schedule = getSchedule("scheduler-missing-connection-case")
+    expect(schedule?.error).toContain("Connection required: definitely_missing_connection")
+    expect(schedule?.last_run_at).not.toBeNull()
   })
 })

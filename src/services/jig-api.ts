@@ -7,6 +7,7 @@ import { prettifyId } from "../domain/jig-source.js"
 import { getActiveRunStatusForJig } from "./run-store.js"
 import { webhookToken } from "../scheduler/webhook-auth.js"
 import { introspectJig } from "./introspect-jig.js"
+import { publicUrl } from "../config/runtime.js"
 
 function deriveStatus(jigId: string): "healthy" | "attention" | "failed" {
   try {
@@ -55,12 +56,16 @@ export async function buildJigResponse(
   const scheduleRow = getSchedule(id)
   const schedule = scheduleRow ? (() => {
     const port = parseInt(process.env.JIG_API_PORT ?? process.env.PORT ?? "3141")
+    // In service mode (Railway/Render/Fly), webhooks are hit from the public
+    // internet — must use the deployed HTTPS URL. Localhost only works in dev.
+    const base = publicUrl() ?? `http://localhost:${port}`
     const webhookUrl = scheduleRow.trigger_type === "webhook"
-      ? `http://localhost:${port}/api/webhooks/${id}?token=${webhookToken(id)}`
+      ? `${base}/api/webhooks/${id}?token=${webhookToken(id)}`
       : undefined
     return {
       triggerType: scheduleRow.trigger_type,
       cronExpr: scheduleRow.cron_expr,
+      timezone: scheduleRow.timezone,
       missedStrategy: scheduleRow.missed_strategy,
       nextRunAt: scheduleRow.next_run_at ? new Date(scheduleRow.next_run_at * 1000).toISOString() : null,
       lastRunAt: scheduleRow.last_run_at ? new Date(scheduleRow.last_run_at * 1000).toISOString() : null,

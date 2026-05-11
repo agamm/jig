@@ -11,17 +11,23 @@ import { CreateJigPane } from "@/components/create-jig-pane";
 import { ReviewPane } from "@/components/review-pane";
 import { ConnectionPane } from "@/components/connection-pane";
 import { NotificationsSettings } from "@/components/notifications-settings";
+import { LogsSettings } from "@/components/logs-settings";
+import { ModelsSettings } from "@/components/models-settings";
+import { SystemSettings } from "@/components/system-settings";
+import { DangerSettings } from "@/components/danger-settings";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ServiceIcon } from "@/components/service-icon";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/resizable";
 import { Button } from "@/components/button";
 import { TextInput } from "@/components/input";
+import { toast } from "@/components/toast";
 import { EmptyState, LoadingState, Notice } from "@/components/state-panel";
 import { isRecommendedConnection, sortConnectionsForDisplay } from "@/lib/connection-catalog";
 import { useConnectionCatalog } from "@/lib/hooks";
 import { useModels, useConnections } from "@/lib/swr";
 import { APP_VERSION } from "@/lib/version";
-import { addExampleJig, createCustomConnection } from "@/lib/api";
-import type { ExampleJig } from "@shared/api";
+import { addExampleJig, closeAgentSession, createCustomConnection } from "@/lib/api";
+import type { DataStorageHealth, ExampleJig } from "@shared/api";
 
 function useLocalStorage(key: string, initial: boolean): [boolean, (v: boolean) => void, boolean] {
   const [value, setValue] = useState(initial);
@@ -44,6 +50,7 @@ export function DashboardShell({
   loading = false,
   errorMessage,
   examplesErrorMessage,
+  storageHealth,
   phaseToggle = false,
   onPhaseChange,
 }: {
@@ -52,6 +59,7 @@ export function DashboardShell({
   loading?: boolean;
   errorMessage?: string;
   examplesErrorMessage?: string;
+  storageHealth?: DataStorageHealth;
   phaseToggle?: boolean;
   onPhaseChange?: (phase: Phase) => void;
 }) {
@@ -62,15 +70,20 @@ export function DashboardShell({
   const jigs = initialJigs;
   const [sidebarSlim, setSidebarSlim, sidebarMounted] = useLocalStorage("jig-sidebar-slim", false);
   const [view, setView] = useQueryState("view", parseAsString);
+  const [settingsFocus, setSettingsFocus] = useQueryState("settingsFocus", parseAsString);
+  const [settingsTab, setSettingsTab] = useQueryState("tab", parseAsString);
   const [createOpen, setCreateOpen] = useState(false);
   const [createInstruction, setCreateInstruction] = useState("");
   const [createStartToken, setCreateStartToken] = useState(0);
+  const [createResumeSessionId, setCreateResumeSessionId] = useState<string | null>(null);
   const [showCustomConnectionForm, setShowCustomConnectionForm] = useState(false);
   const [creatingCustomConnection, setCreatingCustomConnection] = useState(false);
   const [customConnectionName, setCustomConnectionName] = useState("");
   const [customConnectionUrl, setCustomConnectionUrl] = useState("");
   const [customConnectionDescription, setCustomConnectionDescription] = useState("");
   const [customConnectionStatus, setCustomConnectionStatus] = useState<{ tone: "success" | "danger"; message: string } | null>(null);
+  const [draftToDiscard, setDraftToDiscard] = useState<Jig | null>(null);
+  const [discardingDraft, setDiscardingDraft] = useState(false);
   const { data: models } = useModels();
   const { data: connections, isLoading: connectionsLoading, error: connectionsError } = useConnections();
 
@@ -94,6 +107,15 @@ export function DashboardShell({
   }
 
   function handleJigClick(jig: Jig) {
+    if (jig.underConstruction) {
+      setCreateOpen(false);
+      setView(null);
+      setSelectedJig(jig.id);
+      setReviewMode(null);
+      setSelectedConnection(null);
+      setCreateResumeSessionId(jig.underConstruction.sessionId);
+      return;
+    }
     openJigDetail(jig.id);
   }
 
@@ -102,6 +124,7 @@ export function DashboardShell({
     setReviewMode(null);
     setSelectedConnection(null);
     setCreateOpen(false);
+    setCreateResumeSessionId(null);
   }
 
   function openCreatePane(instruction = "", autoStart = false) {
@@ -110,6 +133,7 @@ export function DashboardShell({
     setSelectedConnection(null);
     setView(null);
     setCreateOpen(true);
+    setCreateResumeSessionId(null);
     setCreateInstruction(instruction);
     if (autoStart && instruction.trim()) {
       setCreateStartToken((prev) => prev + 1);
@@ -120,6 +144,27 @@ export function DashboardShell({
     await mutate("jigs")
     if (openJigId) {
       openJigDetail(openJigId)
+    }
+  }
+
+  async function confirmDiscardUnderConstruction() {
+    const draft = draftToDiscard;
+    const sessionId = draft?.underConstruction?.sessionId;
+    if (!draft || !sessionId || discardingDraft) return;
+
+    setDiscardingDraft(true);
+    try {
+      await closeAgentSession(sessionId);
+      await mutate("jigs", (current: Jig[] | undefined) =>
+        (current ?? []).filter((candidate) => candidate.id !== draft.id),
+      false);
+      if (selectedJig === draft.id) closeDetail();
+      setDraftToDiscard(null);
+      await mutate("jigs");
+    } catch (error: any) {
+      toast.error(error?.message ?? "Failed to discard draft");
+    } finally {
+      setDiscardingDraft(false);
     }
   }
 
@@ -177,6 +222,15 @@ export function DashboardShell({
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-4">
+        {storageHealth && !storageHealth.ok && (
+          <Notice
+            tone="danger"
+            title="Persistent storage is not connected"
+            className="mb-3"
+          >
+            {storageHealth.message} Run <code className="rounded bg-black/30 px-1 py-0.5 font-mono text-[10px] text-rose-100">{storageHealth.action}</code> from this checkout, then paste/save connection tokens again.
+          </Notice>
+        )}
         {loading && <LoadingState message="Loading workspace…" className="h-32" />}
         {!loading && errorMessage && (
           <Notice
@@ -215,6 +269,7 @@ export function DashboardShell({
             onJigClick={handleJigClick}
             onReorder={(reordered) => mutate("jigs", reordered, false)}
             onCreate={() => openCreatePane()}
+            onDiscardUnderConstruction={setDraftToDiscard}
           />
         )}
       </div>
@@ -377,7 +432,23 @@ export function DashboardShell({
       <CreateJigPane
         initialInstruction={createInstruction}
         startToken={createStartToken}
-        onClose={() => setCreateOpen(false)}
+        onClose={() => {
+          setCreateOpen(false);
+          setCreateResumeSessionId(null);
+        }}
+        onConnectionClick={(name) => {
+          setView("connections");
+          setSelectedConnection(name);
+        }}
+        onCreated={async (jigId) => {
+          await refreshJigs(jigId);
+        }}
+      />
+    ) : selectedJig && currentJig?.underConstruction && !selectedConnection ? (
+      <CreateJigPane
+        key={currentJig.underConstruction.sessionId}
+        resumeSessionId={createResumeSessionId ?? currentJig.underConstruction.sessionId}
+        onClose={closeDetail}
         onConnectionClick={(name) => {
           setView("connections");
           setSelectedConnection(name);
@@ -416,6 +487,18 @@ export function DashboardShell({
     ) : null;
 
   return (
+    <>
+    <ConfirmDialog
+      open={draftToDiscard !== null}
+      title="Discard draft?"
+      message={draftToDiscard ? `This will remove ${draftToDiscard.name} from under construction.` : "This will remove the under-construction jig."}
+      confirmLabel="Discard Draft"
+      destructive
+      loading={discardingDraft}
+      onConfirm={confirmDiscardUnderConstruction}
+      onClose={() => !discardingDraft && setDraftToDiscard(null)}
+    />
+
     <div className="flex h-full" style={{ background: "#0a0a0b" }}>
       <nav className={`flex shrink-0 flex-col border-r border-[#1f1f23] bg-[#0a0a0b] transition-all duration-200 overflow-hidden ${collapsed ? "w-[52px]" : "w-[180px]"}`}>
         <div className={`flex h-11 shrink-0 items-center border-b border-[#1f1f23] ${collapsed ? "justify-center px-0" : "justify-between px-3"}`}>
@@ -459,28 +542,53 @@ export function DashboardShell({
         </div>
 
         <div className="flex-1 flex flex-col gap-0.5 py-2">
-          <NavItem icon={NavIcons.jigs} label="Jigs" active={!view || view === "jigs"} collapsed={collapsed} onClick={() => { setView(null); closeDetail(); }} />
-          <NavItem icon={NavIcons.connections} label="Connections" active={view === "connections"} collapsed={collapsed} onClick={() => { setView("connections"); closeDetail(); }} />
-          <NavItem icon={NavIcons.settings} label="Settings" active={view === "settings"} collapsed={collapsed} onClick={() => { setView("settings"); closeDetail(); }} />
+          <NavItem icon={NavIcons.jigs} label="Jigs" href="/" active={!view || view === "jigs"} collapsed={collapsed} onActivate={() => { setView(null); closeDetail(); }} />
+          <NavItem icon={NavIcons.connections} label="Connections" href="/?view=connections" active={view === "connections"} collapsed={collapsed} onActivate={() => { setView("connections"); closeDetail(); }} />
+          <NavItem icon={NavIcons.settings} label="Settings" href="/?view=settings" active={view === "settings"} collapsed={collapsed} onActivate={() => { setView("settings"); closeDetail(); }} />
+          <NavItem icon={NavIcons.logs} label="Logs" href="/?view=logs" active={view === "logs"} collapsed={collapsed} onActivate={() => { setView("logs"); closeDetail(); }} />
         </div>
 
         {!collapsed && models && (
-          <div className="border-t border-[#1f1f23] px-3 py-2.5">
-            <span className="text-[9px] text-[#444] uppercase tracking-wider">Models</span>
-            <div className="mt-1.5 space-y-1.5">
+          <div className="border-t border-[#1f1f23] px-2 py-2">
+            <div className="mb-1 flex items-center justify-between px-1">
+              <span className="text-[9px] text-[#444] uppercase tracking-wider">Models</span>
+              <span className="text-[9px] text-[#444]">Change</span>
+            </div>
+            <div className="space-y-0.5">
               {(["main", "editor", "fast"] as const).map((k) => models[k] && (
-                <div key={k}>
-                  <span className="text-[9px] text-[#555] capitalize">{k}</span>
-                  <div className="text-[10px] text-[#888] font-mono truncate" title={models[k].id}>{models[k].label}</div>
-                </div>
+                <button
+                  key={k}
+                  onClick={() => {
+                    setView("settings");
+                    setSettingsTab("models");
+                    setSettingsFocus(k);
+                    closeDetail();
+                  }}
+                  className="group flex w-full items-start justify-between gap-1.5 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-[#111113]"
+                  title={`Change ${k} model — currently ${models[k].id}`}
+                >
+                  <div className="min-w-0 flex-1">
+                    <span className="block text-[9px] text-[#555] capitalize">{k}</span>
+                    <span className="block truncate font-mono text-[10px] text-[#888] group-hover:text-[#ededed]">
+                      {models[k].label}
+                    </span>
+                  </div>
+                  <span className="mt-[7px] text-[10px] text-[#333] opacity-0 transition-opacity group-hover:opacity-100">
+                    ›
+                  </span>
+                </button>
               ))}
             </div>
           </div>
         )}
         {collapsed && (
-          <div className="border-t border-[#1f1f23] py-2 flex flex-col items-center gap-1">
-            <span className="text-[9px] text-[#444]" title="Models">AI</span>
-          </div>
+          <button
+            onClick={() => { setView("settings"); setSettingsTab("models"); setSettingsFocus("main"); closeDetail(); }}
+            className="border-t border-[#1f1f23] py-2 flex flex-col items-center gap-1 text-[#444] hover:text-[#9a9aa3] hover:bg-[#111113]"
+            title="Models"
+          >
+            <span className="text-[9px]">AI</span>
+          </button>
         )}
 
       </nav>
@@ -502,35 +610,87 @@ export function DashboardShell({
           )
         )}
 
-        {view === "settings" && (
+        {view === "settings" && (() => {
+          const tab: "models" | "system" | "notifications" | "danger" =
+            settingsTab === "system" || settingsTab === "notifications" || settingsTab === "danger" ? settingsTab : "models";
+          return (
+            <main className="flex flex-col flex-1 overflow-hidden">
+              <div className="flex h-11 shrink-0 items-center justify-between border-b border-[#1f1f23] px-4">
+                <span className="text-[13px] font-medium text-[#ededed]">Settings</span>
+              </div>
+              <div className="flex h-10 shrink-0 items-center gap-1 border-b border-[#1f1f23] px-4">
+                {(
+                  [
+                    ["models", "Models"],
+                    ["system", "System"],
+                    ["notifications", "Notifications"],
+                    ["danger", "Danger"],
+                  ] as const
+                ).map(([key, label]) => {
+                  const active = tab === key;
+                  return (
+                    <button
+                      key={key}
+                      onClick={() => {
+                        setSettingsTab(key);
+                        if (key !== "models") setSettingsFocus(null);
+                      }}
+                      className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                        active
+                          ? key === "danger"
+                            ? "bg-rose-500/[0.08] text-rose-200"
+                            : "bg-[#1a1a1d] text-[#ededed]"
+                          : key === "danger"
+                          ? "text-rose-300/60 hover:text-rose-200 hover:bg-rose-500/[0.05]"
+                          : "text-[#666] hover:text-[#9a9aa3] hover:bg-[#111113]"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="flex-1 overflow-y-auto px-6 py-6">
+                <div className="max-w-4xl mx-auto">
+                  {tab === "models" && (
+                    <ModelsSettings
+                      autofocusSlot={
+                        settingsFocus === "main" || settingsFocus === "editor" || settingsFocus === "fast"
+                          ? settingsFocus
+                          : undefined
+                      }
+                    />
+	                  )}
+                  {tab === "system" && <SystemSettings />}
+                  {tab === "notifications" && <NotificationsSettings />}
+                  {tab === "danger" && (
+                    <DangerSettings
+                      onReset={async () => {
+                        closeDetail();
+                        setView(null);
+                        await mutate("jigs", [], false);
+                        await mutate("examples");
+                        await mutate("connections");
+                      }}
+                    />
+                  )}
+                </div>
+              </div>
+            </main>
+          );
+        })()}
+
+        {view === "logs" && (
           <main className="flex flex-col flex-1 overflow-hidden">
             <div className="flex h-11 shrink-0 items-center justify-between border-b border-[#1f1f23] px-4">
-              <span className="text-[13px] font-medium text-[#ededed]">Settings</span>
+              <div className="flex flex-col">
+                <span className="text-[13px] font-medium text-[#ededed]">Server Logs</span>
+                <span className="text-[10px] text-[#666]">Live <code className="text-[#9a9aa3]">console.log/warn/error</code> from the Bun API server — useful for debugging a remote deploy.</span>
+              </div>
             </div>
             <div className="flex-1 overflow-y-auto px-6 py-6">
-              <div className="max-w-2xl mx-auto space-y-6">
-                <div className="space-y-3">
-                  <h3 className="text-[12px] text-[#555] uppercase tracking-wider">LLM Provider</h3>
-                  <div className="rounded-lg border border-[#1f1f23] bg-[#111113] px-4 py-3">
-                    <p className="mb-2 text-[11px] text-[#666]">Default model used for the assistant and jig generation.</p>
-                    <div className="flex items-center justify-between">
-                      <span className="text-[13px] text-[#ededed]">{models?.main?.id ?? "Loading..."}</span>
-                      <span className="text-[11px] text-[#555] rounded-md border border-[#1f1f23] px-2 py-0.5">Change</span>
-                    </div>
-                  </div>
-                </div>
-                <div className="space-y-3">
-                  <h3 className="text-[12px] text-[#555] uppercase tracking-wider">Notifications</h3>
-                  <NotificationsSettings
-                    onReset={async () => {
-                      closeDetail();
-                      setView(null);
-                      await mutate("jigs", [], false);
-                      await mutate("examples");
-                      await mutate("connections");
-                    }}
-                  />
-                </div>
+              <div className="max-w-4xl mx-auto">
+                <LogsSettings />
               </div>
             </div>
           </main>
@@ -553,15 +713,30 @@ export function DashboardShell({
         )}
       </div>
     </div>
+    </>
   );
 }
 
-function NavItem({ icon, label, active, collapsed, onClick }: { icon: React.ReactNode; label: string; active?: boolean; collapsed: boolean; onClick?: () => void }) {
+function NavItem({ icon, label, href, active, collapsed, onActivate }: { icon: React.ReactNode; label: string; href: string; active?: boolean; collapsed: boolean; onActivate?: () => void }) {
+  // Render as <a> so middle-click / cmd-click / right-click "Open in new tab"
+  // work natively. A plain click is intercepted to avoid a full page reload
+  // — we update view state via nuqs instead.
+  function handleClick(event: React.MouseEvent<HTMLAnchorElement>) {
+    if (event.defaultPrevented) return;
+    if (event.button !== 0) return; // only intercept primary button
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    onActivate?.();
+  }
   return (
-    <button onClick={onClick} className={`flex items-center gap-2.5 rounded-md py-1.5 text-[12px] transition-colors duration-150 ${collapsed ? "justify-center mx-1 px-0" : "mx-2 px-2.5"} ${active ? "bg-[#1a1a1d] text-[#ededed]" : "text-[#666] hover:text-[#999] hover:bg-[#111113]"}`}>
+    <a
+      href={href}
+      onClick={handleClick}
+      className={`flex items-center gap-2.5 rounded-md py-1.5 text-[12px] no-underline transition-colors duration-150 ${collapsed ? "justify-center mx-1 px-0" : "mx-2 px-2.5"} ${active ? "bg-[#1a1a1d] text-[#ededed]" : "text-[#666] hover:text-[#999] hover:bg-[#111113]"}`}
+    >
       <span className="shrink-0 [&>svg]:w-[14px] [&>svg]:h-[14px]">{icon}</span>
       {!collapsed && <span>{label}</span>}
-    </button>
+    </a>
   );
 }
 
@@ -585,6 +760,13 @@ const NavIcons = {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="3" />
       <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  ),
+  logs: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="4" y1="7" x2="20" y2="7" />
+      <line x1="4" y1="12" x2="14" y2="12" />
+      <line x1="4" y1="17" x2="18" y2="17" />
     </svg>
   ),
 };

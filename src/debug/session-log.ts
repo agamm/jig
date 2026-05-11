@@ -1,6 +1,8 @@
-import { appendFile, writeFile } from "node:fs/promises"
+import { appendFile, mkdir } from "node:fs/promises"
+import { dirname, join } from "node:path"
+import { DATA_DIR } from "../config/paths.js"
 
-export const SESSION_LOG_PATH = "/tmp/jig.log"
+export const SESSION_LOG_PATH = join(DATA_DIR, "jig.log")
 
 let queue: string[] = []
 let flushPending = false
@@ -36,6 +38,7 @@ async function flush() {
   queue = []
   flushPending = false
   try {
+    await mkdir(dirname(SESSION_LOG_PATH), { recursive: true })
     await appendFile(SESSION_LOG_PATH, batch.join(""))
   } catch {}
 }
@@ -59,6 +62,16 @@ export async function resetSessionLog(): Promise<void> {
   queue = []
   flushPending = false
   try {
-    await writeFile(SESSION_LOG_PATH, "")
+    await mkdir(dirname(SESSION_LOG_PATH), { recursive: true })
+    await appendFile(
+      SESSION_LOG_PATH,
+      stringifyLine({
+        ts: new Date().toISOString(),
+        pid: process.pid,
+        source: "session-log",
+        event: "start",
+        path: SESSION_LOG_PATH,
+      }) + "\n"
+    )
   } catch {}
 }

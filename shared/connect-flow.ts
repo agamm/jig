@@ -6,6 +6,7 @@ export type ConnectEvent =
   | { type: "tools-discovered"; server: string; count: number; tools: string[] }
   | { type: "server-ready"; server: string }
   | { type: "setup-instructions"; message: string }
+  | { type: "awaiting-oauth"; server: string; authorizationUrl: string }
   | { type: "error"; code: string; message: string; details?: Record<string, any> }
 
 export interface ConnectIO {
@@ -40,10 +41,19 @@ export async function runConnectFlow(
   io.emit({ type: "connecting", server: serverName })
   let result = await backend.connect(serverName)
   if (!result.ok) {
-    if (result.setup) io.emit({ type: "setup-instructions", message: result.setup })
+    if ("awaitingOAuth" in result && result.awaitingOAuth) {
+      io.emit({ type: "awaiting-oauth", server: serverName, authorizationUrl: result.authorizationUrl })
+      // Background connect keeps running on the server; it resolves when the
+      // OAuth callback fires. The frontend polls /api/connections/:name and
+      // flips the UI to connected once the schema appears. Nothing else to
+      // do here.
+      return
+    }
+    if ("setup" in result && result.setup) io.emit({ type: "setup-instructions", message: result.setup })
 
     const credentials: Record<string, string> = {}
-    for (const varName of result.missingCredentials) {
+    const missing = "missingCredentials" in result ? result.missingCredentials : []
+    for (const varName of missing) {
       const value = (await io.ask(`Enter ${varName}:`)).trim()
       if (!value) {
         io.emit({ type: "error", code: "missing-credential", message: `${varName} is required` })
@@ -54,7 +64,12 @@ export async function runConnectFlow(
 
     result = await backend.connect(serverName, credentials)
     if (!result.ok) {
-      const message = `Missing credentials: ${result.missingCredentials.join(", ")}`
+      if ("awaitingOAuth" in result && result.awaitingOAuth) {
+        io.emit({ type: "awaiting-oauth", server: serverName, authorizationUrl: result.authorizationUrl })
+        return
+      }
+      const missingAfter = "missingCredentials" in result ? result.missingCredentials : []
+      const message = `Missing credentials: ${missingAfter.join(", ")}`
       io.emit({ type: "error", code: "missing-credential", message })
       throw new Error(message)
     }

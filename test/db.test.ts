@@ -9,6 +9,7 @@ import {
   clearStepCache, deleteJigLocalState, getSchedule, getStepCache, setStepCache, upsertSchedule,
   getSetting, setSetting,
   getToolPermission, listToolPermissions, setToolPermission,
+  deleteAgentSession, getAgentSession, listAgentSessions, upsertAgentSession,
 } from "../src/db.js"
 
 beforeEach(() => {
@@ -184,6 +185,37 @@ describe("settings", () => {
     setSetting("k", { a: 1 })
     setSetting("k", { a: 2 })
     expect(getSetting<{ a: number }>("k")!.a).toBe(2)
+  })
+})
+
+describe("agent sessions", () => {
+  it("round-trips persisted authoring sessions", () => {
+    upsertAgentSession({
+      session_id: "session-1",
+      jig_id: "draft-jig",
+      creation_mode: 1,
+      authoring_intent: "User: build a draft",
+      conversation_history: JSON.stringify([{ role: "user", content: "build a draft" }]),
+      authoring_policy: JSON.stringify({ requiresIntegration: false, buildResolutions: [] }),
+      messages: JSON.stringify([{ role: "user", content: "build a draft" }]),
+      events: JSON.stringify([{ type: "text", content: "Draft ready" }]),
+      status: "waiting",
+      metrics: JSON.stringify({ round: 2 }),
+      created_at: 123,
+      updated_at: 456,
+      pending_ask_tool_call_id: null,
+      pending_ask_question: null,
+      draft_file_path: "/tmp/draft-jig.ts",
+      draft_approval: null,
+    })
+
+    const row = getAgentSession("session-1")
+    expect(row?.jig_id).toBe("draft-jig")
+    expect(row?.status).toBe("waiting")
+    expect(listAgentSessions()).toHaveLength(1)
+
+    deleteAgentSession("session-1")
+    expect(getAgentSession("session-1")).toBeNull()
   })
 })
 

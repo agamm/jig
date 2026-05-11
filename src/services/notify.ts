@@ -12,38 +12,34 @@
  *     connection. Callers can fire-and-forget.
  *   - Channels are fanned out with Promise.allSettled so one broken
  *     connection doesn't block the others.
- *   - Sends reuse the generated `.jig/connections/{name}.ts` runtime
+ *   - Sends reuse the generated connection runtime modules
  *     modules so proxy tools (e.g. composio) are invoked through the
  *     same path jigs use.
  */
 import { join } from "node:path"
-import { PROJECT_ROOT } from "../config/paths.js"
+import { CONNECTIONS_DIR } from "../config/paths.js"
 import { getSetting, setSetting } from "../db.js"
 import { buildNotificationManifest, type NotificationCapableTool } from "../mcp/discover/notification-manifest.js"
+import { publicUrl } from "../config/runtime.js"
+import type {
+  NotificationChannel as SharedNotificationChannel,
+  NotificationHealth,
+  NotificationSettings as SharedNotificationSettings,
+  NotificationTestStatus,
+  NotifyTestResponse,
+} from "../../shared/api.js"
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-export interface NotificationChannel {
-  connection: string                          // server name, e.g. "composio"
-  tool: string                                // tool name, e.g. "telegram_send_message"
-  recipient: string                           // chat id / email / etc.
-  extraParams?: Record<string, unknown>       // e.g. { subject: "Jig alert" }
-}
+export type NotificationChannel = SharedNotificationChannel
+export type NotificationSettings = SharedNotificationSettings
 
-export interface NotificationSettings {
-  channels: NotificationChannel[]
-  /** Whether to fire on jig run failures. More trigger kinds may land later. */
-  triggerOn: { fail: boolean }
-}
-
-export interface NotifyReport {
-  sent: Array<{ channel: string; ok: true }>
-  errors: Array<{ channel: string; error: string }>
-}
+export type NotifyReport = NotifyTestResponse
 
 const SETTINGS_KEY = "notifications"
+const TEST_STATUS_KEY = "notifications.testStatus"
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   channels: [],
@@ -70,6 +66,68 @@ export function saveNotificationSettings(s: NotificationSettings): void {
     channels: s.channels.filter(isValidChannel),
     triggerOn: { fail: s.triggerOn?.fail ?? true },
   })
+}
+
+export function getNotificationHealth(
+  settings: NotificationSettings = getNotificationSettings(),
+  manifest: NotificationCapableTool[] = buildNotificationManifest(),
+  testStatus: NotificationTestStatus | null = getNotificationTestStatus(),
+): NotificationHealth {
+  const reasons: string[] = []
+  const manifestKeys = new Set(manifest.map((tool) => key(tool.connection, tool.tool)))
+
+  if (!settings.triggerOn?.fail) {
+    reasons.push("Failure notifications are paused.")
+  }
+
+  if (manifest.length === 0) {
+    reasons.push("No notification-capable tools are connected.")
+  }
+
+  if (settings.channels.length === 0) {
+    reasons.push("No failure notification channel is configured.")
+  }
+
+  for (const channel of settings.channels) {
+    if (!manifestKeys.has(key(channel.connection, channel.tool))) {
+      reasons.push(`Configured channel ${channel.connection}.${channel.tool} is not available. Reconnect ${channel.connection}.`)
+    }
+  }
+
+  if (settings.channels.length > 0 && !testStatus?.ok) {
+    reasons.push(testStatus
+      ? "Last notification test failed. Send a test notification before relying on scheduled failure alerts."
+      : "Notification delivery has not been tested yet.")
+  }
+
+  return {
+    ok: reasons.length === 0,
+    severity: reasons.length === 0 ? "success" : "danger",
+    reasons,
+  }
+}
+
+export function getNotificationTestStatus(): NotificationTestStatus | null {
+  const raw = getSetting<Partial<NotificationTestStatus>>(TEST_STATUS_KEY)
+  if (!raw || typeof raw !== "object") return null
+  if (typeof raw.at !== "string" || typeof raw.ok !== "boolean") return null
+  return {
+    at: raw.at,
+    ok: raw.ok,
+    sent: typeof raw.sent === "number" ? raw.sent : 0,
+    errors: typeof raw.errors === "number" ? raw.errors : 0,
+  }
+}
+
+export function saveNotificationTestStatus(report: NotifyReport): NotificationTestStatus {
+  const status: NotificationTestStatus = {
+    at: new Date().toISOString(),
+    ok: report.sent.length > 0 && report.errors.length === 0,
+    sent: report.sent.length,
+    errors: report.errors.length,
+  }
+  setSetting(TEST_STATUS_KEY, status)
+  return status
 }
 
 function isValidChannel(c: unknown): c is NotificationChannel {
@@ -192,7 +250,7 @@ async function defaultToolCaller(
   params: Record<string, unknown>,
 ): Promise<unknown> {
   // Dynamic import so a missing connection file doesn't break startup.
-  const modulePath = join(PROJECT_ROOT, ".jig", "connections", `${connection}.ts`)
+  const modulePath = join(CONNECTIONS_DIR, `${connection}.ts`)
   const mod = await import(`${modulePath}?_t=${Date.now()}`)
   const fn = (mod as Record<string, unknown>)[tool] as ((p: Record<string, unknown>) => Promise<unknown>) | undefined
   if (typeof fn !== "function") {
@@ -221,7 +279,9 @@ export function formatFailureBody(opts: {
     const s = seconds % 60
     lines.push(`Duration: ${m}m ${s}s`)
   }
-  const base = opts.dashboardBaseUrl ?? `http://localhost:${process.env.JIG_DASHBOARD_PORT ?? "3141"}`
+  const base = opts.dashboardBaseUrl
+    ?? publicUrl()
+    ?? `http://localhost:${process.env.JIG_DASHBOARD_PORT ?? "3141"}`
   lines.push(`Link: ${base}/jigs/${opts.jigId}`)
   return lines.join("\n")
 }

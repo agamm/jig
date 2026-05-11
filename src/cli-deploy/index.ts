@@ -25,13 +25,16 @@ import {
   findProjectsByName,
   getPublicUrl,
   getStatus,
+  hasVolumeAtPath,
   installRailway,
   isLoggedIn,
   isRailwayInstalled,
   linkService,
   listProjects,
+  listVolumes,
   railwayInteractive,
 } from "./railway-cli.js"
+import { writeDeployDefaults } from "../config/timezone.js"
 
 async function prompt(question: string, defaultValue?: string): Promise<string> {
   const rl = createInterface({ input: process.stdin, output: process.stdout })
@@ -46,6 +49,17 @@ async function confirm(question: string, defaultYes = true): Promise<boolean> {
   const ans = await prompt(`${question}${suffix}`)
   if (!ans) return defaultYes
   return ans.toLowerCase().startsWith("y")
+}
+
+async function ensureRailwayLogin(): Promise<void> {
+  if (await isLoggedIn()) return
+
+  console.log("Opening Railway login in your browser...")
+  const code = await railwayInteractive(["login"])
+  if (code !== 0 || !(await isLoggedIn())) {
+    console.error("railway login failed. Re-run `jig deploy` once you're logged in.")
+    process.exit(1)
+  }
 }
 
 async function fetchHealth(publicUrl: string): Promise<{ ok: boolean; status?: number }> {
@@ -72,12 +86,63 @@ function slugify(input: string): string {
 }
 
 export async function runDeployArgs(args: string[]): Promise<void> {
+  if (args.includes("--attach-volume")) {
+    await runAttachVolume()
+    return
+  }
   if (args.includes("--update")) {
     await runUpdateInPlace()
     return
   }
   const target = args.find((a) => !a.startsWith("--"))
   await runDeploy(target)
+}
+
+/**
+ * Recovery: attach the `/data` persistent volume to an already-linked Railway
+ * project that's missing one. Running without this, every redeploy wipes
+ * SQLite (password, OAuth tokens, jigs — everything) because `/data` is
+ * ephemeral container filesystem without a volume mounted there.
+ *
+ * Data already written to the ephemeral filesystem is lost the moment the
+ * volume attaches, since the mount shadows the old directory. We still
+ * surface the sequence so the user knows what to expect.
+ */
+async function runAttachVolume(): Promise<void> {
+  console.log("jig deploy --attach-volume — attach missing /data volume to the linked Railway project.\n")
+  if (!(await isRailwayInstalled())) {
+    console.error("Railway CLI not found. Run `jig deploy` first to provision an instance.")
+    process.exit(1)
+  }
+  await ensureRailwayLogin()
+  const status = await getStatus()
+  if (!status) {
+    console.error("This directory isn't linked to a Railway project. Run `railway link` or `jig deploy` first.")
+    process.exit(1)
+  }
+  if (await hasVolumeAtPath("/data")) {
+    console.log(`  ✓ ${status.projectName} already has a volume at /data. Nothing to do.`)
+    return
+  }
+  console.log(`  Linked to: ${status.projectName} / ${status.serviceId.slice(0, 8)}`)
+  console.log("  No volume at /data — attaching now.\n")
+  console.log("Attaching /data volume (enter any name when prompted)...")
+  const code = await railwayInteractive([
+    "volume",
+    "-s", status.serviceId,
+    "-e", status.environmentId,
+    "add", "--mount-path", "/data",
+  ])
+  if (code !== 0) {
+    console.error("\nrailway volume add failed — see output above.")
+    process.exit(1)
+  }
+  if (!(await hasVolumeAtPath("/data"))) {
+    console.error("\nVolume still missing after attach. Check the Railway dashboard and retry.")
+    process.exit(1)
+  }
+  console.log("\n  ✓ Volume attached. Redeploy now: `jig deploy --update`")
+  console.log("  Note: any data written to /data before the volume was attached is gone — you'll need to re-onboard once.")
 }
 
 /**
@@ -92,10 +157,7 @@ async function runUpdateInPlace(): Promise<void> {
     console.error("Railway CLI not found. Run `jig deploy` without --update first to provision an instance.")
     process.exit(1)
   }
-  if (!(await isLoggedIn())) {
-    console.error("Not logged in to Railway. Run `railway login` and retry.")
-    process.exit(1)
-  }
+  await ensureRailwayLogin()
 
   const status = await getStatus()
   if (!status) {
@@ -103,9 +165,35 @@ async function runUpdateInPlace(): Promise<void> {
     process.exit(1)
   }
   console.log(`  Linked to: ${status.projectName} / ${status.serviceId.slice(0, 8)}\n`)
+  const defaults = await writeDeployDefaults()
+  console.log(`  Scheduler timezone default: ${defaults.timezone} (saved to SQLite on boot)\n`)
+
+  // Without a /data volume, every redeploy wipes SQLite (password, OAuth
+  // tokens, jigs). Auto-attach if missing — shadows whatever's in the
+  // ephemeral /data (which was going to die at the next redeploy anyway),
+  // and gives subsequent --updates real persistence.
+  if (!(await hasVolumeAtPath("/data"))) {
+    console.log("No Railway volume at /data — auto-attaching before redeploy.")
+    console.log("  SQLite (password, OAuth tokens, jigs) is lost on redeploy without a volume.")
+    console.log("  Anything currently in the ephemeral /data will be shadowed by the new mount —")
+    console.log("  you'll need to re-onboard once. Subsequent --updates will persist normally.\n")
+    // `-s`/`-e` are parent-level flags on `railway volume`, not on `add`.
+    // Order matters: `railway volume -s <svc> -e <env> add --mount-path /data`.
+    const code = await railwayInteractive([
+      "volume",
+      "-s", status.serviceId,
+      "-e", status.environmentId,
+      "add", "--mount-path", "/data",
+    ])
+    if (code !== 0 || !(await hasVolumeAtPath("/data"))) {
+      console.error("\nVolume attach failed. Attach it manually in the Railway dashboard, then re-run.")
+      process.exit(1)
+    }
+    console.log("  ✓ Volume attached at /data.\n")
+  }
 
   console.log("Uploading and deploying (Nixpacks; streams build logs)...")
-  const code = await railwayInteractive(["up", "--ci"])
+  const code = await railwayInteractive(["up", "--ci", "--service", status.serviceId])
   if (code !== 0) {
     console.error("\nrailway up failed — see logs above.")
     process.exit(1)
@@ -149,14 +237,7 @@ export async function runDeploy(targetArg?: string): Promise<void> {
   }
 
   // Step 2: login
-  if (!(await isLoggedIn())) {
-    console.log("Opening Railway login in your browser...")
-    const code = await railwayInteractive(["login"])
-    if (code !== 0) {
-      console.error("railway login failed. Re-run `jig deploy` once you're logged in.")
-      process.exit(1)
-    }
-  }
+  await ensureRailwayLogin()
 
   // Step 3: project name
   const defaultSlug = slugify(`jig-${Date.now().toString(36).slice(-4)}`)
@@ -235,15 +316,39 @@ export async function runDeploy(targetArg?: string): Promise<void> {
     console.log(`  (service link non-zero; continuing — may already be linked)`)
   })
 
-  // Step 5: volume (v4 CLI: `railway volume add --mount-path <path>`; name is prompted)
+  // Step 5: volume. `-s`/`-e` are parent-level flags on `railway volume`,
+  // not on the `add` subcommand; order is `volume -s <svc> -e <env> add ...`.
   console.log("\nAttaching /data volume (enter any name when prompted)...")
-  const volumeCode = await railwayInteractive(["volume", "add", "--mount-path", "/data"])
+  const preVolStatus = await getStatus()
+  const volArgs = preVolStatus
+    ? ["volume", "-s", preVolStatus.serviceId, "-e", preVolStatus.environmentId, "add", "--mount-path", "/data"]
+    : ["volume", "add", "--mount-path", "/data"]
+  if (!preVolStatus) console.log("  (no status yet; relying on the linked cwd)")
+  const volumeCode = await railwayInteractive(volArgs)
   if (volumeCode !== 0) {
-    console.log("  (volume attach reported non-zero; continuing — may already exist or need manual attach)")
+    console.log("  (volume attach reported non-zero; verifying...)")
   }
+  // Authoritative check — a missing volume silently wipes SQLite on every
+  // redeploy. Better to fail the deploy here than let onboarding evaporate
+  // later.
+  const volumesAfter = await listVolumes()
+  if (!volumesAfter.some((v) => v.mountPath === "/data")) {
+    console.error("")
+    console.error("Volume attach did NOT create a volume at /data.")
+    console.error("Without it, every `jig deploy --update` wipes SQLite (password, OAuth tokens, jigs).")
+    console.error("Existing volumes on this project:")
+    if (volumesAfter.length === 0) console.error("  (none)")
+    else for (const v of volumesAfter) console.error(`  - ${v.name} @ ${v.mountPath || "?"} (${v.id})`)
+    console.error("")
+    console.error("Attach it manually in the Railway dashboard, then run `jig deploy --update`.")
+    process.exit(1)
+  }
+  console.log(`  ✓ Volume attached at /data.`)
 
   // Step 6: deploy. `--ci` streams build logs then exits with the build
   // result code — we get live progress AND a clean finish signal.
+  const defaults = await writeDeployDefaults()
+  console.log(`\nScheduler timezone default: ${defaults.timezone} (saved to SQLite on first boot)`)
   console.log("\nUploading and deploying (Nixpacks; streams build logs, first build ~2 min)...")
   const upCode = await railwayInteractive(["up", "--ci"])
   if (upCode !== 0) {

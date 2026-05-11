@@ -2,12 +2,12 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from "fs"
 import { join } from "path"
 import OpenAI from "openai"
 import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions"
-import type { AgentConversationTurn, AgentDraftApproval, AgentEvent, AgentMetrics, AgentStatusResponse, StartAgentResponse } from "../../shared/api.js"
-import { JIG_EDITOR_MODEL } from "../config/models.js"
+import type { AgentConversationTurn, AgentDraftApproval, AgentEvent, AgentMetrics, AgentStatusResponse, JigData, OkResponse, StartAgentResponse } from "../../shared/api.js"
+import { getEditorModel } from "../config/models.js"
 import { DRAFT_JIGS_DIR, SCHEMAS_DIR } from "../config/paths.js"
 import { isValidJigId } from "../domain/jig-id.js"
 import { getImportedServers } from "../domain/source-analysis.js"
-import { resolveJigPath } from "../domain/jig-source.js"
+import { prettifyId, resolveJigPath } from "../domain/jig-source.js"
 import { invalidateJigsCache } from "../discover.js"
 import { checkJigFile } from "./jig-checker.js"
 import { buildAgentJigSystemPrompt } from "./jig-writing-prompt.js"
@@ -16,6 +16,7 @@ import { ApiError } from "../server/http.js"
 import { requireOpenRouterApiKey } from "../config/openrouter.js"
 import { logSessionEvent } from "../debug/session-log.js"
 import { buildDraftJigResponse } from "./jig-api.js"
+import { toolNameToIdentifier } from "../mcp/typegen.js"
 import {
   buildAuthoringState,
   collectBuildTimeToolPolicyIssues,
@@ -23,7 +24,15 @@ import {
   hasExplicitEmptyToolsArray,
   type BuildTimeResolution,
 } from "../jig-gen.js"
-import { renameJigLocalState, setToolPermission } from "../db.js"
+import {
+  deleteAgentSession,
+  getAgentSession,
+  listAgentSessions,
+  renameJigLocalState,
+  setToolPermission,
+  upsertAgentSession,
+  type AgentSessionRow,
+} from "../db.js"
 
 const MAX_AGENT_ROUNDS = 15
 const AGENT_SESSION_TTL = 30 * 60 * 1000
@@ -51,6 +60,134 @@ type AgentSession = {
 
 const agentSessions = new Map<string, AgentSession>()
 const activeAgentJigs = new Set<string>()
+const closedAgentSessions = new Set<string>()
+
+function parseJson<T>(value: string | null | undefined, fallback: T): T {
+  if (!value) return fallback
+  try {
+    return JSON.parse(value) as T
+  } catch {
+    return fallback
+  }
+}
+
+function serializeSession(session: AgentSession): AgentSessionRow {
+  return {
+    session_id: session.sessionId,
+    jig_id: session.jigId ?? null,
+    creation_mode: session.creationMode ? 1 : 0,
+    authoring_intent: session.authoringIntent,
+    conversation_history: JSON.stringify(session.conversationHistory),
+    authoring_policy: JSON.stringify(session.authoringPolicy),
+    messages: JSON.stringify(session.messages),
+    events: JSON.stringify(session.events),
+    status: session.status,
+    metrics: JSON.stringify(session.metrics),
+    created_at: session.createdAt,
+    updated_at: Date.now(),
+    pending_ask_tool_call_id: session.pendingAskToolCallId ?? null,
+    pending_ask_question: session.pendingAskQuestion ?? null,
+    draft_file_path: session.draftFilePath ?? null,
+    draft_approval: session.draftApproval ? JSON.stringify(session.draftApproval) : null,
+  }
+}
+
+function hydrateSession(row: AgentSessionRow): AgentSession {
+  return {
+    sessionId: row.session_id,
+    jigId: row.jig_id ?? undefined,
+    creationMode: row.creation_mode === 1,
+    authoringIntent: row.authoring_intent,
+    conversationHistory: parseJson<AgentConversationTurn[]>(row.conversation_history, []),
+    authoringPolicy: parseJson<AgentSession["authoringPolicy"]>(row.authoring_policy, {
+      requiresIntegration: false,
+      buildResolutions: [],
+    }),
+    messages: parseJson<ChatCompletionMessageParam[]>(row.messages, []),
+    events: parseJson<AgentEvent[]>(row.events, []),
+    status: row.status as AgentSession["status"],
+    metrics: parseJson<AgentMetrics>(row.metrics, {}),
+    createdAt: row.created_at,
+    pendingAskToolCallId: row.pending_ask_tool_call_id ?? undefined,
+    pendingAskQuestion: row.pending_ask_question ?? undefined,
+    draftFilePath: row.draft_file_path ?? undefined,
+    draftApproval: parseJson<AgentDraftApproval | undefined>(row.draft_approval, undefined),
+  }
+}
+
+function persistSession(session: AgentSession): void {
+  if (closedAgentSessions.has(session.sessionId)) return
+  upsertAgentSession(serializeSession(session))
+}
+
+function isSessionClosed(session: AgentSession): boolean {
+  return closedAgentSessions.has(session.sessionId) || agentSessions.get(session.sessionId) !== session
+}
+
+function stopIfClosed(session: AgentSession): boolean {
+  if (!isSessionClosed(session)) return false
+  clearDraft(session)
+  if (session.jigId) activeAgentJigs.delete(session.jigId)
+  return true
+}
+
+function setSessionStatus(session: AgentSession, status: AgentSession["status"]): void {
+  const wasActive = session.status === "thinking" || session.status === "tool-calling"
+  const willBeActive = status === "thinking" || status === "tool-calling"
+  const changed = session.status !== status
+  session.status = status
+  if (willBeActive && (changed || !wasActive || !session.metrics.activeStartedAt)) {
+    session.metrics = { ...session.metrics, activeStartedAt: Date.now(), updatedAt: Date.now() }
+  } else if (!willBeActive && session.metrics.activeStartedAt != null) {
+    const { activeStartedAt, ...metrics } = session.metrics
+    void activeStartedAt
+    session.metrics = { ...metrics, updatedAt: Date.now() }
+  }
+}
+
+function markInterruptedIfNeeded(session: AgentSession): AgentSession {
+  if (session.status !== "thinking" && session.status !== "tool-calling") return session
+  for (const event of session.events) {
+    if (event.type === "tool-call" && event.status === "running") {
+      event.status = "error"
+      event.result = "Interrupted by server restart"
+    }
+  }
+  session.events.push({
+    type: "text",
+    content: "Agent work was interrupted by a server restart. Reply with the next change or ask it to continue.",
+  })
+  setSessionStatus(session, "waiting")
+  session.metrics = { ...session.metrics, activeTool: undefined, updatedAt: Date.now() }
+  persistSession(session)
+  return session
+}
+
+function loadSession(sessionId: string): AgentSession | null {
+  if (closedAgentSessions.has(sessionId)) return null
+  const existing = agentSessions.get(sessionId)
+  if (existing) return existing
+  const row = getAgentSession(sessionId)
+  if (!row) return null
+  const session = markInterruptedIfNeeded(hydrateSession(row))
+  agentSessions.set(session.sessionId, session)
+  if (session.jigId && session.status !== "done" && session.status !== "error") {
+    activeAgentJigs.add(session.jigId)
+  }
+  return session
+}
+
+function placeholderDraftId(sessionId: string): string {
+  return `draft-${sessionId.slice(0, 8)}`
+}
+
+function draftNameFromSession(session: AgentSession): string {
+  if (session.jigId) return prettifyId(session.jigId)
+  const firstUserTurn = session.conversationHistory.find((turn) => turn.role === "user")?.content.trim()
+  if (!firstUserTurn) return "New Jig Draft"
+  const singleLine = firstUserTurn.replace(/\s+/g, " ")
+  return singleLine.length > 36 ? `${singleLine.slice(0, 33)}...` : singleLine
+}
 
 function estimateTokens(value: unknown): number {
   if (value == null) return 0
@@ -95,9 +232,56 @@ async function getSessionCode(session: AgentSession, jigId?: string): Promise<st
 }
 
 function releaseSession(session: AgentSession): void {
+  closedAgentSessions.add(session.sessionId)
   clearDraft(session)
   if (session.jigId) activeAgentJigs.delete(session.jigId)
   agentSessions.delete(session.sessionId)
+  deleteAgentSession(session.sessionId)
+}
+
+/**
+ * Release any stale session holding the activeAgentJigs lock for `jigId`.
+ * A session is "stale" when it's in a terminal or idle state — no active
+ * LLM / tool call is in flight, yet the lock never got cleared (user closed
+ * the pane without calling /close, or the session errored mid-loop). Returns
+ * true if a lock was released OR no session currently holds it, false only
+ * when a genuinely active session (thinking / tool-calling / waiting) is
+ * still running — in which case the caller must refuse to start a new one.
+ */
+function releaseStaleJigLock(jigId: string): boolean {
+  if (!activeAgentJigs.has(jigId)) return true
+  let releasedOrAbsent = false
+  for (const session of [...agentSessions.values()]) {
+    if (session.jigId !== jigId) continue
+    const terminal = session.status === "done" || session.status === "error"
+    if (terminal) {
+      if (session.creationMode && session.draftFilePath && existsSync(session.draftFilePath)) {
+        continue
+      }
+      releaseSession(session)
+      releasedOrAbsent = true
+    }
+  }
+  if (releasedOrAbsent) return true
+  // No terminal session matched — either an active session holds the lock
+  // (genuine conflict) or the lock is orphaned (no session at all). The
+  // orphan case is safe to clear: there's no one to talk to anyway.
+  const hasActiveSession = [...agentSessions.values()].some((s) => s.jigId === jigId)
+  if (!hasActiveSession) {
+    activeAgentJigs.delete(jigId)
+    return true
+  }
+  return false
+}
+
+function hasPersistedDraftForJig(jigId: string, sessionId: string): boolean {
+  return listAgentSessions().some((row) =>
+    row.session_id !== sessionId &&
+    row.creation_mode === 1 &&
+    row.jig_id === jigId &&
+    !!row.draft_file_path &&
+    existsSync(row.draft_file_path)
+  )
 }
 
 function hasCompletedTool(session: AgentSession, tool: string): boolean {
@@ -109,10 +293,12 @@ function hasCompletedTool(session: AgentSession, tool: string): boolean {
 function pruneAgentSessions() {
   const now = Date.now()
   for (const [id, session] of agentSessions) {
+    if (session.creationMode && session.draftFilePath) continue
     if (now - session.createdAt > AGENT_SESSION_TTL) {
       clearDraft(session)
       if (session.jigId) activeAgentJigs.delete(session.jigId)
       agentSessions.delete(id)
+      deleteAgentSession(id)
     }
   }
 }
@@ -226,6 +412,21 @@ const AGENT_TOOL_DEFS: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "get_tool_schema",
+      description: "Inspect cached MCP tool schemas. Use this when exact params or return-shape docs are needed but not present in the prompt. Provide server only to list tools, or server + toolName for a full schema.",
+      parameters: {
+        type: "object",
+        properties: {
+          server: { type: "string", description: "Connection/server key, e.g. workspace, granola, apify, composio" },
+          toolName: { type: "string", description: "Optional MCP tool name or generated TypeScript identifier" },
+        },
+        required: ["server"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "rename_jig",
       description: "Rename the session's jig. Moves the file, updates the jig() name string in code, carries over run history and schedules, and commits. Use this for rename requests instead of read+write.",
       parameters: {
@@ -303,9 +504,12 @@ async function toolWriteJigFile(args: { code: string; jigId?: string; message?: 
   }
 
   if (!session.jigId) {
-    if (activeAgentJigs.has(jigId)) return JSON.stringify({ error: "Another session is already editing this jig" })
+    if (!releaseStaleJigLock(jigId)) return JSON.stringify({ error: "Another session is already editing this jig" })
     if (session.creationMode && existsSync(resolveJigPath(jigId))) {
       return JSON.stringify({ error: `Jig already exists: ${jigId}` })
+    }
+    if (session.creationMode && hasPersistedDraftForJig(jigId, session.sessionId)) {
+      return JSON.stringify({ error: `Jig is already under construction: ${jigId}` })
     }
     session.jigId = jigId
     activeAgentJigs.add(jigId)
@@ -317,6 +521,7 @@ async function toolWriteJigFile(args: { code: string; jigId?: string; message?: 
     await writeJigSource(filePath, args.code, { jigId })
     session.draftFilePath = filePath
     session.draftApproval = undefined
+    persistSession(session)
     return JSON.stringify({ ok: true, path: filePath, draft: true })
   }
 
@@ -328,6 +533,7 @@ async function toolWriteJigFile(args: { code: string; jigId?: string; message?: 
     commitPrompt: session.authoringIntent,
   })
 
+  persistSession(session)
   return JSON.stringify({ ok: true, path: filePath, draft: false })
 }
 
@@ -350,6 +556,63 @@ async function toolCheckJig(args: { jigId?: string }, session: AgentSession): Pr
 
   if (result === "ok" && extraErrors.length === 0) return "ok"
   return [result === "ok" ? null : result, ...extraErrors].filter(Boolean).join("\n")
+}
+
+function firstSchemaLine(value: unknown): string {
+  return String(value ?? "").split("\n")[0].trim()
+}
+
+async function toolGetToolSchema(args: { server?: string; toolName?: string }): Promise<string> {
+  const server = args.server?.trim()
+  if (!server || !/^[a-zA-Z0-9_-]+$/.test(server)) {
+    return JSON.stringify({ error: "Invalid server name" })
+  }
+
+  const schemaPath = join(SCHEMAS_DIR, `${server}.json`)
+  if (!existsSync(schemaPath)) {
+    return JSON.stringify({ error: `No cached schema for server: ${server}` })
+  }
+
+  let schemas: any[]
+  try {
+    schemas = JSON.parse(readFileSync(schemaPath, "utf-8"))
+  } catch (error: any) {
+    return JSON.stringify({ error: error?.message ?? `Failed to read schema for ${server}` })
+  }
+
+  const requestedTool = args.toolName?.trim()
+  if (!requestedTool) {
+    return JSON.stringify({
+      server,
+      tools: schemas.map((tool) => ({
+        name: tool.name,
+        identifier: toolNameToIdentifier(tool.name),
+        description: firstSchemaLine(tool.description),
+      })),
+    })
+  }
+
+  const tool = schemas.find((candidate) =>
+    candidate?.name === requestedTool || toolNameToIdentifier(candidate?.name ?? "") === requestedTool
+  )
+  if (!tool) {
+    return JSON.stringify({
+      error: `Tool not found: ${server}.${requestedTool}`,
+      available: schemas.map((candidate) => ({
+        name: candidate.name,
+        identifier: toolNameToIdentifier(candidate.name),
+      })),
+    })
+  }
+
+  return JSON.stringify({
+    server,
+    name: tool.name,
+    identifier: toolNameToIdentifier(tool.name),
+    description: tool.description,
+    inputSchema: tool.inputSchema,
+    annotations: tool.annotations,
+  })
 }
 
 async function toolRenameJig(args: { newJigId: string }, session: AgentSession): Promise<string> {
@@ -378,13 +641,14 @@ async function toolRenameJig(args: { newJigId: string }, session: AgentSession):
     session.draftFilePath = newDraftPath
     session.jigId = newJigId
     session.draftApproval = undefined
+    persistSession(session)
     return JSON.stringify({ ok: true, oldJigId, newJigId, draft: true })
   }
 
   const oldPath = resolveJigPath(oldJigId)
   if (!existsSync(oldPath)) return JSON.stringify({ error: `File not found for jig: ${oldJigId}` })
   if (existsSync(resolveJigPath(newJigId))) return JSON.stringify({ error: `Jig already exists: ${newJigId}` })
-  if (activeAgentJigs.has(newJigId)) {
+  if (!releaseStaleJigLock(newJigId)) {
     return JSON.stringify({ error: "Another session is already editing this jig" })
   }
 
@@ -400,6 +664,7 @@ async function toolRenameJig(args: { newJigId: string }, session: AgentSession):
   activeAgentJigs.delete(oldJigId)
   activeAgentJigs.add(newJigId)
   session.jigId = newJigId
+  persistSession(session)
   return JSON.stringify({ ok: true, oldJigId, newJigId, draft: false })
 }
 
@@ -459,6 +724,7 @@ async function executeAgentTool(name: string, args: Record<string, any>, session
     case "read_jig_file": return toolReadJigFile(args, session)
     case "write_jig_file": return toolWriteJigFile(args as any, session)
     case "check_jig": return toolCheckJig(args, session)
+    case "get_tool_schema": return toolGetToolSchema(args as any)
     case "rename_jig": return toolRenameJig(args as any, session)
     case "ask_user": return ASK_USER_SENTINEL
     case "browse": return toolBrowse(args as any)
@@ -507,6 +773,8 @@ async function buildAgentSystemPromptWithCode(
       jigId,
       skillMd: authoring.context.skillMd,
       typeDefs: authoring.context.typeDefs,
+      toolCatalog: authoring.context.toolCatalog,
+      relevantSchemas: authoring.context.relevantSchemas,
       serverDescriptions: authoring.context.serverDescriptions,
       buildHints: authoring.context.buildHints,
       currentCode: nextCurrentCode,
@@ -531,6 +799,25 @@ async function buildDraftApproval(session: AgentSession): Promise<AgentDraftAppr
   return {
     jig: await buildDraftJigResponse(session.jigId, draftCode, session.draftFilePath!, true),
   }
+}
+
+async function prepareDraftApproval(session: AgentSession): Promise<AgentDraftApproval | null> {
+  if (!session.creationMode || !session.draftFilePath || !session.jigId || !getDraftCode(session)) {
+    session.messages.push({
+      role: "user",
+      content: "No approvable draft exists yet. Write the jig file, then run check_jig until it returns ok.",
+    })
+    return null
+  }
+  const checkResult = await checkJigFile(session.draftFilePath)
+  if (checkResult !== "ok") {
+    session.messages.push({
+      role: "user",
+      content: `The draft is not ready. check_jig reports:\n${checkResult}\n\nDo not claim completion yet. Patch the jig, then run check_jig until it returns ok.`,
+    })
+    return null
+  }
+  return buildDraftApproval(session)
 }
 
 async function approveDraft(session: AgentSession): Promise<void> {
@@ -560,8 +847,9 @@ async function approveDraft(session: AgentSession): Promise<void> {
   invalidateJigsCache()
   activeAgentJigs.delete(session.jigId)
   clearDraft(session)
+  deleteAgentSession(session.sessionId)
   session.events.push({ type: "text", content: `Created ${session.jigId} and approved its toolset.` })
-  session.status = "done"
+  setSessionStatus(session, "done")
   logSessionEvent({
     source: "authoring.agent",
     event: "draft-approved",
@@ -575,16 +863,18 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
 
   let consecutiveErrors = 0
   for (let round = 0; round < MAX_AGENT_ROUNDS; round++) {
+    if (stopIfClosed(session)) return
     const estimatedPromptTokens = estimateRequestPromptTokens(session.messages, AGENT_TOOL_DEFS)
-    session.status = "thinking"
+    setSessionStatus(session, "thinking")
     session.metrics = {
       ...session.metrics,
-      model: JIG_EDITOR_MODEL,
+      model: getEditorModel(),
       round: round + 1,
       activeTool: undefined,
       estimatedPromptTokens,
       updatedAt: Date.now(),
     }
+    persistSession(session)
     logSessionEvent({
       source: "authoring.agent",
       event: "status",
@@ -602,49 +892,55 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
         sessionId: session.sessionId,
         jigId: session.jigId,
         round,
-        model: JIG_EDITOR_MODEL,
+        model: getEditorModel(),
         messages: session.messages,
         tools: AGENT_TOOL_DEFS,
       })
       response = await client.chat.completions.create({
-        model: JIG_EDITOR_MODEL,
+        model: getEditorModel(),
         max_tokens: 16384,
         messages: session.messages,
         tools: AGENT_TOOL_DEFS,
       })
+      if (stopIfClosed(session)) return
     } catch (e: any) {
+      if (stopIfClosed(session)) return
       logSessionEvent({
         source: "authoring.agent",
         event: "request-error",
         sessionId: session.sessionId,
         jigId: session.jigId,
         round,
-        model: JIG_EDITOR_MODEL,
+        model: getEditorModel(),
         error: e,
       })
       consecutiveErrors++
       const msg = e?.message ?? String(e)
       if (consecutiveErrors >= 3) {
         session.events.push({ type: "text", content: `Failed after ${consecutiveErrors} retries: ${msg}` })
-        session.status = "error"
+        setSessionStatus(session, "error")
+        persistSession(session)
         return
       }
       session.events.push({ type: "text", content: `Network error (retry ${consecutiveErrors}/3): ${msg}` })
+      persistSession(session)
       await new Promise((r) => setTimeout(r, 2000 * consecutiveErrors))
       continue
     }
     consecutiveErrors = 0
+    if (stopIfClosed(session)) return
 
     const msg = response.choices[0]?.message
     if (!msg) {
-      session.status = "error"
+      setSessionStatus(session, "error")
+      persistSession(session)
       logSessionEvent({
         source: "authoring.agent",
         event: "empty-response",
         sessionId: session.sessionId,
         jigId: session.jigId,
         round,
-        model: JIG_EDITOR_MODEL,
+        model: getEditorModel(),
         usage: response.usage,
       })
       return
@@ -655,14 +951,14 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
       sessionId: session.sessionId,
       jigId: session.jigId,
       round,
-      model: JIG_EDITOR_MODEL,
+      model: getEditorModel(),
       message: msg,
       finishReason: response.choices[0]?.finish_reason,
       usage: response.usage,
     })
     session.metrics = {
       ...session.metrics,
-      model: JIG_EDITOR_MODEL,
+      model: getEditorModel(),
       round: round + 1,
       estimatedPromptTokens: response.usage?.prompt_tokens ?? session.metrics.estimatedPromptTokens,
       promptTokens: response.usage?.prompt_tokens,
@@ -672,10 +968,64 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
     }
 
     session.messages.push(msg as ChatCompletionMessageParam)
+    persistSession(session)
 
     if (!msg.tool_calls?.length) {
       session.events.push({ type: "text", content: msg.content ?? "" })
-      session.status = "done"
+      if (session.creationMode) {
+        const draftApproval = await prepareDraftApproval(session)
+        if (draftApproval) {
+          session.draftApproval = draftApproval
+          session.events.push({
+            type: "text",
+            content: `Draft ready. Approve to create ${session.jigId}, or reply with changes to revise it.`,
+          })
+          setSessionStatus(session, "waiting")
+          persistSession(session)
+          logSessionEvent({
+            source: "authoring.agent",
+            event: "draft-ready",
+            sessionId: session.sessionId,
+            jigId: session.jigId,
+            round,
+            reason: "final-response-check-ok",
+          })
+          return
+        }
+        if (round + 1 >= MAX_AGENT_ROUNDS) {
+          session.events.push({
+            type: "text",
+            content: "Draft is still under construction because it has not passed the jig check.",
+          })
+          setSessionStatus(session, "error")
+          persistSession(session)
+          logSessionEvent({
+            source: "authoring.agent",
+            event: "draft-not-ready",
+            sessionId: session.sessionId,
+            jigId: session.jigId,
+            round,
+            reason: "final-response-without-valid-draft",
+          })
+          return
+        }
+        session.events.push({
+          type: "text",
+          content: "Draft is not ready yet; continuing because the jig check has not passed.",
+        })
+        persistSession(session)
+        logSessionEvent({
+          source: "authoring.agent",
+          event: "draft-not-ready",
+          sessionId: session.sessionId,
+          jigId: session.jigId,
+          round,
+          reason: "final-response-without-valid-draft",
+        })
+        continue
+      }
+      setSessionStatus(session, "done")
+      persistSession(session)
       logSessionEvent({
         source: "authoring.agent",
         event: "done",
@@ -687,12 +1037,13 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
       return
     }
 
-    session.status = "tool-calling"
+    setSessionStatus(session, "tool-calling")
     session.metrics = {
       ...session.metrics,
       round: round + 1,
       updatedAt: Date.now(),
     }
+    persistSession(session)
     logSessionEvent({
       source: "authoring.agent",
       event: "status",
@@ -705,6 +1056,7 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
     let roundHadSuccessfulCheck = false
     let pendingAsk: { toolCallId: string; question: string; event: AgentEvent } | null = null
     for (const toolCall of msg.tool_calls) {
+      if (stopIfClosed(session)) return
       if (toolCall.type !== "function") {
         session.messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ error: `Unsupported tool call type: ${toolCall.type}` }) })
         continue
@@ -724,6 +1076,7 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
         activeTool: toolCall.function.name,
         updatedAt: Date.now(),
       }
+      persistSession(session)
       logSessionEvent({
         source: "authoring.agent",
         event: "tool-start",
@@ -736,6 +1089,7 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
 
       try {
         const result = await executeAgentTool(toolCall.function.name, args, session)
+        if (stopIfClosed(session)) return
 
         // ask_user: defer pause until all other tools in this round are done
         if (result === ASK_USER_SENTINEL) {
@@ -753,6 +1107,7 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
             question,
           })
           pendingAsk = { toolCallId: toolCall.id, question, event }
+          persistSession(session)
           continue
         }
 
@@ -777,7 +1132,9 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
           roundHadSuccessfulCheck = true
         }
         session.messages.push({ role: "tool", tool_call_id: toolCall.id, content: result })
+        persistSession(session)
       } catch (e: any) {
+        if (stopIfClosed(session)) return
         event.status = "error"
         event.result = e?.message ?? String(e)
         session.metrics = {
@@ -797,15 +1154,18 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
           error: e,
         })
         session.messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ error: e?.message }) })
+        persistSession(session)
       }
     }
+    if (stopIfClosed(session)) return
 
     // Pause after processing all tools in the round
     if (pendingAsk) {
       session.events.push({ type: "text", content: pendingAsk.question })
       session.pendingAskToolCallId = pendingAsk.toolCallId
       session.pendingAskQuestion = pendingAsk.question
-      session.status = "waiting"
+      setSessionStatus(session, "waiting")
+      persistSession(session)
       logSessionEvent({
         source: "authoring.agent",
         event: "status",
@@ -825,7 +1185,8 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
           type: "text",
           content: `Draft ready. Approve to create ${session.jigId}, or reply with changes to revise it.`,
         })
-        session.status = "waiting"
+        setSessionStatus(session, "waiting")
+        persistSession(session)
         logSessionEvent({
           source: "authoring.agent",
           event: "draft-ready",
@@ -841,7 +1202,8 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
           ? `Updated ${session.jigId} and it passed the jig check.`
           : "Jig written and it passed the jig check.",
       })
-      session.status = "done"
+      setSessionStatus(session, "done")
+      persistSession(session)
       logSessionEvent({
         source: "authoring.agent",
         event: "done",
@@ -855,7 +1217,8 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
   }
 
   session.events.push({ type: "text", content: "Agent reached maximum rounds." })
-  session.status = "done"
+  setSessionStatus(session, "done")
+  persistSession(session)
   logSessionEvent({
     source: "authoring.agent",
     event: "done",
@@ -872,13 +1235,14 @@ export async function startAgentSession(body: any): Promise<StartAgentResponse> 
   const jigId = body?.jigId as string | undefined
 
   if (jigId && !isValidJigId(jigId)) throw new ApiError(400, "Invalid jig ID")
-  if (jigId && activeAgentJigs.has(jigId)) {
+  if (jigId && !releaseStaleJigLock(jigId)) {
     throw new ApiError(409, "An agent session is already editing this jig")
   }
 
   const conversationHistory = normalizeConversationHistory(body?.history, instruction)
   const authoringIntent = renderConversationIntent(conversationHistory) || instruction
   const sessionId = crypto.randomUUID()
+  closedAgentSessions.delete(sessionId)
   const { prompt: systemPrompt, authoringPolicy } = await buildAgentSystemPrompt(authoringIntent, jigId)
 
   const session: AgentSession = {
@@ -895,8 +1259,9 @@ export async function startAgentSession(body: any): Promise<StartAgentResponse> 
     events: [],
     status: "thinking",
     metrics: {
-      model: JIG_EDITOR_MODEL,
+      model: getEditorModel(),
       round: 1,
+      activeStartedAt: Date.now(),
       updatedAt: Date.now(),
     },
     createdAt: Date.now(),
@@ -905,6 +1270,7 @@ export async function startAgentSession(body: any): Promise<StartAgentResponse> 
   pruneAgentSessions()
   agentSessions.set(sessionId, session)
   if (jigId) activeAgentJigs.add(jigId)
+  persistSession(session)
   logSessionEvent({
     source: "authoring.agent",
     event: "session-start",
@@ -917,8 +1283,10 @@ export async function startAgentSession(body: any): Promise<StartAgentResponse> 
   })
 
   runAgentLoop(session).catch((error) => {
-    session.status = "error"
+    if (isSessionClosed(session)) return
+    setSessionStatus(session, "error")
     session.events.push({ type: "text", content: error?.message ?? String(error) })
+    persistSession(session)
     logSessionEvent({
       source: "authoring.agent",
       event: "fatal-error",
@@ -932,7 +1300,7 @@ export async function startAgentSession(body: any): Promise<StartAgentResponse> 
 }
 
 export function getAgentSessionStatus(sessionId: string, sinceIndex: number): AgentStatusResponse {
-  const session = agentSessions.get(sessionId)
+  const session = loadSession(sessionId)
   if (!session) throw new ApiError(404, "Session not found")
 
   return {
@@ -942,11 +1310,65 @@ export function getAgentSessionStatus(sessionId: string, sinceIndex: number): Ag
     totalEvents: session.events.length,
     metrics: session.metrics,
     draftApproval: session.draftApproval,
+    conversationHistory: session.conversationHistory,
   }
 }
 
-export async function approveAgentDraft(sessionId: string): Promise<{ ok: true }> {
-  const session = agentSessions.get(sessionId)
+export async function listUnderConstructionJigs(): Promise<JigData[]> {
+  const rows = listAgentSessions()
+  const drafts: JigData[] = []
+  const seen = new Set<string>()
+
+  for (const row of rows) {
+    const liveSession = agentSessions.get(row.session_id)
+    const session = liveSession ?? markInterruptedIfNeeded(hydrateSession(row))
+    if (!session.creationMode) continue
+    if (session.jigId && existsSync(resolveJigPath(session.jigId))) continue
+
+    const listId = placeholderDraftId(session.sessionId)
+    if (seen.has(listId)) continue
+    seen.add(listId)
+
+    const code = getDraftCode(session)
+    const jig = session.jigId && session.draftFilePath && code !== null
+      ? await buildDraftJigResponse(session.jigId, code, session.draftFilePath, true)
+      : {
+        id: listId,
+        name: draftNameFromSession(session),
+        trigger: "",
+        status: "attention",
+        running: false,
+        sparkline: [],
+        steps: [],
+        code: code ?? "",
+        runs: [],
+        settings: {
+          trigger: "",
+          connections: [],
+          tools: [],
+          permissions: [],
+        },
+        costMonth: "",
+        costLifetime: "",
+      } satisfies JigData
+
+    jig.id = listId
+    jig.name = draftNameFromSession(session)
+
+    jig.underConstruction = {
+      sessionId: session.sessionId,
+      jigId: session.jigId,
+      status: session.status,
+      updatedAt: new Date(row.updated_at).toISOString(),
+    }
+    drafts.push(jig)
+  }
+
+  return drafts
+}
+
+export async function approveAgentDraft(sessionId: string): Promise<OkResponse> {
+  const session = loadSession(sessionId)
   if (!session) throw new ApiError(404, "Session not found")
   if (session.status !== "waiting" || !session.draftApproval) {
     throw new ApiError(409, "No pending draft approval")
@@ -956,15 +1378,15 @@ export async function approveAgentDraft(sessionId: string): Promise<{ ok: true }
   return { ok: true }
 }
 
-export async function closeAgentSession(sessionId: string): Promise<{ ok: true }> {
-  const session = agentSessions.get(sessionId)
+export async function closeAgentSession(sessionId: string): Promise<OkResponse> {
+  const session = loadSession(sessionId)
   if (!session) return { ok: true }
   releaseSession(session)
   return { ok: true }
 }
 
-export async function pushAgentMessage(sessionId: string, body: any): Promise<{ ok: true }> {
-  const session = agentSessions.get(sessionId)
+export async function pushAgentMessage(sessionId: string, body: any): Promise<OkResponse> {
+  const session = loadSession(sessionId)
   if (!session) throw new ApiError(404, "Session not found")
   if (session.status === "thinking" || session.status === "tool-calling") {
     throw new ApiError(409, "Agent is still processing")
@@ -982,6 +1404,8 @@ export async function pushAgentMessage(sessionId: string, body: any): Promise<{ 
     conversationHistory,
     waitingForToolCallId: session.pendingAskToolCallId,
   })
+
+  session.events.push({ type: "user-message", content: message })
 
   // If the agent was waiting for an ask_user reply, inject the answer as a tool result
   const pendingToolCallId = session.pendingAskToolCallId
@@ -1002,11 +1426,14 @@ export async function pushAgentMessage(sessionId: string, body: any): Promise<{ 
     session.messages[0] = { role: "system", content: prompt }
     session.messages.push({ role: "user", content: message })
   }
-  session.status = "thinking"
+  setSessionStatus(session, "thinking")
+  persistSession(session)
 
   runAgentLoop(session).catch((error) => {
-    session.status = "error"
+    if (isSessionClosed(session)) return
+    setSessionStatus(session, "error")
     session.events.push({ type: "text", content: error?.message ?? String(error) })
+    persistSession(session)
     logSessionEvent({
       source: "authoring.agent",
       event: "fatal-error",

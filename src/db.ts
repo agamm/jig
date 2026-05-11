@@ -89,6 +89,26 @@ CREATE TABLE IF NOT EXISTS tool_permissions (
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (connection, tool)
 );
+
+CREATE TABLE IF NOT EXISTS agent_sessions (
+  session_id TEXT PRIMARY KEY,
+  jig_id TEXT,
+  creation_mode INTEGER NOT NULL,
+  authoring_intent TEXT NOT NULL,
+  conversation_history TEXT NOT NULL,
+  authoring_policy TEXT NOT NULL,
+  messages TEXT NOT NULL,
+  events TEXT NOT NULL,
+  status TEXT NOT NULL,
+  metrics TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  pending_ask_tool_call_id TEXT,
+  pending_ask_question TEXT,
+  draft_file_path TEXT,
+  draft_approval TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_jig_id ON agent_sessions(jig_id);
 `
 
 // Versioned migrations — each runs once, tracked by PRAGMA user_version.
@@ -153,6 +173,43 @@ const MIGRATIONS: string[] = [
   // Row values are encrypted in service mode once a system password is set;
   // getCredential/setCredential wrap/unwrap transparently via src/crypto/password.ts.
   `ALTER TABLE credentials ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0;`,
+  // v9: persistent log buffer. Any process touching jig.db can append (CLI,
+  // API server, scheduler). The /api/logs endpoint reads from here so the
+  // Logs page shows everything, not just whatever the API-server process
+  // saw in its local ring buffer.
+  `CREATE TABLE IF NOT EXISTS logs (
+     seq    INTEGER PRIMARY KEY AUTOINCREMENT,
+     ts     INTEGER NOT NULL,
+     level  TEXT NOT NULL CHECK (level IN ('info','warn','error')),
+     source TEXT NOT NULL,
+     msg    TEXT NOT NULL
+   );
+   CREATE INDEX IF NOT EXISTS idx_logs_ts ON logs(ts DESC);`,
+  // v10: cron timezone. Railway runs in UTC by default; schedules should keep
+  // the timezone used to compute next_run_at so local-time cron definitions do
+  // not silently drift.
+  `ALTER TABLE schedules ADD COLUMN timezone TEXT;`,
+  // v11: persist authoring agent sessions/drafts so under-construction jigs
+  // survive dashboard reloads and API server restarts.
+  `CREATE TABLE IF NOT EXISTS agent_sessions (
+     session_id TEXT PRIMARY KEY,
+     jig_id TEXT,
+     creation_mode INTEGER NOT NULL,
+     authoring_intent TEXT NOT NULL,
+     conversation_history TEXT NOT NULL,
+     authoring_policy TEXT NOT NULL,
+     messages TEXT NOT NULL,
+     events TEXT NOT NULL,
+     status TEXT NOT NULL,
+     metrics TEXT NOT NULL,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL,
+     pending_ask_tool_call_id TEXT,
+     pending_ask_question TEXT,
+     draft_file_path TEXT,
+     draft_approval TEXT
+   );
+   CREATE INDEX IF NOT EXISTS idx_agent_sessions_jig_id ON agent_sessions(jig_id);`,
 ]
 
 // ---------------------------------------------------------------------------
@@ -407,6 +464,7 @@ export function deleteJigLocalState(jigId: string): void {
   db.prepare(`DELETE FROM runs WHERE jig_id = ?`).run(jigId)
   db.prepare(`DELETE FROM step_cache WHERE jig_id = ?`).run(jigId)
   db.prepare(`DELETE FROM schedules WHERE jig_id = ?`).run(jigId)
+  db.prepare(`DELETE FROM agent_sessions WHERE jig_id = ?`).run(jigId)
 }
 
 export function renameJigLocalState(oldJigId: string, newJigId: string): void {
@@ -418,6 +476,90 @@ export function renameJigLocalState(oldJigId: string, newJigId: string): void {
   db.prepare(`UPDATE runs SET jig_id = ? WHERE jig_id = ?`).run(newJigId, oldJigId)
   db.prepare(`UPDATE step_cache SET jig_id = ? WHERE jig_id = ?`).run(newJigId, oldJigId)
   db.prepare(`UPDATE schedules SET jig_id = ? WHERE jig_id = ?`).run(newJigId, oldJigId)
+  db.prepare(`UPDATE agent_sessions SET jig_id = ?, updated_at = ? WHERE jig_id = ?`).run(newJigId, Date.now(), oldJigId)
+}
+
+// ---------------------------------------------------------------------------
+// Agent sessions
+// ---------------------------------------------------------------------------
+
+export interface AgentSessionRow {
+  session_id: string
+  jig_id: string | null
+  creation_mode: number
+  authoring_intent: string
+  conversation_history: string
+  authoring_policy: string
+  messages: string
+  events: string
+  status: string
+  metrics: string
+  created_at: number
+  updated_at: number
+  pending_ask_tool_call_id: string | null
+  pending_ask_question: string | null
+  draft_file_path: string | null
+  draft_approval: string | null
+}
+
+export function upsertAgentSession(row: AgentSessionRow): void {
+  const db = openDb()
+  db.prepare(
+    `INSERT INTO agent_sessions (
+       session_id, jig_id, creation_mode, authoring_intent,
+       conversation_history, authoring_policy, messages, events,
+       status, metrics, created_at, updated_at,
+       pending_ask_tool_call_id, pending_ask_question, draft_file_path, draft_approval
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(session_id) DO UPDATE SET
+       jig_id = excluded.jig_id,
+       creation_mode = excluded.creation_mode,
+       authoring_intent = excluded.authoring_intent,
+       conversation_history = excluded.conversation_history,
+       authoring_policy = excluded.authoring_policy,
+       messages = excluded.messages,
+       events = excluded.events,
+       status = excluded.status,
+       metrics = excluded.metrics,
+       created_at = excluded.created_at,
+       updated_at = excluded.updated_at,
+       pending_ask_tool_call_id = excluded.pending_ask_tool_call_id,
+       pending_ask_question = excluded.pending_ask_question,
+       draft_file_path = excluded.draft_file_path,
+       draft_approval = excluded.draft_approval`
+  ).run(
+    row.session_id,
+    row.jig_id,
+    row.creation_mode,
+    row.authoring_intent,
+    row.conversation_history,
+    row.authoring_policy,
+    row.messages,
+    row.events,
+    row.status,
+    row.metrics,
+    row.created_at,
+    row.updated_at,
+    row.pending_ask_tool_call_id,
+    row.pending_ask_question,
+    row.draft_file_path,
+    row.draft_approval,
+  )
+}
+
+export function getAgentSession(sessionId: string): AgentSessionRow | null {
+  const db = openDb()
+  return db.prepare(`SELECT * FROM agent_sessions WHERE session_id = ?`).get(sessionId) as AgentSessionRow | null
+}
+
+export function listAgentSessions(): AgentSessionRow[] {
+  const db = openDb()
+  return db.prepare(`SELECT * FROM agent_sessions ORDER BY updated_at DESC`).all() as AgentSessionRow[]
+}
+
+export function deleteAgentSession(sessionId: string): void {
+  const db = openDb()
+  db.prepare(`DELETE FROM agent_sessions WHERE session_id = ?`).run(sessionId)
 }
 
 // ---------------------------------------------------------------------------
@@ -428,6 +570,7 @@ export interface ScheduleRow {
   jig_id: string
   trigger_type: "cron" | "webhook"
   cron_expr: string | null
+  timezone: string | null
   missed_strategy: "catch-up" | "skip"
   next_run_at: number | null
   last_run_at: number | null
@@ -447,18 +590,20 @@ export function upsertSchedule(
   missedStrategy: "catch-up" | "skip",
   nextRunAt: number | null,
   error: string | null,
+  timezone: string | null = null,
 ): void {
   const db = openDb()
   db.prepare(
-    `INSERT INTO schedules (jig_id, trigger_type, cron_expr, missed_strategy, next_run_at, error)
-     VALUES (?, ?, ?, ?, ?, ?)
+    `INSERT INTO schedules (jig_id, trigger_type, cron_expr, missed_strategy, next_run_at, error, timezone)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(jig_id) DO UPDATE SET
        trigger_type = excluded.trigger_type,
        cron_expr = excluded.cron_expr,
        missed_strategy = excluded.missed_strategy,
        next_run_at = excluded.next_run_at,
-       error = excluded.error`
-  ).run(jigId, triggerType, cronExpr, missedStrategy, nextRunAt, error)
+       error = excluded.error,
+       timezone = excluded.timezone`
+  ).run(jigId, triggerType, cronExpr, missedStrategy, nextRunAt, error, timezone)
 }
 
 export function deleteSchedule(jigId: string): void {

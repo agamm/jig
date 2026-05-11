@@ -22,7 +22,7 @@ export function recoverMissedRuns(): void {
     if (schedule.next_run_at == null || schedule.next_run_at > now) continue
 
     // This schedule was missed (next_run_at is in the past)
-    const nextRunAt = computeNextRun(schedule.cron_expr)
+    const nextRunAt = computeNextRun(schedule.cron_expr, schedule.timezone ?? undefined)
     if (nextRunAt == null) {
       setScheduleError(schedule.jig_id, `Invalid cron expression: ${schedule.cron_expr}`)
       continue

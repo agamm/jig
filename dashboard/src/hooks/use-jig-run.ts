@@ -53,7 +53,22 @@ async function ensureMinimumVisibleRun(startTime: number, abort: AbortController
   if (abort.signal.aborted) return;
 }
 
-export function useJigRun(jigId: string) {
+type MissingConnectionsHandler = (connections: string[]) => void;
+
+function extractMissingConnections(error: any): string[] {
+  const required = error?.details?.requiredConnections;
+  if (Array.isArray(required)) return required.filter((name): name is string => typeof name === "string");
+  const statuses = error?.details?.connectionStatuses;
+  if (Array.isArray(statuses)) {
+    return statuses
+      .filter((item: any) => item && item.connected !== true && typeof item.name === "string")
+      .map((item: any) => item.name);
+  }
+  return [];
+}
+
+export function useJigRun(jigId: string, options: { onMissingConnections?: MissingConnectionsHandler } = {}) {
+  const { onMissingConnections } = options;
   const [mode, setMode] = useState<RunStepsMode>({ type: "idle" });
   const [liveSteps, setLiveSteps] = useState<RunStep[]>([]);
   const [completedTools, setCompletedTools] = useState<string[]>([]);
@@ -232,11 +247,15 @@ export function useJigRun(jigId: string) {
       await pollUntilDone(data.runId, abort, startTime, dryRun);
     } catch (e: any) {
       if (abort.signal.aborted) return;
+      const missingConnections = extractMissingConnections(e);
+      if (missingConnections.length > 0) {
+        onMissingConnections?.(missingConnections);
+      }
       setAttached(false);
       setInactiveSnapshot();
       setMode({ type: "done", elapsed: Math.round((Date.now() - startTime) / 1000), dryRun, status: "fail", error: e?.message ?? "Unknown error" });
     }
-  }, [jigId, cleanup, pollUntilDone, setInactiveSnapshot]);
+  }, [jigId, cleanup, pollUntilDone, setInactiveSnapshot, onMissingConnections]);
 
   const dismiss = useCallback(() => {
     runIdRef.current = null;

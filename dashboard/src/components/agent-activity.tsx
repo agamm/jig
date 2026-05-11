@@ -53,10 +53,19 @@ function QuestionBubble({ question }: { question: string }) {
 }
 
 function TextMessage({ content }: { content: string }) {
-  const short = content.length > 200 ? content.slice(0, 200).trim() + "..." : content
   return (
-    <div className="py-1.5 text-[11px] text-[#aaa] leading-relaxed break-words max-h-24 overflow-y-auto">
-      {short}
+    <div className="py-1.5 text-[11px] text-[#aaa] leading-relaxed break-words whitespace-pre-wrap max-h-60 overflow-y-auto">
+      {content}
+    </div>
+  )
+}
+
+function UserMessage({ content }: { content: string }) {
+  return (
+    <div className="py-2 flex justify-end" style={{ animation: "fade-up 0.15s ease" }}>
+      <div className="max-w-[85%] rounded-lg border border-emerald-500/20 bg-emerald-500/[0.06] px-3 py-2 text-[11px] text-[#ededed] leading-relaxed whitespace-pre-wrap break-words">
+        {content}
+      </div>
     </div>
   )
 }
@@ -71,7 +80,15 @@ function isAskUserDuplicateText(events: AgentEvent[], index: number): boolean {
   )
 }
 
-export function AgentActivity({ events, status }: { events: AgentEvent[]; status: AgentStatus }) {
+export function AgentActivity({
+  events,
+  status,
+  activeStartedAt,
+}: {
+  events: AgentEvent[]
+  status: AgentStatus
+  activeStartedAt?: number
+}) {
   const active = status === "thinking" || status === "tool-calling"
   const [lastToolAt, setLastToolAt] = useState<number | null>(null)
   const [elapsed, setElapsed] = useState(0)
@@ -88,6 +105,12 @@ export function AgentActivity({ events, status }: { events: AgentEvent[]; status
       return
     }
 
+    if (activeStartedAt) {
+      setLastToolAt(activeStartedAt)
+      setElapsed(Math.round((Date.now() - activeStartedAt) / 1000))
+      return
+    }
+
     if (latestToolSignature) {
       setLastToolAt(Date.now())
       setElapsed(0)
@@ -95,7 +118,7 @@ export function AgentActivity({ events, status }: { events: AgentEvent[]; status
     }
 
     setLastToolAt((current) => current ?? Date.now())
-  }, [active, latestToolSignature])
+  }, [active, activeStartedAt, latestToolSignature])
 
   useEffect(() => {
     if (!active || lastToolAt === null) {
@@ -136,6 +159,7 @@ export function AgentActivity({ events, status }: { events: AgentEvent[]; status
           <div key={i}>
             {event.type === "tool-call" && <ToolCallCard event={event} />}
             {event.type === "text" && <TextMessage content={event.content} />}
+            {event.type === "user-message" && <UserMessage content={event.content} />}
           </div>
         )
       })}

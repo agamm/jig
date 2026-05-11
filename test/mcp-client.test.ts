@@ -109,6 +109,65 @@ describe("callTool result normalization", () => {
       config: {} as any,
     } as any, "demo-tool", {})).rejects.toThrow("Bad request")
   })
+
+  it("normalizes Markdown markers in proxied Gmail HTML sends", async () => {
+    let sentArgs: any
+    await callTool({
+      client: {
+        callTool: async (request: any) => {
+          sentArgs = request.arguments
+          return { structuredContent: { ok: true } }
+        },
+        listTools: async () => ({ tools: [] }),
+      },
+      transport: {} as any,
+      serverName: "composio",
+      config: {} as any,
+    } as any, "COMPOSIO_MULTI_EXECUTE_TOOL", {
+      tools: [
+        {
+          tool_slug: "GMAIL_SEND_EMAIL",
+          arguments: {
+            to: "a@example.com",
+            subject: "Coach",
+            body: "<div>**TENSION:** Ship it\n**PATTERN:** Decide</div>",
+            is_html: true,
+          },
+        },
+      ],
+      sync_response_to_workbench: false,
+    })
+
+    const gmailArgs = sentArgs.tools[0].arguments
+    expect(gmailArgs.body).toContain("<strong>TENSION:</strong>")
+    expect(gmailArgs.body).toContain("<strong>PATTERN:</strong>")
+    expect(gmailArgs.body).not.toContain("**TENSION:**")
+    expect(gmailArgs.is_html).toBe(true)
+  })
+
+  it("turns Markdown-ish Gmail bodies into HTML before send", async () => {
+    let sentArgs: any
+    await callTool({
+      client: {
+        callTool: async (request: any) => {
+          sentArgs = request.arguments
+          return { structuredContent: { ok: true } }
+        },
+        listTools: async () => ({ tools: [] }),
+      },
+      transport: {} as any,
+      serverName: "workspace",
+      config: {} as any,
+    } as any, "gmail_send", {
+      to: "a@example.com",
+      subject: "Coach",
+      body: "**TENSION:** Ship it",
+      is_html: true,
+    })
+
+    expect(sentArgs.body).toBe("<p><strong>TENSION:</strong> Ship it</p>")
+    expect(sentArgs.is_html).toBe(true)
+  })
 })
 
 describe("shouldReconnectMcpConnection", () => {

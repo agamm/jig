@@ -1,5 +1,7 @@
-import { describe, expect, it } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it } from "bun:test"
+import { closeDb, openDb, upsertAgentSession } from "../src/db.js"
 import {
+  listUnderConstructionJigs,
   normalizeConversationHistory,
   renderConversationIntent,
 } from "../src/services/agent-service.js"
@@ -43,5 +45,52 @@ describe("agent authoring intent accumulation", () => {
     expect(transcript).toContain("User: Create a jig for GitHub trending via Apify.")
     expect(transcript).toContain("Assistant: I can do that. What timeframe?")
     expect(transcript).toContain("User: Use last week and output here.")
+  })
+})
+
+describe("under construction jigs", () => {
+  beforeEach(() => {
+    closeDb()
+    openDb(":memory:")
+  })
+
+  afterEach(() => {
+    closeDb()
+  })
+
+  function upsertDraftSession(overrides: { jigId?: string | null } = {}) {
+    upsertAgentSession({
+      session_id: "12345678-1234-4234-9234-123456789abc",
+      jig_id: overrides.jigId ?? null,
+      creation_mode: 1,
+      authoring_intent: "User: Test",
+      conversation_history: JSON.stringify([{ role: "user", content: "Test" }]),
+      authoring_policy: JSON.stringify({ requiresIntegration: false, buildResolutions: [] }),
+      messages: JSON.stringify([{ role: "user", content: "Test" }]),
+      events: JSON.stringify([{ type: "text", content: "Working" }]),
+      status: "waiting",
+      metrics: JSON.stringify({ round: 1 }),
+      created_at: 100,
+      updated_at: 200,
+      pending_ask_tool_call_id: null,
+      pending_ask_question: null,
+      draft_file_path: null,
+      draft_approval: null,
+    })
+  }
+
+  it("keeps the list id stable when a draft receives its target jig id", async () => {
+    upsertDraftSession()
+
+    let [draft] = await listUnderConstructionJigs()
+    expect(draft.id).toBe("draft-12345678")
+    expect(draft.name).toBe("Test")
+    expect(draft.underConstruction?.sessionId).toBe("12345678-1234-4234-9234-123456789abc")
+
+    upsertDraftSession({ jigId: "test_jig" })
+    ;[draft] = await listUnderConstructionJigs()
+    expect(draft.id).toBe("draft-12345678")
+    expect(draft.name).toBe("Test Jig")
+    expect(draft.underConstruction?.jigId).toBe("test_jig")
   })
 })

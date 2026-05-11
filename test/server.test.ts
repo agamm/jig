@@ -90,6 +90,73 @@ describe("start preflight", () => {
       expect(content).not.toContain("sdk/connections") // stale import pattern
     }
   })
+
+  it("reports the specific imported connection that is not generated", async () => {
+    const { missingConnectionsForJig } = await import("../src/services/connection-preflight.js")
+    const testJig = join(TEST_TMP_DIR, "missing-connection.ts")
+    writeFileSync(testJig, `
+import { jig } from "@jig/sdk"
+import { definitely_missing_connection } from "@jig/connections/definitely_missing_connection"
+
+export default jig("missing-connection", { trigger: { type: "manual" } }, async () => {
+  void definitely_missing_connection
+})
+`)
+    try {
+      expect(missingConnectionsForJig(testJig)).toEqual(["definitely_missing_connection"])
+    } finally {
+      rmSync(testJig, { force: true })
+    }
+  })
+
+  it("runs a jig outside the project root that imports @jig/sdk", async () => {
+    const { runJig } = await import("../src/runner.js")
+    const testJig = join(TEST_TMP_DIR, "external-sdk-import.ts")
+    writeFileSync(testJig, `
+import { jig } from "@jig/sdk"
+
+export default jig("external-sdk-import", { trigger: { type: "manual" } }, async (ctx) => {
+  await ctx.step("ok", [], async () => ctx.output("ok"))
+})
+`)
+
+    try {
+      const events: RunEvent[] = []
+      const result = await runJig(testJig, {}, (e) => events.push(e), { dryRun: true, silent: true })
+      expect(result.error).toBeUndefined()
+      expect(result.output).toContain("ok")
+      expect(events.some((e) => e.type === "done")).toBe(true)
+    } finally {
+      rmSync(testJig, { force: true })
+    }
+  })
+
+  it("checks a draft outside the project root that imports generated connections", async () => {
+    const connectionModule = join(PROJECT_ROOT, ".jig/connections/apify.ts")
+    if (!existsSync(connectionModule)) return
+
+    const { checkJigFile } = await import("../src/services/jig-checker.js")
+    const testJig = join(TEST_TMP_DIR, "external-connection-import.ts")
+    writeFileSync(testJig, `
+import { jig } from "@jig/sdk"
+import { apify } from "@jig/connections/apify.js"
+
+export default jig("external-connection-import", {
+  trigger: { type: "manual" },
+  tools: [apify.call_actor],
+}, async (ctx) => {
+  await ctx.step("ok", [apify.call_actor], async () => {
+    ctx.output("ok")
+  })
+})
+`)
+
+    try {
+      expect(await checkJigFile(testJig)).toBe("ok")
+    } finally {
+      rmSync(testJig, { force: true })
+    }
+  })
 })
 
 describe("index exports", () => {

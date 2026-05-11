@@ -1,5 +1,4 @@
-import type { RunDetail, StartRunResponse } from "../../shared/api.js"
-import { PROJECT_ROOT } from "../config/paths.js"
+import type { CancelRunResponse, RunDetail, StartRunResponse } from "../../shared/api.js"
 import { getRun, insertRun, openDb } from "../db.js"
 import { discoverAllJigs } from "./jig-api.js"
 import { runJig, persist } from "../runner.js"
@@ -9,6 +8,24 @@ import { abortRunForJig, applyRunEvent, discardTrackedRun, finishTrackedRun, get
 import { resolveJigPath } from "../domain/jig-source.js"
 import { existsSync } from "fs"
 import { maybeNotifyRunFailure } from "./run-failure-notify.js"
+import { missingConnectionsForJig } from "./connection-preflight.js"
+
+function assertConnectionsReady(jigPath: string): void {
+  const missing = missingConnectionsForJig(jigPath)
+  if (missing.length === 0) return
+
+  throw new ApiError(
+    400,
+    missing.length === 1
+      ? `Connection required: ${missing[0]}`
+      : `Connections required: ${missing.join(", ")}`,
+    {
+      code: "missing_connections",
+      requiredConnections: missing,
+      connectionStatuses: missing.map((name) => ({ name, connected: false })),
+    },
+  )
+}
 
 export async function startJigRun(id: string, body: any): Promise<StartRunResponse> {
   const discovered = discoverAllJigs()
@@ -18,9 +35,7 @@ export async function startJigRun(id: string, body: any): Promise<StartRunRespon
   const jigPath = resolveJigPath(id)
 
   if (!existsSync(jigPath)) throw new ApiError(404, "Jig file not found")
-  if (!existsSync(`${PROJECT_ROOT}/.jig/connections/index.ts`)) {
-    throw new ApiError(400, "No connections found. Run 'jig connect <server>' first.")
-  }
+  assertConnectionsReady(jigPath)
   if (hasActiveRunForJig(id)) throw new ApiError(409, `A run is already in progress for ${id}`)
 
   const runId = dryRun ? -Date.now() : insertRun(id)
@@ -32,9 +47,19 @@ export async function startJigRun(id: string, body: any): Promise<StartRunRespon
   ;(async () => {
     let skipped = false
     try {
+      console.log(`[run] ${id} started (runId=${runId}${dryRun ? ", dryRun" : ""})`)
       const result = await runJig(jigPath, {}, (event) => {
         if (event.type !== "skipped") applyRunEvent(runId, event)
         if (event.type !== "skipped") persistHandler?.(event)
+        // Mirror step failures + fatal errors to console.error so the Logs
+        // page surfaces *why* a run failed (otherwise silent:true hides it).
+        if (event.type === "step-done" && event.status === "fail") {
+          console.error(`[run] ${id} step ${event.seq} failed: ${event.error ?? "(no error message)"}`)
+        } else if (event.type === "error") {
+          console.error(`[run] ${id} error: ${event.message}`)
+        } else if (event.type === "done") {
+          console.log(`[run] ${id} done in ${event.durationMs}ms`)
+        }
       }, { dryRun, silent: true, signal: getSignalForRun(runId) })
       if (result.skipped && !dryRun) {
         skipped = true
@@ -121,7 +146,7 @@ export function getRunDetail(runId: number): RunDetail {
   }
 }
 
-export async function cancelActiveRun(jigId?: string): Promise<{ ok: true; jigId: string }> {
+export async function cancelActiveRun(jigId?: string): Promise<CancelRunResponse> {
   if (!jigId) {
     // Cancel the first active run (backward compat)
     const status = getActiveRunStatusForJig()

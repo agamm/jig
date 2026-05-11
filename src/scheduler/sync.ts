@@ -9,6 +9,7 @@ import { JIGS_DIR } from "../config/paths.js"
 import { discoverJigs } from "../discover.js"
 import { extractTriggerConfig, resolveJigPath } from "../domain/jig-source.js"
 import { deleteSchedule, getSchedule, listAllSchedules, setScheduleError, upsertSchedule } from "../db.js"
+import { schedulerTimeZone } from "../config/timezone.js"
 import { computeNextRun } from "./cron-utils.js"
 
 function readTriggerConfig(jigId: string) {
@@ -45,14 +46,18 @@ export async function syncSchedules(): Promise<void> {
     if (trigger.type === "cron" && trigger.cron) {
       const cronExpr = trigger.cron
       const missedStrategy = trigger.missedStrategy ?? "catch-up"
+      const timezone = schedulerTimeZone()
 
-      // Only recompute next_run_at if cron changed or no existing schedule
+      // Only recompute next_run_at when the schedule definition changed. This
+      // preserves already-due runs during regular sync, while migrating old UTC
+      // schedules once because their stored timezone is null.
       const cronChanged = !existing || existing.cron_expr !== cronExpr
-      const computedNextRunAt = cronChanged ? computeNextRun(cronExpr) : existing.next_run_at
+      const timezoneChanged = !existing || existing.timezone !== timezone
+      const computedNextRunAt = cronChanged || timezoneChanged ? computeNextRun(cronExpr, timezone) : existing.next_run_at
       const nextRunAt = computedNextRunAt ?? existing?.next_run_at ?? null
       const syncError = computedNextRunAt === null ? `Invalid cron expression: ${cronExpr}` : null
 
-      upsertSchedule(jigId, "cron", cronExpr, missedStrategy, nextRunAt, syncError)
+      upsertSchedule(jigId, "cron", cronExpr, missedStrategy, nextRunAt, syncError, timezone)
       continue
     }
 

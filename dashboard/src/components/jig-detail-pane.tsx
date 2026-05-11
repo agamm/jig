@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect, useRef } from "react";
-import type { JigStepTool, ScheduleInfo } from "@shared/api";
+import type { AgentEvent, JigStepTool, ScheduleInfo } from "@shared/api";
 import type { Jig } from "@/types/jig";
 import { ConnectionTag } from "@/components/connection-tag";
 import { HighlightedCode } from "@/components/highlighted-code";
@@ -22,8 +22,9 @@ import { MarkdownOutput } from "@/components/markdown-output";
 import { useElapsed } from "@/hooks/use-elapsed";
 import { useJigToolApproval } from "@/lib/jig-tool-approval";
 import { formatElapsed } from "@/lib/format";
-import { deleteJig } from "@/lib/api";
-import { useJigSteps } from "@/lib/swr";
+import { deleteJig, updateSchedule } from "@/lib/api";
+import { useJigSteps, useConnections } from "@/lib/swr";
+import { ServiceIcon } from "@/components/service-icon";
 import { PaneHeader } from "@/components/pane-header";
 import { PaneSection } from "@/components/pane-section";
 import { SegmentedControl } from "@/components/segmented-control";
@@ -33,6 +34,46 @@ import { buildRemovalInstruction, getReviewableToolKeys, sameTool, toolKey } fro
 
 const statusDot = (s: string) =>
   s === "healthy" ? "bg-emerald-400" : s === "attention" ? "bg-amber-400" : "bg-rose-400";
+
+type DirectWriteNotice = {
+  key: string;
+  file: string;
+  message: string;
+};
+
+function fileLabel(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
+}
+
+function latestDirectWriteNotice(events: AgentEvent[], sessionId: string | null): DirectWriteNotice | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i];
+    if (event.type !== "tool-call" || event.tool !== "write_jig_file" || event.status !== "done" || !event.result) {
+      continue;
+    }
+
+    let result: { ok?: unknown; path?: unknown; draft?: unknown };
+    try {
+      result = JSON.parse(event.result);
+    } catch {
+      continue;
+    }
+
+    if (result.ok !== true || result.draft === true || typeof result.path !== "string") continue;
+
+    const message = typeof event.args.message === "string" && event.args.message.trim()
+      ? event.args.message.trim()
+      : "Updated jig source";
+
+    return {
+      key: `${sessionId ?? "session"}:${i}:${result.path}:${message}`,
+      file: fileLabel(result.path),
+      message,
+    };
+  }
+
+  return null;
+}
 
 function formatScheduleTime(iso: string | null): string {
   if (!iso) return "—";
@@ -50,12 +91,7 @@ function ScheduleSection({ schedule, jigId, onRefresh }: { schedule: ScheduleInf
   const handleToggle = async () => {
     setToggling(true);
     try {
-      const res = await fetch(`/api/schedules/${encodeURIComponent(jigId)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled: !schedule.enabled }),
-      });
-      if (!res.ok) throw new Error("Failed to update schedule");
+      await updateSchedule(jigId, { enabled: !schedule.enabled });
       await onRefresh?.();
     } catch {
       toast.error("Failed to update schedule");
@@ -105,6 +141,12 @@ function ScheduleSection({ schedule, jigId, onRefresh }: { schedule: ScheduleInf
             <div className="flex items-center gap-1.5">
               <span className="text-[9px] text-[#444] uppercase tracking-wider">If Missed</span>
               <span className="text-[10px] font-mono text-[#888]">{schedule.missedStrategy}</span>
+            </div>
+          )}
+          {schedule.triggerType === "cron" && schedule.timezone && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-[9px] text-[#444] uppercase tracking-wider">TZ</span>
+              <span className="text-[10px] font-mono text-[#888]">{schedule.timezone}</span>
             </div>
           )}
         </div>
@@ -276,14 +318,38 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
   const tools = jig.settings.tools ?? [];
   const toolApproval = useJigToolApproval(tools, jig.settings.permissions, onRefresh);
   const previousAutoRemovalRef = useRef("");
+  const lastEditToastRef = useRef("");
 
-  const { mode, liveSteps, completedTools, activeTools, toolReadOnly, startRun, dismiss, cancelRun, isRunning, canCancel } = useJigRun(jigId);
+  // Pre-run gate: if the jig imports connections that aren't currently
+  // connected, ask before firing off a run — otherwise we'd silently
+  // trigger an OAuth popup from the runtime's first tool call, which
+  // surprises users.
+  const { data: allConnections } = useConnections();
+  const [missingConnections, setMissingConnections] = useState<string[] | null>(null);
+  const runOptions = useMemo(() => ({
+    onMissingConnections: (connections: string[]) => setMissingConnections(connections),
+  }), []);
+  const { mode, liveSteps, completedTools, activeTools, toolReadOnly, startRun, dismiss, cancelRun, isRunning, canCancel } = useJigRun(jigId, runOptions);
+  const requiredConnections: string[] = jig.settings.connections ?? [];
+  const disconnectedRequired: string[] = (() => {
+    if (!allConnections) return []
+    const connectedSet = new Set(allConnections.filter((c) => c.connected).map((c) => c.name))
+    return requiredConnections.filter((n: string) => !connectedSet.has(n))
+  })();
 
   const agent = useAgent(async () => {
     await onRefresh?.();
     // Revalidate steps after jig data refreshes — ensures new code hash is used
     await revalidateSteps();
   });
+
+  useEffect(() => {
+    if (agent.status !== "done") return;
+    const notice = latestDirectWriteNotice(agent.events, agent.sessionId);
+    if (!notice || lastEditToastRef.current === notice.key) return;
+    lastEditToastRef.current = notice.key;
+    toast.success(`Jig updated: ${notice.file}\nChanged: ${notice.message}`, { durationMs: null });
+  }, [agent.events, agent.sessionId, agent.status]);
 
   // Fetch derived steps via SWR (cached server-side by code hash)
   const { data: stepsData, isValidating: derivingSteps, error: stepsError, mutate: revalidateSteps } = useJigSteps(jigId);
@@ -364,8 +430,21 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
   }, [removalInstruction]);
 
   const handleRun = (dryRun: boolean) => {
+    if (disconnectedRequired.length > 0) {
+      setMissingConnections(disconnectedRequired);
+      return;
+    }
     setDetailTab("steps");
     startRun(dryRun);
+  };
+
+  const dismissMissingConnectionsDialog = () => {
+    setMissingConnections(null);
+  };
+
+  const openConnectionFromDialog = (name: string) => {
+    setMissingConnections(null);
+    onConnectionClick?.(name);
   };
 
   const retryDerivation = () => { revalidateSteps(); };
@@ -413,6 +492,14 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
         onConfirm={handleDelete}
         onClose={() => !deleting && setConfirmDeleteOpen(false)}
       />
+
+      {missingConnections && missingConnections.length > 0 && (
+        <MissingConnectionsDialog
+          connections={missingConnections}
+          onConnect={openConnectionFromDialog}
+          onCancel={dismissMissingConnectionsDialog}
+        />
+      )}
 
       <PaneHeader
         title={jig.name}
@@ -681,6 +768,7 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
         <PaneSection title="History">
           <JigVersions
             jigId={jigId}
+            refreshKey={jig.code}
             onRestored={handleVersionRestored}
           />
         </PaneSection>
@@ -738,5 +826,74 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
         />
       </div>
     </aside>
+  );
+}
+
+/**
+ * Pre-run gate: this jig imports connections that aren't authorized yet.
+ * Gives the user an explicit connection path instead of surfacing the
+ * runtime's missing generated-module error after the run has already failed.
+ */
+function MissingConnectionsDialog({
+  connections,
+  onConnect,
+  onCancel,
+}: {
+  connections: string[];
+  onConnect: (name: string) => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/60 px-4"
+      onClick={onCancel}
+    >
+      <div
+        className="w-full max-w-md rounded-xl border border-[#2a2a2e] bg-[#111113] shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+        style={{ animation: "fade-up 0.15s ease" }}
+      >
+        <div className="border-b border-[#1f1f23] px-5 py-4">
+          <h3 className="text-[14px] font-semibold text-[#ededed]">
+            {connections.length === 1 ? "Connection required" : "Connections required"}
+          </h3>
+          <p className="mt-1 text-[12px] leading-relaxed text-[#666]">
+            This jig uses {connections.length === 1 ? "a service" : "services"} that {connections.length === 1 ? "isn't" : "aren't"} authorized yet. Connect {connections.length === 1 ? "it" : "them"} before running.
+          </p>
+        </div>
+
+        <div className="px-5 py-3 space-y-1.5">
+          {connections.map((name) => (
+            <div
+              key={name}
+              className="flex items-center justify-between gap-3 rounded-lg border border-[#1f1f23] bg-[#0d0d0f] px-3 py-2.5"
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <ServiceIcon name={name} size={16} />
+                <span className="truncate text-[13px] text-[#ededed] capitalize">{name}</span>
+                <span className="rounded-full border border-[#2a2a2e] bg-[#1a1a1d] px-1.5 py-0.5 text-[9px] text-[#888]">
+                  not connected
+                </span>
+              </div>
+              <button
+                onClick={() => onConnect(name)}
+                className="rounded-md border border-emerald-500/30 bg-emerald-500/[0.08] px-2.5 py-1 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/[0.14] transition-colors"
+              >
+                Connect
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex justify-end border-t border-[#1f1f23] px-5 py-4">
+          <button
+            onClick={onCancel}
+            className="rounded-md border border-[#2a2a2e] bg-[#0a0a0b] px-3 py-1.5 text-[12px] text-[#888] hover:text-[#ededed] transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

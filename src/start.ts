@@ -174,7 +174,9 @@ export async function startServer(options?: { port?: number }) {
 
   await ensureDashboardInstalled()
 
-  // Verify connection files are up-to-date (regenerate if they reference missing modules)
+  // Verify connection files are up-to-date. Service-mode connection modules
+  // live under /data, so relative imports like ../../src/... resolve to /src,
+  // not the deployed /app/src. Regenerate old modules on boot.
   const connectionsDir = CONNECTIONS_DIR
   if (existsSync(connectionsDir)) {
     const indexFile = `${connectionsDir}/index.ts`
@@ -183,7 +185,7 @@ export async function startServer(options?: { port?: number }) {
       const files = readdirSync(connectionsDir).filter(f => f.endsWith(".ts") && f !== "index.ts")
       for (const file of files) {
         const content = readFileSync(`${connectionsDir}/${file}`, "utf-8")
-        if (content.includes("sdk/connections")) {
+        if (content.includes("sdk/connections") || content.includes("\"../../src/") || content.includes("from \"../../src/")) {
           console.log(`Stale connection files detected. Regenerating...`)
           const regen = Bun.spawn(["bun", "run", "src/mcp/typegen.ts"], { cwd: PROJECT_ROOT, stdout: "inherit", stderr: "inherit" })
           await regen.exited

@@ -2,15 +2,16 @@
 
 import { useEffect, useState } from "react";
 import { Button } from "@/components/button";
-import { ConfirmDialog } from "@/components/confirm-dialog";
 import { TextInput } from "@/components/input";
 import { ServiceIcon } from "@/components/service-icon";
 import { LoadingState, Notice } from "@/components/state-panel";
-import { fetchNotificationSettings, resetLocalState, saveNotificationSettings, sendTestNotification } from "@/lib/api";
+import { fetchNotificationSettings, saveNotificationSettings, sendTestNotification } from "@/lib/api";
 import type {
   NotificationCapableTool,
   NotificationChannel,
+  NotificationHealth,
   NotificationSettings,
+  NotificationTestStatus,
 } from "@shared/api";
 
 type ChannelDraft = {
@@ -49,14 +50,14 @@ function formatFieldLabel(field: string): string {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-export function NotificationsSettings({ onReset }: { onReset?: () => Promise<void> | void } = {}) {
+export function NotificationsSettings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveConfirmed, setSaveConfirmed] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [resetting, setResetting] = useState(false);
-  const [confirmResetOpen, setConfirmResetOpen] = useState(false);
   const [tools, setTools] = useState<NotificationCapableTool[]>([]);
+  const [health, setHealth] = useState<NotificationHealth | null>(null);
+  const [testStatus, setTestStatus] = useState<NotificationTestStatus | null>(null);
   const [drafts, setDrafts] = useState<Record<string, ChannelDraft>>({});
   const [triggerOnFail, setTriggerOnFail] = useState(true);
   const [status, setStatus] = useState<string | null>(null);
@@ -67,6 +68,8 @@ export function NotificationsSettings({ onReset }: { onReset?: () => Promise<voi
       .then((data) => {
         if (cancelled) return;
         setTools(data.availableTools);
+        setHealth(data.health);
+        setTestStatus(data.testStatus);
         const next: Record<string, ChannelDraft> = {};
         for (const t of data.availableTools) {
           const key = channelKey(t.connection, t.tool);
@@ -124,7 +127,9 @@ export function NotificationsSettings({ onReset }: { onReset?: () => Promise<voi
     setSaveConfirmed(false);
     setStatus(null);
     try {
-      await saveNotificationSettings(buildSettings());
+      const data = await saveNotificationSettings(buildSettings());
+      setHealth(data.health);
+      setTestStatus(data.testStatus);
       setSaveConfirmed(true);
       setStatus("Saved.");
     } catch (e: unknown) {
@@ -139,8 +144,16 @@ export function NotificationsSettings({ onReset }: { onReset?: () => Promise<voi
     setStatus(null);
     try {
       // Save first so the test reflects the current draft
-      await saveNotificationSettings(buildSettings());
+      const data = await saveNotificationSettings(buildSettings());
+      setHealth(data.health);
+      setTestStatus(data.testStatus);
       const report = await sendTestNotification();
+      setTestStatus({
+        at: new Date().toISOString(),
+        ok: report.sent.length > 0 && report.errors.length === 0,
+        sent: report.sent.length,
+        errors: report.errors.length,
+      });
       const okCount = report.sent.length;
       const errCount = report.errors.length;
       if (errCount === 0) setStatus(`Test sent to ${okCount} channel${okCount === 1 ? "" : "s"}.`);
@@ -157,28 +170,6 @@ export function NotificationsSettings({ onReset }: { onReset?: () => Promise<voi
     setDrafts((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
   }
 
-  async function onResetConfirm() {
-    setResetting(true);
-    setStatus(null);
-    try {
-      const result = await resetLocalState();
-      setConfirmResetOpen(false);
-      const deletedJigs = Array.isArray(result.deletedJigs) ? result.deletedJigs : [];
-      const disconnectedConnections = Array.isArray(result.disconnectedConnections) ? result.disconnectedConnections : [];
-      const disconnected = disconnectedConnections.length;
-      setStatus(
-        disconnected > 0
-          ? `Reset complete. Removed ${deletedJigs.length} jig${deletedJigs.length === 1 ? "" : "s"} and disconnected ${disconnected} connection${disconnected === 1 ? "" : "s"}.`
-          : `Reset complete. Removed ${deletedJigs.length} jig${deletedJigs.length === 1 ? "" : "s"}.`
-      );
-      await onReset?.();
-    } catch (e: unknown) {
-      setStatus(`Reset failed: ${(e as Error)?.message ?? String(e)}`);
-    } finally {
-      setResetting(false);
-    }
-  }
-
   if (loading) {
     return <LoadingState message="Loading notification settings…" />;
   }
@@ -188,17 +179,6 @@ export function NotificationsSettings({ onReset }: { onReset?: () => Promise<voi
 
   return (
     <div className="space-y-4">
-      <ConfirmDialog
-        open={confirmResetOpen}
-        title="Start from scratch?"
-        message="This will delete all local jig files, clear the local SQLite database, and disconnect saved connections on this machine. Example jigs in examples/ are kept. The app will return to onboarding."
-        confirmLabel="Delete Everything"
-        destructive
-        loading={resetting}
-        onConfirm={onResetConfirm}
-        onClose={() => !resetting && setConfirmResetOpen(false)}
-      />
-
       <div className="rounded-xl border border-[#1f1f23] bg-[#111113] px-4 py-4 space-y-3.5">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1">
@@ -237,6 +217,18 @@ export function NotificationsSettings({ onReset }: { onReset?: () => Promise<voi
           <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-input)] px-3 py-2.5 text-[11px] text-[var(--text-muted)]">
             Delivery is paused. Channel settings stay saved here and will resume when you turn failure notifications back on.
           </div>
+        ) : null}
+
+        {health && !health.ok ? (
+          <Notice tone="danger" title="Failure alerts are not protected">
+            Scheduled jigs can fail without reaching you. {health.reasons.join(" ")}
+          </Notice>
+        ) : null}
+
+        {testStatus?.ok ? (
+          <Notice tone="success">
+            Last notification test succeeded at {new Date(testStatus.at).toLocaleString()}.
+          </Notice>
         ) : null}
 
         {tools.length === 0 ? (
@@ -363,21 +355,6 @@ export function NotificationsSettings({ onReset }: { onReset?: () => Promise<voi
             {status}
           </Notice>
         )}
-      </div>
-
-      <div className="space-y-3 pt-2">
-        <h4 className="text-[12px] text-rose-300 uppercase tracking-wider">Danger Zone</h4>
-        <div className="rounded-lg border border-rose-500/20 bg-rose-500/[0.05] px-4 py-4 space-y-3">
-          <div>
-            <p className="text-[13px] text-rose-100">Start from scratch</p>
-            <p className="mt-1 text-[11px] leading-relaxed text-rose-100/60">
-              Deletes all local jigs, clears saved connection auth on this machine, and returns the dashboard to onboarding. Example jigs in <code className="text-rose-100/80">examples/</code> are preserved.
-            </p>
-          </div>
-          <Button onClick={() => setConfirmResetOpen(true)} disabled={resetting} variant="danger" size="md">
-            {resetting ? "Deleting…" : "Delete Local Data"}
-          </Button>
-        </div>
       </div>
     </div>
   );

@@ -4,10 +4,12 @@ export function matchRoute(pathname: string): { handler: string; params: Record<
   if (pathname === "/api/health") return { handler: "health", params: {} }
   if (pathname === "/api/unlock") return { handler: "unlock", params: {} }
   if (pathname === "/api/setup-password") return { handler: "setupPassword", params: {} }
+  if (pathname === "/api/change-password") return { handler: "changePassword", params: {} }
   if (pathname === "/api/onboarding/complete") return { handler: "completeOnboarding", params: {} }
   if (pathname === "/api/oauth/callback") return { handler: "oauthCallback", params: {} }
   if (pathname === "/api/events") return { handler: "liveUpdates", params: {} }
-  if (pathname === "/api/models") return { handler: "getModels", params: {} }
+  if (pathname === "/api/models") return { handler: "models", params: {} }
+  if (pathname === "/api/models/catalog") return { handler: "modelsCatalog", params: {} }
   if (pathname === "/api/jigs") return { handler: "listJigs", params: {} }
   if (pathname === "/api/examples") return { handler: "listExamples", params: {} }
 
@@ -19,6 +21,9 @@ export function matchRoute(pathname: string): { handler: string; params: Record<
 
   const connectMatch = pathname.match(/^\/api\/connections\/([^/]+)\/connect$/)
   if (connectMatch) return { handler: "connectConnection", params: { name: decodeURIComponent(connectMatch[1]) } }
+
+  const disconnectMatch = pathname.match(/^\/api\/connections\/([^/]+)\/disconnect$/)
+  if (disconnectMatch) return { handler: "disconnectConnection", params: { name: decodeURIComponent(disconnectMatch[1]) } }
 
   const connMatch = pathname.match(/^\/api\/connections\/([^/]+)$/)
   if (connMatch) return { handler: "getConnection", params: { name: decodeURIComponent(connMatch[1]) } }
@@ -101,8 +106,10 @@ export function matchRoute(pathname: string): { handler: string; params: Record<
 
   if (pathname === "/api/settings/notifications") return { handler: "notificationSettings", params: {} }
   if (pathname === "/api/settings/notifications/test") return { handler: "notificationSettingsTest", params: {} }
+  if (pathname === "/api/settings/system") return { handler: "systemSettings", params: {} }
   if (pathname === "/api/settings/reset-local") return { handler: "resetLocalState", params: {} }
   if (pathname === "/api/permissions") return { handler: "toolPermissions", params: {} }
+  if (pathname === "/api/logs") return { handler: "serverLogs", params: {} }
 
   const webhookMatch = pathname.match(/^\/api\/webhooks\/([^/]+)$/)
   if (webhookMatch) {

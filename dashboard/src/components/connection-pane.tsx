@@ -9,7 +9,8 @@ import { PaneSection } from "@/components/pane-section"
 import { RotatingFrame } from "@/components/rotating-frame"
 import { ServiceIcon } from "@/components/service-icon"
 import { EmptyState, LoadingState, Notice } from "@/components/state-panel"
-import { connectConnection, fetchConnections } from "@/lib/api"
+import { connectConnection, disconnectConnection, fetchConnection, fetchConnections } from "@/lib/api"
+import { ConfirmDialog } from "@/components/confirm-dialog"
 import { useConnection } from "@/lib/swr"
 import { runConnectFlow } from "@shared/connect-flow"
 
@@ -57,6 +58,9 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
   const [missingCredentials, setMissingCredentials] = useState<string[]>([])
   const [credentialValues, setCredentialValues] = useState<Record<string, string>>({})
   const [awaitingCredentialKey, setAwaitingCredentialKey] = useState<string | null>(null)
+  const [oauthUrl, setOauthUrl] = useState<string | null>(null)
+  const [confirmDisconnectOpen, setConfirmDisconnectOpen] = useState(false)
+  const [disconnecting, setDisconnecting] = useState(false)
   const { data: conn, isLoading: loading, error, mutate: reload } = useConnection(name)
   const credentialValuesRef = useRef<Record<string, string>>({})
   const pendingCredentialRef = useRef<{
@@ -96,7 +100,23 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
     setMissingCredentials([])
     setCredentialValues({})
     setAwaitingCredentialKey(null)
+    setOauthUrl(null)
   }, [name])
+
+  // Poll for completion while awaiting OAuth callback. Once the connection
+  // flips to connected, dismiss the pending-URL notice and refresh tools.
+  useEffect(() => {
+    if (!oauthUrl) return
+    const timer = setInterval(() => { void reload() }, 2000)
+    return () => clearInterval(timer)
+  }, [oauthUrl, reload])
+
+  useEffect(() => {
+    if (oauthUrl && conn?.connected) {
+      setOauthUrl(null)
+      setConnectStatus("Connected.")
+    }
+  }, [oauthUrl, conn?.connected])
 
   function prettifyUsedByLabel(jigId: string): string {
     return jigId
@@ -122,6 +142,11 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
     setAwaitingCredentialKey(null)
     pending.resolve(value)
     return true
+  }
+
+  async function refreshConnectionState() {
+    await mutate("connections")
+    await reload(await fetchConnection(name), false)
   }
 
   async function handleConnect() {
@@ -166,6 +191,16 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
             case "tools-discovered":
               setConnectStatus(`Connected. Discovered ${event.count} tool${event.count === 1 ? "" : "s"}.`)
               break
+            case "awaiting-oauth":
+              setConnectStatus(`Opening authorization window for ${event.server}. If nothing opens, click the link below.`)
+              setOauthUrl(event.authorizationUrl)
+              // Open in a new tab; the user authorizes, the callback fires
+              // server-side, and the background connect resolves. We poll
+              // fetchConnections to detect completion.
+              if (typeof window !== "undefined") {
+                try { window.open(event.authorizationUrl, "_blank", "noopener,noreferrer") } catch {}
+              }
+              break
             case "error":
               setConnectStatus(event.message)
               break
@@ -180,8 +215,7 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
       if (connectRunRef.current !== runId) return
       setMissingCredentials([])
       setCredentialValues({})
-      await mutate("connections")
-      await reload()
+      await refreshConnectionState()
     } catch (e: unknown) {
       if (controller.signal.aborted) {
         if (connectRunRef.current === runId) setConnectStatus("Connect cancelled.")
@@ -202,6 +236,28 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
     cancelPendingCredential("Connect cancelled")
     setConnecting(false)
     setConnectStatus("Connect cancelled.")
+  }
+
+  async function handleDisconnectConfirm() {
+    if (disconnecting) return
+    setDisconnecting(true)
+    setConnectStatus(null)
+    try {
+      await disconnectConnection(name)
+      setOauthUrl(null)
+      setMissingCredentials([])
+      setCredentialValues({})
+      setConnectStatus("Disconnected.")
+      await refreshConnectionState()
+    } catch (e) {
+      setConnectStatus(`Disconnect failed: ${(e as Error)?.message ?? String(e)}`)
+    } finally {
+      // Close the dialog either way — the error (if any) is visible in the
+      // pane's status notice, which reads better than a dialog stuck open
+      // behind a dimmed backdrop.
+      setConfirmDisconnectOpen(false)
+      setDisconnecting(false)
+    }
   }
 
   return (
@@ -252,6 +308,17 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
         }
       />
 
+      <ConfirmDialog
+        open={confirmDisconnectOpen}
+        title={`Disconnect ${name}?`}
+        message="Deletes stored OAuth tokens, closes the active MCP client, and removes generated tool schemas. Jigs that use this connection will fail until you reconnect."
+        confirmLabel="Disconnect"
+        destructive
+        loading={disconnecting}
+        onConfirm={handleDisconnectConfirm}
+        onClose={() => !disconnecting && setConfirmDisconnectOpen(false)}
+      />
+
       {/* Content */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
         {loading && (
@@ -294,6 +361,16 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
                         Cancel
                       </Button>
                     )}
+                    {conn.connected && !connecting && (
+                      <Button
+                        onClick={() => setConfirmDisconnectOpen(true)}
+                        variant="subtle"
+                        size="sm"
+                        disabled={disconnecting}
+                      >
+                        {disconnecting ? "Disconnecting…" : "Disconnect"}
+                      </Button>
+                    )}
                     <Button
                       onClick={handleConnect}
                       variant={conn.connected ? "subtle" : "success"}
@@ -322,6 +399,23 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
                   </Notice>
                 )}
 
+                {oauthUrl ? (
+                  <Notice tone="neutral" title="Authorize in a new tab">
+                    <div className="space-y-2">
+                      <p className="text-[11px] text-[var(--text-muted)]">
+                        A new tab should have opened. If it didn't (popup blocker?), click the link below. After authorizing, this pane will update automatically.
+                      </p>
+                      <a
+                        href={oauthUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/[0.08] px-2.5 py-1.5 text-[11px] text-emerald-300 hover:bg-emerald-500/[0.14]"
+                      >
+                        Open authorization URL <span>↗</span>
+                      </a>
+                    </div>
+                  </Notice>
+                ) : null}
                 {connectStatus ? (
                   <Notice tone={connectStatus.toLowerCase().startsWith("connected") ? "success" : connectStatus.toLowerCase().includes("failed") || connectStatus.toLowerCase().includes("error") ? "danger" : "neutral"}>
                     <div className="whitespace-pre-wrap">{connectStatus}</div>

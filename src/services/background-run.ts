@@ -4,12 +4,18 @@
  * Mirrors startJigRun() in run-api.ts but without HTTP request/response wrapping.
  */
 import { existsSync } from "fs"
-import { PROJECT_ROOT } from "../config/paths.js"
 import { completeRun, insertRun, markScheduleTriggered, openDb, setScheduleError } from "../db.js"
 import { resolveJigPath } from "../domain/jig-source.js"
 import { runJig, persist } from "../runner.js"
 import { applyRunEvent, discardTrackedRun, finishTrackedRun, getSignalForRun, hasActiveRunForJig, startTrackedRun } from "./run-store.js"
 import { maybeNotifyRunFailure } from "./run-failure-notify.js"
+import { missingConnectionsForJig } from "./connection-preflight.js"
+
+function missingConnectionsMessage(missingConnections: string[]): string {
+  return missingConnections.length === 1
+    ? `Connection required: ${missingConnections[0]}`
+    : `Connections required: ${missingConnections.join(", ")}`
+}
 
 export async function startBackgroundRun(jigId: string, params?: Record<string, unknown>): Promise<boolean> {
   if (hasActiveRunForJig(jigId)) return false
@@ -19,8 +25,15 @@ export async function startBackgroundRun(jigId: string, params?: Record<string, 
     setScheduleError(jigId, "Jig file not found")
     return false
   }
-  if (!existsSync(`${PROJECT_ROOT}/.jig/connections/index.ts`)) {
-    setScheduleError(jigId, "No connections found. Run 'jig connect <server>' first.")
+  const missingConnections = missingConnectionsForJig(jigPath)
+  if (missingConnections.length > 0) {
+    const error = missingConnectionsMessage(missingConnections)
+    const runId = insertRun(jigId, params)
+    markScheduleTriggered(jigId, Math.floor(Date.now() / 1000))
+    completeRun(runId, "fail", 0, error)
+    setScheduleError(jigId, error)
+    console.error(`[scheduler] ${jigId} failed preflight: ${error}`)
+    void maybeNotifyRunFailure(jigId, runId, false).catch(() => {})
     return false
   }
 
@@ -40,6 +53,13 @@ export async function startBackgroundRun(jigId: string, params?: Record<string, 
         applyRunEvent(runId, event)
         persistHandler(event)
       }
+      if (event.type === "step-done" && event.status === "fail") {
+        console.error(`[scheduler] ${jigId} step ${event.seq} failed: ${event.error ?? "(no error message)"}`)
+      } else if (event.type === "error") {
+        console.error(`[scheduler] ${jigId} error: ${event.message}`)
+      } else if (event.type === "done") {
+        console.log(`[scheduler] ${jigId} done in ${event.durationMs}ms`)
+      }
     }, { silent: true, signal: getSignalForRun(runId) })
 
     // If skipped, remove the run row — it never happened
@@ -53,6 +73,7 @@ export async function startBackgroundRun(jigId: string, params?: Record<string, 
     return true
   } catch (e: any) {
     setScheduleError(jigId, e?.message ?? String(e))
+    console.error(`[scheduler] ${jigId} failed: ${e?.message ?? e}`)
     completeRun(runId, "fail", Date.now() - startTime, e?.message ?? String(e))
   } finally {
     if (shouldFinishTrackedRun) {

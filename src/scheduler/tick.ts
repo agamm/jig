@@ -14,7 +14,7 @@ export function tick(): void {
     if (hasActiveRunForJig(schedule.jig_id)) continue
     if (!schedule.cron_expr) continue
 
-    const nextRunAt = computeNextRun(schedule.cron_expr)
+    const nextRunAt = computeNextRun(schedule.cron_expr, schedule.timezone ?? undefined)
     if (nextRunAt == null) {
       setScheduleError(schedule.jig_id, `Invalid cron expression: ${schedule.cron_expr}`)
       continue

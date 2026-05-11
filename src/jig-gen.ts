@@ -8,6 +8,7 @@ import { join, relative } from "path"
 import { existsSync, readFileSync, rmSync } from "fs"
 import ts from "typescript"
 import { llm, agent } from "./sdk/llm.js"
+import { getEditorModel } from "./config/models.js"
 import { discoverJigs } from "./discover.js"
 import { getServerConfig, loadServerConfigs } from "./mcp/config.js"
 import type { JigTool } from "./sdk/jig.js"
@@ -137,6 +138,10 @@ type AuthoringServerScope = {
   allServers: string[]
   newServers: string[]
   buildResolutionServers: string[]
+}
+
+type AssembleContextOptions = {
+  includeAllToolsWhenUnscoped?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -305,15 +310,27 @@ export async function buildAuthoringState(
   const { allServers, newServers, buildResolutionServers } = deriveAuthoringServerScope(importedServers, plan.servers)
 
   ensureResolvedIntegration(plan.needsIntegration, allServers, plan.unknownServers)
+  if (allServers.length > 0 || plan.unknownServers.length > 0) {
+    checkConnections(allServers, plan.unknownServers, serverConfigs)
+  }
 
   const buildResolutions = await resolveBuildTimeTargets(description, buildResolutionServers, serverConfigs, options.ask)
   ensureAuthoringDiscoveryResolved(description, buildResolutionServers, serverConfigs, buildResolutions)
-  const relevantTools = options.existingCode
-    ? (newServers.length > 0 || buildResolutions.length > 0
-        ? await selectTools(description, allServers, buildResolutions)
-        : [])
-    : await selectTools(description, plan.servers, buildResolutions)
-  const context = await assembleContext(allServers, relevantTools, buildResolutions)
+  let relevantTools: string[]
+  let includeAllToolsWhenUnscoped = true
+  if (options.existingCode) {
+    if (newServers.length > 0 || buildResolutions.length > 0) {
+      relevantTools = await selectTools(description, allServers, buildResolutions)
+    } else {
+      relevantTools = extractReferencedToolNames(options.existingCode, allServers)
+      includeAllToolsWhenUnscoped = false
+    }
+  } else {
+    relevantTools = await selectTools(description, plan.servers, buildResolutions)
+  }
+  const context = await assembleContext(allServers, relevantTools, buildResolutions, {
+    includeAllToolsWhenUnscoped,
+  })
 
   return {
     name: plan.name,
@@ -345,6 +362,36 @@ export function deriveAuthoringServerScope(importedServers: string[], plannedSer
     newServers,
     buildResolutionServers: [...new Set([...newServers, ...plannedServers])],
   }
+}
+
+export function extractReferencedToolNames(code: string, servers: string[]): string[] {
+  const found = new Set<string>()
+
+  for (const serverName of servers) {
+    const schemaPath = join(SCHEMAS_DIR, `${serverName}.json`)
+    if (!existsSync(schemaPath)) continue
+
+    let schemas: any[]
+    try {
+      schemas = JSON.parse(readFileSync(schemaPath, "utf-8"))
+    } catch {
+      continue
+    }
+
+    const byIdentifier = new Map<string, string>()
+    for (const tool of schemas) {
+      if (typeof tool?.name !== "string") continue
+      byIdentifier.set(toolNameToIdentifier(tool.name), tool.name)
+    }
+
+    const pattern = new RegExp(`\\b${escapeRegExp(serverName)}\\.([A-Za-z_$][\\w$]*)\\b`, "g")
+    for (const match of code.matchAll(pattern)) {
+      const toolName = byIdentifier.get(match[1])
+      if (toolName) found.add(toolName)
+    }
+  }
+
+  return [...found]
 }
 
 // ---------------------------------------------------------------------------
@@ -408,25 +455,13 @@ async function planJig(
     )
     .join("\n")
 
-  const keywordHints = entries
-    .map(([name, cfg]) => {
-      const desc = (cfg as any).description ?? ""
-      const keywords = desc.split(/[,&]+/).map((s: string) => s.trim()).filter(Boolean)
-      return keywords.length > 1
-        ? `If the user mentions ${keywords.join(", or ")}, the server key is "${name}".`
-        : ""
-    })
-    .filter(Boolean)
-    .join("\n")
-
   const result = await llm<{ servers: string[]; unknownServers: string[]; name: string; needsIntegration: boolean }>(
+    // Authoring-time planning uses the editor model, not the runtime main model.
     `Plan a workflow automation.
 
 ## Available servers (use ONLY these key names)
 Each entry is tagged [connected] or [not connected]. "Connected" means credentials are already set up; "not connected" means the user would have to run a connect flow before the jig can run.
 ${serverList}
-
-${keywordHints}
 
 ## Task
 For this workflow: "${description}"
@@ -443,9 +478,10 @@ Important:
 - If the user explicitly names one of the available servers or clearly references that provider/connection, include that exact server in "servers"
 - If the user says to do something via/using/through a specific server, prefer that server and do not add another server just because the target website or data source matches its brand
 - Only include an additional server when the workflow truly needs that server's own authenticated API, write actions, or first-party tools beyond what the explicit provider can already do
+- Server descriptions are capabilities, not keyword substitution rules. Do not infer a server solely from a product word when the user explicitly chose another available server.
 - Do not replace an explicitly named server with a different inferred alternative unless the named one is clearly impossible for the task`,
     {},
-    { schema: { servers: "array", unknownServers: "array", name: "string", needsIntegration: "boolean" } as any }
+    { schema: { servers: "array", unknownServers: "array", name: "string", needsIntegration: "boolean" } as any, model: getEditorModel() }
   )
 
   const validServers = (result.servers || []).filter(s => s in serverConfigs)
@@ -489,6 +525,7 @@ async function selectTools(
   buildResolutions: BuildTimeResolution[] = []
 ): Promise<string[]> {
   let toolList = ""
+  const availableToolNames: string[] = []
   const resolutionsByServer = new Map(buildResolutions.map((resolution) => [resolution.server, resolution]))
   for (const serverName of servers) {
     const schemaPath = join(SCHEMAS_DIR, `${serverName}.json`)
@@ -504,7 +541,13 @@ async function selectTools(
     })
     toolList += `\n## ${serverName}\n`
     for (const t of runtimeSchemas) {
-      toolList += `  ${t.name}: ${t.description ?? ""}\n`
+      if (typeof t.name !== "string") continue
+      availableToolNames.push(t.name)
+      // First-line-only: the selector only needs enough to know what the tool
+      // is for, not its full usage docs. Cuts the prompt ~3-5x on servers
+      // with verbose MCP descriptions (Gmail, Drive, Calendar).
+      const firstLine = (t.description ?? "").split("\n")[0].trim()
+      toolList += `  ${t.name}: ${firstLine}\n`
     }
   }
 
@@ -538,14 +581,45 @@ Start by including ALL tools from the relevant servers. Then remove only tools t
 
 Return "tools": an array of tool name strings.`,
     {},
-    { schema: { tools: "array" } as any }
+    { schema: { tools: "array" } as any, model: getEditorModel() }
   )
 
-  const selected = new Set(result.tools || [])
+  const excludedTools = buildResolutions.flatMap((resolution) => resolution.excludeTools ?? [])
+  const selected = new Set(normalizeSelectedToolNames(result.tools || [], availableToolNames, excludedTools))
   for (const resolution of buildResolutions) {
-    for (const tool of resolution.includeTools ?? []) selected.add(tool)
+    for (const tool of resolution.includeTools ?? []) {
+      if (availableToolNames.includes(tool) && !excludedTools.includes(tool)) selected.add(tool)
+    }
     for (const tool of resolution.excludeTools ?? []) selected.delete(tool)
   }
+  return [...selected]
+}
+
+export function normalizeSelectedToolNames(
+  selectedToolNames: unknown[],
+  availableToolNames: string[],
+  excludedToolNames: string[] = []
+): string[] {
+  const excluded = new Set(excludedToolNames)
+  const byAcceptedName = new Map<string, string>()
+  for (const toolName of availableToolNames) {
+    byAcceptedName.set(toolName, toolName)
+    byAcceptedName.set(toolNameToIdentifier(toolName), toolName)
+  }
+
+  const selected = new Set<string>()
+  for (const rawName of selectedToolNames) {
+    if (typeof rawName !== "string") continue
+    const toolName = byAcceptedName.get(rawName)
+    if (toolName && !excluded.has(toolName)) selected.add(toolName)
+  }
+
+  if (selected.size === 0) {
+    for (const toolName of availableToolNames) {
+      if (!excluded.has(toolName)) selected.add(toolName)
+    }
+  }
+
   return [...selected]
 }
 
@@ -638,7 +712,8 @@ async function loadReadOnlyTools(servers: string[], relevantTools?: string[]): P
 async function assembleContext(
   servers: string[],
   relevantToolNames?: string[],
-  buildResolutions: BuildTimeResolution[] = []
+  buildResolutions: BuildTimeResolution[] = [],
+  options: AssembleContextOptions = {}
 ): Promise<AuthoringContext> {
   const skillPath = join(PROJECT_ROOT, "SKILL.md")
   const rawSkillMd = existsSync(skillPath) ? await Bun.file(skillPath).text() : ""
@@ -647,6 +722,7 @@ async function assembleContext(
   let toolCatalog = ""
   let relevantSchemas = ""
   const toolSet = relevantToolNames?.length ? new Set(relevantToolNames) : null
+  const includeAllToolsWhenUnscoped = options.includeAllToolsWhenUnscoped ?? true
   const typeDefSections: string[] = []
   for (const serverName of servers) {
     const schemaPath = join(SCHEMAS_DIR, `${serverName}.json`)
@@ -654,7 +730,7 @@ async function assembleContext(
     const allSchemas: any[] = JSON.parse(readFileSync(schemaPath, "utf-8"))
     const scoped = toolSet
       ? allSchemas.filter((tool) => toolSet.has(tool.name))
-      : allSchemas
+      : includeAllToolsWhenUnscoped ? allSchemas : []
 
     if (scoped.length > 0) {
       typeDefSections.push(`// --- ${serverName}.d.ts ---\n${generateTypeDeclaration(serverName, scoped as any)}`)
@@ -973,7 +1049,7 @@ async function generateJigCode(
     existingCode: options?.edit?.existingCode,
   })
 
-  const result = await llm(prompt, {}, { maxTokens: 16384 })
+  const result = await llm(prompt, {}, { maxTokens: 16384, model: getEditorModel() })
   return result as string
 }
 
@@ -1012,7 +1088,7 @@ Rules:
 - Do not change the overall approach unless the current approach is invalid.
 - Output ONLY the corrected TypeScript code, no explanation, no markdown fences.`,
     {},
-    { maxTokens: 16384 }
+    { maxTokens: 16384, model: getEditorModel() }
   ) as string
 }
 
@@ -1183,7 +1259,7 @@ Review against the user's goal:
 If the jig accomplishes the goal correctly (even if dry-run stubs some writes), set ok=true and issues="".
 If there are real problems with correctness, missing functionality, or errors, set ok=false and describe specific issues to fix in the code.`,
     {},
-    { schema: { ok: "boolean", issues: "string" } }
+    { schema: { ok: "boolean", issues: "string" }, model: getEditorModel() }
   )
 
   return { issues: result.ok ? null : result.issues }
@@ -1216,7 +1292,7 @@ ${code}
 
 Fix the issues. Output ONLY the corrected TypeScript code, no explanation, no markdown fences.`,
     {},
-    { maxTokens: 16384 }
+    { maxTokens: 16384, model: getEditorModel() }
   ) as string
 }
 

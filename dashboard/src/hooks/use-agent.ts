@@ -26,7 +26,10 @@ function extractSuggestedConnections(error: any): SuggestedConnection[] {
   return []
 }
 
-export function useAgent(onComplete?: (jigId?: string) => void | Promise<void>) {
+export function useAgent(
+  onComplete?: (jigId?: string) => void | Promise<void>,
+  options: { persistOnUnmount?: boolean } = {},
+) {
   const [events, setEvents] = useState<AgentEvent[]>([])
   const [status, setStatus] = useState<AgentStatus>("idle")
   const [sessionId, setSessionId] = useState<string | null>(null)
@@ -52,11 +55,12 @@ export function useAgent(onComplete?: (jigId?: string) => void | Promise<void>) 
 
   useEffect(() => () => {
     cleanup()
+    if (options.persistOnUnmount) return
     const sid = sessionIdRef.current
     if (sid) {
       void closeAgentSession(sid).catch(() => {})
     }
-  }, [cleanup])
+  }, [cleanup, options.persistOnUnmount])
 
   const appendConversationTurn = useCallback((turn: AgentConversationTurn) => {
     const content = turn.content.trim()
@@ -87,6 +91,9 @@ export function useAgent(onComplete?: (jigId?: string) => void | Promise<void>) 
         setJigId(data.jigId ?? null)
         setMetrics(data.metrics)
         setDraftApproval(data.draftApproval)
+        if (data.conversationHistory) {
+          conversationRef.current = data.conversationHistory
+        }
 
         if (data.status === "done" || data.status === "error") {
           pollRef.current = null
@@ -110,7 +117,7 @@ export function useAgent(onComplete?: (jigId?: string) => void | Promise<void>) 
 
   const startSession = useCallback(async (instruction: string, targetJigId?: string): Promise<boolean> => {
     const previousSessionId = sessionIdRef.current
-    if (previousSessionId) {
+    if (previousSessionId && !options.persistOnUnmount) {
       await closeAgentSession(previousSessionId).catch(() => {})
       sessionIdRef.current = null
     }
@@ -147,7 +154,47 @@ export function useAgent(onComplete?: (jigId?: string) => void | Promise<void>) 
       }
       return false
     }
-  }, [appendConversationTurn, cleanup, poll])
+  }, [appendConversationTurn, cleanup, options.persistOnUnmount, poll])
+
+  const resumeSession = useCallback(async (sid: string): Promise<boolean> => {
+    if (!sid || sessionIdRef.current === sid) return true
+    cleanup()
+    const generation = generationRef.current
+    setEvents([])
+    setStatus("thinking")
+    setSessionId(sid)
+    sessionIdRef.current = sid
+    setJigId(null)
+    setRequiredConnections([])
+    setSuggestedConnections([])
+    setMetrics(undefined)
+    setDraftApproval(undefined)
+    sinceRef.current = 0
+
+    try {
+      const data = await fetchAgentStatus(sid, 0)
+      if (generationRef.current !== generation) return false
+      sinceRef.current = data.totalEvents
+      setEvents(data.events ?? [])
+      setStatus(data.status)
+      setJigId(data.jigId ?? null)
+      setMetrics(data.metrics)
+      setDraftApproval(data.draftApproval)
+      conversationRef.current = data.conversationHistory ?? []
+      if (data.status !== "done" && data.status !== "error") {
+        poll(sid, generation)
+      }
+      return true
+    } catch (e: any) {
+      if (generationRef.current === generation) {
+        setStatus("error")
+        setEvents([{ type: "text", content: e?.message ?? "Unknown error" }])
+        setSessionId(null)
+        sessionIdRef.current = null
+      }
+      return false
+    }
+  }, [cleanup, poll])
 
   const sendMessage = useCallback(async (message: string): Promise<boolean> => {
     if (!sessionId) return false
@@ -216,6 +263,7 @@ export function useAgent(onComplete?: (jigId?: string) => void | Promise<void>) 
     isWaiting,
     canSend,
     startSession,
+    resumeSession,
     sendMessage,
     approveDraft,
     reset,

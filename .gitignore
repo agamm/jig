@@ -6,5 +6,6 @@ jig.db*
 .worktrees/
 jig_debug.log
 .next
+src/config/deploy-defaults.generated.json
 
 jigs/.git

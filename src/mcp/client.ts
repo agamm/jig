@@ -10,7 +10,8 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js"
 import type { ServerConfig } from "./config.js"
 import { resolveToken } from "./config.js"
 import { JigOAuthProvider } from "./auth.js"
-import { PROJECT_ROOT, SCHEMAS_DIR } from "../config/paths.js"
+import { deleteCredentials } from "../db.js"
+import { SCHEMAS_DIR } from "../config/paths.js"
 import { runContext } from "../sdk/context.js"
 import { USER_CANCELLED_MESSAGE } from "../run-cancel.js"
 
@@ -175,10 +176,10 @@ async function connectWithOAuth(
     })
     return { client, transport, serverName: name, config }
   } catch (error) {
-    if (error instanceof UnauthorizedError) {
-      return finishOAuthAuthorization(name, config, authProvider, transport, options)
+    if (isAuthDeniedError(error)) {
+      return recoverOAuth(name, config, authProvider, transport, error, options)
     }
-    // StreamableHTTP failed for non-auth reason — try SSE
+    // StreamableHTTP failed for a non-auth reason — try SSE
     try {
       throwIfAborted(options.signal)
       const sseClient = new Client({ name: "jig", version: "0.1.0" })
@@ -192,12 +193,44 @@ async function connectWithOAuth(
       })
       return { client: sseClient, transport, serverName: name, config }
     } catch (sseError) {
-      if (sseError instanceof UnauthorizedError) {
-        return handleOAuthRedirect(name, config, authProvider, options)
+      if (isAuthDeniedError(sseError)) {
+        return recoverOAuth(name, config, authProvider, null, sseError, options)
       }
       throw sseError
     }
   }
+}
+
+/**
+ * Auth denied on connect. Two sub-cases:
+ *   1. No saved tokens yet (fresh install) → classic UnauthorizedError path;
+ *      run the authorization dance against the original transport so the
+ *      MCP SDK can pick up the code via `finishAuth`.
+ *   2. Saved tokens exist but were rejected (rotated / expired / revoked) →
+ *      nuke them and start a fresh OAuth round.
+ *
+ * We distinguish by checking the credentials table, not by inspecting the
+ * error's shape. The `transport` arg is only forwarded in case (1); pass
+ * `null` for paths where no transport was successfully constructed.
+ */
+async function recoverOAuth(
+  name: string,
+  config: ServerConfig & { type: "remote" },
+  authProvider: JigOAuthProvider,
+  transport: StreamableHTTPClientTransport | null,
+  error: unknown,
+  options: { signal?: AbortSignal },
+): Promise<McpConnection> {
+  const hasSavedTokens = (await authProvider.tokens()) !== undefined
+  if (hasSavedTokens) {
+    console.warn(`[jig] ${name}: saved OAuth credentials were rejected. Clearing and re-authorizing.`)
+    deleteCredentials(name)
+    return handleOAuthRedirect(name, config, new JigOAuthProvider(name), options)
+  }
+  // Fresh auth — reuse the existing transport when we have one so the SDK
+  // can call finishAuth on the same instance.
+  if (transport) return finishOAuthAuthorization(name, config, authProvider, transport, options)
+  return handleOAuthRedirect(name, config, authProvider, options)
 }
 
 async function finishOAuthAuthorization(
@@ -357,12 +390,14 @@ export async function ensureAnnotations(tools: Tool[], options: { signal?: Abort
     return `${t.name}: props=[${keys.join(",")}] required=[${required.join(",")}]`
   }).filter(Boolean).join("\n")
 
-  const result = await llm<{
+  let result: {
     readOnly: string[]
     destructive: string[]
     notification: Array<{ name: string; label: string; textField: string; recipientField: string; extraRequired?: string[] }>
-  }>(
-    `For each tool, determine:
+  }
+  try {
+    result = await llm<typeof result>(
+      `For each tool, determine:
 1. "readOnly": tools that ONLY retrieve/view data (no side effects)
 2. "destructive": tools that delete, overwrite, or permanently alter data
 3. "notification": tools that can SEND a short text alert to a human.
@@ -383,9 +418,13 @@ ${toolList}
 
 Input schemas (for notification field selection):
 ${schemaHints}`,
-    {},
-    { schema: { readOnly: "array", destructive: "array", notification: "array" } as any, signal: options.signal }
-  )
+      {},
+      { schema: { readOnly: "array", destructive: "array", notification: "array" } as any, signal: options.signal }
+    )
+  } catch (error) {
+    console.warn(`[typegen] annotation LLM failed; using deterministic hints: ${error instanceof Error ? error.message : String(error)}`)
+    result = inferToolAnnotations(tools)
+  }
   throwIfAborted(options.signal)
 
   const readOnlySet = new Set(result.readOnly ?? [])
@@ -411,6 +450,47 @@ ${schemaHints}`,
   }
 }
 
+function inferToolAnnotations(tools: Tool[]): {
+  readOnly: string[]
+  destructive: string[]
+  notification: Array<{ name: string; label: string; textField: string; recipientField: string; extraRequired?: string[] }>
+} {
+  const readOnly: string[] = []
+  const destructive: string[] = []
+  const notification: Array<{ name: string; label: string; textField: string; recipientField: string; extraRequired?: string[] }> = []
+
+  for (const tool of tools) {
+    const name = tool.name.toLowerCase()
+    if (/\b(delete|remove|trash|revoke|terminate)\b|_(delete|remove|trash|revoke|terminate)_?/.test(name)) {
+      destructive.push(tool.name)
+    } else if (/^(get|list|search|fetch|read|find)_|_(get|list|search|fetch|read|find)_/.test(name)) {
+      readOnly.push(tool.name)
+    }
+
+    const props = ((tool.inputSchema as any)?.properties ?? {}) as Record<string, unknown>
+    const required = Array.isArray((tool.inputSchema as any)?.required) ? (tool.inputSchema as any).required as string[] : []
+    if (name.includes("send") || name.includes("message") || name.includes("email")) {
+      const textField = firstExistingKey(props, ["text", "message", "body", "content"])
+      const recipientField = firstExistingKey(props, ["chat_id", "recipient_email", "to", "channel", "recipient", "user_id"])
+      if (textField && recipientField) {
+        notification.push({
+          name: tool.name,
+          label: tool.name.split("_")[0]?.replace(/^\w/, (c) => c.toUpperCase()) || tool.name,
+          textField,
+          recipientField,
+          extraRequired: required.filter((key) => key !== textField && key !== recipientField),
+        })
+      }
+    }
+  }
+
+  return { readOnly, destructive, notification }
+}
+
+function firstExistingKey(props: Record<string, unknown>, keys: string[]): string | null {
+  return keys.find((key) => key in props) ?? null
+}
+
 /**
  * Call a tool on a connected MCP server.
  */
@@ -431,43 +511,301 @@ export async function closeAllConnections(): Promise<void> {
   openConnections.clear()
 }
 
+/** Close a single open MCP connection by server name, if any. */
+export async function closeConnection(name: string): Promise<void> {
+  const conn = openConnections.get(name)
+  if (!conn) return
+  openConnections.delete(name)
+  try { await conn.transport.close() } catch {}
+  try { await conn.client.close() } catch {}
+}
+
 export async function callTool(
   connection: McpConnection,
   toolName: string,
   params: Record<string, unknown>,
   options?: { signal?: AbortSignal }
 ): Promise<unknown> {
-  await validateRequiredToolArguments(connection, toolName, params)
+  const normalizedParams = normalizeOutgoingToolParams(connection, toolName, params)
+  await validateRequiredToolArguments(connection, toolName, normalizedParams)
 
   const signal = options?.signal ?? runContext.getStore()?.signal
   const result = await connection.client.callTool({
     name: toolName,
-    arguments: params,
+    arguments: normalizedParams,
   }, undefined, signal ? { signal } : undefined)
   const normalized = normalizeToolResult(result)
+  if (result.isError) {
+    // MCP-standard error: isError flag is set. Use the normalized content as
+    // the message if it's a plain string or has a canonical `{error: "..."}`
+    // shape; otherwise fall back to a generic error.
+    const msg = errorMessageFromResult(normalized) ??
+      `Tool "${connection.serverName}.${toolName}" returned an error`
+    throw new Error(msg)
+  }
   const toolError = extractToolError(normalized)
-  if (result.isError || toolError) {
-    throw new Error(toolError ?? `Tool "${connection.serverName}.${toolName}" returned an error`)
+  if (toolError) {
+    throw new Error(toolError)
   }
   return normalized
 }
 
+function normalizeOutgoingToolParams(
+  connection: McpConnection,
+  toolName: string,
+  params: Record<string, unknown>,
+): Record<string, unknown> {
+  if (toolName === "COMPOSIO_MULTI_EXECUTE_TOOL" && Array.isArray(params.tools)) {
+    let changed = false
+    const tools = params.tools.map((tool) => {
+      if (!isRecord(tool)) return tool
+      if (typeof tool.tool_slug !== "string" || !isGmailSendSlug(tool.tool_slug)) return tool
+      const args = isRecord(tool.arguments) ? tool.arguments : {}
+      changed = true
+      return {
+        ...tool,
+        arguments: normalizeGmailSendArgs(args, true),
+      }
+    })
+    if (changed) return { ...params, tools }
+  }
+
+  if (
+    toolName === "COMPOSIO_MULTI_EXECUTE_TOOL" &&
+    typeof params.tool_slug === "string" &&
+    isGmailSendSlug(params.tool_slug)
+  ) {
+    const args = isRecord(params.arguments) ? params.arguments : {}
+    return {
+      ...params,
+      arguments: normalizeGmailSendArgs(args, true),
+    }
+  }
+
+  const combined = `${connection.serverName}.${toolName}`
+  if (/gmail/i.test(combined) && /send/i.test(toolName)) {
+    return normalizeGmailSendArgs(params, false)
+  }
+
+  return params
+}
+
+function isGmailSendSlug(slug: string): boolean {
+  return /gmail.*send|send.*gmail/i.test(slug)
+}
+
+function normalizeGmailSendArgs(args: Record<string, unknown>, preferHtml: boolean): Record<string, unknown> {
+  const bodyKey = ["body", "html", "message", "content"].find((key) => typeof args[key] === "string")
+  if (!bodyKey) return args
+
+  const rawBody = String(args[bodyKey])
+  const explicitHtml = args.is_html === true || args.isHtml === true || bodyKey === "html"
+  const looksHtml = /<[a-z][\s\S]*>/i.test(rawBody)
+  const markdowny = /\*\*[^*\n]{1,120}\*\*|^\s{0,3}#{1,6}\s+/m.test(rawBody)
+  if (!explicitHtml && !preferHtml && !markdowny) return args
+
+  const body = looksHtml
+    ? cleanupMarkdownInHtml(rawBody)
+    : markdownishToHtml(rawBody)
+
+  const next: Record<string, unknown> = { ...args, [bodyKey]: body }
+  if ("is_html" in args || preferHtml) next.is_html = true
+  if ("isHtml" in args) next.isHtml = true
+  return next
+}
+
+function cleanupMarkdownInHtml(html: string): string {
+  return html
+    .replace(/(^|[\n>])\s{0,3}#{1,6}\s+/g, "$1")
+    .replace(/\*\*([^*<>]{1,120})\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[\n>])\s{0,3}>\s+/g, "$1")
+}
+
+function markdownishToHtml(markdown: string): string {
+  const lines = markdown.replace(/\r\n/g, "\n").split("\n")
+  const chunks: string[] = []
+  let listOpen = false
+
+  const closeList = () => {
+    if (!listOpen) return
+    chunks.push("</ul>")
+    listOpen = false
+  }
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim()
+    if (!line) {
+      closeList()
+      continue
+    }
+    const heading = line.match(/^#{1,6}\s+(.+)$/)
+    if (heading) {
+      closeList()
+      chunks.push(`<h2>${inlineMarkdownToHtml(heading[1])}</h2>`)
+      continue
+    }
+    const bullet = line.match(/^[-*]\s+(.+)$/)
+    if (bullet) {
+      if (!listOpen) {
+        chunks.push("<ul>")
+        listOpen = true
+      }
+      chunks.push(`<li>${inlineMarkdownToHtml(bullet[1])}</li>`)
+      continue
+    }
+    closeList()
+    chunks.push(`<p>${inlineMarkdownToHtml(line)}</p>`)
+  }
+  closeList()
+
+  return chunks.join("\n")
+}
+
+function inlineMarkdownToHtml(value: string): string {
+  return escapeHtml(value)
+    .replace(/\*\*([^*]{1,120})\*\*/g, "<strong>$1</strong>")
+    .replace(/\*([^*]{1,120})\*/g, "<em>$1</em>")
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+}
+
+function errorMessageFromResult(result: unknown): string | null {
+  if (typeof result === "string") {
+    const t = result.trim()
+    return t || null
+  }
+  if (isRecord(result) && typeof result.error === "string" && result.error.trim()) {
+    return result.error.trim()
+  }
+  return null
+}
+
 export function shouldReconnectMcpConnection(error: unknown): boolean {
-  const haystack = collectErrorStrings(error).join("\n").toLowerCase()
-  if (!haystack) return false
+  // Auth-denied errors from a cached connection: the saved tokens expired
+  // mid-run. Dropping the cached connection lets the typegen wrapper's
+  // retry go through connectServer() again, where `connectWithOAuth` will
+  // notice the auth failure on re-connect and trigger the stale-token
+  // recovery path.
+  if (isAuthDeniedError(error)) return true
+  if (isDisconnectedMcpClientError(error)) return true
 
-  const hasMissingSession =
-    haystack.includes("session id")
-    && haystack.includes("not found")
+  // Transport-layer disconnects / missing sessions: classic reconnect case,
+  // nothing to do with credentials.
+  return isTransportReconnectable(error)
+}
 
-  const hasClosedTransport =
-    haystack.includes("connection closed")
-    || haystack.includes("transport closed")
-    || haystack.includes("other side closed")
-    || haystack.includes("socket hang up")
-    || haystack.includes("econnreset")
+function isDisconnectedMcpClientError(error: unknown): boolean {
+  return error instanceof Error && error.message === "Not connected"
+}
 
-  return hasMissingSession || hasClosedTransport
+/**
+ * Detect auth-denied errors without pattern-matching message text.
+ *
+ * Sources of signal, in priority order:
+ *   1. MCP SDK's `UnauthorizedError` class — canonical auth signal.
+ *   2. HTTP status: `.status`, `.statusCode`, `.response.status`, or
+ *      `.code` when it's a number (MCP's `StreamableHTTPError` stores the
+ *      HTTP status in `.code`).
+ *   3. OAuth2 error field (`.error`, or `.code` when it's a string) with
+ *      one of the RFC 6749 error codes.
+ *
+ * The inspection walks `cause`, `response`, `data`, `body` so wrapped
+ * errors surface the same signals as unwrapped ones. No regex, no
+ * substring search — new providers work without updating a keyword list.
+ */
+export function isAuthDeniedError(error: unknown): boolean {
+  if (error instanceof UnauthorizedError) return true
+  for (const c of walkErrorShape(error)) {
+    if (isAuthDeniedStatus(c.status ?? c.statusCode)) return true
+    // `.code` is overloaded: MCP's StreamableHTTPError stores HTTP status
+    // as a number there, while OAuth2 error bodies put a string code
+    // (invalid_grant, invalid_token, …) in `.code` or `.error`.
+    if (isAuthDeniedStatus(c.code)) return true
+    if (isOAuthDenyCode(c.error ?? c.code)) return true
+  }
+  return false
+}
+
+function isAuthDeniedStatus(v: unknown): boolean {
+  return v === 401 || v === 403
+}
+
+const OAUTH_DENY_CODES = new Set([
+  "invalid_grant",
+  "invalid_token",
+  "invalid_client",
+  "unauthorized_client",
+  "access_denied",
+])
+
+function isOAuthDenyCode(v: unknown): boolean {
+  return typeof v === "string" && OAUTH_DENY_CODES.has(v)
+}
+
+function isTransportReconnectable(error: unknown): boolean {
+  for (const c of walkErrorShape(error)) {
+    // Node / undici error codes are strings; the `.code` overload for HTTP
+    // status (number) is already handled in the auth detector.
+    if (typeof c.code === "string" && TRANSPORT_RECONNECT_CODES.has(c.code)) return true
+    if (typeof c.name === "string" && TRANSPORT_RECONNECT_NAMES.has(c.name)) return true
+    const message = c.message
+    if (typeof message === "string" && TRANSPORT_RECONNECT_MESSAGES.some((pattern) => pattern.test(message))) return true
+    // StreamableHTTPError doesn't set `.name`, so fall back to the class
+    // name. Any SDK/Node error we want to reconnect on can be added here.
+    const ctorName = (c.constructor as { name?: string } | undefined)?.name
+    if (typeof ctorName === "string" && TRANSPORT_RECONNECT_NAMES.has(ctorName)) return true
+  }
+  return false
+}
+
+// Node / undici error codes that indicate the TCP/HTTP connection dropped.
+const TRANSPORT_RECONNECT_CODES = new Set([
+  "ECONNRESET",
+  "ECONNABORTED",
+  "EPIPE",
+  "ETIMEDOUT",
+  "ENOTFOUND",
+  "UND_ERR_SOCKET",
+  "UND_ERR_CLOSED",
+])
+
+// SDK error names/classes where the right response is to reconnect.
+const TRANSPORT_RECONNECT_NAMES = new Set([
+  "StreamableHTTPError",
+  "SseError",
+])
+
+const TRANSPORT_RECONNECT_MESSAGES = [
+  /\bSession ID\b[\s\S]*\bnot found\b/i,
+  /\bConnection closed by peer\b/i,
+  /\bconnection (?:closed|reset|aborted)\b/i,
+  /\bsocket hang up\b/i,
+]
+
+/**
+ * Yield the error and every wrapped object we might find a signal on.
+ * Visits `.cause`, `.response`, `.data`, `.body`. Bounded by a `seen` set
+ * so cyclic references don't infinite-loop.
+ */
+function* walkErrorShape(error: unknown): Generator<Record<string, unknown>, void, unknown> {
+  const seen = new Set<unknown>()
+  const stack: unknown[] = [error]
+  while (stack.length) {
+    const cur = stack.pop()
+    if (!cur || typeof cur !== "object" || seen.has(cur)) continue
+    seen.add(cur)
+    const c = cur as Record<string, unknown>
+    yield c
+    const nested = [c.cause, c.response, c.data, c.body]
+    for (const n of nested) if (n && typeof n === "object") stack.push(n)
+  }
 }
 
 function parseToolText(text: string): unknown {
@@ -593,34 +931,12 @@ function isRecord(value: unknown): value is Record<string, any> {
 }
 
 function extractToolError(result: unknown): string | null {
-  if (typeof result === "string") return result.trim() || null
-  if (Array.isArray(result)) {
-    const parts = result.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-    return parts.length > 0 ? parts.join("\n") : null
-  }
+  // Errors are signalled by the MCP response's `isError` flag (checked by the
+  // caller) or by an explicit `{ error: "..." }` field in structured content.
+  // A plain string return value — e.g. Granola's list_meetings returning an
+  // XML block — is NOT an error; treating it as one threw away every
+  // text-typed tool response.
   if (!isRecord(result)) return null
   if (typeof result.error === "string" && result.error.trim()) return result.error.trim()
   return null
-}
-
-function collectErrorStrings(value: unknown, seen = new Set<unknown>()): string[] {
-  if (value == null) return []
-  if (typeof value === "string") return [value]
-  if (typeof value === "number" || typeof value === "boolean") return [String(value)]
-  if (seen.has(value)) return []
-  if (typeof value !== "object") return []
-
-  seen.add(value)
-  const out: string[] = []
-  if (value instanceof Error) {
-    out.push(value.name, value.message)
-    if ("cause" in value && value.cause) out.push(...collectErrorStrings(value.cause, seen))
-  }
-  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
-    if (typeof nested === "string") out.push(nested)
-    else if (typeof nested === "number" || typeof nested === "boolean") out.push(String(nested))
-    else if (nested && typeof nested === "object") out.push(...collectErrorStrings(nested, seen))
-    if (key === "name" && typeof nested === "string") out.push(nested)
-  }
-  return out
 }

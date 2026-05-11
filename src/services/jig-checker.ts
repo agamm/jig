@@ -1,15 +1,11 @@
 import { readFileSync } from "fs"
 import { resolve } from "path"
 import ts from "typescript"
-import { PROJECT_ROOT } from "../config/paths.js"
 import { validateJigFile } from "../validate.js"
+import { getJigTsCompilerOptions } from "../domain/jig-ts-options.js"
 
 export async function validateTsFile(filePath: string): Promise<{ ok: boolean; errors?: string }> {
-  const tsconfigPath = `${PROJECT_ROOT}/tsconfig.json`
-  const configFile = ts.readConfigFile(tsconfigPath, (p) => readFileSync(p, "utf-8"))
-  const parsedConfig = ts.parseJsonConfigFileContent(configFile.config, ts.sys, PROJECT_ROOT)
-
-  const program = ts.createProgram([filePath], { ...parsedConfig.options, noEmit: true })
+  const program = ts.createProgram([filePath], getJigTsCompilerOptions({ noEmit: true }))
   const diagnostics = ts.getPreEmitDiagnostics(program)
 
   const fileErrors = diagnostics.filter((d) =>

@@ -2,7 +2,7 @@
 
 import { DashboardShell } from "@/components/dashboard-shell";
 import { useJigListLiveUpdates } from "@/hooks/use-jig-list-live-updates";
-import { useExamples, useJigs } from "@/lib/swr";
+import { useExamples, useHealth, useJigs } from "@/lib/swr";
 
 export function DashboardPage() {
   useJigListLiveUpdates();
@@ -11,6 +11,7 @@ export function DashboardPage() {
     errorRetryCount: 10,
   });
   const { data: examples, error: examplesError } = useExamples();
+  const { data: health } = useHealth();
 
   return (
     <DashboardShell
@@ -19,6 +20,7 @@ export function DashboardPage() {
       loading={isLoading}
       errorMessage={error?.message}
       examplesErrorMessage={examplesError?.message}
+      storageHealth={health?.data_storage}
     />
   );
 }

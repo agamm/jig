@@ -1,14 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
-
-type HealthResponse = {
-  mode: "service" | "local";
-  locked: boolean;
-  password_set: boolean;
-  onboarding_complete: boolean;
-  has_openrouter_key: boolean;
-};
+import { completeOnboarding, fetchHealth, setupPassword, unlock } from "@/lib/api";
+import type { DataStorageHealth, HealthResponse } from "@shared/api";
 
 /**
  * Blocks the dashboard until the server reports a usable state.
@@ -27,9 +21,7 @@ export function UnlockGate({ children }: { children: ReactNode }) {
 
   const refresh = useCallback(async () => {
     try {
-      const res = await fetch("/api/health", { cache: "no-store" });
-      if (!res.ok) throw new Error(`Health check failed: ${res.status}`);
-      setHealth((await res.json()) as HealthResponse);
+      setHealth(await fetchHealth());
       setError(null);
     } catch (e: any) {
       setError(e?.message ?? "Failed to reach server");
@@ -58,10 +50,34 @@ export function UnlockGate({ children }: { children: ReactNode }) {
   }
 
   if (health.mode === "local") return <>{children}</>;
+  if (health.data_storage && !health.data_storage.ok) {
+    return (
+      <Frame>
+        <StorageProblem storage={health.data_storage} />
+      </Frame>
+    );
+  }
   if (!health.password_set) return <PasswordForm mode="set" onDone={refresh} />;
   if (health.locked) return <PasswordForm mode="unlock" onDone={refresh} />;
   if (!health.onboarding_complete) return <OnboardingForm onDone={refresh} />;
   return <>{children}</>;
+}
+
+function StorageProblem({ storage }: { storage: DataStorageHealth }) {
+  return (
+    <>
+      <h1>Connect persistent storage</h1>
+      <p>
+        Jig is running in service mode, but <code className="text-[#ededed]">{storage.path}</code>{" "}
+        is not backed by a persistent volume. Passwords, jigs, and connection tokens would be lost on redeploy.
+      </p>
+      {storage.message && <p className="mt-3 text-[#fb7185]">{storage.message}</p>}
+      <p className="mt-4 text-[#aaa]">Run this from the Jig checkout, then reload this page:</p>
+      <pre className="mt-2 overflow-x-auto rounded-lg border border-rose-500/25 bg-rose-500/[0.06] px-3 py-2 font-mono text-[12px] text-rose-100">
+        {storage.action}
+      </pre>
+    </>
+  );
 }
 
 function PasswordForm({ mode, onDone }: { mode: "set" | "unlock"; onDone: () => void }) {
@@ -80,17 +96,11 @@ function PasswordForm({ mode, onDone }: { mode: "set" | "unlock"; onDone: () => 
     }
     setBusy(true);
     try {
-      const res = await fetch(isSet ? "/api/setup-password" : "/api/unlock", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        setErr(body.error ?? `Request failed: ${res.status}`);
-        return;
-      }
+      if (isSet) await setupPassword(password);
+      else await unlock(password);
       onDone();
+    } catch (e: any) {
+      setErr(e?.message ?? "Request failed");
     } finally {
       setBusy(false);
     }
@@ -146,17 +156,10 @@ function OnboardingForm({ onDone }: { onDone: () => void }) {
     setBusy(true);
     setErr(null);
     try {
-      const res = await fetch("/api/onboarding/complete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(withKey ? { openrouter_key: apiKey.trim() } : {}),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        setErr(body.error ?? `Request failed: ${res.status}`);
-        return;
-      }
+      await completeOnboarding(withKey ? apiKey.trim() : undefined);
       onDone();
+    } catch (e: any) {
+      setErr(e?.message ?? "Request failed");
     } finally {
       setBusy(false);
     }

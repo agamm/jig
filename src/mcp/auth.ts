@@ -46,6 +46,76 @@ export function completePendingOAuth(state: string, code: string): boolean {
   return true
 }
 
+/**
+ * Last-resort fallback for providers that drop the `state` param entirely.
+ * Works only when a single authorization is in flight; otherwise the code
+ * could be routed to the wrong provider. The caller must pass `null` state
+ * — we won't match a provider that registered with an empty-string state.
+ */
+export function completePendingOAuthStateless(code: string): boolean {
+  if (pendingProvidersByState.size !== 1) return false
+  const [state, provider] = pendingProvidersByState.entries().next().value as [string, JigOAuthProvider]
+  pendingProvidersByState.delete(state)
+  provider.resolveAuthCode(code)
+  return true
+}
+
+/**
+ * Service-mode surfacing: the authorization URL for each server that's
+ * currently mid-flow. The HTTP /api/connections/:name/connect handler races
+ * the blocking connect promise against `waitForPendingAuthUrl` so that the
+ * dashboard can open the URL in a new tab instead of the request hanging.
+ */
+const pendingAuthUrls = new Map<string, string>()
+const pendingAuthWaiters = new Map<string, ((url: string) => void)[]>()
+
+function setPendingAuthUrl(server: string, url: string): void {
+  pendingAuthUrls.set(server, url)
+  const waiters = pendingAuthWaiters.get(server)
+  if (waiters) {
+    pendingAuthWaiters.delete(server)
+    for (const w of waiters) w(url)
+  }
+}
+
+function clearPendingAuthUrl(server: string): void {
+  pendingAuthUrls.delete(server)
+}
+
+/** Resolve immediately if a URL is already staged, otherwise resolve on next push. Resolves to null on timeout. */
+export function waitForPendingAuthUrl(server: string, timeoutMs: number): Promise<string | null> {
+  const existing = pendingAuthUrls.get(server)
+  if (existing) return Promise.resolve(existing)
+  return new Promise((resolve) => {
+    let settled = false
+    const settle = (value: string | null) => {
+      if (settled) return
+      settled = true
+      // Drop this specific resolver from the waiters list to avoid leaking.
+      const list = pendingAuthWaiters.get(server)
+      if (list) {
+        const idx = list.indexOf(wrapped)
+        if (idx >= 0) list.splice(idx, 1)
+        if (list.length === 0) pendingAuthWaiters.delete(server)
+      }
+      resolve(value)
+    }
+    const wrapped = (url: string) => settle(url)
+    const arr = pendingAuthWaiters.get(server) ?? []
+    arr.push(wrapped)
+    pendingAuthWaiters.set(server, arr)
+    setTimeout(() => {
+      if (settled) return
+      // Defensive check: a URL may have been staged between the time we
+      // started waiting and the timeout firing without going through the
+      // waiter callback (e.g., timing-edge where setPendingAuthUrl ran
+      // just before our subscription). Prefer the staged URL over null.
+      const late = pendingAuthUrls.get(server)
+      settle(late ?? null)
+    }, timeoutMs)
+  })
+}
+
 function extractState(authUrl: string): string | null {
   try {
     return new URL(authUrl).searchParams.get("state")
@@ -284,6 +354,14 @@ export class JigOAuthProvider implements OAuthClientProvider {
   }
 
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
+    // Some providers (e.g. Apify) don't include `state` in the authorize
+    // URL the MCP SDK builds. Without it, the OAuth server has nothing to
+    // echo back, and our /api/oauth/callback can't route the code to the
+    // right provider. Inject one so the round-trip survives. Per RFC 6749
+    // §4.1.1, servers MUST echo `state` unchanged if present.
+    if (!authorizationUrl.searchParams.has("state")) {
+      authorizationUrl.searchParams.set("state", `${this.serverName}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`)
+    }
     const url = authorizationUrl.toString()
     const state = extractState(url) ?? `${this.serverName}-${Date.now()}`
     this._activeState = state
@@ -291,8 +369,10 @@ export class JigOAuthProvider implements OAuthClientProvider {
     if (isServiceMode()) {
       // Headless: don't open a browser or a loopback server. Register ourselves
       // so /api/oauth/callback can find us by state, surface the URL for the
-      // dashboard, and log it so it's also visible in platform log viewers.
+      // dashboard (via waitForPendingAuthUrl), and log it so it's also visible
+      // in platform log viewers.
       pendingProvidersByState.set(state, this)
+      setPendingAuthUrl(this.serverName, url)
       console.log(
         `[jig][oauth] ${this.serverName}: click to authorize → ${url}`,
       )
@@ -321,6 +401,7 @@ export class JigOAuthProvider implements OAuthClientProvider {
     this._authResolve?.(code)
     this._authResolve = undefined
     this._activeState = undefined
+    clearPendingAuthUrl(this.serverName)
   }
 
   waitForAuthCode(signal?: AbortSignal): Promise<string> {
@@ -336,6 +417,7 @@ export class JigOAuthProvider implements OAuthClientProvider {
           pendingProvidersByState.delete(this._activeState)
           this._activeState = undefined
         }
+        clearPendingAuthUrl(this.serverName)
         reject(new Error(USER_CANCELLED_MESSAGE))
       }
 

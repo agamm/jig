@@ -35,6 +35,12 @@ export function checkAccess(req: Request, handler: string): Response | null {
   if (!isServiceMode()) return null
   if (PUBLIC_HANDLERS.has(handler)) return null
 
+  return requireAdminAccess(req)
+}
+
+export function requireAdminAccess(req: Request): Response | null {
+  if (!isServiceMode()) return null
+
   if (isPasswordSet() && !isUnlocked()) {
     return json({ error: "Locked. Unlock with your password to continue.", locked: true }, 423)
   }

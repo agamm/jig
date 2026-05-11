@@ -13,6 +13,7 @@ import { logSessionEvent } from "./debug/session-log.js"
 import { checkStepStructure } from "./services/jig-checker.js"
 import { hasConsoleLogCall } from "./domain/source-analysis.js"
 import { isCancellationMessage, USER_CANCELLED_MESSAGE } from "./run-cancel.js"
+import { materializeJigWithRuntimeImports } from "./domain/runtime-imports.js"
 
 // --- Runner ---
 export interface RunResult {
@@ -116,7 +117,8 @@ async function _runJig(
     // 1. Import jig (cache bust) — classified errors
     let mod: any
     try {
-      mod = await import(`${jigPath}?_t=${Date.now()}_${Math.random().toString(36).slice(2)}`)
+      const importPath = source ? await materializeJigWithRuntimeImports(jigPath, source) : jigPath
+      mod = await import(`${importPath}?_t=${Date.now()}_${Math.random().toString(36).slice(2)}`)
     } catch (e: any) {
       const msg = e?.message ?? String(e)
       const error = msg.includes("Cannot find module")

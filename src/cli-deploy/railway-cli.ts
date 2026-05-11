@@ -221,3 +221,48 @@ export async function linkService(serviceName: string, cwd = process.cwd()): Pro
   const code = await railwayInteractive(["service", "link", serviceName], cwd)
   return code === 0
 }
+
+export interface RailwayVolumeSummary {
+  id: string
+  name: string
+  mountPath: string
+}
+
+/**
+ * List volumes currently attached to the linked project's active service/env.
+ * Returns [] on failure so callers can fail loudly with a clearer message.
+ */
+export async function listVolumes(cwd = process.cwd()): Promise<RailwayVolumeSummary[]> {
+  try {
+    const raw = await railwayText(["volume", "list", "--json"], cwd)
+    const data = JSON.parse(raw)
+    // The CLI's JSON shape isn't stable across versions: tolerate both
+    // a flat array and a `{ volumes: [...] }` wrapper. Fields we care about
+    // (id, name, mountPath) live on each item regardless.
+    const items: unknown[] = Array.isArray(data)
+      ? data
+      : Array.isArray(data?.volumes)
+        ? data.volumes
+        : []
+    const out: RailwayVolumeSummary[] = []
+    for (const item of items) {
+      if (!item || typeof item !== "object") continue
+      const o = item as Record<string, unknown>
+      const id = typeof o.id === "string" ? o.id : ""
+      const name = typeof o.name === "string" ? o.name : ""
+      const mountPath = typeof o.mountPath === "string" ? o.mountPath
+        : typeof o.mount_path === "string" ? o.mount_path
+        : ""
+      if (id) out.push({ id, name, mountPath })
+    }
+    return out
+  } catch {
+    return []
+  }
+}
+
+/** True iff a volume is currently mounted at the given path. */
+export async function hasVolumeAtPath(mountPath: string, cwd = process.cwd()): Promise<boolean> {
+  const volumes = await listVolumes(cwd)
+  return volumes.some((v) => v.mountPath === mountPath)
+}

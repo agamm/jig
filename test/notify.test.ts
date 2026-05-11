@@ -8,6 +8,9 @@ import { openDb, closeDb } from "../src/db.js"
 import {
   notify,
   getNotificationSettings,
+  getNotificationHealth,
+  getNotificationTestStatus,
+  saveNotificationTestStatus,
   saveNotificationSettings,
   formatFailureBody,
   type NotificationSettings,
@@ -270,6 +273,57 @@ describe("settings persistence", () => {
     expect(s.channels).toHaveLength(1)
     expect(s.channels[0].recipient).toBe("42")
     expect(s.triggerOn.fail).toBe(false)
+  })
+})
+
+describe("notification health", () => {
+  it("reports ok when failure alerts have an available configured channel", () => {
+    const health = getNotificationHealth(
+      baseSettings({
+        channels: [{ connection: "composio", tool: "telegram_send_message", recipient: "42" }],
+      }),
+      [telegramManifest],
+      { at: "2026-04-25T12:00:00.000Z", ok: true, sent: 1, errors: 0 },
+    )
+    expect(health.ok).toBe(true)
+    expect(health.reasons).toEqual([])
+  })
+
+  it("requires a successful explicit test before reporting protected", () => {
+    const health = getNotificationHealth(
+      baseSettings({
+        channels: [{ connection: "composio", tool: "telegram_send_message", recipient: "42" }],
+      }),
+      [telegramManifest],
+      null,
+    )
+    expect(health.ok).toBe(false)
+    expect(health.reasons.join(" ")).toContain("not been tested")
+  })
+
+  it("persists the last notification test result", () => {
+    const status = saveNotificationTestStatus({
+      sent: [{ channel: "Telegram", ok: true }],
+      errors: [],
+    })
+    expect(status.ok).toBe(true)
+    expect(getNotificationTestStatus()).toMatchObject({ ok: true, sent: 1, errors: 0 })
+  })
+
+  it("reports danger when alerts are paused or no notification tool is available", () => {
+    const health = getNotificationHealth(
+      baseSettings({
+        channels: [{ connection: "composio", tool: "telegram_send_message", recipient: "42" }],
+        triggerOn: { fail: false },
+      }),
+      [],
+      { at: "2026-04-25T12:00:00.000Z", ok: false, sent: 0, errors: 1 },
+    )
+    expect(health.ok).toBe(false)
+    expect(health.severity).toBe("danger")
+    expect(health.reasons.join(" ")).toContain("paused")
+    expect(health.reasons.join(" ")).toContain("No notification-capable tools")
+    expect(health.reasons.join(" ")).toContain("not available")
   })
 })
 

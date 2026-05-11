@@ -125,6 +125,53 @@ export function setPassword(password: string): void {
 }
 
 /**
+ * Rotate the system password. Requires the process to already be unlocked —
+ * the in-memory data key IS the proof of the old password. Derives a new key
+ * from a fresh salt, re-encrypts every encrypted credential + the canary, then
+ * swaps the in-memory key so the running session stays unlocked under the new
+ * password.
+ *
+ * Atomic: if re-encryption fails midway, the DB transaction rolls back and
+ * salt/canary remain the old values.
+ */
+export function changePassword(newPassword: string): void {
+  if (!dataKey) throw new LockedError("Unlock with your current password before changing it.")
+  if (newPassword.length < 8) {
+    throw new Error("Password must be at least 8 characters.")
+  }
+  const saltHex = getSetting(SALT_KEY)
+  const canary = getSetting(CANARY_KEY)
+  if (!saltHex || !canary) {
+    throw new Error("No password is set. Call setPassword() first.")
+  }
+
+  const oldKey = dataKey
+  const newSalt = randomBytes(SALT_BYTES)
+  const newKey = deriveKey(newPassword, newSalt)
+  const newCanary = encryptWith(newKey, CANARY_PLAINTEXT)
+
+  const db = openDb()
+  db.exec("BEGIN")
+  try {
+    const rows = db
+      .prepare(`SELECT key, value FROM credentials WHERE encrypted = 1`)
+      .all() as { key: string; value: string }[]
+    for (const row of rows) {
+      const plaintext = decryptWith(oldKey, row.value)
+      const ct = encryptWith(newKey, plaintext)
+      db.prepare(`UPDATE credentials SET value = ? WHERE key = ?`).run(ct, row.key)
+    }
+    setSetting(SALT_KEY, newSalt.toString("hex"))
+    setSetting(CANARY_KEY, newCanary)
+    db.exec("COMMIT")
+  } catch (e) {
+    db.exec("ROLLBACK")
+    throw e
+  }
+  dataKey = newKey
+}
+
+/**
  * Try to unlock with the given password. Returns true on success, false if
  * the password is wrong. Throws if no password is set.
  */

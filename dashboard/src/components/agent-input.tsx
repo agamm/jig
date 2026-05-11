@@ -72,7 +72,7 @@ export function AgentInput({
       : idlePlaceholder
 
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 transition-colors duration-150 focus-within:border-[var(--border-strong)]">
+    <div className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 transition-colors duration-150 focus-within:border-emerald-500/40 focus-within:ring-1 focus-within:ring-emerald-500/20">
       <input
         ref={inputRef}
         type="text"
@@ -96,7 +96,7 @@ export function AgentInput({
         placeholder={placeholder}
         disabled={!agent.canSend}
         autoFocus={autoFocus}
-        className="flex-1 bg-transparent text-[12px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-dim)] disabled:opacity-50"
+        className="flex-1 bg-transparent text-[12px] text-[var(--text-primary)] outline-none border-0 ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 placeholder:text-[var(--text-dim)] disabled:opacity-50"
       />
       {(agent.status === "done" || agent.status === "error") && (
         <Button

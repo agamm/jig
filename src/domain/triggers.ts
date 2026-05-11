@@ -1,4 +1,4 @@
-import { TRIGGER_PARSE_MODEL } from "../config/models.js"
+import { getFastModel } from "../config/models.js"
 
 type TriggerResult = {
   type: string
@@ -89,7 +89,7 @@ export async function textToTriggerLLM(text: string): Promise<TriggerResult | nu
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
-        model: TRIGGER_PARSE_MODEL,
+        model: getFastModel(),
         max_tokens: 2000,
         messages: [
           { role: "system", content: `Convert the user's scheduling description into a JSON trigger object. Return ONLY valid JSON, no explanation.

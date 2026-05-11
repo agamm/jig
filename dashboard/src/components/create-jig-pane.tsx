@@ -1,15 +1,19 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { mutate } from "swr";
 import { AgentInput } from "@/components/agent-input";
 import { AgentPanel } from "@/components/agent-panel";
 import { Button } from "@/components/button";
 import { BusyFrame } from "@/components/busy-frame";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ConnectionTag } from "@/components/connection-tag";
 import { DraftBanner } from "@/components/draft-banner";
 import { HighlightedCode } from "@/components/highlighted-code";
 import { RunSteps, type RunStep } from "@/components/run-steps";
 import { useAgent } from "@/hooks/use-agent";
+import { closeAgentSession } from "@/lib/api";
+import { toast } from "@/components/toast";
 import { PaneHeader } from "@/components/pane-header";
 import { PaneSection } from "@/components/pane-section";
 import { SegmentedControl } from "@/components/segmented-control";
@@ -56,24 +60,44 @@ function SkeletonSteps() {
 export function CreateJigPane({
   initialInstruction = "",
   startToken = 0,
+  resumeSessionId,
   onClose,
   onCreated,
   onConnectionClick,
 }: {
   initialInstruction?: string;
   startToken?: number;
+  resumeSessionId?: string | null;
   onClose: () => void;
   onCreated?: (jigId?: string) => Promise<void> | void;
   onConnectionClick?: (name: string) => void;
 }) {
   const [input, setInput] = useState(initialInstruction);
   const [detailTab, setDetailTab] = useState<"steps" | "code">("steps");
+  const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
+  const [codeCopied, setCodeCopied] = useState(false);
+
+  const handleCopyCode = async () => {
+    if (!previewJig?.code) return;
+    try {
+      await navigator.clipboard.writeText(previewJig.code);
+      setCodeCopied(true);
+      setTimeout(() => setCodeCopied(false), 1500);
+    } catch {
+      toast.error("Failed to copy code");
+    }
+  };
   const startedTokenRef = useRef(0);
+  const resumedSessionRef = useRef<string | null>(null);
+  const listedDraftRef = useRef<string | null>(null);
   const agent = useAgent(async (jigId) => {
     await onCreated?.(jigId);
-  });
+  }, { persistOnUnmount: true });
+  const resumeAgentSession = agent.resumeSession;
   const displayName = agent.jigId ? prettifyJigName(agent.jigId) : "Create New Jig";
   const previewJig = agent.draftApproval?.jig ?? null;
+  const discardSessionId = agent.sessionId ?? resumeSessionId ?? null;
 
   useEffect(() => {
     setInput(initialInstruction);
@@ -85,6 +109,18 @@ export function CreateJigPane({
     setInput(initialInstruction);
   }, [initialInstruction, startToken]);
 
+  useEffect(() => {
+    if (!resumeSessionId || resumedSessionRef.current === resumeSessionId) return;
+    resumedSessionRef.current = resumeSessionId;
+    void resumeAgentSession(resumeSessionId);
+  }, [resumeAgentSession, resumeSessionId]);
+
+  useEffect(() => {
+    if (!agent.jigId || listedDraftRef.current === agent.jigId) return;
+    listedDraftRef.current = agent.jigId;
+    void mutate("jigs");
+  }, [agent.jigId]);
+
   const steps: RunStep[] = previewJig?.steps?.map((s) => ({
     num: s.num,
     name: s.name,
@@ -94,10 +130,37 @@ export function CreateJigPane({
   const hasData = previewJig !== null;
   const showAgentLoadingFrame = agent.isActive;
 
+  const handleDiscardDraft = async () => {
+    if (!discardSessionId || discarding) return;
+    setDiscarding(true);
+    try {
+      await agent.reset();
+      await closeAgentSession(discardSessionId);
+      await mutate("jigs");
+      setConfirmDiscardOpen(false);
+      onClose();
+    } catch (error: any) {
+      toast.error(error?.message ?? "Failed to discard draft");
+    } finally {
+      setDiscarding(false);
+    }
+  };
+
   return (
     <aside
       className="flex h-full w-full flex-col bg-[#0e0e10] overflow-hidden"
     >
+      <ConfirmDialog
+        open={confirmDiscardOpen}
+        title="Discard draft?"
+        message="This will remove the under-construction jig and any draft code that has been generated for it."
+        confirmLabel="Discard Draft"
+        destructive
+        loading={discarding}
+        onConfirm={handleDiscardDraft}
+        onClose={() => !discarding && setConfirmDiscardOpen(false)}
+      />
+
       <DraftBanner title="Draft under construction" />
 
       <BusyFrame busy={showAgentLoadingFrame} className="mx-3 my-3 flex-1 min-h-0" innerClassName="flex h-full min-h-0 flex-col">
@@ -109,9 +172,22 @@ export function CreateJigPane({
             }
             badge={<span className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[9px] text-amber-400">draft</span>}
             actions={
-              <Button onClick={onClose} variant="subtle" size="sm">
-                &#10005;
-              </Button>
+              <>
+                {discardSessionId && (
+                  <Button
+                    onClick={() => setConfirmDiscardOpen(true)}
+                    disabled={discarding}
+                    variant="danger"
+                    size="sm"
+                    title="Discard draft"
+                  >
+                    {discarding ? "Discarding…" : "Discard"}
+                  </Button>
+                )}
+                <Button onClick={onClose} variant="subtle" size="sm">
+                  &#10005;
+                </Button>
+              </>
             }
           />
 
@@ -136,7 +212,15 @@ export function CreateJigPane({
                 showAgentLoadingFrame ? <SkeletonSteps /> : <EmptyState title="No draft steps yet" description="Describe the automation you want and the planner will build the first draft." />
               )
             ) : hasData ? (
-              <div className="rounded-lg border border-[#1f1f23] bg-[#111113] p-4 font-mono overflow-x-auto" style={{ animation: "fade-up 0.15s ease" }}>
+              <div className="relative rounded-lg border border-[#1f1f23] bg-[#111113] p-4 font-mono overflow-x-auto" style={{ animation: "fade-up 0.15s ease" }}>
+                <button
+                  type="button"
+                  onClick={handleCopyCode}
+                  className="absolute right-3 top-3 z-10 rounded-md border border-[#2a2a2e] bg-[#0d0d0f] px-2 py-1 text-[10px] text-[#888] transition-colors hover:border-[#3a3a3e] hover:text-[#ededed]"
+                  title="Copy code"
+                >
+                  {codeCopied ? "Copied" : "Copy"}
+                </button>
                 <HighlightedCode code={previewJig!.code} connections={previewJig!.settings.connections} />
               </div>
             ) : null}

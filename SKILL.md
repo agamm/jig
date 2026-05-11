@@ -190,7 +190,40 @@ If the required connection or tool is unavailable, stop creation/editing and sur
 - Small logic, wording, output, or scheduling edits should usually keep the existing tools unchanged
 - Only change the toolset when the current tools are insufficient or invalid for the requested behavior
 
-### 7. Pick the right trigger (ASK if unclear)
+### 7. Edit existing jigs surgically
+When editing an existing jig, treat the current file as the source of truth.
+The user usually wants a narrow patch, not a rewrite.
+
+Before writing:
+- Identify the exact requested behavior change.
+- Locate the smallest code region that implements that behavior.
+- Preserve the existing trigger, schedule, recipients, subject lines, constants, data sources, step labels, step ordering, and output shape unless the user explicitly asks to change them.
+- Preserve existing formatting modes. If a jig sends HTML, keep sending HTML. If the user asks for HTML but the schema says the field is `isHtml`, use `isHtml: true` rather than inventing unsupported fields like `contentType`.
+- Preserve the current tool list unless Rule 6 says it must change.
+- Do not "simplify", collapse steps, remove data gathering, replace deterministic code with `llm()`/`agent()`, or remove user-visible sections just because they seem verbose.
+- Do not call `read_jig_file` if the current jig code is already in the prompt context. Use the provided code.
+- After the edit, run `check_jig`. If it fails, patch the narrow error and check again.
+
+Bad edit behavior:
+```typescript
+// User asked: "make the email body HTML"
+// Bad: rewrite the whole jig, remove HTML conversion, shorten the workflow,
+// change the subject, and send plain text.
+```
+
+Good edit behavior:
+```typescript
+// User asked: "make the email body HTML"
+const htmlBody = markdownToHtml(markdownBody)
+await workspace.gmail_send({
+  to: "user@example.com",
+  subject,
+  body: htmlBody,
+  isHtml: true,
+})
+```
+
+### 8. Pick the right trigger (ASK if unclear)
 
 Every jig has exactly one `trigger` field. The three types:
 
@@ -220,7 +253,125 @@ Good clarifying questions:
 - "Is this triggered by an incoming Telegram message, or on a fixed schedule?"
 - "Should this fire every time a webhook comes in, or just once manually?"
 
-### 8. Code format
+### 9. `ctx.output()` must show the real data, not just counts
+
+Every `ctx.output()` should let a human reviewing the run see *what happened*, not just *how many*. Bullet list the gathered items with their key identifying fields (date + title, subject + sender, event + time). A short excerpt or summary is welcome. A single "Found N items" line is never enough.
+
+Bad:
+```typescript
+ctx.output(`Found ${meetings.length} meetings`)
+```
+
+Good:
+```typescript
+const preview = meetings
+  .slice(0, 10)
+  .map((m) => `- ${m.date} — **${m.title}**`)
+  .join("\n")
+ctx.output(`Found ${meetings.length} meetings\n\n${preview}`)
+```
+
+### 10. Tool return shapes vary — don't assume structure
+
+MCP tools return different shapes: arrays, `{items: [...]}`, `{data: {...}}`, plain strings (XML, Markdown, or prose), and sometimes an empty string. Do NOT blindly `Array.isArray(result) ? result : (result as any).items ?? []` — if the shape doesn't match, that silently collapses to `[]` and every downstream step starves on empty data.
+
+At each tool boundary:
+
+1. Check `typeof result`.
+2. If it's a **string** (Granola, some Apify tools, HTML scrapers), parse it — regex, `split`, `DOMParser`, or `llm()` to pull out the fields you need. Do not discard it.
+3. If it's an **object**, unwrap with the documented key (`items`, `messages`, `meetings`, etc.), and fall back to surfacing the raw object — never to `[]`.
+4. When uncertain, `ctx.output()` the first ~500 chars of the raw result so the real shape is visible in the run log.
+
+Example — good:
+```typescript
+const raw = await granola.list_meetings({ time_range: "this_week" })
+const text = typeof raw === "string" ? raw : JSON.stringify(raw)
+const meetings = [...text.matchAll(/<meeting\s+id="([^"]+)"\s+title="([^"]+)"\s+date="([^"]+)"/g)]
+  .map(([, id, title, date]) => ({ id, title, date }))
+if (meetings.length === 0) {
+  ctx.output(`No structured meetings parsed. Raw response head:\n\n\`\`\`\n${text.slice(0, 500)}\n\`\`\``)
+  return
+}
+```
+
+### 11. Format outbound messages nicely
+
+When the jig sends content to a human — email bodies, Gmail, Telegram/Slack/Chat messages, any notification whose body is read by a person — format it for the destination channel, not as raw data:
+
+- Lead with a clear title or heading.
+- Short paragraphs; bullet lists where helpful.
+- For Markdown channels, use bold for key names/numbers and `[label](url)` for links (never bare URLs).
+- Never dump raw JSON, XML tool output, or uninterpreted IDs into the body. Summarize and reformat first — use `llm()` to rewrite the data into human-friendly prose when the tool returned an opaque shape.
+- Gmail does not render Markdown in email bodies. If the user expects formatted Gmail output, generate valid HTML, send it in `body`, and set `isHtml: true`.
+- Do not invent unsupported Gmail fields such as `contentType` or `htmlBody`; use the generated schema field `isHtml`.
+- Do not wrap Markdown lines in HTML tags and call that "HTML". If the source is Markdown, either ask `llm()` for an HTML fragment with no Markdown markers, or deterministically convert inline Markdown (`**bold**`, `*italic*`, `[label](url)`) before sending.
+- For branded Gmail output, use Gmail-safe inline styles or simple `<style>` rules with the Jig brand palette: dark canvas `#0a0a0b`, raised panel `#111113`, border `#1f1f23`, text `#ededed`, muted `#8b8b91`, emerald `#10b981`, blue `#60a5fa`, amber `#f59e0b`.
+- The send step output should prove what changed: include the destination plus a short preview of sections/items rendered, not only "Email sent".
+- For coaching, digests, and executive summaries, do not feed arbitrary newest Gmail messages into the LLM. Search with a bounded recent window, then filter out auth codes, noreply/notification senders, newsletters, prior jig alerts/failures, and other operational noise before summarizing.
+
+Example — bad:
+```typescript
+await workspace.gmail_send({ to, subject, body: JSON.stringify(meetings) })
+```
+
+Example — good:
+```typescript
+const body = await llm(
+  `Write a brief morning coach email from these meetings. Plain-text formatting: clear title, bullet list for key moments, short reflection paragraph.`,
+  { meetings }
+) as string
+await workspace.gmail_send({ to, subject, body })
+```
+
+Example — good Gmail HTML:
+```typescript
+const htmlBody = await llm(
+  `Write a brief morning coach email from these meetings as valid HTML. Use h2/h3 headings, ul/li lists, p tags, and strong tags. Return only the HTML fragment, not Markdown.`,
+  { meetings }
+) as string
+await workspace.gmail_send({ to, subject, body: htmlBody, isHtml: true })
+ctx.output(`Email sent to ${to}\n\nPreview:\n- Key insights: ${insightCount}\n- Questions: ${questionCount}`)
+```
+
+### 12. Runtime performance guardrails
+
+Slow jigs are usually caused by broad tool calls, too many detail reads, or
+feeding oversized raw payloads into LLM steps. Bound every runtime path.
+
+- Prefer narrow queries: include `timeMin`/`timeMax`, `maxResults`, label filters, or other schema-supported limits whenever available.
+- Cap detail reads. Search broadly only to identify candidates, then read a small slice such as the top 5-10 relevant items.
+- Use `ctx.parallel()` for independent reads only after capping the list. Do not launch unbounded parallel tool calls.
+- Convert raw tool responses into compact records before calling `llm()`: title, date, sender, short excerpt, URL/ID if needed. Do not send full email bodies, full transcripts, XML dumps, or huge JSON unless the task requires it.
+- Prefer deterministic filtering for obvious rules. Use `llm()` once over a compact list for fuzzy classification; do not call `llm()` once per calendar event/email/meeting.
+- If a step gathers many items, `ctx.output()` a preview of the exact capped set that will feed later steps so slow or noisy inputs are visible in the run log.
+- For recurring jigs, avoid reprocessing the entire account history on every run. Use a recent window or compare against the last run when available.
+
+Bad:
+```typescript
+const events = await workspace.calendar_listEvents({ calendarId: "primary" })
+for (const event of events) {
+  classifications.push(await llm("Classify this event", { event }))
+}
+```
+
+Good:
+```typescript
+const events = await workspace.calendar_listEvents({
+  calendarId: "primary",
+  timeMin: weekStart.toISOString(),
+  timeMax: weekEnd.toISOString(),
+})
+const compactEvents = (Array.isArray(events) ? events : (events as any).items ?? [])
+  .filter((event: any) => event.summary && event.start?.dateTime)
+  .slice(0, 20)
+  .map((event: any) => ({
+    title: event.summary,
+    start: event.start.dateTime,
+  }))
+const classification = await llm("Classify these events as professional or personal", { events: compactEvents })
+```
+
+### 13. Code format
 - Output ONLY TypeScript code. No explanation, no markdown fences.
 - Import SDK: `import { jig, llm, agent } from "@jig/sdk"`
 - Import connections: `import { serverName } from "@jig/connections/serverName.js"`
@@ -228,11 +379,31 @@ Good clarifying questions:
 - For Jig-specific behavior, prompts, validators, schemas, or generated code, use this repo as the source of truth. Do NOT browse or web-search for Jig docs or Jig behavior.
 - Use `ctx.output()` inside `ctx.step()` blocks for output, NEVER `console.log()`
 - ALL tool calls MUST be inside `ctx.step()` blocks — tools called outside a step throw at runtime
+- Remove unused imports and unused entries from the `tools` array. If you imported `agent` but never call it, or declared `composio.gmail_fetch_message_by_message_id` in `tools` but never call it, delete it before finishing.
 - End the file with: `export default myJig`
 - Do NOT call `run()` or `process.exit()`
 - Do NOT use `require()` or CommonJS imports
 - Do NOT use relative imports (`../`) — always use the `"@jig/sdk"` and `"@jig/connections/"` aliases
 - Do NOT add markdown fences around the code
+
+### 14. Silent on empty by default
+If a jig fetches data and gets nothing back, do NOT send an "empty digest" / "nothing found" notification unless the user explicitly asked for empty-state pings. Default behavior: `ctx.output()` that nothing was found, then return. The user does not need a daily "no emails today" email — that's noise.
+
+Bad:
+```typescript
+if (emails.length === 0) {
+  await gmail_send_email({ to, subject: "No emails today", body: "Nothing to report." })
+  return
+}
+```
+
+Good:
+```typescript
+if (emails.length === 0) {
+  ctx.output(`No matching emails in the past ${DAYS_BACK} days. Nothing to send.`)
+  return
+}
+```
 
 ---
 

@@ -53,7 +53,14 @@ async function setupJigsGit() {
     if (ok) {
       // Initial commit so version history starts clean
       await run(["git", "add", "-A"], JIGS_DIR)
-      await run(["git", "commit", "-m", "Initial jig snapshot", "--allow-empty"], JIGS_DIR)
+      await run([
+        "git",
+        "-c", "user.name=Jig",
+        "-c", "user.email=jig@local",
+        "commit",
+        "-m", "Initial jig snapshot",
+        "--allow-empty",
+      ], JIGS_DIR)
       log("\u2713", "initialized jigs/.git")
     } else {
       log("!", "failed to init jigs/.git")

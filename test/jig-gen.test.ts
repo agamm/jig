@@ -5,6 +5,8 @@ import {
   hasExplicitEmptyToolsArray,
   collectBuildTimeToolPolicyIssues,
   deriveAuthoringServerScope,
+  extractReferencedToolNames,
+  normalizeSelectedToolNames,
 } from "../src/jig-gen.js"
 import { Context } from "../src/sdk/context.js"
 import { jig, run } from "../src/sdk/jig.js"
@@ -181,6 +183,52 @@ describe("deriveAuthoringServerScope", () => {
       newServers: ["apify", "github"],
       buildResolutionServers: ["apify", "github"],
     })
+  })
+})
+
+describe("extractReferencedToolNames", () => {
+  it("scopes existing edit prompts to tools referenced by the current code", () => {
+    const code = `
+import { workspace } from "@jig/connections/workspace.js"
+import { apify } from "@jig/connections/apify.js"
+
+await workspace.gmail_search({ query: "subject:update" })
+await workspace.gmail_get({ id: "abc" })
+await apify.call_actor({ actor: "apify/hello-world", input: {} })
+`
+
+    expect(extractReferencedToolNames(code, ["workspace", "apify"])).toEqual([
+      "gmail_search",
+      "gmail_get",
+      "call-actor",
+    ])
+  })
+
+  it("dedupes repeated references and ignores unknown tool identifiers", () => {
+    const code = `
+await workspace.gmail_search({ query: "a" })
+await workspace.gmail_search({ query: "b" })
+await workspace.not_a_real_tool({})
+`
+
+    expect(extractReferencedToolNames(code, ["workspace"])).toEqual(["gmail_search"])
+  })
+})
+
+describe("normalizeSelectedToolNames", () => {
+  it("maps code-facing identifiers back to runtime tool names", () => {
+    expect(normalizeSelectedToolNames(["get_actor_output"], ["get-actor-output"])).toEqual(["get-actor-output"])
+  })
+
+  it("filters hallucinated names when at least one selected tool is valid", () => {
+    expect(normalizeSelectedToolNames(["search_emails", "gmail_search"], ["gmail_search", "gmail_get"])).toEqual(["gmail_search"])
+  })
+
+  it("falls back to all available non-excluded tools when every selected name is invalid", () => {
+    expect(normalizeSelectedToolNames(["search_emails"], ["gmail_search", "gmail_get", "gmail_send"], ["gmail_send"])).toEqual([
+      "gmail_search",
+      "gmail_get",
+    ])
   })
 })
 

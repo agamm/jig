@@ -10,6 +10,8 @@ import type { JigDefinition, JigTrigger } from "./sdk/jig.js"
 import { PROJECT_ROOT } from "./config/paths.js"
 import { toolNameToIdentifier } from "./mcp/typegen.js"
 import { getConnectionImportBindings, getConnectionToolReferences } from "./domain/source-analysis.js"
+import { getJigTsCompilerOptions } from "./domain/jig-ts-options.js"
+import { materializeJigWithRuntimeImports } from "./domain/runtime-imports.js"
 
 // ---------------------------------------------------------------------------
 // Validation errors
@@ -284,31 +286,7 @@ let validationCompilerOptions: ts.CompilerOptions | null = null
 function getValidationCompilerOptions(): ts.CompilerOptions {
   if (validationCompilerOptions) return validationCompilerOptions
 
-  const configPath = ts.findConfigFile(PROJECT_ROOT, ts.sys.fileExists, "tsconfig.json")
-  if (!configPath) {
-    validationCompilerOptions = {
-      module: ts.ModuleKind.ESNext,
-      moduleResolution: ts.ModuleResolutionKind.Bundler,
-      target: ts.ScriptTarget.ESNext,
-      strict: true,
-      noEmit: true,
-    }
-    return validationCompilerOptions
-  }
-
-  const parsed = ts.getParsedCommandLineOfConfigFile(
-    configPath,
-    { noEmit: true },
-    {
-      ...ts.sys,
-      onUnRecoverableConfigFileDiagnostic: () => {},
-    }
-  )
-
-  validationCompilerOptions = {
-    ...(parsed?.options ?? {}),
-    noEmit: true,
-  }
+  validationCompilerOptions = getJigTsCompilerOptions({ noEmit: true })
   return validationCompilerOptions
 }
 
@@ -503,7 +481,9 @@ export async function validateJigFile(path: string): Promise<ValidationResult> {
   }
 
   try {
-    const mod = await import(`${path}?_t=${Date.now()}_${Math.random().toString(36).slice(2)}`)
+    const source = require("fs").readFileSync(path, "utf-8")
+    const importPath = await materializeJigWithRuntimeImports(path, source)
+    const mod = await import(`${importPath}?_t=${Date.now()}_${Math.random().toString(36).slice(2)}`)
     if (!mod.default) {
       return { ok: false, errors: [{ field: "default", message: "Jig file must have a default export" }] }
     }
@@ -511,7 +491,7 @@ export async function validateJigFile(path: string): Promise<ValidationResult> {
     const errors = validateDefinition(mod.default)
 
     try {
-      const code = require("fs").readFileSync(path, "utf-8")
+      const code = source
       const tools = mod.default?.options?.tools
       if (Array.isArray(tools) && tools.length > 0) {
         const declaredNames = tools.map((t: any) => t._toolName).filter(Boolean)

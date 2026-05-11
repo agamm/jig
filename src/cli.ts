@@ -5,6 +5,8 @@
  * Business logic emits structured JigEvents. This file renders them as text.
  * A dashboard would render the same events as UI components.
  */
+process.env.JIG_LOG_SOURCE = process.env.JIG_LOG_SOURCE ?? "cli"
+import "./server/log-buffer.js" // side-effect: captures console.* into the shared SQLite logs table
 import { discoverJigs } from "./discover.js"
 import { existsSync } from "fs"
 import { join, relative } from "path"
@@ -176,6 +178,12 @@ function renderEvent(event: JigEvent): void {
       break
     case "setup-instructions":
       console.log(`\n${event.message}\n`)
+      break
+    case "awaiting-oauth":
+      // Only reached when jig is running as a remote service; local CLI uses
+      // the loopback flow and never emits this event. Surface the URL anyway
+      // in case someone SSHs into a Railway shell and runs `jig connect`.
+      console.log(`\nOpen this URL in any browser to authorize ${event.server}:\n  ${event.authorizationUrl}\n`)
       break
 
     // Run events

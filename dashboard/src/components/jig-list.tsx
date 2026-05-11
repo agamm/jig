@@ -15,6 +15,17 @@ const statusColor = (s: string) =>
 const runStatusColor = (s: "success" | "fail") =>
   s === "success" ? "#34d399" : "#f43f5e";
 
+function runDurationValue(duration: string): number {
+  if (!duration || duration === "—") return 0;
+  const hours = duration.match(/(\d+(?:\.\d+)?)h/)?.[1];
+  const minutes = duration.match(/(\d+(?:\.\d+)?)m/)?.[1];
+  const seconds = duration.match(/(\d+(?:\.\d+)?)s/)?.[1];
+  const explicit = (Number(hours ?? 0) * 3600) + (Number(minutes ?? 0) * 60) + Number(seconds ?? 0);
+  if (explicit > 0) return explicit;
+  const numeric = Number.parseFloat(duration);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
 function formatNextRun(iso: string): string {
   const d = new Date(iso);
   const now = Date.now();
@@ -31,12 +42,13 @@ function formatNextRun(iso: string): string {
 const statusDot = (s: string) =>
   s === "healthy" ? "bg-emerald-400" : s === "attention" ? "bg-amber-400" : "bg-rose-400";
 
-export function JigList({ jigs, selectedJigId, onJigClick, onReorder, onCreate }: {
+export function JigList({ jigs, selectedJigId, onJigClick, onReorder, onCreate, onDiscardUnderConstruction }: {
   jigs: Jig[];
   selectedJigId: string | null;
   onJigClick: (jig: Jig) => void;
   onReorder: (newJigs: Jig[]) => void;
   onCreate: () => void;
+  onDiscardUnderConstruction?: (jig: Jig) => void;
 }) {
   const [jigSearch, setJigSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "running" | "attention" | "scheduled">("all");
@@ -62,10 +74,15 @@ export function JigList({ jigs, selectedJigId, onJigClick, onReorder, onCreate }
 
   function renderJigRow(jig: Jig, idx: number) {
     const isSelected = selectedJigId === jig.id;
+    const isUnderConstruction = !!jig.underConstruction;
     const isDragging = draggingIdx === idx;
     const isDropTarget = dropTargetIdx === idx;
     const dragProps = getDragProps(idx);
-    const sparklineColors = jig.runs.slice(0, 7).reverse().map((run) => runStatusColor(run.status));
+    const sparklineRuns = jig.runs.slice(0, 7).reverse();
+    const sparklineData = sparklineRuns.length > 0
+      ? sparklineRuns.map((run) => runDurationValue(run.duration))
+      : jig.sparkline;
+    const sparklineColors = sparklineRuns.map((run) => runStatusColor(run.status));
 
     return (
       <div key={jig.id} className="relative">
@@ -96,12 +113,15 @@ export function JigList({ jigs, selectedJigId, onJigClick, onReorder, onCreate }
               <span className="absolute inset-0 rounded-full bg-blue-400/30 animate-ping" />
               <span className="absolute inset-0 rounded-full bg-blue-400" />
             </span>
+          ) : isUnderConstruction ? (
+            <span className="h-[7px] w-[7px] rounded-[2px] bg-amber-400 shrink-0 rotate-45" />
           ) : (
             <span className={`h-[7px] w-[7px] rounded-full shrink-0 ${statusDot(jig.status)}`} />
           )}
 
           <span className={`flex min-w-0 items-baseline gap-1.5 text-[13px] font-medium ${isSelected ? "text-[#ededed]" : "text-[#ccc]"}`}>
             <span className="truncate">{jig.name}</span>
+            {isUnderConstruction && <span className="text-[9px] font-normal text-amber-400 shrink-0">Under construction</span>}
             {jig.running && <span className="text-[9px] font-normal text-blue-400 shrink-0">Running</span>}
           </span>
 
@@ -114,7 +134,7 @@ export function JigList({ jigs, selectedJigId, onJigClick, onReorder, onCreate }
           </span>
 
           <span className="rounded-md bg-[#111113] border border-[#1f1f23] px-2 py-0.5 font-mono text-[10px] text-[#888] shrink-0">
-            {jig.trigger}
+            {isUnderConstruction ? "draft" : jig.trigger}
           </span>
           {jig.schedule?.nextRunAt && (
             <span className="text-[9px] text-[#444] shrink-0" title={`Next: ${new Date(jig.schedule.nextRunAt).toLocaleString()}`}>
@@ -124,7 +144,29 @@ export function JigList({ jigs, selectedJigId, onJigClick, onReorder, onCreate }
 
           <span className="flex-1" />
 
-          <Sparkline data={jig.sparkline} color={statusColor(jig.status)} colors={sparklineColors} />
+          {isUnderConstruction ? (
+            <span className="construction-stripe rounded-md border border-amber-500/20 px-2 py-0.5 text-[9px] font-medium text-amber-300/80 shrink-0">
+              not runnable yet
+            </span>
+          ) : (
+            <Sparkline data={sparklineData} color={statusColor(jig.status)} colors={sparklineColors} />
+          )}
+          {isUnderConstruction && onDiscardUnderConstruction && (
+            <button
+              type="button"
+              draggable={false}
+              onClick={(event) => {
+                event.stopPropagation();
+                onDiscardUnderConstruction(jig);
+              }}
+              onDragStart={(event) => event.stopPropagation()}
+              className="shrink-0 rounded-md border border-rose-500/15 bg-rose-500/[0.05] px-2 py-0.5 text-[9px] font-medium text-rose-200 opacity-0 transition-opacity duration-150 hover:border-rose-500/25 hover:bg-rose-500/[0.1] group-hover:opacity-100"
+              title="Discard draft"
+              aria-label={`Discard ${jig.name}`}
+            >
+              Discard
+            </button>
+          )}
           {jig.costMonth && (
             <span className="group/cost relative text-[10px] text-[#444] font-mono shrink-0 cursor-default">
               {jig.costMonth}/mo

@@ -1,9 +1,12 @@
 import { join } from "node:path"
+import { rm } from "node:fs/promises"
 import { loadServerConfigs, checkMissingCredentials, getServerConfig } from "../mcp/config.js"
-import { setCredential } from "../db.js"
-import { PROJECT_ROOT, SCHEMAS_DIR } from "../config/paths.js"
-import { connectServer, discoverTools, ensureAnnotations } from "../mcp/client.js"
+import { setCredential, deleteCredentials } from "../db.js"
+import { CONNECTIONS_DIR, PROJECT_ROOT, SCHEMAS_DIR, TYPES_DIR } from "../config/paths.js"
+import { closeConnection, connectServer, discoverTools, ensureAnnotations } from "../mcp/client.js"
 import { generateConnectionArtifacts } from "../mcp/typegen.js"
+import { isServiceMode } from "../config/runtime.js"
+import { waitForPendingAuthUrl } from "../mcp/auth.js"
 
 export type ConnectServerSuccess = {
   ok: true
@@ -19,7 +22,14 @@ export type ConnectServerNeedsCredentials = {
   setup?: string
 }
 
-export type ConnectServerResult = ConnectServerSuccess | ConnectServerNeedsCredentials
+export type ConnectServerAwaitingOAuth = {
+  ok: false
+  awaitingOAuth: true
+  server: string
+  authorizationUrl: string
+}
+
+export type ConnectServerResult = ConnectServerSuccess | ConnectServerNeedsCredentials | ConnectServerAwaitingOAuth
 
 export async function connectConfiguredServer(
   serverName: string,
@@ -51,19 +61,115 @@ export async function connectConfiguredServer(
   }
 
   const config = await getServerConfig(serverName)
-  const connection = await connectServer(serverName, config, { signal: input.signal })
 
+  // In service mode, the caller is an HTTP request that can't drive a
+  // loopback OAuth flow — so we can't let the request block on
+  // waitForAuthCode. Kick off connect as a detached promise, and race it
+  // against `waitForPendingAuthUrl`: if an OAuth URL appears first, return
+  // it immediately so the dashboard can open it, and let the connect promise
+  // continue in the background (it will resolve when the callback fires and
+  // completePendingOAuth hands the code over).
+  if (isServiceMode()) {
+    const detached = runConnectToCompletion(serverName, rawConfig, config, input.signal).catch((err) => {
+      console.error(`[connection] ${serverName} failed:`, err?.message ?? err)
+      return null
+    })
+    const racer = Promise.race([
+      detached.then((res) => ({ kind: "done" as const, res })),
+      waitForPendingAuthUrl(serverName, 30_000).then((url) => ({ kind: "oauth" as const, url })),
+    ])
+    const outcome = await racer
+    if (outcome.kind === "oauth" && outcome.url) {
+      return {
+        ok: false,
+        awaitingOAuth: true,
+        server: serverName,
+        authorizationUrl: outcome.url,
+      }
+    }
+    // `done` won, or OAuth timed out. Await the detached result either way.
+    const finalRes = await detached
+    if (!finalRes) throw new Error(`Connect to ${serverName} failed — see server logs`)
+    return finalRes
+  }
+
+  return await runConnectToCompletion(serverName, rawConfig, config, input.signal)
+}
+
+/**
+ * Disconnect a configured server: close any live MCP client, drop its saved
+ * credentials (OAuth tokens, client registration, verifier), and remove the
+ * generated schema/typegen files so the dashboard shows it as "not connected".
+ *
+ * Safe to call on a server that was never connected — each step is
+ * best-effort. Returns the set of things actually removed so callers can
+ * surface an accurate summary.
+ */
+export async function disconnectConfiguredServer(serverName: string): Promise<{
+  ok: true
+  server: string
+  removed: { credentials: boolean; schema: boolean; connection: boolean }
+}> {
+  const configs = await loadServerConfigs()
+  if (!configs[serverName]) {
+    throw new Error(`Unknown server "${serverName}". Available: ${Object.keys(configs).join(", ")}`)
+  }
+
+  // 1. Tear down any live MCP client so a subsequent tool call doesn't reuse
+  // stale auth. Don't throw if nothing was open.
+  let connectionClosed = false
   try {
-    let tools = await discoverTools(connection, { signal: input.signal })
+    await closeConnection(serverName)
+    connectionClosed = true
+  } catch {}
+
+  // 2. Wipe every credentials row for this server (oauth:*:tokens, client,
+  // verifier, any provider-custom keys). Harmless if the row set was empty.
+  deleteCredentials(serverName)
+
+  // 3. Remove the generated schema + typed runtime so the UI flips to "not
+  // connected" and tool lookups fail loudly instead of silently reusing an
+  // old surface. Regenerate the connection index so other connections keep
+  // their imports valid.
+  const schemaPath = join(SCHEMAS_DIR, `${serverName}.json`)
+  let schemaRemoved = false
+  try {
+    await rm(schemaPath, { force: true })
+    schemaRemoved = true
+  } catch {}
+  try { await rm(join(CONNECTIONS_DIR, `${serverName}.ts`), { force: true }) } catch {}
+  try { await rm(join(CONNECTIONS_DIR, `${serverName}.d.ts`), { force: true }) } catch {}
+  try { await rm(join(TYPES_DIR, `${serverName}.d.ts`), { force: true }) } catch {}
+  try { await generateConnectionArtifacts() } catch {}
+
+  console.log(`[connection] ${serverName} disconnected`)
+
+  return {
+    ok: true,
+    server: serverName,
+    removed: { credentials: true, schema: schemaRemoved, connection: connectionClosed },
+  }
+}
+
+async function runConnectToCompletion(
+  serverName: string,
+  rawConfig: Awaited<ReturnType<typeof loadServerConfigs>>[string],
+  config: Awaited<ReturnType<typeof getServerConfig>>,
+  signal?: AbortSignal,
+): Promise<ConnectServerSuccess> {
+  const connection = await connectServer(serverName, config, { signal })
+  try {
+    let tools = await discoverTools(connection, { signal })
 
     if (rawConfig.proxy?.connectDiscovery) {
       const { discover } = await import(join(PROJECT_ROOT, rawConfig.proxy.connectDiscovery))
       tools = await discover(connection)
     }
 
-    await ensureAnnotations(tools, { signal: input.signal })
+    await ensureAnnotations(tools, { signal })
     await Bun.write(join(SCHEMAS_DIR, `${serverName}.json`), JSON.stringify(tools, null, 2))
     await generateConnectionArtifacts()
+    console.log(`[connection] ${serverName} ready (${tools.length} tool${tools.length === 1 ? "" : "s"})`)
 
     return {
       ok: true,

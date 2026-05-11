@@ -1,7 +1,7 @@
 /** SWR keys and fetchers for jig data. */
 import useSWR, { type SWRConfiguration } from "swr"
-import { fetchJigs, fetchJig, fetchModels, fetchJigSteps, fetchConnections, fetchConnection, fetchJigVersions, fetchActiveRunForJig, fetchExamples } from "./api"
-import type { JigData, ModelCatalog, StepList, Connection, ConnectionDetail, JigVersion, RunStatus, ExampleJig } from "@shared/api"
+import { fetchJigs, fetchJig, fetchModels, fetchJigSteps, fetchConnections, fetchConnection, fetchJigVersions, fetchActiveRunForJig, fetchExamples, fetchHealth, fetchSystemSettings } from "./api"
+import type { JigData, ModelCatalog, StepList, Connection, ConnectionDetail, JigVersion, RunStatus, ExampleJig, HealthResponse, SystemSettings } from "@shared/api"
 
 const REFRESH_INTERVAL = 10_000
 
@@ -19,6 +19,13 @@ export function useExamples() {
   })
 }
 
+export function useHealth() {
+  return useSWR<HealthResponse>("health", fetchHealth, {
+    refreshInterval: REFRESH_INTERVAL,
+    revalidateOnFocus: true,
+  })
+}
+
 export function useJig(jigId: string | null, config?: SWRConfiguration<JigData>) {
   return useSWR<JigData>(
     jigId ? `jig/${jigId}` : null,
@@ -29,6 +36,12 @@ export function useJig(jigId: string | null, config?: SWRConfiguration<JigData>)
 
 export function useModels() {
   return useSWR<ModelCatalog>("models", fetchModels, {
+    revalidateOnFocus: false,
+  })
+}
+
+export function useSystemSettings() {
+  return useSWR<SystemSettings>("system-settings", fetchSystemSettings, {
     revalidateOnFocus: false,
   })
 }

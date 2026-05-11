@@ -1,7 +1,7 @@
 /** SWR keys and fetchers for jig data. */
 import useSWR, { type SWRConfiguration } from "swr"
-import { fetchJigs, fetchJig, fetchModels, fetchJigSteps, fetchConnections, fetchConnection, fetchJigVersions, fetchActiveRunForJig, fetchExamples, fetchHealth, fetchSystemSettings } from "./api"
-import type { JigData, ModelCatalog, StepList, Connection, ConnectionDetail, JigVersion, RunStatus, ExampleJig, HealthResponse, SystemSettings } from "@shared/api"
+import { fetchJigs, fetchJig, fetchModels, fetchJigSteps, fetchConnections, fetchConnection, fetchJigVersions, fetchActiveRunForJig, fetchExamples, fetchHealth, fetchSystemSettings, fetchPending, fetchVersionsV2 } from "./api"
+import type { JigData, ModelCatalog, StepList, Connection, ConnectionDetail, JigVersion, RunStatus, ExampleJig, HealthResponse, SystemSettings, PendingState, JigVersionListResponse } from "@shared/api"
 
 const REFRESH_INTERVAL = 10_000
 
@@ -70,6 +70,27 @@ export function useJigVersions(jigId: string | null) {
   return useSWR<JigVersion[]>(
     jigId ? `jig/${jigId}/versions` : null,
     () => fetchJigVersions(jigId!),
+  )
+}
+
+export function usePending(jigId: string | null, config?: SWRConfiguration<PendingState | null>) {
+  return useSWR<PendingState | null>(
+    jigId ? `jig/${jigId}/pending` : null,
+    () => fetchPending(jigId!),
+    {
+      // Pending state changes when the agent writes — caller invalidates this
+      // key on tool-call events. Background refresh as a safety net.
+      refreshInterval: 5000,
+      revalidateOnFocus: true,
+      ...config,
+    },
+  )
+}
+
+export function useVersionsV2(jigId: string | null) {
+  return useSWR<JigVersionListResponse>(
+    jigId ? `jig/${jigId}/versions-v2` : null,
+    () => fetchVersionsV2(jigId!),
   )
 }
 

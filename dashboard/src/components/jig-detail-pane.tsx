@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect, useRef } from "react";
-import type { AgentEvent, JigStepTool, ScheduleInfo } from "@shared/api";
+import type { JigStepTool, ScheduleInfo } from "@shared/api";
 import type { Jig } from "@/types/jig";
 import { ConnectionTag } from "@/components/connection-tag";
 import { HighlightedCode } from "@/components/highlighted-code";
@@ -23,7 +23,8 @@ import { useElapsed } from "@/hooks/use-elapsed";
 import { useJigToolApproval } from "@/lib/jig-tool-approval";
 import { formatElapsed } from "@/lib/format";
 import { deleteJig, updateSchedule } from "@/lib/api";
-import { useJigSteps, useConnections } from "@/lib/swr";
+import { useJigSteps, useConnections, usePending } from "@/lib/swr";
+import { PendingChangesBanner } from "@/components/pending-changes-banner";
 import { ServiceIcon } from "@/components/service-icon";
 import { PaneHeader } from "@/components/pane-header";
 import { PaneSection } from "@/components/pane-section";
@@ -34,46 +35,6 @@ import { buildRemovalInstruction, getReviewableToolKeys, sameTool, toolKey } fro
 
 const statusDot = (s: string) =>
   s === "healthy" ? "bg-emerald-400" : s === "attention" ? "bg-amber-400" : "bg-rose-400";
-
-type DirectWriteNotice = {
-  key: string;
-  file: string;
-  message: string;
-};
-
-function fileLabel(path: string): string {
-  return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
-}
-
-function latestDirectWriteNotice(events: AgentEvent[], sessionId: string | null): DirectWriteNotice | null {
-  for (let i = events.length - 1; i >= 0; i--) {
-    const event = events[i];
-    if (event.type !== "tool-call" || event.tool !== "write_jig_file" || event.status !== "done" || !event.result) {
-      continue;
-    }
-
-    let result: { ok?: unknown; path?: unknown; draft?: unknown };
-    try {
-      result = JSON.parse(event.result);
-    } catch {
-      continue;
-    }
-
-    if (result.ok !== true || result.draft === true || typeof result.path !== "string") continue;
-
-    const message = typeof event.args.message === "string" && event.args.message.trim()
-      ? event.args.message.trim()
-      : "Updated jig source";
-
-    return {
-      key: `${sessionId ?? "session"}:${i}:${result.path}:${message}`,
-      file: fileLabel(result.path),
-      message,
-    };
-  }
-
-  return null;
-}
 
 function formatScheduleTime(iso: string | null): string {
   if (!iso) return "—";
@@ -318,7 +279,6 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
   const tools = jig.settings.tools ?? [];
   const toolApproval = useJigToolApproval(tools, jig.settings.permissions, onRefresh);
   const previousAutoRemovalRef = useRef("");
-  const lastEditToastRef = useRef("");
 
   // Pre-run gate: if the jig imports connections that aren't currently
   // connected, ask before firing off a run — otherwise we'd silently
@@ -337,19 +297,19 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
     return requiredConnections.filter((n: string) => !connectedSet.has(n))
   })();
 
+  // Pending changes for this jig (v12). The agent writes here; user approves
+  // or discards via the banner. Revalidates on agent activity.
+  const { data: pending, mutate: revalidatePending } = usePending(jigId);
+
   const agent = useAgent(async () => {
     await onRefresh?.();
-    // Revalidate steps after jig data refreshes — ensures new code hash is used
+    // Revalidate steps + pending after jig data refreshes
     await revalidateSteps();
+    await revalidatePending();
   });
 
-  useEffect(() => {
-    if (agent.status !== "done") return;
-    const notice = latestDirectWriteNotice(agent.events, agent.sessionId);
-    if (!notice || lastEditToastRef.current === notice.key) return;
-    lastEditToastRef.current = notice.key;
-    toast.success(`Jig updated: ${notice.file}\nChanged: ${notice.message}`, { durationMs: null });
-  }, [agent.events, agent.sessionId, agent.status]);
+  // Revalidate pending whenever the agent emits a new event (likely a write).
+  useEffect(() => { revalidatePending(); }, [agent.events.length, revalidatePending]);
 
   // Fetch derived steps via SWR (cached server-side by code hash)
   const { data: stepsData, isValidating: derivingSteps, error: stepsError, mutate: revalidateSteps } = useJigSteps(jigId);
@@ -528,6 +488,23 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
 
       {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+        {/* Pending changes banner — visible whenever the jig has an unapproved pending version. */}
+        {pending && (
+          <PendingChangesBanner
+            jigId={jigId}
+            pending={pending}
+            agentStatus={agent.status}
+            onApproved={async () => {
+              await revalidatePending();
+              await onRefresh?.();
+              await revalidateSteps();
+            }}
+            onDiscarded={async () => {
+              await revalidatePending();
+              await revalidateSteps();
+            }}
+          />
+        )}
         {/* Steps / Code toggle + Run buttons */}
         <div className="flex items-center justify-between">
           <SegmentedControl

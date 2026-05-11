@@ -7,30 +7,10 @@ import { ConfirmDialog } from "@/components/confirm-dialog"
 import { EmptyState, LoadingState, Notice } from "@/components/state-panel"
 import { toast } from "@/components/toast"
 import { fetchJigVersionDetail, restoreJigVersion } from "@/lib/api"
-import { trimGitDiffHeaders } from "@/lib/git-diff"
 import { useJigVersions } from "@/lib/swr"
+import { DiffOutput } from "@/components/diff-output"
 
 const DEFAULT_VISIBLE_HISTORY_ROWS = 3
-
-function DiffOutput({ diff }: { diff: string }) {
-  const normalizedDiff = trimGitDiffHeaders(diff)
-  const visibleLines = normalizedDiff
-    .split("\n")
-    .filter((line) => !line.startsWith("@@"))
-
-  return (
-    <pre className="max-h-64 overflow-auto rounded-md border border-[#1f1f23] bg-[#0a0a0b] p-3 text-[10px] leading-relaxed">
-      {visibleLines.map((line, index) => {
-        const cls = line.startsWith("+")
-          ? "text-emerald-300"
-          : line.startsWith("-")
-            ? "text-rose-300"
-            : "text-[#8b8b91]"
-        return <div key={index} className={cls}>{line || " "}</div>
-      })}
-    </pre>
-  )
-}
 
 function PromptOutput({ prompt }: { prompt: string }) {
   return (

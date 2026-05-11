@@ -13,6 +13,8 @@ import { HighlightedCode } from "@/components/highlighted-code";
 import { RunSteps, type RunStep } from "@/components/run-steps";
 import { useAgent } from "@/hooks/use-agent";
 import { closeAgentSession } from "@/lib/api";
+import { usePending } from "@/lib/swr";
+import { PendingChangesBanner } from "@/components/pending-changes-banner";
 import { toast } from "@/components/toast";
 import { PaneHeader } from "@/components/pane-header";
 import { PaneSection } from "@/components/pane-section";
@@ -97,6 +99,10 @@ export function CreateJigPane({
   const resumeAgentSession = agent.resumeSession;
   const displayName = agent.jigId ? prettifyJigName(agent.jigId) : "Create New Jig";
   const previewJig = agent.draftApproval?.jig ?? null;
+  // v12: read pending directly from the store rather than relying on the
+  // ephemeral session.draftApproval snapshot. Revalidates as the agent writes.
+  const { data: pending, mutate: revalidatePending } = usePending(agent.jigId ?? null);
+  useEffect(() => { revalidatePending() }, [agent.events.length, revalidatePending]);
   const discardSessionId = agent.sessionId ?? resumeSessionId ?? null;
 
   useEffect(() => {
@@ -264,19 +270,20 @@ export function CreateJigPane({
             onRetry={() => agent.sendMessage("Continue — retry the last step.")}
           />
 
-          {agent.draftApproval?.jig && (
+          {pending && agent.jigId && (
             <div className="border-t border-[#1f1f23] px-4 py-3">
-              <div className="flex items-center justify-between gap-3 rounded-lg border border-emerald-500/20 bg-emerald-500/[0.05] px-3 py-2">
-                <div className="min-w-0">
-                  <p className="text-[10px] font-medium uppercase tracking-wider text-emerald-300">Draft Ready</p>
-                  <p className="mt-0.5 text-[11px] leading-relaxed text-emerald-100/70">
-                    Approve to create this jig and allow its detected tools. Or type feedback below to revise the draft.
-                  </p>
-                </div>
-                <Button onClick={() => void agent.approveDraft()} variant="success" size="xs">
-                  Approve Draft
-                </Button>
-              </div>
+              <PendingChangesBanner
+                jigId={agent.jigId}
+                pending={pending}
+                agentStatus={agent.status}
+                onApproved={async () => {
+                  await revalidatePending();
+                  await onCreated?.(agent.jigId ?? undefined);
+                }}
+                onDiscarded={async () => {
+                  await revalidatePending();
+                }}
+              />
             </div>
           )}
 

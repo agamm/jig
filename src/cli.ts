@@ -347,6 +347,68 @@ try {
       break
     }
 
+    case "versions": {
+      const [name] = rest
+      if (!name) { io.emit({ type: "error", code: "usage", message: "Usage: jig versions <name>" }); process.exit(1) }
+      const { listAllVersions, getJigRow } = await import("./services/jig-store.js")
+      const jig = getJigRow(name)
+      if (!jig) { console.error(`Jig not found: ${name}`); process.exit(1); }
+      const versions = listAllVersions(name)
+      if (versions.length === 0) { console.log("(no versions)"); break }
+      for (const v of versions) {
+        const tag = v.id === jig.active_version_id ? " ACTIVE" : v.id === jig.pending_version_id ? " PENDING" : ""
+        const date = new Date(v.createdAt).toISOString().slice(0, 16).replace("T", " ")
+        console.log(`v${String(v.id).padStart(4)}  ${date}  ${v.author.padEnd(8)}${tag.padEnd(8)}  ${v.message ?? ""}`)
+      }
+      process.exit(0)
+      break
+    }
+
+    case "restore": {
+      const [name, versionArg] = rest
+      const versionId = versionArg?.startsWith("v") ? parseInt(versionArg.slice(1)) : parseInt(versionArg)
+      if (!name || !Number.isFinite(versionId)) {
+        io.emit({ type: "error", code: "usage", message: "Usage: jig restore <name> <versionId>" })
+        process.exit(1)
+      }
+      const { restoreVersion, getPending } = await import("./services/jig-store.js")
+      if (getPending(name)) {
+        console.error(`A pending change already exists for ${name}. Approve or discard it first.`)
+        process.exit(1)
+      }
+      const { pendingVersionId } = restoreVersion({ jigId: name, versionId, author: "cli" })
+      console.log(`Restored v${versionId} as pending v${pendingVersionId}. Use 'jig pending ${name}' to review and approve.`)
+      process.exit(0)
+      break
+    }
+
+    case "pending": {
+      const [name, action] = rest
+      if (!name) { io.emit({ type: "error", code: "usage", message: "Usage: jig pending <name> [approve|discard]" }); process.exit(1) }
+      const { getPending, approvePending, discardPending } = await import("./services/jig-store.js")
+      const pending = getPending(name)
+      if (!pending) { console.log(`No pending changes for ${name}.`); break }
+
+      if (action === "approve") {
+        approvePending(name)
+        console.log(`Approved pending changes for ${name} (now active).`)
+        process.exit(0)
+        break
+      }
+      if (action === "discard") {
+        discardPending(name)
+        console.log(`Discarded pending changes for ${name}.`)
+        process.exit(0)
+        break
+      }
+      // Default: show diff
+      console.log(`Pending changes for ${name}: +${pending.addedLines} −${pending.removedLines} lines\n`)
+      console.log(pending.diff)
+      console.log(`\nRun 'jig pending ${name} approve' to apply, or 'jig pending ${name} discard' to drop.`)
+      process.exit(0)
+      break
+    }
+
     case "deploy": {
       const { runDeployArgs } = await import("./cli-deploy/index.js")
       await runDeployArgs(rest)
@@ -383,6 +445,9 @@ try {
       console.log(`  jig run <name> [args]  Run a jig`)
       console.log(`  jig new [description]  AI generates a new jig`)
       console.log(`  jig edit <name> [ent]  AI modifies an existing jig`)
+      console.log(`  jig versions <name>    List versions for a jig`)
+      console.log(`  jig restore <name> <v> Restore version <v> as a pending change`)
+      console.log(`  jig pending <name>     Show pending diff; append 'approve' or 'discard'`)
       console.log(`  jig deploy             Provision a new Railway-hosted instance (interactive)`)
       console.log(`  jig deploy --update    Redeploy current code to the linked Railway project`)
       console.log(`  jig update [handle]    Update a deployed jig to the latest tag (rolls back on failure)`)

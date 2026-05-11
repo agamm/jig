@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react"
-import type { AgentConversationTurn, AgentDraftApproval, AgentEvent, AgentMetrics, AgentStatus } from "@shared/api"
-import { approveAgentDraft, closeAgentSession, fetchAgentStatus, sendAgentMessage, startAgentSession } from "@/lib/api"
+import type { AgentConversationTurn, AgentDraftApproval, AgentEvent, AgentMetrics, AgentStatus, AgentStatusResponse } from "@shared/api"
+import { approveAgentDraft, closeAgentSession, sendAgentMessage, startAgentSession } from "@/lib/api"
 
 type SuggestedConnection = {
   name: string
@@ -26,6 +26,14 @@ function extractSuggestedConnections(error: any): SuggestedConnection[] {
   return []
 }
 
+/**
+ * Connects to the agent's SSE stream for one session.
+ *
+ * Replaces the older polling-based hook. The browser's native EventSource
+ * handles reconnect + Last-Event-ID; we just attach a listener and merge
+ * incoming snapshot frames into local state. No generation counters, no
+ * setTimeout loops, no separate conversation mirror.
+ */
 export function useAgent(
   onComplete?: (jigId?: string) => void | Promise<void>,
   options: { persistOnUnmount?: boolean } = {},
@@ -38,82 +46,65 @@ export function useAgent(
   const [suggestedConnections, setSuggestedConnections] = useState<SuggestedConnection[]>([])
   const [metrics, setMetrics] = useState<AgentMetrics | undefined>(undefined)
   const [draftApproval, setDraftApproval] = useState<AgentDraftApproval | undefined>(undefined)
-  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const onCompleteRef = useRef(onComplete)
-  const sinceRef = useRef(0)
-  const generationRef = useRef(0)
-  const conversationRef = useRef<AgentConversationTurn[]>([])
+  const [conversation, setConversation] = useState<AgentConversationTurn[]>([])
+  const sourceRef = useRef<EventSource | null>(null)
   const sessionIdRef = useRef<string | null>(null)
+  const onCompleteRef = useRef(onComplete)
   onCompleteRef.current = onComplete
 
-  const cleanup = useCallback(() => {
-    generationRef.current += 1
-    sinceRef.current = 0
-    if (pollRef.current) clearTimeout(pollRef.current)
-    pollRef.current = null
+  const closeStream = useCallback(() => {
+    if (sourceRef.current) {
+      try { sourceRef.current.close() } catch {}
+      sourceRef.current = null
+    }
   }, [])
 
   useEffect(() => () => {
-    cleanup()
+    closeStream()
     if (options.persistOnUnmount) return
     const sid = sessionIdRef.current
-    if (sid) {
-      void closeAgentSession(sid).catch(() => {})
-    }
-  }, [cleanup, options.persistOnUnmount])
+    if (sid) void closeAgentSession(sid).catch(() => {})
+  }, [closeStream, options.persistOnUnmount])
 
-  const appendConversationTurn = useCallback((turn: AgentConversationTurn) => {
-    const content = turn.content.trim()
-    if (!content) return
-    const previous = conversationRef.current[conversationRef.current.length - 1]
-    if (previous && previous.role === turn.role && previous.content === content) return
-    conversationRef.current = [...conversationRef.current, { role: turn.role, content }]
+  const applySnapshot = useCallback((snapshot: AgentStatusResponse) => {
+    if (snapshot.events?.length) {
+      setEvents((prev) => [...prev, ...snapshot.events])
+    }
+    setStatus(snapshot.status)
+    setJigId(snapshot.jigId ?? null)
+    setMetrics(snapshot.metrics)
+    setDraftApproval(snapshot.draftApproval)
+    if (snapshot.conversationHistory) setConversation(snapshot.conversationHistory)
   }, [])
 
-  const poll = useCallback((sid: string, generation: number) => {
-    const tick = async () => {
-      if (generationRef.current !== generation) return false
+  const subscribe = useCallback((sid: string) => {
+    closeStream()
+    // EventSource auto-handles Last-Event-ID on reconnect.
+    const source = new EventSource(`/api/agent/${encodeURIComponent(sid)}/stream`)
+    sourceRef.current = source
+
+    source.addEventListener("snapshot", (ev: MessageEvent) => {
       try {
-        const data = await fetchAgentStatus(sid, sinceRef.current)
-        if (generationRef.current !== generation) return
-
-        if (data.events?.length) {
-          sinceRef.current = data.totalEvents
-          for (const event of data.events) {
-            if (event.type === "text" && event.content.trim()) {
-              appendConversationTurn({ role: "assistant", content: event.content })
-            }
-          }
-          setEvents((prev) => [...prev, ...data.events])
+        const snapshot = JSON.parse(ev.data) as AgentStatusResponse
+        applySnapshot(snapshot)
+        if (snapshot.status === "done" || snapshot.status === "error") {
+          // Close stream — terminal state. onComplete callback fires once.
+          closeStream()
+          void onCompleteRef.current?.(snapshot.jigId)
         }
-
-        setStatus(data.status)
-        setJigId(data.jigId ?? null)
-        setMetrics(data.metrics)
-        setDraftApproval(data.draftApproval)
-        if (data.conversationHistory) {
-          conversationRef.current = data.conversationHistory
-        }
-
-        if (data.status === "done" || data.status === "error") {
-          pollRef.current = null
-          await onCompleteRef.current?.(data.jigId)
-          return
-        }
-      } catch (e: any) {
-        if (generationRef.current !== generation) return
-        setStatus("error")
-        setEvents((prev) => prev.length > 0 ? prev : [{ type: "text", content: e?.message ?? "Unknown error" }])
-        pollRef.current = null
-        return
+      } catch {
+        /* ignore malformed frames */
       }
+    })
 
-      pollRef.current = setTimeout(tick, 1000)
-    }
-
-    if (pollRef.current) clearTimeout(pollRef.current)
-    void tick()
-  }, [appendConversationTurn])
+    source.addEventListener("error", () => {
+      // Native EventSource auto-reconnects with Last-Event-ID; only enter our
+      // error state if the connection is closed permanently.
+      if (source.readyState === EventSource.CLOSED) {
+        setStatus((current) => current === "thinking" || current === "tool-calling" ? "error" : current)
+      }
+    })
+  }, [applySnapshot, closeStream])
 
   const startSession = useCallback(async (instruction: string, targetJigId?: string): Promise<boolean> => {
     const previousSessionId = sessionIdRef.current
@@ -121,10 +112,7 @@ export function useAgent(
       await closeAgentSession(previousSessionId).catch(() => {})
       sessionIdRef.current = null
     }
-    cleanup()
-    const generation = generationRef.current
-    appendConversationTurn({ role: "user", content: instruction })
-    const history = [...conversationRef.current]
+    closeStream()
 
     setEvents([])
     setStatus("thinking")
@@ -133,33 +121,31 @@ export function useAgent(
     setSuggestedConnections([])
     setMetrics(undefined)
     setDraftApproval(undefined)
-    sinceRef.current = 0
+
+    const nextConversation = [...conversation, { role: "user" as const, content: instruction.trim() }].filter((t) => t.content)
+    setConversation(nextConversation)
 
     try {
-      const data = await startAgentSession(instruction, targetJigId, history)
-      if (generationRef.current !== generation) return false
+      const data = await startAgentSession(instruction, targetJigId, nextConversation)
       setSessionId(data.sessionId)
       sessionIdRef.current = data.sessionId
       setJigId(data.jigId ?? null)
-      poll(data.sessionId, generation)
+      subscribe(data.sessionId)
       return true
     } catch (e: any) {
-      if (generationRef.current === generation) {
-        setStatus("error")
-        setEvents([{ type: "text", content: e?.message ?? "Unknown error" }])
-        setRequiredConnections(Array.isArray(e?.details?.requiredConnections) ? e.details.requiredConnections : [])
-        setSuggestedConnections(extractSuggestedConnections(e))
-        setMetrics(undefined)
-        setDraftApproval(undefined)
-      }
+      setStatus("error")
+      setEvents([{ type: "text", content: e?.message ?? "Unknown error" }])
+      setRequiredConnections(Array.isArray(e?.details?.requiredConnections) ? e.details.requiredConnections : [])
+      setSuggestedConnections(extractSuggestedConnections(e))
+      setMetrics(undefined)
+      setDraftApproval(undefined)
       return false
     }
-  }, [appendConversationTurn, cleanup, options.persistOnUnmount, poll])
+  }, [closeStream, conversation, options.persistOnUnmount, subscribe])
 
   const resumeSession = useCallback(async (sid: string): Promise<boolean> => {
     if (!sid || sessionIdRef.current === sid) return true
-    cleanup()
-    const generation = generationRef.current
+    closeStream()
     setEvents([])
     setStatus("thinking")
     setSessionId(sid)
@@ -169,68 +155,46 @@ export function useAgent(
     setSuggestedConnections([])
     setMetrics(undefined)
     setDraftApproval(undefined)
-    sinceRef.current = 0
-
-    try {
-      const data = await fetchAgentStatus(sid, 0)
-      if (generationRef.current !== generation) return false
-      sinceRef.current = data.totalEvents
-      setEvents(data.events ?? [])
-      setStatus(data.status)
-      setJigId(data.jigId ?? null)
-      setMetrics(data.metrics)
-      setDraftApproval(data.draftApproval)
-      conversationRef.current = data.conversationHistory ?? []
-      if (data.status !== "done" && data.status !== "error") {
-        poll(sid, generation)
-      }
-      return true
-    } catch (e: any) {
-      if (generationRef.current === generation) {
-        setStatus("error")
-        setEvents([{ type: "text", content: e?.message ?? "Unknown error" }])
-        setSessionId(null)
-        sessionIdRef.current = null
-      }
-      return false
-    }
-  }, [cleanup, poll])
+    subscribe(sid)
+    return true
+  }, [closeStream, subscribe])
 
   const sendMessage = useCallback(async (message: string): Promise<boolean> => {
     if (!sessionId) return false
     setStatus("thinking")
-    appendConversationTurn({ role: "user", content: message })
-    const history = [...conversationRef.current]
-
+    const nextConversation = [...conversation, { role: "user" as const, content: message.trim() }].filter((t) => t.content)
+    setConversation(nextConversation)
     try {
-      await sendAgentMessage(sessionId, message, history)
-      poll(sessionId, generationRef.current)
+      await sendAgentMessage(sessionId, message, nextConversation)
+      // SSE stream is already open; backend will emit new frames.
+      if (!sourceRef.current) subscribe(sessionId)
       return true
     } catch (e: any) {
       setStatus("error")
       setEvents((prev) => prev.concat({ type: "text", content: e?.message ?? "Unknown error" }))
       return false
     }
-  }, [appendConversationTurn, sessionId, poll])
+  }, [conversation, sessionId, subscribe])
 
-  const approveDraft = useCallback(async (): Promise<boolean> => {
+  const approveDraftFn = useCallback(async (): Promise<boolean> => {
     if (!sessionId) return false
     try {
       setStatus("thinking")
       await approveAgentDraft(sessionId)
       setDraftApproval(undefined)
-      poll(sessionId, generationRef.current)
+      // Backend marks the session done; stream will emit the terminal frame.
+      if (!sourceRef.current) subscribe(sessionId)
       return true
     } catch (e: any) {
       setStatus("error")
       setEvents((prev) => prev.concat({ type: "text", content: e?.message ?? "Unknown error" }))
       return false
     }
-  }, [poll, sessionId])
+  }, [sessionId, subscribe])
 
   const reset = useCallback(async () => {
     const sid = sessionIdRef.current
-    cleanup()
+    closeStream()
     setEvents([])
     setStatus("idle")
     setSessionId(null)
@@ -240,11 +204,9 @@ export function useAgent(
     setSuggestedConnections([])
     setMetrics(undefined)
     setDraftApproval(undefined)
-    conversationRef.current = []
-    if (sid) {
-      await closeAgentSession(sid).catch(() => {})
-    }
-  }, [cleanup])
+    setConversation([])
+    if (sid) await closeAgentSession(sid).catch(() => {})
+  }, [closeStream])
 
   const isActive = status === "thinking" || status === "tool-calling"
   const isWaiting = status === "waiting"
@@ -265,7 +227,7 @@ export function useAgent(
     startSession,
     resumeSession,
     sendMessage,
-    approveDraft,
+    approveDraft: approveDraftFn,
     reset,
   }
 }

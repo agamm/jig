@@ -23,7 +23,7 @@ import {
 } from "./domain/triggers.js"
 import { createCustomRemoteServer, loadCustomServerConfigs, loadServerConfigs } from "./mcp/config.js"
 import { buildJigResponse, discoverAllJigs } from "./services/jig-api.js"
-import { approveAgentDraft, closeAgentSession, getAgentSessionStatus, listUnderConstructionJigs, pushAgentMessage, startAgentSession } from "./services/agent-service.js"
+import { approveAgentDraft, closeAgentSession, getAgentSessionStatus, listUnderConstructionJigs, pushAgentMessage, startAgentSession, streamAgentSession } from "./services/agent-service.js"
 import { cancelActiveRun, getActiveRunSnapshot, getRunDetail, startJigRun } from "./services/run-api.js"
 import { getNotificationHealth, getNotificationSettings, getNotificationTestStatus, saveNotificationSettings, saveNotificationTestStatus, notify, type NotificationSettings } from "./services/notify.js"
 import { connectConfiguredServer, disconnectConfiguredServer } from "./services/connect-server.js"
@@ -715,6 +715,10 @@ export function createApiServer(port: number) {
           case "agentStatus": {
             const since = parseInt(url.searchParams.get("since") ?? "0")
             return apiJson("agentStatus", getAgentSessionStatus(route.params.sessionId, since))
+          }
+          case "agentStream": {
+            const lastEventId = parseInt(req.headers.get("last-event-id") ?? url.searchParams.get("since") ?? "0")
+            return streamAgentSession(route.params.sessionId, lastEventId, req.signal)
           }
           case "agentMessage": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)

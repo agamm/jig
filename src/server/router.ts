@@ -57,6 +57,9 @@ export function matchRoute(pathname: string): { handler: string; params: Record<
 
   if (pathname === "/api/agent") return { handler: "startAgent", params: {} }
 
+  const agentStreamMatch = pathname.match(/^\/api\/agent\/([^/]+)\/stream$/)
+  if (agentStreamMatch) return { handler: "agentStream", params: { sessionId: agentStreamMatch[1] } }
+
   const agentStatusMatch = pathname.match(/^\/api\/agent\/([^/]+)$/)
   if (agentStatusMatch) return { handler: "agentStatus", params: { sessionId: agentStatusMatch[1] } }
 

@@ -130,6 +130,36 @@ function hydrateSession(row: AgentSessionRow): AgentSession {
 function persistSession(session: AgentSession): void {
   if (closedAgentSessions.has(session.sessionId)) return
   upsertAgentSession(serializeSession(session))
+  notifySessionStream(session.sessionId)
+}
+
+// ---------------------------------------------------------------------------
+// SSE streaming — one EventEmitter per session, fires whenever session state
+// changes (after each persistSession). Subscribers maintain their own cursor.
+// ---------------------------------------------------------------------------
+import { EventEmitter } from "events"
+const sessionStreams = new Map<string, EventEmitter>()
+
+function getSessionStream(sessionId: string): EventEmitter {
+  let stream = sessionStreams.get(sessionId)
+  if (!stream) {
+    stream = new EventEmitter()
+    stream.setMaxListeners(50)
+    sessionStreams.set(sessionId, stream)
+  }
+  return stream
+}
+
+function notifySessionStream(sessionId: string): void {
+  sessionStreams.get(sessionId)?.emit("frame")
+}
+
+function disposeSessionStream(sessionId: string): void {
+  const stream = sessionStreams.get(sessionId)
+  if (stream) {
+    stream.removeAllListeners()
+    sessionStreams.delete(sessionId)
+  }
 }
 
 function isSessionClosed(session: AgentSession): boolean {
@@ -1384,7 +1414,86 @@ export async function closeAgentSession(sessionId: string): Promise<OkResponse> 
   const session = loadSession(sessionId)
   if (!session) return { ok: true }
   releaseSession(session)
+  disposeSessionStream(sessionId)
   return { ok: true }
+}
+
+/**
+ * Server-Sent Events stream of agent session updates. Each frame is the
+ * AgentStatusResponse shape with only new events since the client's cursor.
+ *
+ * Frame format: `id: <seq>\nevent: snapshot\ndata: <json>\n\n` where seq is
+ * session.events.length at emit time. Clients pass Last-Event-ID on
+ * reconnect to skip already-seen events.
+ */
+export function streamAgentSession(sessionId: string, lastEventId: number, signal: AbortSignal): Response {
+  const session = loadSession(sessionId)
+  if (!session) throw new ApiError(404, "Session not found")
+
+  const stream = getSessionStream(sessionId)
+  let cursor = Number.isFinite(lastEventId) && lastEventId >= 0 ? lastEventId : 0
+
+  const body = new ReadableStream({
+    start(controller) {
+      const encoder = new TextEncoder()
+      let closed = false
+      const send = (seq: number, payload: AgentStatusResponse) => {
+        if (closed) return
+        const frame = `id: ${seq}\nevent: snapshot\ndata: ${JSON.stringify(payload)}\n\n`
+        try { controller.enqueue(encoder.encode(frame)) } catch { closed = true }
+      }
+      const heartbeat = () => {
+        if (closed) return
+        try { controller.enqueue(encoder.encode(":\n\n")) } catch { closed = true }
+      }
+
+      const push = () => {
+        const s = loadSession(sessionId)
+        if (!s) {
+          if (!closed) { try { controller.close() } catch {} closed = true }
+          return
+        }
+        const seq = s.events.length
+        if (seq <= cursor && s.status === lastStatusSent) return
+        lastStatusSent = s.status
+        send(seq, {
+          status: s.status,
+          jigId: s.jigId,
+          events: s.events.slice(cursor),
+          totalEvents: seq,
+          metrics: s.metrics,
+          draftApproval: s.draftApproval,
+          conversationHistory: s.conversationHistory,
+        })
+        cursor = seq
+      }
+
+      let lastStatusSent: AgentSession["status"] | null = null
+      // Initial replay
+      push()
+
+      stream.on("frame", push)
+      const hb = setInterval(heartbeat, 15_000)
+
+      const abort = () => {
+        if (closed) return
+        closed = true
+        clearInterval(hb)
+        stream.off("frame", push)
+        try { controller.close() } catch {}
+      }
+      signal.addEventListener("abort", abort, { once: true })
+    },
+  })
+
+  return new Response(body, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no",
+    },
+  })
 }
 
 export async function pushAgentMessage(sessionId: string, body: any): Promise<OkResponse> {

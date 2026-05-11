@@ -410,9 +410,9 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
   const retryDerivation = () => { revalidateSteps(); };
 
   const handleVersionRestored = async () => {
-    await onRefresh?.()
-    setDetailTab("code")
-    revalidateSteps()
+    // v12: restore writes to pending; user reviews + approves via the banner.
+    // No tab switch needed — the pending banner is visible regardless.
+    await revalidatePending()
   }
 
   const handleDelete = async () => {

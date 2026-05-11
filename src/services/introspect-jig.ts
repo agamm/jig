@@ -1,7 +1,9 @@
-import { readFileSync } from "fs"
+import { existsSync, readFileSync } from "fs"
 import type { JigTool, ToolPermission } from "../../shared/api.js"
 import { extractConnections, extractTrigger, getJigFilePath } from "../domain/jig-source.js"
 import { getToolPermission } from "../db.js"
+import { getJigRow, getActiveCode } from "./jig-store.js"
+import { materializeActiveVersion } from "./jig-runtime.js"
 
 function dedupeTools(tools: JigTool[]): JigTool[] {
   return [...new Map(tools.map((tool) => [`${tool.connection}:${tool.name}`, tool])).values()]
@@ -26,8 +28,25 @@ export async function introspectJig(
     codeOverride?: string
   } = {}
 ): Promise<IntrospectedJig> {
-  const filePath = options.filePathOverride ?? getJigFilePath(id)
+  // v12: prefer the materialized active version over the legacy filesystem
+  // path. After approve, the store has the fresh code; the fs file is stale.
+  let filePath = options.filePathOverride ?? null
   let code = options.codeOverride ?? ""
+
+  if (!options.filePathOverride && !options.codeOverride) {
+    if (getJigRow(id)?.active_version_id != null) {
+      const materialized = await materializeActiveVersion(id)
+      if (materialized) {
+        filePath = materialized.path
+        code = getActiveCode(id) ?? ""
+      }
+    }
+    if (!filePath) {
+      const legacy = getJigFilePath(id)
+      if (legacy && existsSync(legacy)) filePath = legacy
+    }
+  }
+
   try {
     if (!code && filePath) code = readFileSync(filePath, "utf-8")
   } catch {}

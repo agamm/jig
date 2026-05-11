@@ -4,29 +4,39 @@
  * On startup and periodically, reads each jig source file to reconcile the
  * schedules table without executing jig module side effects.
  */
-import { readFileSync } from "fs"
+import { readFileSync, existsSync } from "fs"
 import { JIGS_DIR } from "../config/paths.js"
 import { discoverJigs } from "../discover.js"
 import { extractTriggerConfig, resolveJigPath } from "../domain/jig-source.js"
 import { deleteSchedule, getSchedule, listAllSchedules, setScheduleError, upsertSchedule } from "../db.js"
 import { schedulerTimeZone } from "../config/timezone.js"
 import { computeNextRun } from "./cron-utils.js"
+import { getActiveCode, listJigs } from "../services/jig-store.js"
 
 function readTriggerConfig(jigId: string) {
-  const jigPath = resolveJigPath(jigId)
-  try {
-    return extractTriggerConfig(readFileSync(jigPath, "utf-8"))
-  } catch (error: any) {
-    return {
-      trigger: null,
-      error: `Failed to read jig source: ${error?.message ?? String(error)}`,
+  // Prefer the v12 active version's code; fall back to legacy filesystem.
+  let code: string | null = getActiveCode(jigId)
+  if (code == null) {
+    const jigPath = resolveJigPath(jigId)
+    if (existsSync(jigPath)) {
+      try { code = readFileSync(jigPath, "utf-8") } catch (error: any) {
+        return { trigger: null, error: `Failed to read jig source: ${error?.message ?? String(error)}` }
+      }
     }
+  }
+  if (code == null) return { trigger: null, error: `Jig source not found for ${jigId}` }
+  try {
+    return extractTriggerConfig(code)
+  } catch (error: any) {
+    return { trigger: null, error: `Failed to parse jig source: ${error?.message ?? String(error)}` }
   }
 }
 
 export async function syncSchedules(): Promise<void> {
-  const jigs = discoverJigs(JIGS_DIR)
-  const activeJigIds = new Set(jigs.keys())
+  // Active jigs = union of v12 store rows + legacy filesystem entries.
+  const storeIds = new Set(listJigs().filter((j) => j.activeVersionId != null).map((j) => j.id))
+  const fsIds = new Set(discoverJigs(JIGS_DIR).keys())
+  const activeJigIds = new Set([...storeIds, ...fsIds])
 
   // Reconcile each discovered jig
   for (const jigId of activeJigIds) {

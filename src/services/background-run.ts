@@ -10,6 +10,17 @@ import { runJig, persist } from "../runner.js"
 import { applyRunEvent, discardTrackedRun, finishTrackedRun, getSignalForRun, hasActiveRunForJig, startTrackedRun } from "./run-store.js"
 import { maybeNotifyRunFailure } from "./run-failure-notify.js"
 import { missingConnectionsForJig } from "./connection-preflight.js"
+import { materializeActiveVersion } from "./jig-runtime.js"
+import { getJigRow } from "./jig-store.js"
+
+async function resolveRunnablePath(jigId: string): Promise<string | null> {
+  if (getJigRow(jigId)?.active_version_id != null) {
+    const materialized = await materializeActiveVersion(jigId)
+    if (materialized) return materialized.path
+  }
+  const legacy = resolveJigPath(jigId)
+  return existsSync(legacy) ? legacy : null
+}
 
 function missingConnectionsMessage(missingConnections: string[]): string {
   return missingConnections.length === 1
@@ -20,8 +31,8 @@ function missingConnectionsMessage(missingConnections: string[]): string {
 export async function startBackgroundRun(jigId: string, params?: Record<string, unknown>): Promise<boolean> {
   if (hasActiveRunForJig(jigId)) return false
 
-  const jigPath = resolveJigPath(jigId)
-  if (!existsSync(jigPath)) {
+  const jigPath = await resolveRunnablePath(jigId)
+  if (!jigPath) {
     setScheduleError(jigId, "Jig file not found")
     return false
   }

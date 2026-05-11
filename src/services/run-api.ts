@@ -9,6 +9,22 @@ import { resolveJigPath } from "../domain/jig-source.js"
 import { existsSync } from "fs"
 import { maybeNotifyRunFailure } from "./run-failure-notify.js"
 import { missingConnectionsForJig } from "./connection-preflight.js"
+import { materializeActiveVersion } from "./jig-runtime.js"
+import { getJigRow } from "./jig-store.js"
+
+/**
+ * Resolves the on-disk path the runner should import for this jig:
+ * 1. If a v12 active version exists in the store, materialize it.
+ * 2. Otherwise (legacy / not-yet-imported), fall back to jigs/{id}.ts.
+ */
+async function resolveRunnablePath(jigId: string): Promise<string | null> {
+  if (getJigRow(jigId)?.active_version_id != null) {
+    const materialized = await materializeActiveVersion(jigId)
+    if (materialized) return materialized.path
+  }
+  const legacy = resolveJigPath(jigId)
+  return existsSync(legacy) ? legacy : null
+}
 
 function assertConnectionsReady(jigPath: string): void {
   const missing = missingConnectionsForJig(jigPath)
@@ -28,13 +44,15 @@ function assertConnectionsReady(jigPath: string): void {
 }
 
 export async function startJigRun(id: string, body: any): Promise<StartRunResponse> {
-  const discovered = discoverAllJigs()
-  if (!discovered.has(id)) throw new ApiError(404, `Jig not found: ${id}`)
+  // Existence check: either a v12 store row OR a legacy filesystem jig.
+  if (!getJigRow(id) && !discoverAllJigs().has(id)) {
+    throw new ApiError(404, `Jig not found: ${id}`)
+  }
 
   const dryRun = body?.dryRun === true
-  const jigPath = resolveJigPath(id)
+  const jigPath = await resolveRunnablePath(id)
 
-  if (!existsSync(jigPath)) throw new ApiError(404, "Jig file not found")
+  if (!jigPath) throw new ApiError(404, "Jig file not found")
   assertConnectionsReady(jigPath)
   if (hasActiveRunForJig(id)) throw new ApiError(409, `A run is already in progress for ${id}`)
 

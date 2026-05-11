@@ -7,6 +7,7 @@ import { prettifyId } from "../domain/jig-source.js"
 import { getActiveRunStatusForJig } from "./run-store.js"
 import { webhookToken } from "../scheduler/webhook-auth.js"
 import { introspectJig } from "./introspect-jig.js"
+import { listJigs as storeListJigs } from "./jig-store.js"
 import { publicUrl } from "../config/runtime.js"
 
 function deriveStatus(jigId: string): "healthy" | "attention" | "failed" {
@@ -133,5 +134,12 @@ export async function buildDraftJigResponse(
 }
 
 export function discoverAllJigs(): Map<string, string[]> {
-  return discoverJigs(JIGS_DIR)
+  // Union of v12 store-known jigs (active) + legacy filesystem entries.
+  // After approve of a brand-new jig the store has it but the fs doesn't —
+  // including both makes both pre- and post-rehaul jigs visible.
+  const map = discoverJigs(JIGS_DIR)
+  for (const jig of storeListJigs()) {
+    if (jig.activeVersionId != null && !map.has(jig.id)) map.set(jig.id, [])
+  }
+  return map
 }

@@ -9,3 +9,6 @@ jig_debug.log
 src/config/deploy-defaults.generated.json
 
 jigs/.git
+runtime/
+check/
+jig.log

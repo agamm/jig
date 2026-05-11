@@ -369,6 +369,63 @@ export interface RestoreJigVersionResult {
   sha: string
 }
 
+// ---------------------------------------------------------------------------
+// v12: code-as-versions API contracts.
+// ---------------------------------------------------------------------------
+
+export type JigVersionAuthor = "agent" | "restore" | "import" | "cli"
+
+export interface JigVersionRecord {
+  id: number
+  jigId: string
+  author: JigVersionAuthor
+  message: string | null
+  prompt: string | null
+  parentVersionId: number | null
+  createdAt: number
+}
+
+export interface JigVersionListResponse {
+  active: JigVersionRecord | null
+  pending: JigVersionRecord | null
+  history: JigVersionRecord[]
+}
+
+/** Returned by GET /api/jigs/:id/pending when a pending change exists. */
+export interface PendingState {
+  versionId: number
+  code: string
+  publishedCode: string
+  diff: string
+  addedLines: number
+  removedLines: number
+  author: JigVersionAuthor
+  prompt: string | null
+  message: string | null
+  createdAt: number
+}
+
+export interface ApprovePendingResponse {
+  ok: true
+  jigId: string
+  activeVersionId: number
+}
+
+export interface DiscardPendingResponse {
+  ok: true
+  jigId: string
+}
+
+export interface RestoreToPendingRequest {
+  versionId: number
+}
+
+export interface RestoreToPendingResponse {
+  ok: true
+  jigId: string
+  pendingVersionId: number
+}
+
 export interface CancelRunResponse {
   ok: true
   jigId: string
@@ -504,6 +561,12 @@ export interface ApiContracts {
   getVersions: ApiContract<void, JigVersion[]>
   getVersionCode: ApiContract<void, JigVersionDetail>
   restoreVersion: ApiContract<void, RestoreJigVersionResult>
+  // v12 — code-as-versions endpoints
+  getPending: ApiContract<void, PendingState | null>
+  approvePending: ApiContract<void, ApprovePendingResponse>
+  discardPending: ApiContract<void, DiscardPendingResponse>
+  restoreToPending: ApiContract<RestoreToPendingRequest, RestoreToPendingResponse>
+  listVersionsV2: ApiContract<void, JigVersionListResponse>
   listSchedules: ApiContract<void, ScheduleListItem[]>
   updateSchedule: ApiContract<UpdateScheduleRequest, OkResponse>
   systemSettings: ApiContract<SystemSettings | void, SystemSettings>

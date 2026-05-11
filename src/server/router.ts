@@ -75,6 +75,28 @@ export function matchRoute(pathname: string): { handler: string; params: Record<
     return { handler: "getVersions", params: { id: decodeURIComponent(versionsMatch[1]) } }
   }
 
+  // v12: code-as-versions endpoints
+  const pendingMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/pending$/)
+  if (pendingMatch) {
+    if (!isValidJigId(decodeURIComponent(pendingMatch[1]))) return null
+    return { handler: "pending", params: { id: decodeURIComponent(pendingMatch[1]) } }
+  }
+  const approvePendingMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/pending\/approve$/)
+  if (approvePendingMatch) {
+    if (!isValidJigId(decodeURIComponent(approvePendingMatch[1]))) return null
+    return { handler: "approvePending", params: { id: decodeURIComponent(approvePendingMatch[1]) } }
+  }
+  const restoreToPendingMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/restore$/)
+  if (restoreToPendingMatch) {
+    if (!isValidJigId(decodeURIComponent(restoreToPendingMatch[1]))) return null
+    return { handler: "restoreToPending", params: { id: decodeURIComponent(restoreToPendingMatch[1]) } }
+  }
+  const listVersionsV2Match = pathname.match(/^\/api\/jigs\/([^/]+)\/versions-v2$/)
+  if (listVersionsV2Match) {
+    if (!isValidJigId(decodeURIComponent(listVersionsV2Match[1]))) return null
+    return { handler: "listVersionsV2", params: { id: decodeURIComponent(listVersionsV2Match[1]) } }
+  }
+
   const versionCodeMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/versions\/([^/]+)$/)
   if (versionCodeMatch) {
     if (!isValidJigId(decodeURIComponent(versionCodeMatch[1]))) return null

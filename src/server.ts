@@ -36,6 +36,17 @@ import { startScheduler } from "./scheduler/index.js"
 import { syncSchedules } from "./scheduler/sync.js"
 import { getJigVersionDetail, listJigVersions, restoreJigVersion } from "./services/jig-versioning.js"
 import { writeJigSource } from "./services/jig-writer.js"
+import {
+  approvePending as approveJigPending,
+  discardPending as discardJigPending,
+  getActiveVersion as getJigActiveVersion,
+  getJigRow,
+  getPending as getJigPending,
+  getVersion as getJigVersion,
+  listHistoryVersions as listJigHistoryVersions,
+  restoreVersion as restoreToPendingVersion,
+  type JigVersion as JigVersionStoreRow,
+} from "./services/jig-store.js"
 import { resetSessionLog } from "./debug/session-log.js"
 import { ApiError, apiJson, apiJsonWithHeaders, json } from "./server/http.js"
 import { broadcastJigsUpdated, createLiveUpdatesResponse, startLiveUpdateWatchers } from "./server/live-updates.js"
@@ -93,6 +104,83 @@ async function handleRestoreVersion(jigId: string, sha: string): Promise<Respons
     throw new ApiError(409, "Cannot restore a jig version while it is running")
   }
   return apiJson("restoreVersion", await restoreJigVersion(jigId, sha))
+}
+
+// ---------------------------------------------------------------------------
+// v12: code-as-versions handlers
+// ---------------------------------------------------------------------------
+
+function jigVersionToRecord(v: JigVersionStoreRow) {
+  return {
+    id: v.id,
+    jigId: v.jigId,
+    author: v.author,
+    message: v.message,
+    prompt: v.prompt,
+    parentVersionId: v.parentVersionId,
+    createdAt: v.createdAt,
+  }
+}
+
+function ensureJigStoreRow(jigId: string): void {
+  if (!getJigRow(jigId)) throw new ApiError(404, `Jig not found: ${jigId}`)
+}
+
+function handleGetPending(jigId: string): Response {
+  // Pending may exist on a brand-new jig that doesn't yet have a `jigs/{id}.ts`
+  // file — so we DON'T call ensureJigExists here. The store row is enough.
+  if (!getJigRow(jigId)) return apiJson("getPending", null)
+  return apiJson("getPending", getJigPending(jigId))
+}
+
+async function handleApprovePending(jigId: string): Promise<Response> {
+  ensureJigStoreRow(jigId)
+  const { hasActiveRunForJig } = await import("./services/run-store.js")
+  if (hasActiveRunForJig(jigId)) {
+    throw new ApiError(409, "Cannot approve a pending change while the jig is running")
+  }
+  if (!getJigPending(jigId)) throw new ApiError(404, "No pending changes")
+  const { activeVersionId } = approveJigPending(jigId)
+  return apiJson("approvePending", { ok: true as const, jigId, activeVersionId })
+}
+
+function handleDiscardPending(jigId: string): Response {
+  ensureJigStoreRow(jigId)
+  if (!getJigPending(jigId)) {
+    return apiJson("discardPending", { ok: true as const, jigId })
+  }
+  discardJigPending(jigId)
+  return apiJson("discardPending", { ok: true as const, jigId })
+}
+
+async function handleRestoreToPending(jigId: string, body: { versionId?: unknown }): Promise<Response> {
+  ensureJigStoreRow(jigId)
+  const { hasActiveRunForJig } = await import("./services/run-store.js")
+  if (hasActiveRunForJig(jigId)) {
+    throw new ApiError(409, "Cannot restore while the jig is running")
+  }
+  const versionId = typeof body.versionId === "number" ? body.versionId : NaN
+  if (!Number.isFinite(versionId)) throw new ApiError(400, "Missing or invalid versionId")
+  const source = getJigVersion(versionId)
+  if (!source || source.jigId !== jigId) throw new ApiError(404, "Version not found")
+  if (getJigPending(jigId)) {
+    throw new ApiError(409, "A pending change already exists — approve or discard it before restoring an older version")
+  }
+  const { pendingVersionId } = restoreToPendingVersion({ jigId, versionId })
+  return apiJson("restoreToPending", { ok: true as const, jigId, pendingVersionId })
+}
+
+function handleListVersionsV2(jigId: string): Response {
+  const row = getJigRow(jigId)
+  if (!row) return apiJson("listVersionsV2", { active: null, pending: null, history: [] })
+  const active = getJigActiveVersion(jigId)
+  const pending = row.pending_version_id != null ? getJigVersion(row.pending_version_id) : null
+  const history = listJigHistoryVersions(jigId).filter((v) => v.id !== active?.id)
+  return apiJson("listVersionsV2", {
+    active: active ? jigVersionToRecord(active) : null,
+    pending: pending ? jigVersionToRecord(pending) : null,
+    history: history.map(jigVersionToRecord),
+  })
 }
 
 async function handleGetSteps(id: string): Promise<Response> {
@@ -632,6 +720,23 @@ export function createApiServer(port: number) {
           case "restoreVersion": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
             return handleRestoreVersion(route.params.id, route.params.sha)
+          }
+          case "pending": {
+            if (req.method === "GET") return handleGetPending(route.params.id)
+            if (req.method === "DELETE") return handleDiscardPending(route.params.id)
+            return json({ error: "Method not allowed" }, 405)
+          }
+          case "approvePending": {
+            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+            return handleApprovePending(route.params.id)
+          }
+          case "restoreToPending": {
+            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+            const body = await req.json().catch(() => ({}))
+            return handleRestoreToPending(route.params.id, body)
+          }
+          case "listVersionsV2": {
+            return handleListVersionsV2(route.params.id)
           }
           case "listSchedules":
             return apiJson("listSchedules", listAllSchedules().map(s => ({

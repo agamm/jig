@@ -12,6 +12,11 @@ import type {
   JigData,
   JigVersionDetail,
   JigVersion,
+  JigVersionListResponse,
+  PendingState,
+  ApprovePendingResponse,
+  DiscardPendingResponse,
+  RestoreToPendingResponse,
   ModelCatalog,
   ModelOverrideInput,
   OpenRouterCatalogResponse,
@@ -263,6 +268,31 @@ export function restoreJigVersion(jigId: string, sha: string): Promise<RestoreJi
   return fetchApi("restoreVersion", `/api/jigs/${encodeURIComponent(jigId)}/versions/${sha}/restore`, {
     method: "POST",
   })
+}
+
+// v12: code-as-versions endpoints
+export function fetchPending(jigId: string): Promise<PendingState | null> {
+  return fetchApi("getPending", `/api/jigs/${encodeURIComponent(jigId)}/pending`)
+}
+
+export function approvePending(jigId: string): Promise<ApprovePendingResponse> {
+  return fetchApi("approvePending", `/api/jigs/${encodeURIComponent(jigId)}/pending/approve`, { method: "POST" })
+}
+
+export function discardPending(jigId: string): Promise<DiscardPendingResponse> {
+  return fetchApi("discardPending", `/api/jigs/${encodeURIComponent(jigId)}/pending`, { method: "DELETE" })
+}
+
+export function restoreToPending(jigId: string, versionId: number): Promise<RestoreToPendingResponse> {
+  return fetchApi("restoreToPending", `/api/jigs/${encodeURIComponent(jigId)}/restore`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ versionId }),
+  })
+}
+
+export function fetchVersionsV2(jigId: string): Promise<JigVersionListResponse> {
+  return fetchApi("listVersionsV2", `/api/jigs/${encodeURIComponent(jigId)}/versions-v2`)
 }
 
 export function fetchNotificationSettings(): Promise<NotificationSettingsResponse> {

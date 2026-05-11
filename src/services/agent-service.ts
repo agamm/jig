@@ -1,18 +1,26 @@
-import { existsSync, mkdirSync, readFileSync, rmSync } from "fs"
+import { existsSync, readFileSync } from "fs"
 import { join } from "path"
 import OpenAI from "openai"
 import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions"
 import type { AgentConversationTurn, AgentDraftApproval, AgentEvent, AgentMetrics, AgentStatusResponse, JigData, OkResponse, StartAgentResponse } from "../../shared/api.js"
 import { getEditorModel } from "../config/models.js"
-import { DRAFT_JIGS_DIR, SCHEMAS_DIR } from "../config/paths.js"
+import { SCHEMAS_DIR } from "../config/paths.js"
 import { isValidJigId } from "../domain/jig-id.js"
 import { getImportedServers } from "../domain/source-analysis.js"
-import { prettifyId, resolveJigPath } from "../domain/jig-source.js"
+import { prettifyId } from "../domain/jig-source.js"
 import { invalidateJigsCache } from "../discover.js"
 import { checkJigFile } from "./jig-checker.js"
 import { buildAgentJigSystemPrompt } from "./jig-writing-prompt.js"
-import { renameJigFile, writeJigSource } from "./jig-writer.js"
 import { ApiError } from "../server/http.js"
+import {
+  approvePending as storeApprovePending,
+  getActiveCode as storeGetActiveCode,
+  getJigRow as storeGetJigRow,
+  getPending as storeGetPending,
+  renameJig as storeRenameJig,
+  writePending as storeWritePending,
+} from "./jig-store.js"
+import { materializePendingVersion } from "./jig-runtime.js"
 import { requireOpenRouterApiKey } from "../config/openrouter.js"
 import { logSessionEvent } from "../debug/session-log.js"
 import { buildDraftJigResponse } from "./jig-api.js"
@@ -207,32 +215,26 @@ function estimateRequestPromptTokens(messages: ChatCompletionMessageParam[], too
 }
 
 function clearDraft(session: AgentSession): void {
-  if (session.draftFilePath) {
-    rmSync(session.draftFilePath, { force: true })
-  }
+  // v12: pending in the store is durable across sessions — the next session
+  // for this jig inherits it. Closing/timing-out a session does NOT discard
+  // pending; that requires an explicit user action via the discard endpoint.
+  // We only clear session-local state here.
   session.draftFilePath = undefined
   session.draftApproval = undefined
 }
 
 function getDraftCode(session: AgentSession): string | null {
-  if (!session.draftFilePath || !existsSync(session.draftFilePath)) return null
-  return readFileSync(session.draftFilePath, "utf-8")
-}
-
-function getDraftFilePath(session: AgentSession, jigId: string): string {
-  return `${DRAFT_JIGS_DIR}/${session.sessionId}-${jigId}.ts`
+  if (!session.jigId) return null
+  return storeGetPending(session.jigId)?.code ?? null
 }
 
 async function getSessionCode(session: AgentSession, jigId?: string): Promise<string | null> {
   const resolvedJigId = session.jigId ?? jigId
   if (!resolvedJigId) return null
-  if (session.creationMode) {
-    const draftCode = getDraftCode(session)
-    if (draftCode) return draftCode
-  }
-  const filePath = resolveJigPath(resolvedJigId)
-  if (!existsSync(filePath)) return null
-  return readFileSync(filePath, "utf-8")
+  // Prefer pending if it exists (agent is editing it), else active code.
+  const pending = storeGetPending(resolvedJigId)
+  if (pending) return pending.code
+  return storeGetActiveCode(resolvedJigId)
 }
 
 function releaseSession(session: AgentSession): void {
@@ -244,48 +246,35 @@ function releaseSession(session: AgentSession): void {
 }
 
 /**
- * Release any stale session holding the activeAgentJigs lock for `jigId`.
- * A session is "stale" when it's in a terminal or idle state — no active
- * LLM / tool call is in flight, yet the lock never got cleared (user closed
- * the pane without calling /close, or the session errored mid-loop). Returns
- * true if a lock was released OR no session currently holds it, false only
- * when a genuinely active session (thinking / tool-calling / waiting) is
- * still running — in which case the caller must refuse to start a new one.
+ * Returns true if no other live session is editing this jig — caller is safe to claim.
+ * v12: lock lives entirely in agent_sessions status; pending in the store is durable
+ * across sessions, but only one session can be actively writing at a time.
  */
 function releaseStaleJigLock(jigId: string): boolean {
-  if (!activeAgentJigs.has(jigId)) return true
-  let releasedOrAbsent = false
+  const ACTIVE = new Set(["thinking", "tool-calling", "waiting"])
+  // Drop in-memory locks for terminal/missing sessions on the same jig.
   for (const session of [...agentSessions.values()]) {
     if (session.jigId !== jigId) continue
-    const terminal = session.status === "done" || session.status === "error"
-    if (terminal) {
-      if (session.creationMode && session.draftFilePath && existsSync(session.draftFilePath)) {
-        continue
-      }
+    if (!ACTIVE.has(session.status)) {
       releaseSession(session)
-      releasedOrAbsent = true
     }
   }
-  if (releasedOrAbsent) return true
-  // No terminal session matched — either an active session holds the lock
-  // (genuine conflict) or the lock is orphaned (no session at all). The
-  // orphan case is safe to clear: there's no one to talk to anyway.
-  const hasActiveSession = [...agentSessions.values()].some((s) => s.jigId === jigId)
-  if (!hasActiveSession) {
+  // Check the DB for any session still actively claiming this jig.
+  const claimedByDb = listAgentSessions().some((row) =>
+    row.jig_id === jigId && ACTIVE.has(row.status),
+  )
+  if (!claimedByDb) {
     activeAgentJigs.delete(jigId)
     return true
   }
   return false
 }
 
-function hasPersistedDraftForJig(jigId: string, sessionId: string): boolean {
-  return listAgentSessions().some((row) =>
-    row.session_id !== sessionId &&
-    row.creation_mode === 1 &&
-    row.jig_id === jigId &&
-    !!row.draft_file_path &&
-    existsSync(row.draft_file_path)
-  )
+function hasPersistedDraftForJig(_jigId: string, _sessionId: string): boolean {
+  // v12: pending is durable in jig_versions and freely inheritable by the next
+  // session. We don't refuse a new session on the basis of a leftover pending —
+  // the lock check (releaseStaleJigLock) is the only gate that matters.
+  return false
 }
 
 function hasCompletedTool(session: AgentSession, tool: string): boolean {
@@ -297,9 +286,10 @@ function hasCompletedTool(session: AgentSession, tool: string): boolean {
 function pruneAgentSessions() {
   const now = Date.now()
   for (const [id, session] of agentSessions) {
-    if (session.creationMode && session.draftFilePath) continue
     if (now - session.createdAt > AGENT_SESSION_TTL) {
-      clearDraft(session)
+      // v12: don't touch pending here — it's durable across sessions and the
+      // next session that opens this jig can pick it up. Only prune the session
+      // row itself; the pending stays.
       if (session.jigId) activeAgentJigs.delete(session.jigId)
       agentSessions.delete(id)
       deleteAgentSession(id)
@@ -507,38 +497,35 @@ async function toolWriteJigFile(args: { code: string; jigId?: string; message?: 
     })
   }
 
+  // First write claims the jig for this session. If another session is
+  // actively editing the same jig, refuse.
   if (!session.jigId) {
     if (!releaseStaleJigLock(jigId)) return JSON.stringify({ error: "Another session is already editing this jig" })
-    if (session.creationMode && existsSync(resolveJigPath(jigId))) {
+    // Brand-new jig flow: the jigs row doesn't exist yet. If it does AND this
+    // is a creation session, the user picked a name that collides — reject.
+    if (session.creationMode && storeGetJigRow(jigId)) {
       return JSON.stringify({ error: `Jig already exists: ${jigId}` })
-    }
-    if (session.creationMode && hasPersistedDraftForJig(jigId, session.sessionId)) {
-      return JSON.stringify({ error: `Jig is already under construction: ${jigId}` })
     }
     session.jigId = jigId
     activeAgentJigs.add(jigId)
   }
 
-  if (session.creationMode) {
-    mkdirSync(DRAFT_JIGS_DIR, { recursive: true })
-    const filePath = getDraftFilePath(session, jigId)
-    await writeJigSource(filePath, args.code, { jigId })
-    session.draftFilePath = filePath
-    session.draftApproval = undefined
-    persistSession(session)
-    return JSON.stringify({ ok: true, path: filePath, draft: true })
-  }
-
-  const filePath = resolveJigPath(jigId)
-  await writeJigSource(filePath, args.code, {
+  // v12: every write — create or edit — goes to pending. Approve promotes.
+  const { versionId } = storeWritePending({
     jigId,
-    commit: true,
-    commitMessage: args.message ? `jig: ${jigId} — ${args.message}` : `jig: ${jigId} — update`,
-    commitPrompt: session.authoringIntent,
+    name: prettifyId(jigId),
+    code: args.code,
+    author: "agent",
+    message: args.message ?? null,
+    prompt: session.authoringIntent || null,
   })
 
+  // The previous `draftApproval` cache is now derivable from getPending(jigId);
+  // clear it here so consumers refetch and don't see stale approval data.
+  session.draftFilePath = undefined
+  session.draftApproval = undefined
   persistSession(session)
-  return JSON.stringify({ ok: true, path: filePath, draft: false })
+  return JSON.stringify({ ok: true, pendingVersionId: versionId, draft: true })
 }
 
 async function toolCheckJig(args: { jigId?: string }, session: AgentSession): Promise<string> {
@@ -546,9 +533,13 @@ async function toolCheckJig(args: { jigId?: string }, session: AgentSession): Pr
   if (!jigId) return JSON.stringify({ error: "No jigId specified" })
   const code = await getSessionCode(session, jigId)
   if (!code) return JSON.stringify({ error: `File not found for jig: ${jigId}` })
-  const result = session.creationMode
-    ? await checkJigFile(session.draftFilePath!)
-    : await checkJigFile(resolveJigPath(jigId))
+
+  // Check the on-disk materialization of whichever version we'd want to
+  // validate — pending if it exists (agent is working on it), else active.
+  const { materializeActiveVersion } = await import("./jig-runtime.js")
+  const target = (await materializePendingVersion(jigId)) ?? (await materializeActiveVersion(jigId))
+  if (!target) return JSON.stringify({ error: `No code on disk for jig: ${jigId}` })
+  const result = await checkJigFile(target.path)
   const extraErrors: string[] = []
 
   if (session.authoringPolicy.requiresIntegration && hasExplicitEmptyToolsArray(code)) {
@@ -627,49 +618,51 @@ async function toolRenameJig(args: { newJigId: string }, session: AgentSession):
     return JSON.stringify({ error: "Invalid newJigId. Use lowercase letters, numbers, dashes, or underscores." })
   }
   if (newJigId === oldJigId) return JSON.stringify({ error: "newJigId matches current jigId" })
-
-  if (session.creationMode) {
-    if (!session.draftFilePath || !existsSync(session.draftFilePath)) {
-      return JSON.stringify({ error: "No draft file to rename" })
-    }
-    const newDraftPath = getDraftFilePath(session, newJigId)
-    if (existsSync(newDraftPath)) return JSON.stringify({ error: `Draft already exists: ${newJigId}` })
-    if (existsSync(resolveJigPath(newJigId))) return JSON.stringify({ error: `Jig already exists: ${newJigId}` })
-
-    const code = readFileSync(session.draftFilePath, "utf-8")
-    const renamed = rewriteJigIdentifier(code, newJigId)
-    await writeJigSource(newDraftPath, renamed, { jigId: newJigId })
-    rmSync(session.draftFilePath, { force: true })
-    activeAgentJigs.delete(oldJigId)
-    activeAgentJigs.add(newJigId)
-    session.draftFilePath = newDraftPath
-    session.jigId = newJigId
-    session.draftApproval = undefined
-    persistSession(session)
-    return JSON.stringify({ ok: true, oldJigId, newJigId, draft: true })
+  if (storeGetJigRow(newJigId)) {
+    return JSON.stringify({ error: `Jig already exists: ${newJigId}` })
   }
-
-  const oldPath = resolveJigPath(oldJigId)
-  if (!existsSync(oldPath)) return JSON.stringify({ error: `File not found for jig: ${oldJigId}` })
-  if (existsSync(resolveJigPath(newJigId))) return JSON.stringify({ error: `Jig already exists: ${newJigId}` })
   if (!releaseStaleJigLock(newJigId)) {
     return JSON.stringify({ error: "Another session is already editing this jig" })
   }
 
-  const code = readFileSync(oldPath, "utf-8")
-  const renamed = rewriteJigIdentifier(code, newJigId)
-
-  await renameJigFile(oldJigId, newJigId, renamed, {
-    commitMessage: `jig: ${oldJigId} → ${newJigId}`,
-    commitPrompt: session.authoringIntent,
-  })
+  // Rename the jig in the store. After renameJig, any pending version still
+  // has the new jigId. We then rewrite the `jig("oldId")` identifier inside
+  // the pending code so the runtime sees the correct name.
+  storeRenameJig(oldJigId, newJigId)
   renameJigLocalState(oldJigId, newJigId)
   invalidateJigsCache()
   activeAgentJigs.delete(oldJigId)
   activeAgentJigs.add(newJigId)
   session.jigId = newJigId
+
+  // Rewrite the identifier inside the active code (or pending if present).
+  const pending = storeGetPending(newJigId)
+  if (pending) {
+    storeWritePending({
+      jigId: newJigId,
+      name: prettifyId(newJigId),
+      code: rewriteJigIdentifier(pending.code, newJigId),
+      author: "agent",
+      message: `rename ${oldJigId} → ${newJigId}`,
+      prompt: session.authoringIntent || null,
+    })
+  } else {
+    const active = storeGetActiveCode(newJigId)
+    if (active) {
+      storeWritePending({
+        jigId: newJigId,
+        name: prettifyId(newJigId),
+        code: rewriteJigIdentifier(active, newJigId),
+        author: "agent",
+        message: `rename ${oldJigId} → ${newJigId}`,
+        prompt: session.authoringIntent || null,
+      })
+    }
+  }
+  session.draftFilePath = undefined
+  session.draftApproval = undefined
   persistSession(session)
-  return JSON.stringify({ ok: true, oldJigId, newJigId, draft: false })
+  return JSON.stringify({ ok: true, oldJigId, newJigId, draft: true })
 }
 
 function findDisconnectedImports(code: string): string[] {
@@ -754,10 +747,8 @@ async function buildAgentSystemPromptWithCode(
 }> {
   let nextCurrentCode = currentCode
   if (!nextCurrentCode && jigId) {
-    const filePath = resolveJigPath(jigId)
-    if (existsSync(filePath)) {
-      nextCurrentCode = readFileSync(filePath, "utf-8")
-    }
+    // v12: pull from store; either pending (mid-edit) or active.
+    nextCurrentCode = storeGetPending(jigId)?.code ?? storeGetActiveCode(jigId) ?? ""
   }
 
   let authoring
@@ -792,28 +783,34 @@ async function buildAgentSystemPromptWithCode(
 }
 
 async function buildDraftApproval(session: AgentSession): Promise<AgentDraftApproval> {
-  if (!session.jigId) {
-    throw new Error("No draft is available to approve")
-  }
-  const draftCode = getDraftCode(session)
-  if (!draftCode) {
-    throw new Error("No draft is available to approve")
-  }
-
+  if (!session.jigId) throw new Error("No draft is available to approve")
+  const pending = storeGetPending(session.jigId)
+  if (!pending) throw new Error("No draft is available to approve")
+  // Materialize pending to a real path so introspectJig can import it for
+  // tool extraction. introspectJig falls back to regex parsing if import fails.
+  const materialized = await materializePendingVersion(session.jigId)
   return {
-    jig: await buildDraftJigResponse(session.jigId, draftCode, session.draftFilePath!, true),
+    jig: await buildDraftJigResponse(session.jigId, pending.code, materialized?.path ?? "", true),
   }
 }
 
 async function prepareDraftApproval(session: AgentSession): Promise<AgentDraftApproval | null> {
-  if (!session.creationMode || !session.draftFilePath || !session.jigId || !getDraftCode(session)) {
+  if (!session.jigId || !storeGetPending(session.jigId)) {
     session.messages.push({
       role: "user",
       content: "No approvable draft exists yet. Write the jig file, then run check_jig until it returns ok.",
     })
     return null
   }
-  const checkResult = await checkJigFile(session.draftFilePath)
+  const materialized = await materializePendingVersion(session.jigId)
+  if (!materialized) {
+    session.messages.push({
+      role: "user",
+      content: "Could not materialize the pending version for validation. Try writing the jig again.",
+    })
+    return null
+  }
+  const checkResult = await checkJigFile(materialized.path)
   if (checkResult !== "ok") {
     session.messages.push({
       role: "user",
@@ -825,34 +822,28 @@ async function prepareDraftApproval(session: AgentSession): Promise<AgentDraftAp
 }
 
 async function approveDraft(session: AgentSession): Promise<void> {
-  if (!session.jigId || !session.draftApproval) {
-    throw new ApiError(409, "No pending draft approval")
-  }
-  const draftCode = getDraftCode(session)
-  if (!draftCode || !session.draftFilePath) {
-    throw new ApiError(409, "No pending draft approval")
-  }
+  if (!session.jigId) throw new ApiError(409, "No pending draft approval")
+  const pending = storeGetPending(session.jigId)
+  if (!pending) throw new ApiError(409, "No pending draft approval")
 
-  const filePath = resolveJigPath(session.jigId)
-  if (existsSync(filePath)) {
-    throw new ApiError(409, `Jig already exists: ${session.jigId}`)
-  }
-  await writeJigSource(filePath, draftCode, {
-    jigId: session.jigId,
-    commit: true,
-    commitMessage: `jig: ${session.jigId} — create`,
-    commitPrompt: session.authoringIntent,
-  })
+  // v12: promote pending to active in one atomic store call. No filesystem
+  // writes, no git commits — the version row already holds the code, we just
+  // move the active pointer.
+  storeApprovePending(session.jigId)
 
-  for (const tool of session.draftApproval.jig.settings.tools ?? []) {
-    setToolPermission(tool.connection, tool.name, "always")
+  // Auto-approve declared tools, matching pre-v12 behavior.
+  if (session.draftApproval) {
+    for (const tool of session.draftApproval.jig.settings.tools ?? []) {
+      setToolPermission(tool.connection, tool.name, "always")
+    }
   }
 
   invalidateJigsCache()
   activeAgentJigs.delete(session.jigId)
-  clearDraft(session)
+  session.draftFilePath = undefined
+  session.draftApproval = undefined
   deleteAgentSession(session.sessionId)
-  session.events.push({ type: "text", content: `Created ${session.jigId} and approved its toolset.` })
+  session.events.push({ type: "text", content: `Approved changes to ${session.jigId}.` })
   setSessionStatus(session, "done")
   logSessionEvent({
     source: "authoring.agent",
@@ -1328,15 +1319,21 @@ export async function listUnderConstructionJigs(): Promise<JigData[]> {
     const liveSession = agentSessions.get(row.session_id)
     const session = liveSession ?? markInterruptedIfNeeded(hydrateSession(row))
     if (!session.creationMode) continue
-    if (session.jigId && existsSync(resolveJigPath(session.jigId))) continue
+    // Only show drafts whose jig hasn't been approved (i.e. the jigs row has
+    // no active version yet — still in "new" lifecycle state).
+    if (session.jigId) {
+      const jig = storeGetJigRow(session.jigId)
+      if (jig?.active_version_id != null) continue
+    }
 
     const listId = placeholderDraftId(session.sessionId)
     if (seen.has(listId)) continue
     seen.add(listId)
 
     const code = getDraftCode(session)
-    const jig = session.jigId && session.draftFilePath && code !== null
-      ? await buildDraftJigResponse(session.jigId, code, session.draftFilePath, true)
+    const materialized = session.jigId ? await materializePendingVersion(session.jigId) : null
+    const jig = session.jigId && materialized && code !== null
+      ? await buildDraftJigResponse(session.jigId, code, materialized.path, true)
       : {
         id: listId,
         name: draftNameFromSession(session),

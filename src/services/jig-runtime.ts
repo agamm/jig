@@ -11,7 +11,7 @@
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from "fs"
 import { join } from "path"
 import { RUNTIME_DIR } from "../config/paths.js"
-import { getActiveVersion, getVersion, listJigs, type JigVersion } from "./jig-store.js"
+import { getActiveVersion, getJigRow, getVersion, listJigs, type JigVersion } from "./jig-store.js"
 
 function ensureRuntimeDir(): void {
   if (!existsSync(RUNTIME_DIR)) mkdirSync(RUNTIME_DIR, { recursive: true })
@@ -54,6 +54,19 @@ export async function materializeVersionById(versionId: number): Promise<string 
   const version = getVersion(versionId)
   if (!version) return null
   return materializeVersion(version)
+}
+
+/**
+ * Materializes the pending version of a jig. Returns null if no pending exists.
+ * Used during agent flows that need the file on disk for introspection / typecheck.
+ */
+export async function materializePendingVersion(jigId: string): Promise<{ path: string; versionId: number } | null> {
+  const jig = getJigRow(jigId)
+  if (!jig?.pending_version_id) return null
+  const v = getVersion(jig.pending_version_id)
+  if (!v) return null
+  const path = await materializeVersion(v)
+  return { path, versionId: v.id }
 }
 
 /**

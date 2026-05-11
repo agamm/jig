@@ -548,6 +548,22 @@ export function createApiServer(port: number) {
   const { clearAllStepCache } = require("./db.js")
   clearAllStepCache()
 
+  // v12 one-time migration: ingest legacy jigs/*.ts + git history into the
+  // jig_versions table. No-op after the first successful import.
+  void import("./services/jig-import.js").then(async ({ importLegacyJigsIfEmpty }) => {
+    try {
+      const summary = await importLegacyJigsIfEmpty()
+      if (summary && (summary.jigsImported > 0 || summary.jigsSkipped > 0)) {
+        console.log(
+          `[migration] imported ${summary.jigsImported} jigs (${summary.versionsImported} versions)` +
+          (summary.jigsSkipped ? `, skipped ${summary.jigsSkipped}` : ""),
+        )
+      }
+    } catch (err: any) {
+      console.warn(`[migration] legacy jig import failed: ${err?.message ?? err}`)
+    }
+  })
+
   return Bun.serve({
     port,
     // /api/events sends SSE heartbeats every 15s, so Bun's 10s default would

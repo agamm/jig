@@ -593,6 +593,30 @@ export function deleteAgentSession(sessionId: string): void {
   db.prepare(`DELETE FROM agent_sessions WHERE session_id = ?`).run(sessionId)
 }
 
+/**
+ * Returns true if any agent session is actively claiming this jig (status in
+ * thinking/tool-calling/waiting). Used as the v12 jig-lock check. O(1) via the
+ * existing idx_agent_sessions_jig_id index rather than scanning the table.
+ */
+export function jigHasActiveSession(jigId: string, excludeSessionId?: string): boolean {
+  const db = openDb()
+  const stmt = excludeSessionId
+    ? db.prepare(
+        `SELECT 1 FROM agent_sessions
+          WHERE jig_id = ? AND session_id != ?
+            AND status IN ('thinking','tool-calling','waiting')
+          LIMIT 1`,
+      )
+    : db.prepare(
+        `SELECT 1 FROM agent_sessions
+          WHERE jig_id = ?
+            AND status IN ('thinking','tool-calling','waiting')
+          LIMIT 1`,
+      )
+  const row = excludeSessionId ? stmt.get(jigId, excludeSessionId) : stmt.get(jigId)
+  return row != null
+}
+
 // ---------------------------------------------------------------------------
 // Schedules
 // ---------------------------------------------------------------------------

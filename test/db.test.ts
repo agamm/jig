@@ -9,7 +9,7 @@ import {
   clearStepCache, deleteJigLocalState, getSchedule, getStepCache, setStepCache, upsertSchedule,
   getSetting, setSetting,
   getToolPermission, listToolPermissions, setToolPermission,
-  deleteAgentSession, getAgentSession, listAgentSessions, upsertAgentSession,
+  deleteAgentSession, getAgentSession, jigHasActiveSession, listAgentSessions, upsertAgentSession,
 } from "../src/db.js"
 
 beforeEach(() => {
@@ -217,6 +217,53 @@ describe("agent sessions", () => {
 
     deleteAgentSession("session-1")
     expect(getAgentSession("session-1")).toBeNull()
+  })
+})
+
+describe("jigHasActiveSession", () => {
+  const row = (overrides: Partial<Parameters<typeof upsertAgentSession>[0]>): Parameters<typeof upsertAgentSession>[0] => ({
+    session_id: "s",
+    jig_id: "foo",
+    creation_mode: 0,
+    authoring_intent: "",
+    conversation_history: "[]",
+    authoring_policy: '{"requiresIntegration":false,"buildResolutions":[]}',
+    messages: "[]",
+    events: "[]",
+    status: "waiting",
+    metrics: "{}",
+    created_at: 1,
+    updated_at: 1,
+    pending_ask_tool_call_id: null,
+    pending_ask_question: null,
+    draft_file_path: null,
+    draft_approval: null,
+    last_event_seq: 0,
+    ...overrides,
+  })
+
+  it("returns false when no session claims the jig", () => {
+    expect(jigHasActiveSession("foo")).toBe(false)
+  })
+
+  it("returns true for thinking/tool-calling/waiting", () => {
+    for (const status of ["thinking", "tool-calling", "waiting"] as const) {
+      upsertAgentSession(row({ session_id: `s-${status}`, jig_id: "foo", status }))
+      expect(jigHasActiveSession("foo")).toBe(true)
+      deleteAgentSession(`s-${status}`)
+    }
+  })
+
+  it("ignores terminal sessions", () => {
+    upsertAgentSession(row({ session_id: "s-done", jig_id: "foo", status: "done" }))
+    upsertAgentSession(row({ session_id: "s-err", jig_id: "foo", status: "error" }))
+    expect(jigHasActiveSession("foo")).toBe(false)
+  })
+
+  it("respects the excludeSessionId filter", () => {
+    upsertAgentSession(row({ session_id: "s-active", jig_id: "foo", status: "thinking" }))
+    expect(jigHasActiveSession("foo")).toBe(true)
+    expect(jigHasActiveSession("foo", "s-active")).toBe(false)
   })
 })
 

@@ -308,8 +308,16 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
     await revalidatePending();
   });
 
-  // Revalidate pending whenever the agent emits a new event (likely a write).
-  useEffect(() => { revalidatePending(); }, [agent.events.length, revalidatePending]);
+  // Revalidate pending when the agent finishes a write_jig_file tool call.
+  // Filtering avoids a refetch on every text/thinking event (10× chattier).
+  const lastWriteEvent = useMemo(() => {
+    for (let i = agent.events.length - 1; i >= 0; i--) {
+      const ev = agent.events[i];
+      if (ev.type === "tool-call" && ev.tool === "write_jig_file" && ev.status === "done") return i;
+    }
+    return -1;
+  }, [agent.events]);
+  useEffect(() => { revalidatePending(); }, [lastWriteEvent, revalidatePending]);
 
   // Fetch derived steps via SWR (cached server-side by code hash)
   const { data: stepsData, isValidating: derivingSteps, error: stepsError, mutate: revalidateSteps } = useJigSteps(jigId);

@@ -103,10 +103,10 @@ function rowToSummary(row: JigRow): JigSummary {
 function countDiff(oldCode: string, newCode: string): { added: number; removed: number } {
   let added = 0
   let removed = 0
+  // diffLines always populates `count` for line-mode parts.
   for (const part of diffLines(oldCode, newCode)) {
-    const lines = part.count ?? part.value.split("\n").length - 1
-    if (part.added) added += lines
-    else if (part.removed) removed += lines
+    if (part.added) added += part.count ?? 0
+    else if (part.removed) removed += part.count ?? 0
   }
   return { added, removed }
 }
@@ -315,13 +315,28 @@ export function restoreVersion(args: { jigId: string; versionId: number; author?
   return { pendingVersionId }
 }
 
-/** Rename a jig. All version FK pointers cascade in one transaction. */
+/** Rename a jig. All version FK pointers cascade, and every version's code is
+ *  rewritten so the literal `jig("oldId")` references match the new id —
+ *  otherwise restoring a pre-rename version would refer to a dead identifier.
+ *  All in one transaction. */
 export function renameJig(oldId: string, newId: string): void {
   if (oldId === newId) return
   const db = openDb()
   db.transaction(() => {
     const existing = getJigRow(newId)
     if (existing) throw new Error(`Jig already exists: ${newId}`)
+
+    // Rewrite the jig("...") identifier inside every version's code. The
+    // capture-group preserves whatever quote character the user used.
+    const rows = db.prepare(`SELECT id, code FROM jig_versions WHERE jig_id = ?`).all(oldId) as { id: number; code: string }[]
+    const update = db.prepare(`UPDATE jig_versions SET code = ? WHERE id = ?`)
+    for (const row of rows) {
+      const rewritten = row.code.replace(/jig\(\s*(["'`])([^"'`]+)\1/, (match, quote: string, name: string) =>
+        name === oldId ? `jig(${quote}${newId}${quote}` : match,
+      )
+      if (rewritten !== row.code) update.run(rewritten, row.id)
+    }
+
     db.prepare(`UPDATE jig_versions SET jig_id = ? WHERE jig_id = ?`).run(newId, oldId)
     db.prepare(`UPDATE jigs SET id = ? WHERE id = ?`).run(newId, oldId)
   })()

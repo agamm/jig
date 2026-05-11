@@ -173,6 +173,36 @@ describe("renameJig", () => {
     writePending({ jigId: "bar", code: "// bar", author: "agent" })
     expect(() => renameJig("foo", "bar")).toThrow(/already exists/)
   })
+
+  it("rewrites jig() identifier in every historical version", () => {
+    writePending({ jigId: "foo", code: 'export default jig("foo", () => {})', author: "agent" })
+    approvePending("foo")
+    writePending({ jigId: "foo", code: 'export default jig("foo", async () => {})', author: "agent" })
+    approvePending("foo")
+    writePending({ jigId: "foo", code: 'export default jig("foo", () => null)', author: "agent" })
+
+    renameJig("foo", "bar")
+    for (const v of listAllVersions("bar")) {
+      expect(v.code).toContain('jig("bar"')
+      expect(v.code).not.toContain('jig("foo"')
+    }
+  })
+
+  it("only rewrites the first jig(\"id\", ...) call site", () => {
+    // Matches the existing agent-service convention: the first jig() call in
+    // the source is the declaration, subsequent occurrences (nested jigs in
+    // comments / strings / metaprogramming) are left as-is.
+    writePending({
+      jigId: "foo",
+      code: 'export default jig("foo", () => "foo bar")\n// later: jig("foo") in a comment',
+      author: "agent",
+    })
+    renameJig("foo", "bar")
+    const code = getPending("bar")!.code
+    expect(code).toContain('export default jig("bar"')
+    expect(code).toContain('"foo bar"')         // string literal preserved
+    expect(code).toContain('// later: jig("foo") in a comment')
+  })
 })
 
 describe("deleteJig", () => {

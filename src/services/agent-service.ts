@@ -20,7 +20,7 @@ import {
   renameJig as storeRenameJig,
   writePending as storeWritePending,
 } from "./jig-store.js"
-import { materializePendingVersion } from "./jig-runtime.js"
+import { materializeActiveVersion, materializePendingVersion } from "./jig-runtime.js"
 import { requireOpenRouterApiKey } from "../config/openrouter.js"
 import { logSessionEvent } from "../debug/session-log.js"
 import { buildDraftJigResponse } from "./jig-api.js"
@@ -35,6 +35,7 @@ import {
 import {
   deleteAgentSession,
   getAgentSession,
+  jigHasActiveSession,
   listAgentSessions,
   renameJigLocalState,
   setToolPermission,
@@ -130,7 +131,9 @@ function hydrateSession(row: AgentSessionRow): AgentSession {
 function persistSession(session: AgentSession): void {
   if (closedAgentSessions.has(session.sessionId)) return
   upsertAgentSession(serializeSession(session))
-  notifySessionStream(session.sessionId)
+  // Pass the live session object so the SSE handler doesn't need to re-load
+  // from the DB on every frame — hot path.
+  notifySessionStream(session.sessionId, session)
 }
 
 // ---------------------------------------------------------------------------
@@ -150,8 +153,8 @@ function getSessionStream(sessionId: string): EventEmitter {
   return stream
 }
 
-function notifySessionStream(sessionId: string): void {
-  sessionStreams.get(sessionId)?.emit("frame")
+function notifySessionStream(sessionId: string, session?: AgentSession): void {
+  sessionStreams.get(sessionId)?.emit("frame", session)
 }
 
 function disposeSessionStream(sessionId: string): void {
@@ -273,6 +276,7 @@ function releaseSession(session: AgentSession): void {
   if (session.jigId) activeAgentJigs.delete(session.jigId)
   agentSessions.delete(session.sessionId)
   deleteAgentSession(session.sessionId)
+  disposeSessionStream(session.sessionId)
 }
 
 /**
@@ -289,15 +293,10 @@ function releaseStaleJigLock(jigId: string): boolean {
       releaseSession(session)
     }
   }
-  // Check the DB for any session still actively claiming this jig.
-  const claimedByDb = listAgentSessions().some((row) =>
-    row.jig_id === jigId && ACTIVE.has(row.status),
-  )
-  if (!claimedByDb) {
-    activeAgentJigs.delete(jigId)
-    return true
-  }
-  return false
+  // O(1) indexed lookup — does any live session claim this jig?
+  if (jigHasActiveSession(jigId)) return false
+  activeAgentJigs.delete(jigId)
+  return true
 }
 
 function hasPersistedDraftForJig(_jigId: string, _sessionId: string): boolean {
@@ -323,6 +322,7 @@ function pruneAgentSessions() {
       if (session.jigId) activeAgentJigs.delete(session.jigId)
       agentSessions.delete(id)
       deleteAgentSession(id)
+      disposeSessionStream(id)
     }
   }
 }
@@ -566,7 +566,6 @@ async function toolCheckJig(args: { jigId?: string }, session: AgentSession): Pr
 
   // Check the on-disk materialization of whichever version we'd want to
   // validate — pending if it exists (agent is working on it), else active.
-  const { materializeActiveVersion } = await import("./jig-runtime.js")
   const target = (await materializePendingVersion(jigId)) ?? (await materializeActiveVersion(jigId))
   if (!target) return JSON.stringify({ error: `No code on disk for jig: ${jigId}` })
   const result = await checkJigFile(target.path)
@@ -655,44 +654,18 @@ async function toolRenameJig(args: { newJigId: string }, session: AgentSession):
     return JSON.stringify({ error: "Another session is already editing this jig" })
   }
 
-  // Rename the jig in the store. After renameJig, any pending version still
-  // has the new jigId. We then rewrite the `jig("oldId")` identifier inside
-  // the pending code so the runtime sees the correct name.
+  // Rename the jig in the store. storeRenameJig rewrites the `jig("oldId")`
+  // identifier inside every version's code atomically — no follow-up needed.
   storeRenameJig(oldJigId, newJigId)
   renameJigLocalState(oldJigId, newJigId)
   invalidateJigsCache()
   activeAgentJigs.delete(oldJigId)
   activeAgentJigs.add(newJigId)
   session.jigId = newJigId
-
-  // Rewrite the identifier inside the active code (or pending if present).
-  const pending = storeGetPending(newJigId)
-  if (pending) {
-    storeWritePending({
-      jigId: newJigId,
-      name: prettifyId(newJigId),
-      code: rewriteJigIdentifier(pending.code, newJigId),
-      author: "agent",
-      message: `rename ${oldJigId} → ${newJigId}`,
-      prompt: session.authoringIntent || null,
-    })
-  } else {
-    const active = storeGetActiveCode(newJigId)
-    if (active) {
-      storeWritePending({
-        jigId: newJigId,
-        name: prettifyId(newJigId),
-        code: rewriteJigIdentifier(active, newJigId),
-        author: "agent",
-        message: `rename ${oldJigId} → ${newJigId}`,
-        prompt: session.authoringIntent || null,
-      })
-    }
-  }
   session.draftFilePath = undefined
   session.draftApproval = undefined
   persistSession(session)
-  return JSON.stringify({ ok: true, oldJigId, newJigId, draft: true })
+  return JSON.stringify({ ok: true, oldJigId, newJigId, draft: storeGetPending(newJigId) != null })
 }
 
 function findDisconnectedImports(code: string): string[] {
@@ -861,11 +834,20 @@ async function approveDraft(session: AgentSession): Promise<void> {
   // move the active pointer.
   storeApprovePending(session.jigId)
 
-  // Auto-approve declared tools, matching pre-v12 behavior.
-  if (session.draftApproval) {
-    for (const tool of session.draftApproval.jig.settings.tools ?? []) {
-      setToolPermission(tool.connection, tool.name, "always")
+  // Auto-approve every tool declared by the approved code, whether this is a
+  // create or an edit. Sourced from the materialized active version so the
+  // behavior is symmetric across flows (the old code path only ran for
+  // creation, leaving edit-introduced tools waiting in the tool-review UI).
+  try {
+    const materialized = await materializeActiveVersion(session.jigId)
+    if (materialized) {
+      const introspected = await buildDraftJigResponse(session.jigId, pending.code, materialized.path, false)
+      for (const tool of introspected.settings.tools ?? []) {
+        setToolPermission(tool.connection, tool.name, "always")
+      }
     }
+  } catch {
+    // Tool introspection is best-effort; failing it should not block approval.
   }
 
   invalidateJigsCache()
@@ -1414,7 +1396,6 @@ export async function closeAgentSession(sessionId: string): Promise<OkResponse> 
   const session = loadSession(sessionId)
   if (!session) return { ok: true }
   releaseSession(session)
-  disposeSessionStream(sessionId)
   return { ok: true }
 }
 
@@ -1437,6 +1418,8 @@ export function streamAgentSession(sessionId: string, lastEventId: number, signa
     start(controller) {
       const encoder = new TextEncoder()
       let closed = false
+      let lastStatusSent: AgentSession["status"] | null = null
+
       const send = (seq: number, payload: AgentStatusResponse) => {
         if (closed) return
         const frame = `id: ${seq}\nevent: snapshot\ndata: ${JSON.stringify(payload)}\n\n`
@@ -1447,8 +1430,10 @@ export function streamAgentSession(sessionId: string, lastEventId: number, signa
         try { controller.enqueue(encoder.encode(":\n\n")) } catch { closed = true }
       }
 
-      const push = () => {
-        const s = loadSession(sessionId)
+      const push = (incoming?: AgentSession) => {
+        // Use the live session passed by the emitter when available; only fall
+        // back to a DB load when there isn't one (e.g. the initial replay).
+        const s = incoming ?? loadSession(sessionId)
         if (!s) {
           if (!closed) { try { controller.close() } catch {} closed = true }
           return
@@ -1468,11 +1453,10 @@ export function streamAgentSession(sessionId: string, lastEventId: number, signa
         cursor = seq
       }
 
-      let lastStatusSent: AgentSession["status"] | null = null
-      // Initial replay
-      push()
-
+      // Subscribe FIRST, then push initial replay — avoids any window where a
+      // frame fires between snapshot and listener registration.
       stream.on("frame", push)
+      push()
       const hb = setInterval(heartbeat, 15_000)
 
       const abort = () => {

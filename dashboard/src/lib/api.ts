@@ -2,7 +2,6 @@ import type {
   AddExampleJigResponse,
   ApiEndpointKey,
   ApiResponse,
-  AgentStatusResponse,
   AgentConversationTurn,
   Connection,
   ConnectionDetail,
@@ -196,10 +195,6 @@ export function startAgentSession(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ instruction, jigId, history }),
   })
-}
-
-export function fetchAgentStatus(sessionId: string, since = 0): Promise<AgentStatusResponse> {
-  return fetchApi("agentStatus", `/api/agent/${sessionId}?since=${since}`)
 }
 
 export function sendAgentMessage(

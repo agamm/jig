@@ -100,9 +100,17 @@ export function CreateJigPane({
   const displayName = agent.jigId ? prettifyJigName(agent.jigId) : "Create New Jig";
   const previewJig = agent.draftApproval?.jig ?? null;
   // v12: read pending directly from the store rather than relying on the
-  // ephemeral session.draftApproval snapshot. Revalidates as the agent writes.
+  // ephemeral session.draftApproval snapshot. Revalidates when the agent
+  // completes a write_jig_file tool call.
   const { data: pending, mutate: revalidatePending } = usePending(agent.jigId ?? null);
-  useEffect(() => { revalidatePending() }, [agent.events.length, revalidatePending]);
+  const lastWriteEvent = (() => {
+    for (let i = agent.events.length - 1; i >= 0; i--) {
+      const ev = agent.events[i];
+      if (ev.type === "tool-call" && ev.tool === "write_jig_file" && ev.status === "done") return i;
+    }
+    return -1;
+  })();
+  useEffect(() => { revalidatePending() }, [lastWriteEvent, revalidatePending]);
   const discardSessionId = agent.sessionId ?? resumeSessionId ?? null;
 
   useEffect(() => {

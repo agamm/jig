@@ -11,8 +11,8 @@ import { join } from "path"
 import { closeDb, deleteJigLocalState, openDb } from "./db.js"
 import { getModelCatalog, setModelOverrides } from "./config/models.js"
 import { fetchOpenRouterModels } from "./services/openrouter-catalog.js"
-import { CONNECTIONS_DIR, DB_PATH, DRAFT_JIGS_DIR, JIGS_DIR, NOTIFICATION_TOOLS_PATH, SCHEMAS_DIR, TYPES_DIR } from "./config/paths.js"
-import { extractConnections, getJigFilePath, resolveJigPath } from "./domain/jig-source.js"
+import { CONNECTIONS_DIR, DB_PATH, JIGS_DIR, NOTIFICATION_TOOLS_PATH, SCHEMAS_DIR, TYPES_DIR } from "./config/paths.js"
+import { extractConnections } from "./domain/jig-source.js"
 import { invalidateJigsCache } from "./discover.js"
 import {
   cronToText,
@@ -34,17 +34,19 @@ import { handleWebhook } from "./scheduler/webhooks.js"
 import { getSchedule, listAllSchedules, setScheduleEnabled, listAuthorizedSenders, addAuthorizedSender, removeAuthorizedSender, listToolPermissions, setToolPermission, listCredentials, type ToolPermissionPolicy } from "./db.js"
 import { startScheduler } from "./scheduler/index.js"
 import { syncSchedules } from "./scheduler/sync.js"
-import { getJigVersionDetail, listJigVersions, restoreJigVersion } from "./services/jig-versioning.js"
-import { writeJigSource } from "./services/jig-writer.js"
 import {
   approvePending as approveJigPending,
+  deleteJig as storeDeleteJig,
   discardPending as discardJigPending,
+  getActiveCode as getJigActiveCode,
   getActiveVersion as getJigActiveVersion,
   getJigRow,
   getPending as getJigPending,
   getVersion as getJigVersion,
   listHistoryVersions as listJigHistoryVersions,
+  listJigs as storeListJigs,
   restoreVersion as restoreToPendingVersion,
+  writePending as storeWritePending,
   type JigVersion as JigVersionStoreRow,
 } from "./services/jig-store.js"
 import { resetSessionLog } from "./debug/session-log.js"
@@ -74,36 +76,6 @@ const SERVER_STARTED_AT = Date.now()
 
 function ensureJigExists(id: string): void {
   if (!discoverAllJigs().has(id)) throw new ApiError(404, `Jig not found: ${id}`)
-}
-
-function removeStaleDraftFiles(): void {
-  rmSync(DRAFT_JIGS_DIR, { recursive: true, force: true })
-}
-
-async function handleGetVersions(jigId: string): Promise<Response> {
-  ensureJigExists(jigId)
-  try {
-    return apiJson("getVersions", await listJigVersions(jigId))
-  } catch (error) {
-    if (error instanceof ApiError && error.status === 404 && error.message === "No version history") {
-      return apiJson("getVersions", [])
-    }
-    throw error
-  }
-}
-
-async function handleGetVersionCode(jigId: string, sha: string): Promise<Response> {
-  ensureJigExists(jigId)
-  return apiJson("getVersionCode", await getJigVersionDetail(jigId, sha))
-}
-
-async function handleRestoreVersion(jigId: string, sha: string): Promise<Response> {
-  ensureJigExists(jigId)
-  const { hasActiveRunForJig } = await import("./services/run-store.js")
-  if (hasActiveRunForJig(jigId)) {
-    throw new ApiError(409, "Cannot restore a jig version while it is running")
-  }
-  return apiJson("restoreVersion", await restoreJigVersion(jigId, sha))
 }
 
 // ---------------------------------------------------------------------------
@@ -185,9 +157,8 @@ function handleListVersionsV2(jigId: string): Response {
 
 async function handleGetSteps(id: string): Promise<Response> {
   ensureJigExists(id)
-  const filePath = getJigFilePath(id)
-  if (!filePath) throw new ApiError(404, "Jig file not found")
-  const code = readFileSync(filePath, "utf-8")
+  const code = getJigActiveCode(id)
+  if (!code) throw new ApiError(404, "Jig has no active version")
   const { deriveSteps } = await import("./derive-steps.js")
   const steps = await deriveSteps(id, code)
   return apiJson("getSteps", { steps })
@@ -198,8 +169,8 @@ async function handleUpdateTrigger(id: string, body: any): Promise<Response> {
   if (!triggerText) throw new ApiError(400, "Missing trigger text")
 
   ensureJigExists(id)
-  const filePath = getJigFilePath(id)
-  if (!filePath) throw new ApiError(404, "Jig file not found")
+  const code = getJigActiveCode(id)
+  if (!code) throw new ApiError(404, "Jig has no active version")
 
   const trigger = textToTrigger(triggerText) ?? await textToTriggerLLM(triggerText)
   if (!trigger) throw new ApiError(400, `Could not parse trigger: "${triggerText}"`)
@@ -207,22 +178,19 @@ async function handleUpdateTrigger(id: string, body: any): Promise<Response> {
     throw new ApiError(400, `Unsupported trigger type: "${trigger.type}". Expected cron, manual, or webhook.`)
   }
 
-  let code: string
-  try {
-    code = readFileSync(filePath, "utf-8")
-  } catch {
-    throw new ApiError(404, "Jig file not readable")
-  }
-
   const updated = replaceTriggerInSource(code, triggerToSource(trigger))
   if (!updated) throw new ApiError(400, "Could not find trigger in source file")
 
-  await writeJigSource(filePath, updated, {
+  // Trigger edits are metadata — they don't need an approval gate. Write a
+  // new version and promote it to active in one go via the store.
+  storeWritePending({
     jigId: id,
-    commit: true,
-    commitMessage: `jig: ${id} — update trigger`,
-    commitPrompt: `Update trigger to: ${triggerText}`,
+    code: updated,
+    author: "cli",
+    message: `update trigger`,
+    prompt: `Update trigger to: ${triggerText}`,
   })
+  approveJigPending(id)
 
   const newTriggerText = trigger.type === "cron" && trigger.cron ? cronToText(trigger.cron)
     : trigger.type === "manual" ? "Manual"
@@ -300,12 +268,9 @@ async function handleGetConnection(name: string): Promise<Response> {
 
   const usedBy: string[] = []
   for (const id of discoverAllJigs().keys()) {
-    const filePath = getJigFilePath(id)
-    if (!filePath) continue
-    try {
-      const code = readFileSync(filePath, "utf-8")
-      if (extractConnections(code).includes(name)) usedBy.push(id)
-    } catch {}
+    const code = getJigActiveCode(id)
+    if (!code) continue
+    if (extractConnections(code).includes(name)) usedBy.push(id)
   }
 
   return apiJson("getConnection", {
@@ -349,16 +314,14 @@ async function handleCreateCustomConnection(body: any): Promise<Response> {
 }
 
 async function handleDeleteJig(id: string): Promise<Response> {
-  ensureJigExists(id)
+  if (!getJigRow(id)) throw new ApiError(404, `Jig not found: ${id}`)
 
   const { hasActiveRunForJig } = await import("./services/run-store.js")
   if (hasActiveRunForJig(id)) {
     throw new ApiError(409, "Cannot delete a jig while it is running")
   }
 
-  const filePath = getJigFilePath(id)
-  if (!filePath) throw new ApiError(404, "Jig file not found")
-  rmSync(filePath, { force: true })
+  storeDeleteJig(id)
   deleteJigLocalState(id)
   const { clearTrackedRunsForJig } = await import("./services/run-store.js")
   clearTrackedRunsForJig(id)
@@ -379,12 +342,12 @@ async function handleResetLocalState(): Promise<Response> {
   await closeAllConnections()
   closeDb()
 
-  const deletedJigs: string[] = []
+  const deletedJigs = storeListJigs().map((j) => j.id)
+  for (const id of deletedJigs) storeDeleteJig(id)
+  // Also wipe any legacy filesystem files so a fresh boot doesn't re-ingest them.
   if (existsSync(JIGS_DIR)) {
     for (const name of readdirSync(JIGS_DIR)) {
-      const target = join(JIGS_DIR, name)
-      rmSync(target, { recursive: true, force: true })
-      deletedJigs.push(name)
+      rmSync(join(JIGS_DIR, name), { recursive: true, force: true })
     }
   }
 
@@ -542,20 +505,20 @@ async function handleUnlock(req: Request): Promise<Response> {
 export function createApiServer(port: number) {
   openDb()
   seedSystemSettingsDefaults()
-  removeStaleDraftFiles()
   startLiveUpdateWatchers()
   // Clear step cache on startup — ensures stale derivations from old SDK versions don't persist
   const { clearAllStepCache } = require("./db.js")
   clearAllStepCache()
 
-  // v12 one-time migration: ingest legacy jigs/*.ts + git history into the
-  // jig_versions table. No-op after the first successful import.
-  void import("./services/jig-import.js").then(async ({ importLegacyJigsIfEmpty }) => {
+  // v12 migration: sync every legacy jigs/*.ts + git history into the
+  // jig_versions table. Runs on every boot, per-jig idempotent — picks up
+  // any new files that appeared since the previous boot.
+  void import("./services/jig-import.js").then(async ({ syncLegacyJigs }) => {
     try {
-      const summary = await importLegacyJigsIfEmpty()
-      if (summary && (summary.jigsImported > 0 || summary.jigsSkipped > 0)) {
+      const summary = await syncLegacyJigs()
+      if (summary && summary.jigsImported > 0) {
         console.log(
-          `[migration] imported ${summary.jigsImported} jigs (${summary.versionsImported} versions)` +
+          `[migration] imported ${summary.jigsImported} legacy jigs (${summary.versionsImported} versions)` +
           (summary.jigsSkipped ? `, skipped ${summary.jigsSkipped}` : ""),
         )
       }
@@ -732,14 +695,6 @@ export function createApiServer(port: number) {
           case "agentClose": {
             if (req.method !== "DELETE") return json({ error: "Method not allowed" }, 405)
             return apiJson("agentClose", await closeAgentSession(route.params.sessionId))
-          }
-          case "getVersions":
-            return handleGetVersions(route.params.id)
-          case "getVersionCode":
-            return handleGetVersionCode(route.params.id, route.params.sha)
-          case "restoreVersion": {
-            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
-            return handleRestoreVersion(route.params.id, route.params.sha)
           }
           case "pending": {
             if (req.method === "GET") return handleGetPending(route.params.id)

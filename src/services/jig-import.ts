@@ -11,7 +11,7 @@ import { existsSync, readdirSync, statSync } from "fs"
 import { join } from "path"
 import { openDb } from "../db.js"
 import { JIGS_DIR } from "../config/paths.js"
-import { importVersion, setActiveVersion } from "./jig-store.js"
+import { getJigRow, importVersion, setActiveVersion } from "./jig-store.js"
 import { prettifyId } from "../domain/jig-source.js"
 
 export function extractPromptFromCommitBody(body: string): string | null {
@@ -156,11 +156,13 @@ async function importJig(jigId: string, hasGit: boolean, jigsDir: string): Promi
   return imported
 }
 
-export async function importLegacyJigsIfEmpty(jigsDir: string = JIGS_DIR): Promise<ImportSummary | null> {
-  const db = openDb()
-  const row = db.prepare(`SELECT COUNT(*) as count FROM jigs`).get() as { count: number }
-  if (row.count > 0) return null  // already migrated
-
+/**
+ * Sync every legacy `jigs/*.ts` into the store. Runs on every boot, not just
+ * first — so jigs that escaped a previous run (or were added later) get
+ * pulled in. Per-jig idempotent: jigs already present in the store are
+ * skipped. Each newly-imported jig pulls its git history if available.
+ */
+export async function syncLegacyJigs(jigsDir: string = JIGS_DIR): Promise<ImportSummary | null> {
   const summary: ImportSummary = { jigsImported: 0, versionsImported: 0, jigsSkipped: 0 }
 
   const legacyIds = listLegacyJigFiles(jigsDir)
@@ -169,6 +171,7 @@ export async function importLegacyJigsIfEmpty(jigsDir: string = JIGS_DIR): Promi
   const hasGit = existsSync(join(jigsDir, ".git"))
 
   for (const jigId of legacyIds) {
+    if (getJigRow(jigId)) continue  // already in the store
     try {
       const versions = await importJig(jigId, hasGit, jigsDir)
       summary.jigsImported++
@@ -180,3 +183,6 @@ export async function importLegacyJigsIfEmpty(jigsDir: string = JIGS_DIR): Promi
   }
   return summary
 }
+
+/** @deprecated alias for syncLegacyJigs — name is no longer accurate. */
+export const importLegacyJigsIfEmpty = syncLegacyJigs

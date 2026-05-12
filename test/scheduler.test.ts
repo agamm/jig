@@ -13,21 +13,23 @@ import {
   upsertSchedule,
 } from "../src/db.js"
 import { invalidateJigsCache } from "../src/discover.js"
-import { JIGS_DIR, PROJECT_ROOT } from "../src/config/paths.js"
+import { PROJECT_ROOT } from "../src/config/paths.js"
 import { schedulerTimeZone } from "../src/config/timezone.js"
 import { recoverMissedRuns } from "../src/scheduler/recover.js"
 import { millisecondsUntilNextSchedulerTick } from "../src/scheduler/index.js"
 import { syncSchedules } from "../src/scheduler/sync.js"
 import { tick } from "../src/scheduler/tick.js"
 import { startBackgroundRun } from "../src/services/background-run.js"
+import { approvePending, deleteJig as storeDeleteJig, writePending } from "../src/services/jig-store.js"
+import { seedJig } from "./_fixtures.js"
 
 const CONNECTIONS_DIR = join(PROJECT_ROOT, ".jig/connections")
 const CONNECTIONS_INDEX = join(CONNECTIONS_DIR, "index.ts")
-const TEST_JIGS = [
-  join(JIGS_DIR, "scheduler-sync-case.ts"),
-  join(JIGS_DIR, "scheduler-bad-trigger-case.ts"),
-  join(JIGS_DIR, "scheduler-tick-case.ts"),
-  join(JIGS_DIR, "scheduler-missing-connection-case.ts"),
+const TEST_JIG_IDS = [
+  "scheduler-sync-case",
+  "scheduler-bad-trigger-case",
+  "scheduler-tick-case",
+  "scheduler-missing-connection-case",
 ]
 let createdConnectionsIndex = false
 
@@ -39,7 +41,6 @@ beforeEach(() => {
   closeDb()
   openDb(":memory:")
   invalidateJigsCache()
-  mkdirSync(JIGS_DIR, { recursive: true })
   mkdirSync(CONNECTIONS_DIR, { recursive: true })
   createdConnectionsIndex = false
   if (!existsSync(CONNECTIONS_INDEX)) {
@@ -51,14 +52,15 @@ beforeEach(() => {
 afterEach(() => {
   closeDb()
   invalidateJigsCache()
-  for (const path of TEST_JIGS) rmSync(path, { force: true })
+  for (const id of TEST_JIG_IDS) {
+    try { storeDeleteJig(id) } catch {}
+  }
   if (createdConnectionsIndex) rmSync(CONNECTIONS_INDEX, { force: true })
 })
 
 describe("scheduler sync", () => {
   it("preserves an existing schedule and records a visible error when cron becomes invalid", async () => {
-    const jigPath = join(JIGS_DIR, "scheduler-sync-case.ts")
-    writeFileSync(jigPath, `
+    seedJig("scheduler-sync-case", `
 import { jig } from "@jig/sdk"
 
 export default jig("scheduler-sync-case", {
@@ -78,7 +80,10 @@ export default jig("scheduler-sync-case", {
 
     setScheduleEnabled("scheduler-sync-case", false)
 
-    writeFileSync(jigPath, `
+    // Replace active version with a broken-cron variant.
+    writePending({
+      jigId: "scheduler-sync-case",
+      code: `
 import { jig } from "@jig/sdk"
 
 export default jig("scheduler-sync-case", {
@@ -86,7 +91,10 @@ export default jig("scheduler-sync-case", {
 }, async (ctx) => {
   ctx.output("broken")
 })
-`)
+`,
+      author: "cli",
+    })
+    approvePending("scheduler-sync-case")
 
     await syncSchedules()
     const broken = getSchedule("scheduler-sync-case")
@@ -98,8 +106,7 @@ export default jig("scheduler-sync-case", {
   })
 
   it("rejects unsupported trigger types with a visible error", async () => {
-    const jigPath = join(JIGS_DIR, "scheduler-bad-trigger-case.ts")
-    writeFileSync(jigPath, `
+    seedJig("scheduler-bad-trigger-case", `
 import { jig } from "@jig/sdk"
 
 export default jig("scheduler-bad-trigger-case", {
@@ -118,7 +125,6 @@ export default jig("scheduler-bad-trigger-case", {
         expect(schedule.error).toBeTruthy()
       }
     } finally {
-      rmSync(jigPath, { force: true })
     }
   })
 })
@@ -165,8 +171,7 @@ describe("scheduler alignment", () => {
 
 describe("scheduler tick", () => {
   it("claims a due schedule once and records the actual launch time", async () => {
-    const jigPath = join(JIGS_DIR, "scheduler-tick-case.ts")
-    writeFileSync(jigPath, `
+    seedJig("scheduler-tick-case", `
 import { jig } from "@jig/sdk"
 
 export default jig("scheduler-tick-case", {
@@ -196,8 +201,7 @@ export default jig("scheduler-tick-case", {
   })
 
   it("records and surfaces scheduled preflight failures as failed runs", async () => {
-    const jigPath = join(JIGS_DIR, "scheduler-missing-connection-case.ts")
-    writeFileSync(jigPath, `
+    seedJig("scheduler-missing-connection-case", `
 import { jig } from "@jig/sdk"
 import { definitely_missing_connection } from "@jig/connections/definitely_missing_connection"
 

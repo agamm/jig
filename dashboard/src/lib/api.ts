@@ -9,8 +9,6 @@ import type {
   CreateCustomConnectionResponse,
   ExampleJig,
   JigData,
-  JigVersionDetail,
-  JigVersion,
   JigVersionListResponse,
   PendingState,
   ApprovePendingResponse,
@@ -22,7 +20,6 @@ import type {
   NotificationSettings,
   NotificationSettingsResponse,
   NotifyTestResponse,
-  RestoreJigVersionResult,
   ResetLocalStateResponse,
   RunDetail,
   RunStatus,
@@ -248,20 +245,6 @@ export function cancelActiveRun(jigId?: string): Promise<ApiResponse<"cancelRun"
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(jigId ? { jigId } : {}),
-  })
-}
-
-export function fetchJigVersions(jigId: string): Promise<JigVersion[]> {
-  return fetchApi("getVersions", `/api/jigs/${encodeURIComponent(jigId)}/versions`)
-}
-
-export function fetchJigVersionDetail(jigId: string, sha: string): Promise<JigVersionDetail> {
-  return fetchApi("getVersionCode", `/api/jigs/${encodeURIComponent(jigId)}/versions/${sha}`)
-}
-
-export function restoreJigVersion(jigId: string, sha: string): Promise<RestoreJigVersionResult> {
-  return fetchApi("restoreVersion", `/api/jigs/${encodeURIComponent(jigId)}/versions/${sha}/restore`, {
-    method: "POST",
   })
 }
 

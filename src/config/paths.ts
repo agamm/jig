@@ -20,8 +20,12 @@ export const DATA_DIR = isServiceMode() ? "/data" : PROJECT_ROOT
 const META_DIR = isServiceMode() ? DATA_DIR : join(PROJECT_ROOT, ".jig")
 
 export const DB_PATH = join(DATA_DIR, "jig.db")
+/**
+ * Legacy filesystem source for jigs. The v12 migration ingests any files at
+ * this path into jig_versions on boot; after that, the directory is no
+ * longer authoritative — it's a one-time migration source only.
+ */
 export const JIGS_DIR = join(DATA_DIR, "jigs")
-export const DRAFT_JIGS_DIR = join(JIGS_DIR, "drafts")
 /** Materialized active-version code, written on demand for Bun.import. Path includes versionId so module cache stays correct. */
 export const RUNTIME_DIR = join(DATA_DIR, "runtime")
 /** Transient typecheck files for pending code. Wiped between checks. */

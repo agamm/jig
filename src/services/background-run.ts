@@ -3,23 +3,16 @@
  *
  * Mirrors startJigRun() in run-api.ts but without HTTP request/response wrapping.
  */
-import { existsSync } from "fs"
 import { completeRun, insertRun, markScheduleTriggered, openDb, setScheduleError } from "../db.js"
-import { resolveJigPath } from "../domain/jig-source.js"
 import { runJig, persist } from "../runner.js"
 import { applyRunEvent, discardTrackedRun, finishTrackedRun, getSignalForRun, hasActiveRunForJig, startTrackedRun } from "./run-store.js"
 import { maybeNotifyRunFailure } from "./run-failure-notify.js"
 import { missingConnectionsForJig } from "./connection-preflight.js"
 import { materializeActiveVersion } from "./jig-runtime.js"
-import { getJigRow } from "./jig-store.js"
 
 async function resolveRunnablePath(jigId: string): Promise<string | null> {
-  if (getJigRow(jigId)?.active_version_id != null) {
-    const materialized = await materializeActiveVersion(jigId)
-    if (materialized) return materialized.path
-  }
-  const legacy = resolveJigPath(jigId)
-  return existsSync(legacy) ? legacy : null
+  const materialized = await materializeActiveVersion(jigId)
+  return materialized?.path ?? null
 }
 
 function missingConnectionsMessage(missingConnections: string[]): string {
@@ -33,7 +26,7 @@ export async function startBackgroundRun(jigId: string, params?: Record<string, 
 
   const jigPath = await resolveRunnablePath(jigId)
   if (!jigPath) {
-    setScheduleError(jigId, "Jig file not found")
+    setScheduleError(jigId, "Jig has no active version")
     return false
   }
   const missingConnections = missingConnectionsForJig(jigPath)

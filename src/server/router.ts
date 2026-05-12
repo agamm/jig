@@ -72,12 +72,6 @@ export function matchRoute(pathname: string): { handler: string; params: Record<
   const agentCloseMatch = pathname.match(/^\/api\/agent\/([^/]+)\/close$/)
   if (agentCloseMatch) return { handler: "agentClose", params: { sessionId: agentCloseMatch[1] } }
 
-  const versionsMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/versions$/)
-  if (versionsMatch) {
-    if (!isValidJigId(decodeURIComponent(versionsMatch[1]))) return null
-    return { handler: "getVersions", params: { id: decodeURIComponent(versionsMatch[1]) } }
-  }
-
   // v12: code-as-versions endpoints
   const pendingMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/pending$/)
   if (pendingMatch) {
@@ -98,18 +92,6 @@ export function matchRoute(pathname: string): { handler: string; params: Record<
   if (listVersionsV2Match) {
     if (!isValidJigId(decodeURIComponent(listVersionsV2Match[1]))) return null
     return { handler: "listVersionsV2", params: { id: decodeURIComponent(listVersionsV2Match[1]) } }
-  }
-
-  const versionCodeMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/versions\/([^/]+)$/)
-  if (versionCodeMatch) {
-    if (!isValidJigId(decodeURIComponent(versionCodeMatch[1]))) return null
-    return { handler: "getVersionCode", params: { id: decodeURIComponent(versionCodeMatch[1]), sha: versionCodeMatch[2] } }
-  }
-
-  const restoreVersionMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/versions\/([^/]+)\/restore$/)
-  if (restoreVersionMatch) {
-    if (!isValidJigId(decodeURIComponent(restoreVersionMatch[1]))) return null
-    return { handler: "restoreVersion", params: { id: decodeURIComponent(restoreVersionMatch[1]), sha: restoreVersionMatch[2] } }
   }
 
   if (pathname === "/api/runs/active") return { handler: "activeRun", params: {} }

@@ -350,25 +350,6 @@ export interface DeleteJigResponse {
   jigId: string
 }
 
-export interface JigVersion {
-  sha: string
-  date: string
-  message: string
-}
-
-export interface JigVersionDetail {
-  sha: string
-  code: string
-  diff: string
-  hasChanges: boolean
-  prompt?: string | null
-}
-
-export interface RestoreJigVersionResult {
-  ok: true
-  sha: string
-}
-
 // ---------------------------------------------------------------------------
 // v12: code-as-versions API contracts.
 // ---------------------------------------------------------------------------
@@ -558,9 +539,6 @@ export interface ApiContracts {
   agentMessage: ApiContract<{ message: string; history?: AgentConversationTurn[] }, OkResponse>
   agentApprove: ApiContract<void, OkResponse>
   agentClose: ApiContract<void, OkResponse>
-  getVersions: ApiContract<void, JigVersion[]>
-  getVersionCode: ApiContract<void, JigVersionDetail>
-  restoreVersion: ApiContract<void, RestoreJigVersionResult>
   // v12 — code-as-versions endpoints
   getPending: ApiContract<void, PendingState | null>
   approvePending: ApiContract<void, ApprovePendingResponse>

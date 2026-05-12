@@ -4,7 +4,7 @@ import { join } from "path"
 import { tmpdir } from "os"
 import { closeDb, openDb } from "../src/db.js"
 import { getActiveCode, listAllVersions, listJigs } from "../src/services/jig-store.js"
-import { importLegacyJigsIfEmpty } from "../src/services/jig-import.js"
+import { syncLegacyJigs as importLegacyJigsIfEmpty } from "../src/services/jig-import.js"
 
 let workDir: string
 
@@ -35,10 +35,11 @@ afterEach(() => {
 })
 
 describe("importLegacyJigsIfEmpty", () => {
-  it("is a no-op when jigs table is non-empty", async () => {
-    openDb(":memory:").prepare(`INSERT INTO jigs (id, name, created_at) VALUES ('existing', 'Existing', 1)`).run()
+  it("skips jigs that are already in the store (per-jig idempotent)", async () => {
+    openDb(":memory:").prepare(`INSERT INTO jigs (id, name, created_at) VALUES ('solo', 'Solo', 1)`).run()
+    writeFileSync(join(workDir, "solo.ts"), "// solo jig")
     const summary = await importLegacyJigsIfEmpty(workDir)
-    expect(summary).toBeNull()
+    expect(summary?.jigsImported).toBe(0)
   })
 
   it("returns empty summary when there is no jigs directory", async () => {

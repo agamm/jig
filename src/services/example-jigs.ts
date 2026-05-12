@@ -1,11 +1,11 @@
 import { existsSync, readFileSync } from "fs"
 import type { ExampleJig } from "../../shared/api.js"
-import { EXAMPLES_DIR, JIGS_DIR } from "../config/paths.js"
+import { EXAMPLES_DIR } from "../config/paths.js"
 import { prettifyId, extractConnections, extractTrigger } from "../domain/jig-source.js"
 import { discoverJigs } from "../discover.js"
 import { parseStepsFromSource } from "../derive-steps.js"
 import { isValidJigId } from "../domain/jig-id.js"
-import { writeJigSource } from "./jig-writer.js"
+import { approvePending, getJigRow, writePending } from "./jig-store.js"
 import { invalidateJigsCache } from "../discover.js"
 
 function extractDescription(code: string, fallback: string): string {
@@ -53,9 +53,11 @@ export function readExampleJigSource(id: string): string {
 
 export async function addExampleJig(id: string): Promise<string> {
   const code = readExampleJigSource(id)
-  const targetPath = `${JIGS_DIR}/${id}.ts`
-  if (existsSync(targetPath)) throw new Error(`Jig already exists: ${id}`)
-  await writeJigSource(targetPath, code, { jigId: id })
+  if (getJigRow(id)) throw new Error(`Jig already exists: ${id}`)
+  // Install the example as an immediately-active version. No pending — the user
+  // explicitly chose to add a curated example, no review gate needed.
+  writePending({ jigId: id, code, author: "cli", message: "imported from examples" })
+  approvePending(id)
   invalidateJigsCache()
   return id
 }

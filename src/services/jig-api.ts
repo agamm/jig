@@ -1,7 +1,5 @@
 import type { JigData, JigRun } from "../../shared/api.js"
-import { JIGS_DIR } from "../config/paths.js"
 import { getJigRuns, getLastRun, getSchedule } from "../db.js"
-import { discoverJigs } from "../discover.js"
 import { formatDuration } from "../utils.js"
 import { prettifyId } from "../domain/jig-source.js"
 import { getActiveRunStatusForJig } from "./run-store.js"
@@ -134,12 +132,9 @@ export async function buildDraftJigResponse(
 }
 
 export function discoverAllJigs(): Map<string, string[]> {
-  // Union of v12 store-known jigs (active) + legacy filesystem entries.
-  // After approve of a brand-new jig the store has it but the fs doesn't —
-  // including both makes both pre- and post-rehaul jigs visible.
-  const map = discoverJigs(JIGS_DIR)
+  const map = new Map<string, string[]>()
   for (const jig of storeListJigs()) {
-    if (jig.activeVersionId != null && !map.has(jig.id)) map.set(jig.id, [])
+    if (jig.activeVersionId != null) map.set(jig.id, [])
   }
   return map
 }

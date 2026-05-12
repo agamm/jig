@@ -1,7 +1,7 @@
 /** SWR keys and fetchers for jig data. */
 import useSWR, { type SWRConfiguration } from "swr"
-import { fetchJigs, fetchJig, fetchModels, fetchJigSteps, fetchConnections, fetchConnection, fetchJigVersions, fetchActiveRunForJig, fetchExamples, fetchHealth, fetchSystemSettings, fetchPending, fetchVersionsV2 } from "./api"
-import type { JigData, ModelCatalog, StepList, Connection, ConnectionDetail, JigVersion, RunStatus, ExampleJig, HealthResponse, SystemSettings, PendingState, JigVersionListResponse } from "@shared/api"
+import { fetchJigs, fetchJig, fetchModels, fetchJigSteps, fetchConnections, fetchConnection, fetchActiveRunForJig, fetchExamples, fetchHealth, fetchSystemSettings, fetchPending, fetchVersionsV2 } from "./api"
+import type { JigData, ModelCatalog, StepList, Connection, ConnectionDetail, RunStatus, ExampleJig, HealthResponse, SystemSettings, PendingState, JigVersionListResponse } from "@shared/api"
 
 const REFRESH_INTERVAL = 10_000
 
@@ -63,13 +63,6 @@ export function useConnection(name: string | null) {
   return useSWR<ConnectionDetail>(
     name ? `connection/${name}` : null,
     () => fetchConnection(name!),
-  )
-}
-
-export function useJigVersions(jigId: string | null) {
-  return useSWR<JigVersion[]>(
-    jigId ? `jig/${jigId}/versions` : null,
-    () => fetchJigVersions(jigId!),
   )
 }
 

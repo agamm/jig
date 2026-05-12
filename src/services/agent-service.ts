@@ -7,7 +7,7 @@ import { getEditorModel } from "../config/models.js"
 import { SCHEMAS_DIR } from "../config/paths.js"
 import { isValidJigId } from "../domain/jig-id.js"
 import { getImportedServers } from "../domain/source-analysis.js"
-import { prettifyId } from "../domain/jig-source.js"
+import { prettifyId, resolveJigPath } from "../domain/jig-source.js"
 import { invalidateJigsCache } from "../discover.js"
 import { checkJigFile } from "./jig-checker.js"
 import { buildAgentJigSystemPrompt } from "./jig-writing-prompt.js"
@@ -264,10 +264,20 @@ function getDraftCode(session: AgentSession): string | null {
 async function getSessionCode(session: AgentSession, jigId?: string): Promise<string | null> {
   const resolvedJigId = session.jigId ?? jigId
   if (!resolvedJigId) return null
-  // Prefer pending if it exists (agent is editing it), else active code.
+  // Prefer pending (agent is mid-edit), else active in store, else fall back
+  // to the legacy filesystem file. Jigs created before the v12 migration ran
+  // (or any jig that escaped the import pass) live only on disk; reading from
+  // the store alone would return empty and starve planJig of import context,
+  // causing it to over-suggest connections.
   const pending = storeGetPending(resolvedJigId)
   if (pending) return pending.code
-  return storeGetActiveCode(resolvedJigId)
+  const active = storeGetActiveCode(resolvedJigId)
+  if (active != null) return active
+  const legacyPath = resolveJigPath(resolvedJigId)
+  if (existsSync(legacyPath)) {
+    try { return readFileSync(legacyPath, "utf-8") } catch { return null }
+  }
+  return null
 }
 
 function releaseSession(session: AgentSession): void {
@@ -531,9 +541,9 @@ async function toolWriteJigFile(args: { code: string; jigId?: string; message?: 
   // actively editing the same jig, refuse.
   if (!session.jigId) {
     if (!releaseStaleJigLock(jigId)) return JSON.stringify({ error: "Another session is already editing this jig" })
-    // Brand-new jig flow: the jigs row doesn't exist yet. If it does AND this
-    // is a creation session, the user picked a name that collides — reject.
-    if (session.creationMode && storeGetJigRow(jigId)) {
+    // Brand-new jig flow: name collides if EITHER the store has a row OR
+    // a legacy filesystem jig of that name exists.
+    if (session.creationMode && (storeGetJigRow(jigId) || existsSync(resolveJigPath(jigId)))) {
       return JSON.stringify({ error: `Jig already exists: ${jigId}` })
     }
     session.jigId = jigId
@@ -564,11 +574,17 @@ async function toolCheckJig(args: { jigId?: string }, session: AgentSession): Pr
   const code = await getSessionCode(session, jigId)
   if (!code) return JSON.stringify({ error: `File not found for jig: ${jigId}` })
 
-  // Check the on-disk materialization of whichever version we'd want to
-  // validate — pending if it exists (agent is working on it), else active.
+  // Check whichever version is currently the source of truth — pending if
+  // the agent is editing it, then active in the store, then the legacy fs
+  // file (for jigs that escaped the v12 import pass).
   const target = (await materializePendingVersion(jigId)) ?? (await materializeActiveVersion(jigId))
-  if (!target) return JSON.stringify({ error: `No code on disk for jig: ${jigId}` })
-  const result = await checkJigFile(target.path)
+  let path = target?.path
+  if (!path) {
+    const legacyPath = resolveJigPath(jigId)
+    if (existsSync(legacyPath)) path = legacyPath
+  }
+  if (!path) return JSON.stringify({ error: `No code on disk for jig: ${jigId}` })
+  const result = await checkJigFile(path)
   const extraErrors: string[] = []
 
   if (session.authoringPolicy.requiresIntegration && hasExplicitEmptyToolsArray(code)) {
@@ -750,8 +766,17 @@ async function buildAgentSystemPromptWithCode(
 }> {
   let nextCurrentCode = currentCode
   if (!nextCurrentCode && jigId) {
-    // v12: pull from store; either pending (mid-edit) or active.
+    // v12 + legacy fallback: pending → active in store → jigs/{id}.ts on disk.
+    // Falling back to the fs file matters for jigs that escaped the import
+    // pass — without it, planJig sees an empty existingCode and decides the
+    // jig needs servers it doesn't actually use.
     nextCurrentCode = storeGetPending(jigId)?.code ?? storeGetActiveCode(jigId) ?? ""
+    if (!nextCurrentCode) {
+      const legacyPath = resolveJigPath(jigId)
+      if (existsSync(legacyPath)) {
+        try { nextCurrentCode = readFileSync(legacyPath, "utf-8") } catch {}
+      }
+    }
   }
 
   let authoring

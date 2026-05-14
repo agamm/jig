@@ -423,6 +423,12 @@ try {
       break
     }
 
+    case "debug": {
+      const { runDebug } = await import("./cli-debug/index.js")
+      await runDebug(rest)
+      break
+    }
+
     case "update": {
       // Prefer remote update when a manifest exists; otherwise fall back to
       // the local git-pull path so developers working from a clone are
@@ -452,6 +458,7 @@ try {
       console.log(`  jig deploy --update    Redeploy current code to the linked Railway project`)
       console.log(`  jig update [handle]    Update a deployed jig to the latest tag (rolls back on failure)`)
       console.log(`  jig doctor [handle]    Health-check deployed instances`)
+      console.log(`  jig debug <sub>        Trigger remote runs and stream logs — see "jig debug"`)
       break
   }
 } catch (e: any) {

@@ -28,6 +28,13 @@ export interface RemoteManifest {
     environment_id: string
     token: string
   }
+  /**
+   * Signed admin session cookie (`jig-admin` value) from POST /api/unlock.
+   * Issued by the remote's session.ts; HMAC-signed; default 30-day TTL.
+   * Populated by `jig debug login`; used by `jig debug run` / `jig debug tail`
+   * to authenticate against admin-only endpoints.
+   */
+  session_cookie?: string
 }
 
 const remotesDir = (): string => join(homedir(), ".config", "jig", "remotes")
@@ -60,6 +67,15 @@ export function saveRemote(manifest: RemoteManifest): void {
 export function deleteRemote(handle: string): void {
   const path = join(remotesDir(), `${handle}.json`)
   rmSync(path, { force: true })
+}
+
+/** Persist or clear the admin session cookie for a remote. */
+export function setSessionCookie(handle: string, cookie: string | undefined): void {
+  const manifest = getRemote(handle)
+  if (!manifest) throw new Error(`No remote named "${handle}"`)
+  if (cookie) manifest.session_cookie = cookie
+  else delete manifest.session_cookie
+  saveRemote(manifest)
 }
 
 /** Pick the single active remote; exits if zero or asks if multiple. */

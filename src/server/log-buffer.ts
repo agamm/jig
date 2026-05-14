@@ -31,6 +31,12 @@ export interface LogEntry {
   level: LogLevel
   source: string
   msg: string
+  /**
+   * Redacted JSON payload for structured (session-log) entries, or NULL for
+   * plain console.log rows. The dashboard offers a per-row expander to inspect
+   * this — it's where LLM prompts/responses, tool args, and tool results live.
+   */
+  payload: string | null
 }
 
 /**
@@ -49,12 +55,11 @@ function formatArg(a: unknown): string {
 let insertCount = 0
 const PRUNE_EVERY = 200
 
-function record(level: LogLevel, args: unknown[]): void {
-  const msg = args.map(formatArg).join(" ")
+function insertLog(level: LogLevel, msg: string, payload: string | null): void {
   try {
     const db = openDb()
-    db.prepare("INSERT INTO logs (ts, level, source, msg) VALUES (?, ?, ?, ?)")
-      .run(Date.now(), level, SOURCE, msg)
+    db.prepare("INSERT INTO logs (ts, level, source, msg, payload) VALUES (?, ?, ?, ?, ?)")
+      .run(Date.now(), level, SOURCE, msg, payload)
     if (++insertCount % PRUNE_EVERY === 0) {
       // Retain the most recent MAX_RETAINED rows. The inner SELECT returns
       // exactly the `seq` values we want to keep; the outer DELETE drops
@@ -69,6 +74,20 @@ function record(level: LogLevel, args: unknown[]): void {
     // (very early boot before openDb has run), the log is just lost —
     // acceptable tradeoff vs crashing on a console.log.
   }
+}
+
+function record(level: LogLevel, args: unknown[]): void {
+  insertLog(level, args.map(formatArg).join(" "), null)
+}
+
+/**
+ * Append a structured log row with a JSON payload. Used by session-log.ts to
+ * mirror runner/agent/llm events into the dashboard-visible logs table.
+ *
+ * The caller is responsible for redaction — payload is stored verbatim.
+ */
+export function recordStructured(level: LogLevel, msg: string, payload: string | null): void {
+  insertLog(level, msg, payload)
 }
 
 let installed = false
@@ -101,7 +120,7 @@ export function getLogs(sinceSeq = 0): LogEntry[] {
   try {
     const db = openDb()
     const rows = db.prepare(
-      "SELECT seq, ts, level, source, msg FROM logs WHERE seq > ? ORDER BY seq ASC LIMIT ?"
+      "SELECT seq, ts, level, source, msg, payload FROM logs WHERE seq > ? ORDER BY seq ASC LIMIT ?"
     ).all(sinceSeq, MAX_RETAINED) as LogEntry[]
     return rows
   } catch {

@@ -436,6 +436,12 @@ export interface ServerLogEntry {
   level: "info" | "warn" | "error"
   source?: string
   msg: string
+  /**
+   * Redacted JSON payload for structured (session-log) events — LLM prompts/
+   * responses, tool args/results, agent rounds. NULL for plain console.log
+   * lines. Rendered behind an expander in the dashboard Logs view.
+   */
+  payload?: string | null
 }
 
 export interface ServerLogsResponse {

@@ -235,6 +235,11 @@ const MIGRATIONS: string[] = [
    );
    CREATE INDEX IF NOT EXISTS idx_jig_versions_jig ON jig_versions(jig_id, id DESC);
    ALTER TABLE agent_sessions ADD COLUMN last_event_seq INTEGER NOT NULL DEFAULT 0;`,
+  // v13: structured payloads on log entries. Session-log events (runner, sdk.llm,
+  // sdk.agent, authoring.*) now mirror into the logs table with a redacted JSON
+  // payload so the dashboard's Logs page can show LLM/tool details from a remote
+  // Railway deploy — not just whatever made it to console.log.
+  `ALTER TABLE logs ADD COLUMN payload TEXT;`,
 ]
 
 // ---------------------------------------------------------------------------

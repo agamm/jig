@@ -16,12 +16,24 @@ function isOperationalLog(entry: ServerLogEntry): boolean {
   const msg = entry.msg.trim();
   if (entry.level === "error") return true;
   if (/^\[run\]\s/.test(msg)) return true;
+  if (/^\[runner\]\s/.test(msg)) return true;
+  if (/^\[sdk\.(llm|agent)\]\s/.test(msg)) return true;
+  if (/^\[authoring\.(agent|discovery)\]\s/.test(msg)) return true;
+  if (/^\[session-log\]\s/.test(msg)) return true;
   if (/^\[scheduler\]\s/.test(msg) && /(started|done|failed|error|catch-up|marked|skipped|triggered)/i.test(msg)) return true;
   if (/^\[connection\]\s/.test(msg)) return true;
   if (/^\[composio\]\s/.test(msg) && /(connected|discovered|failed|error)/i.test(msg)) return true;
   if (/^\[webhook\]\s/.test(msg)) return true;
   if (/^API error:/i.test(msg)) return true;
   return false;
+}
+
+function formatPayload(raw: string): string {
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2);
+  } catch {
+    return raw;
+  }
 }
 
 function fmtTime(ts: number): string {
@@ -38,6 +50,7 @@ export function LogsSettings() {
   const [levelFilter, setLevelFilter] = useState<"all" | "warn" | "error">("all");
   const [query, setQuery] = useState("");
   const [clearing, setClearing] = useState(false);
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const lastSeqRef = useRef(0);
@@ -92,9 +105,21 @@ export function LogsSettings() {
   const filtered = entries.filter((e) => {
     if (levelFilter === "warn" && e.level === "info") return false;
     if (levelFilter === "error" && e.level !== "error") return false;
-    if (q && !e.msg.toLowerCase().includes(q)) return false;
+    if (q) {
+      const inMsg = e.msg.toLowerCase().includes(q);
+      const inPayload = !inMsg && typeof e.payload === "string" && e.payload.toLowerCase().includes(q);
+      if (!inMsg && !inPayload) return false;
+    }
     return true;
   });
+
+  function toggleExpanded(seq: number) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(seq)) next.delete(seq); else next.add(seq);
+      return next;
+    });
+  }
 
   async function onClear() {
     setClearing(true);
@@ -185,16 +210,40 @@ export function LogsSettings() {
           </div>
         ) : (
           <div className="divide-y divide-[#14141680]">
-            {filtered.map((e) => (
-              <div key={e.seq} className="flex gap-3 px-3 py-1 hover:bg-[#101014]">
-                <span className="shrink-0 text-[#555]">{fmtTime(e.ts)}</span>
-                <span className={`shrink-0 w-10 ${LEVEL_COLOR[e.level]}`}>{e.level}</span>
-                {e.source ? (
-                  <span className="shrink-0 w-16 text-[#666]" title={`process: ${e.source}`}>{e.source}</span>
-                ) : null}
-                <pre className="whitespace-pre-wrap break-words text-[#c7c7cd] m-0">{e.msg}</pre>
-              </div>
-            ))}
+            {filtered.map((e) => {
+              const hasPayload = typeof e.payload === "string" && e.payload.length > 0;
+              const isOpen = hasPayload && expanded.has(e.seq);
+              return (
+                <div key={e.seq} className="px-3 py-1 hover:bg-[#101014]">
+                  <div className="flex gap-3 items-start">
+                    <span className="shrink-0 text-[#555]">{fmtTime(e.ts)}</span>
+                    <span className={`shrink-0 w-10 ${LEVEL_COLOR[e.level]}`}>{e.level}</span>
+                    {e.source ? (
+                      <span className="shrink-0 w-16 text-[#666]" title={`process: ${e.source}`}>{e.source}</span>
+                    ) : null}
+                    {hasPayload ? (
+                      <button
+                        type="button"
+                        onClick={() => toggleExpanded(e.seq)}
+                        className="shrink-0 w-3 text-[#666] hover:text-[#ededed] font-mono leading-[1.55]"
+                        title={isOpen ? "Collapse details" : "Expand details"}
+                        aria-expanded={isOpen}
+                      >
+                        {isOpen ? "▼" : "▶"}
+                      </button>
+                    ) : (
+                      <span className="shrink-0 w-3" />
+                    )}
+                    <pre className="whitespace-pre-wrap break-words text-[#c7c7cd] m-0 flex-1">{e.msg}</pre>
+                  </div>
+                  {isOpen && hasPayload ? (
+                    <pre className="mt-1 ml-[calc(8ch+2.5rem+4rem+0.75rem)] max-h-[40vh] overflow-auto whitespace-pre-wrap break-words rounded border border-[#1f1f23] bg-[#070708] px-2 py-1.5 text-[10.5px] text-[#8d8d95]">
+                      {formatPayload(e.payload as string)}
+                    </pre>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

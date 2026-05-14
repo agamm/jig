@@ -68,6 +68,11 @@
 - **Programmatic over subprocess** — use library APIs (e.g. TypeScript compiler API, Bun APIs) instead of spawning CLI tools. Keeps things faster, more portable, and dashboard-ready.
 - **Abstract all I/O** — business logic must never call `console.log`, `process.exit`, or read `process.stdin` directly. Pass I/O through callback interfaces (like `JigIO`) so the same logic works from CLI and dashboard. The CLI file is thin glue that wires IO; the modules are reusable.
 
+## Debug Logging
+- **`console.log/warn/error` is auto-captured** by `installLogCapture()` and shows up on the dashboard Logs page. Prefix messages `[<source>] ...` (e.g. `[scheduler]`, `[webhook]`, `[composio]`) so the operational-log filter accepts them.
+- **For structured events with a JSON payload, call `logSessionEvent({source, event, ...})`** from `src/debug/session-log.ts`. The chokepoints — `runner`, `sdk.llm`, `sdk.agent`, `mcp.tool` (covers every MCP tool call), `authoring.agent`, `authoring.discovery` — already emit, so new tools/LLM calls/agents/jigs inherit logging for free. Only add fresh `logSessionEvent` calls when introducing a new *category* of operation (a scheduler-internal pass, a non-MCP integration), not for each new tool.
+- Secrets in payloads are redacted by `src/debug/redact.ts` automatically — no scrubbing needed at call sites.
+
 ## Core Principles
 - **Simplicity First**: Make every change as simple as possible. Impact minimal code.
 - **No Laziness**: Find root causes. No temporary fixes. Senior developer standards.

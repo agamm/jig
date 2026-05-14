@@ -14,6 +14,7 @@ import { deleteCredentials } from "../db.js"
 import { SCHEMAS_DIR } from "../config/paths.js"
 import { runContext } from "../sdk/context.js"
 import { USER_CANCELLED_MESSAGE } from "../run-cancel.js"
+import { logSessionEvent } from "../debug/session-log.js"
 
 export type McpConnection = {
   client: Client
@@ -530,10 +531,31 @@ export async function callTool(
   await validateRequiredToolArguments(connection, toolName, normalizedParams)
 
   const signal = options?.signal ?? runContext.getStore()?.signal
-  const result = await connection.client.callTool({
-    name: toolName,
-    arguments: normalizedParams,
-  }, undefined, signal ? { signal } : undefined)
+  const startedAt = Date.now()
+  logSessionEvent({
+    source: "mcp.tool",
+    event: "call",
+    server: connection.serverName,
+    tool: toolName,
+    args: normalizedParams,
+  })
+  let result
+  try {
+    result = await connection.client.callTool({
+      name: toolName,
+      arguments: normalizedParams,
+    }, undefined, signal ? { signal } : undefined)
+  } catch (err) {
+    logSessionEvent({
+      source: "mcp.tool",
+      event: "error",
+      server: connection.serverName,
+      tool: toolName,
+      durationMs: Date.now() - startedAt,
+      error: err,
+    })
+    throw err
+  }
   const normalized = normalizeToolResult(result)
   if (result.isError) {
     // MCP-standard error: isError flag is set. Use the normalized content as
@@ -541,12 +563,38 @@ export async function callTool(
     // shape; otherwise fall back to a generic error.
     const msg = errorMessageFromResult(normalized) ??
       `Tool "${connection.serverName}.${toolName}" returned an error`
+    logSessionEvent({
+      source: "mcp.tool",
+      event: "error",
+      server: connection.serverName,
+      tool: toolName,
+      durationMs: Date.now() - startedAt,
+      error: msg,
+      result: normalized,
+    })
     throw new Error(msg)
   }
   const toolError = extractToolError(normalized)
   if (toolError) {
+    logSessionEvent({
+      source: "mcp.tool",
+      event: "error",
+      server: connection.serverName,
+      tool: toolName,
+      durationMs: Date.now() - startedAt,
+      error: toolError,
+      result: normalized,
+    })
     throw new Error(toolError)
   }
+  logSessionEvent({
+    source: "mcp.tool",
+    event: "result",
+    server: connection.serverName,
+    tool: toolName,
+    durationMs: Date.now() - startedAt,
+    result: normalized,
+  })
   return normalized
 }
 

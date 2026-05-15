@@ -961,6 +961,10 @@ function ModelSelector({ jig, onChange }: { jig: Jig; onChange: () => void }) {
     setSaving(true);
     try {
       await updateJigModel(jig.id, modelId);
+      toast.success(
+        modelId ? `Jig model: ${modelId.split("/").pop() ?? modelId}` : "Jig model: using default",
+        { durationMs: 2000 },
+      );
       onChange();
       setOpen(false);
       setQuery("");

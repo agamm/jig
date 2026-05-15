@@ -483,6 +483,10 @@ function StepModelPicker({
     setSaving(true);
     try {
       await updateJigStepModel(jigId, seq, model);
+      toast.success(
+        model ? `Step ${seq}: ${model.split("/").pop() ?? model}` : `Step ${seq}: using jig default`,
+        { durationMs: 2000 },
+      );
       onChange();
       onClose();
     } catch (e) {

@@ -274,11 +274,28 @@ ctx.output(`Found ${meetings.length} meetings\n\n${preview}`)
 
 ### 10. Tool return shapes vary — introspect, don't guess
 
-MCP results vary wildly — arrays, `{items}`, `{messages}`, `{data}`, `{data_preview}`, raw strings. Never write `result.items ?? result.messages ?? []` — it collapses to `[]` when the real key is something else and the run silently does nothing.
+MCP tools return different shapes: arrays, `{items: [...]}`, `{messages: [...]}`, `{data: {...}}`, `{data_preview: {...}}`, plain strings (XML, Markdown, or prose), and sometimes an empty string. Do NOT blindly write `result.items ?? result.messages ?? []` — if the real key is `entries` / `data.results` / `data_preview.messages`, that silently collapses to `[]` and every downstream step starves on empty data while the run still reports success.
 
-Before writing unwrap code, call `introspect_tool_output({server, tool, args})` with realistic args. It returns a depth-limited shape descriptor plus a redacted 1KB preview — base the unwrap on what comes back. Refuses non-read-only tools unless `allowWrite: true`.
+**If you're the authoring agent: once you've decided which tool to call, run `introspect_tool_output({server, tool, args})` to get a real shape descriptor before writing unwrap code.** It invokes the tool live and returns a depth-limited descriptor (keys, types, array lengths, value samples) plus a redacted 1KB preview — never the full data. Refuses non-read-only tools unless `allowWrite: true`. Use realistic args (e.g. `{query: "is:unread", max_results: 3}`), then base the unwrap on what you got back. One probe call is much cheaper than shipping a jig that returns 0 results when the API returned 3.
 
-For string-returning tools (Granola, some Apify, HTML scrapers), parse the text — don't discard it. For unknown shapes, throw or surface the raw head via `ctx.output()`; never fall back to `[]`.
+At each tool boundary:
+
+1. Check `typeof result`.
+2. If it's a **string** (Granola, some Apify tools, HTML scrapers), parse it — regex, `split`, `DOMParser`, or `llm()` to pull out the fields you need. Do not discard it.
+3. If it's an **object**, unwrap with the documented key (`items`, `messages`, `meetings`, etc.), and fall back to surfacing the raw object — never to `[]`.
+4. When uncertain, `ctx.output()` the first ~500 chars of the raw result so the real shape is visible in the run log.
+
+Example — good:
+```typescript
+const raw = await granola.list_meetings({ time_range: "this_week" })
+const text = typeof raw === "string" ? raw : JSON.stringify(raw)
+const meetings = [...text.matchAll(/<meeting\s+id="([^"]+)"\s+title="([^"]+)"\s+date="([^"]+)"/g)]
+  .map(([, id, title, date]) => ({ id, title, date }))
+if (meetings.length === 0) {
+  ctx.output(`No structured meetings parsed. Raw response head:\n\n\`\`\`\n${text.slice(0, 500)}\n\`\`\``)
+  return
+}
+```
 
 ### 11. Format outbound messages nicely
 

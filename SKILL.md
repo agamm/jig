@@ -407,6 +407,37 @@ if (emails.length === 0) {
 }
 ```
 
+### 15. When the LLM analyzes the user's own data, name the user
+
+Any jig that hands the user's inbox / calendar / messages / files to `llm()` or `agent()` is asking the LLM to reason about *the user's* world. The LLM has no inherent way to tell which records are the user's own vs someone else's — unless the prompt says so. Skip this and you get bugs like "suggest I reply to my own sent email" or "prep me for a meeting where I am the only attendee".
+
+**Rule:** when handing personal data to an LLM, declare the user's identity at the top of the prompt AND filter the user's own records at the data source.
+
+```typescript
+const USER_NAME = "Alex Reyes"
+const USER_EMAIL = "alex@company.com"
+
+const prompt = `You are analyzing the inbox of ${USER_NAME} <${USER_EMAIL}>. "The user" below = ${USER_NAME}.
+
+CRITICAL — emails whose 'from' field contains ${USER_EMAIL} are the user's own sent messages. NEVER include them. NEVER suggest replying to them.
+
+Analyze the remaining emails ...`
+
+// Belt and suspenders: also filter at the fetch boundary so self-sent
+// items never reach the LLM data window.
+await composio.gmail_fetch_emails({
+  query: `after:${cutoff} -from:${USER_EMAIL} -category:promotions -is:draft`,
+})
+```
+
+Three sub-rules that fall out of this:
+
+1. **Identify the user in the system prompt OR in the user-message header, every time.** Not in the data field — the LLM treats data as the thing to analyze, not as context about who is asking.
+2. **Filter at the data source whenever the connection supports it.** `-from:me` for Gmail, organizer-equals-me for Calendar, sender-equals-me for Slack DMs. This is cheaper than asking the LLM to apply a filter and removes a class of false positives.
+3. **Exclude outputs from prior runs of this jig.** Digest emails the jig itself sent will land back in the inbox. If the next run sees them and tries to act on them, you get feedback loops. Hardcode a subject pattern (`-subject:"Your daily digest"`) or check the sender (`-from:${USER_EMAIL}` already covers self-sent digests).
+
+The same principle generalizes: Slack message review (`-from:<bot-user-id>`), GitHub issue triage (filter `author:<me>`), Calendar prep (skip events where attendees.length === 1 and you're the organizer).
+
 ---
 
 ## The Core Principle

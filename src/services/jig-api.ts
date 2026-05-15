@@ -20,7 +20,32 @@ import { publicUrl } from "../config/runtime.js"
  * The parser already captures the code-declared model (or hardcodes the global
  * default if absent); we re-render it here against the current overrides.
  */
-function applyEffectiveModelToSteps(
+/**
+ * Cheap source-level extraction of `jig("id", {..., model: "..."}, ...)`.
+ * Used by `/api/jigs/<id>/steps` to learn the code-declared model without
+ * doing the full module import that introspectJig requires.
+ */
+export function extractModelInCode(code: string): string | null {
+  const m = code.match(/\bjig\s*\(\s*["'`][^"'`]+["'`]\s*,\s*\{[^}]*\bmodel\s*:\s*["']([^"']+)["']/)
+  return m?.[1]?.trim() || null
+}
+
+/**
+ * Resolve the effective jig-level model (override > code-declared > global)
+ * plus the per-step overrides. Both inputs the chip-rewriter needs.
+ */
+export function getEffectiveModelContext(jigId: string, modelInCode: string | null): {
+  jigEffectiveModel: string
+  stepOverrides: Record<string, string>
+} {
+  const row = getJigRow(jigId)
+  return {
+    jigEffectiveModel: row?.model_override ?? modelInCode ?? getMainModel(),
+    stepOverrides: getStepModelOverrides(jigId),
+  }
+}
+
+export function applyEffectiveModelToSteps(
   steps: JigStep[],
   stepOverrides: Record<string, string>,
   jigEffectiveModel: string,
@@ -112,9 +137,9 @@ export async function buildJigResponse(
   const activeRun = getActiveRunStatusForJig(id)
 
   const row = getJigRow(id)
-  const stepOverrides = getStepModelOverrides(id)
-  const jigEffectiveModel = row?.model_override ?? jig.modelInCode ?? getMainModel()
+  const { jigEffectiveModel, stepOverrides } = getEffectiveModelContext(id, jig.modelInCode ?? null)
   const steps = applyEffectiveModelToSteps(jig.steps, stepOverrides, jigEffectiveModel)
+  // (`row` is read separately below for modelOverride; keep the local for clarity)
 
   return {
     id,

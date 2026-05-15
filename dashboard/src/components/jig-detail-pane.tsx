@@ -622,7 +622,13 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
                 jigId={jig.id}
                 stepModelOverrides={jig.stepModelOverrides}
                 jigBaseModel={jig.modelOverride ?? jig.modelInCode ?? null}
-                onStepModelChange={() => onRefresh?.()}
+                onStepModelChange={() => {
+                  // Both caches need to refresh: jig (for stepModelOverrides
+                  // in the picker UI state) AND steps (for the chip relabel
+                  // to land on the page without a hard reload).
+                  void revalidateSteps()
+                  onRefresh?.()
+                }}
                 onApproveTool={toolApproval.reviewRequired ? (tool) => {
                   setReviewedToolKeys((current) => new Set(current).add(toolKey(tool)));
                   setQueuedRemovalTools((current) => current.filter((candidate) => !sameTool(candidate, tool)));

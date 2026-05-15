@@ -162,7 +162,13 @@ async function handleGetSteps(id: string): Promise<Response> {
   const code = getJigActiveCode(id)
   if (!code) throw new ApiError(404, "Jig has no active version")
   const { deriveSteps } = await import("./derive-steps.js")
-  const steps = await deriveSteps(id, code)
+  const raw = await deriveSteps(id, code)
+  // Relabel llm/agent chips against the live override chain — same rewrite
+  // buildJigResponse does, so the chip on the steps tab reflects the
+  // dashboard's per-step picks without needing the user to edit code.
+  const { applyEffectiveModelToSteps, extractModelInCode, getEffectiveModelContext } = await import("./services/jig-api.js")
+  const { jigEffectiveModel, stepOverrides } = getEffectiveModelContext(id, extractModelInCode(code))
+  const steps = applyEffectiveModelToSteps(raw as any, stepOverrides, jigEffectiveModel)
   return apiJson("getSteps", { steps })
 }
 

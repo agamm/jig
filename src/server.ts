@@ -646,6 +646,39 @@ export function createApiServer(port: number) {
             const body = await req.json().catch(() => ({}))
             return apiJson("runJig", await startJigRun(route.params.id, body))
           }
+          case "writeJigCode": {
+            // Direct code write for an existing jig — creates (or replaces) the
+            // pending version. With approve:true, immediately promotes pending
+            // to active. Useful for scripted/CLI-driven edits when going through
+            // the interactive authoring agent would be excessive.
+            if (req.method !== "PUT") return json({ error: "Method not allowed" }, 405)
+            const body = (await req.json().catch(() => ({}))) as {
+              code?: unknown; message?: unknown; approve?: unknown
+            }
+            if (typeof body.code !== "string" || body.code.trim().length === 0) {
+              throw new ApiError(400, "code is required")
+            }
+            ensureJigExists(route.params.id)
+            const { hasActiveRunForJig } = await import("./services/run-store.js")
+            if (hasActiveRunForJig(route.params.id)) {
+              throw new ApiError(409, "Cannot edit while the jig is running")
+            }
+            const message = typeof body.message === "string" ? body.message : null
+            const { versionId } = storeWritePending({
+              jigId: route.params.id,
+              code: body.code,
+              author: "cli",
+              message,
+              prompt: null,
+            })
+            let activeVersionId: number | null = null
+            if (body.approve === true) {
+              activeVersionId = approveJigPending(route.params.id).activeVersionId
+              invalidateJigsCache()
+            }
+            broadcastJigsUpdated()
+            return apiJson("writeJigCode", { ok: true as const, pendingVersionId: versionId, activeVersionId })
+          }
           case "getRun":
             return apiJson("getRun", getRunDetail(parseInt(route.params.id)))
           case "activeRun":

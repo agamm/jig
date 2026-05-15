@@ -530,6 +530,7 @@ export interface ApiContracts {
   getJig: ApiContract<void, JigData>
   deleteJig: ApiContract<void, DeleteJigResponse>
   runJig: ApiContract<{ dryRun: boolean }, StartRunResponse>
+  writeJigCode: ApiContract<{ code: string; message?: string; approve?: boolean }, { ok: true; pendingVersionId: number; activeVersionId: number | null }>
   getRun: ApiContract<void, RunDetail>
   activeRun: ApiContract<void, RunStatus>
   cancelRun: ApiContract<{ jigId?: string }, CancelRunResponse>

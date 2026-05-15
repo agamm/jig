@@ -40,6 +40,12 @@ export function matchRoute(pathname: string): { handler: string; params: Record<
     return { handler: "runJig", params: { id: decodeURIComponent(runMatch[1]) } }
   }
 
+  const writeCodeMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/code$/)
+  if (writeCodeMatch) {
+    if (!isValidJigId(decodeURIComponent(writeCodeMatch[1]))) return null
+    return { handler: "writeJigCode", params: { id: decodeURIComponent(writeCodeMatch[1]) } }
+  }
+
   const runDetailMatch = pathname.match(/^\/api\/runs\/(-?\d+)$/)
   if (runDetailMatch) return { handler: "getRun", params: { id: runDetailMatch[1] } }
 

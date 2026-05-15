@@ -6,7 +6,42 @@ import { getActiveRunStatusForJig } from "./run-store.js"
 import { webhookToken } from "../scheduler/webhook-auth.js"
 import { introspectJig } from "./introspect-jig.js"
 import { getJigRow, getStepModelOverrides, listJigs as storeListJigs } from "./jig-store.js"
+import { getMainModel } from "../config/models.js"
+import type { JigStep, JigStepTool } from "../../shared/api.js"
 import { publicUrl } from "../config/runtime.js"
+
+/**
+ * Replace the model label in `llm.llm(<model>)` / `llm.agent(<model>)` tool
+ * names with the effective model for that step, so the dashboard chip reflects
+ * the live precedence chain (dashboard-step > code-step > dashboard-jig >
+ * code-jig > global default) — not the regex-derived placeholder cached at
+ * parse time.
+ *
+ * The parser already captures the code-declared model (or hardcodes the global
+ * default if absent); we re-render it here against the current overrides.
+ */
+function applyEffectiveModelToSteps(
+  steps: JigStep[],
+  stepOverrides: Record<string, string>,
+  jigEffectiveModel: string,
+): JigStep[] {
+  const shortLabel = (id: string) => id.split("/").pop() ?? id
+  return steps.map((step) => {
+    const tools = step.tools
+    if (!tools || tools.length === 0) return step
+    const overrideForStep = stepOverrides[String(step.num)]
+    const rewritten: JigStepTool[] = tools.map((tool) => {
+      if (tool.connection !== "llm") return tool
+      const match = tool.name.match(/^(llm|agent)\(/)
+      if (!match) return tool
+      const kind = match[1]
+      // Per-step dashboard override wins; otherwise show the jig effective model.
+      const effective = overrideForStep ?? jigEffectiveModel
+      return { ...tool, name: `${kind}(${shortLabel(effective)})` }
+    })
+    return { ...step, tools: rewritten }
+  })
+}
 
 function deriveStatus(jigId: string): "healthy" | "attention" | "failed" {
   try {
@@ -77,6 +112,9 @@ export async function buildJigResponse(
   const activeRun = getActiveRunStatusForJig(id)
 
   const row = getJigRow(id)
+  const stepOverrides = getStepModelOverrides(id)
+  const jigEffectiveModel = row?.model_override ?? jig.modelInCode ?? getMainModel()
+  const steps = applyEffectiveModelToSteps(jig.steps, stepOverrides, jigEffectiveModel)
 
   return {
     id,
@@ -85,7 +123,7 @@ export async function buildJigResponse(
     status: deriveStatus(id),
     running: activeRun.active && !activeRun.dryRun,
     sparkline,
-    steps: jig.steps,
+    steps,
     code: jig.code,
     runs: formatRuns(runs),
     schedule,
@@ -97,7 +135,7 @@ export async function buildJigResponse(
     },
     modelOverride: row?.model_override ?? null,
     modelInCode: jig.modelInCode ?? null,
-    stepModelOverrides: getStepModelOverrides(id),
+    stepModelOverrides: stepOverrides,
     costMonth: "",
     costLifetime: "",
   }
@@ -115,6 +153,9 @@ export async function buildDraftJigResponse(
     codeOverride: code,
   })
 
+  const draftEffectiveModel = jig.modelInCode ?? getMainModel()
+  const draftSteps = applyEffectiveModelToSteps(jig.steps, {}, draftEffectiveModel)
+
   return {
     id,
     name: prettifyId(id),
@@ -122,7 +163,7 @@ export async function buildDraftJigResponse(
     status: "attention",
     running: false,
     sparkline: [],
-    steps: jig.steps,
+    steps: draftSteps,
     code: jig.code,
     runs: [],
     settings: {

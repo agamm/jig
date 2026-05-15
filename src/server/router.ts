@@ -46,6 +46,12 @@ export function matchRoute(pathname: string): { handler: string; params: Record<
     return { handler: "writeJigCode", params: { id: decodeURIComponent(writeCodeMatch[1]) } }
   }
 
+  const modelMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/model$/)
+  if (modelMatch) {
+    if (!isValidJigId(decodeURIComponent(modelMatch[1]))) return null
+    return { handler: "updateJigModel", params: { id: decodeURIComponent(modelMatch[1]) } }
+  }
+
   const runDetailMatch = pathname.match(/^\/api\/runs\/(-?\d+)$/)
   if (runDetailMatch) return { handler: "getRun", params: { id: runDetailMatch[1] } }
 

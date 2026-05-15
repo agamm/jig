@@ -33,7 +33,8 @@ function assertConnectionsReady(jigPath: string): void {
 }
 
 export async function startJigRun(id: string, body: any): Promise<StartRunResponse> {
-  if (!getJigRow(id)) throw new ApiError(404, `Jig not found: ${id}`)
+  const jigRow = getJigRow(id)
+  if (!jigRow) throw new ApiError(404, `Jig not found: ${id}`)
 
   const dryRun = body?.dryRun === true
   const jigPath = await resolveRunnablePath(id)
@@ -47,11 +48,12 @@ export async function startJigRun(id: string, body: any): Promise<StartRunRespon
 
   const startTime = Date.now()
   const persistHandler = !dryRun ? persist(runId, startTime) : null
+  const modelOverride = jigRow.model_override ?? null
 
   ;(async () => {
     let skipped = false
     try {
-      console.log(`[run] ${id} started (runId=${runId}${dryRun ? ", dryRun" : ""})`)
+      console.log(`[run] ${id} started (runId=${runId}${dryRun ? ", dryRun" : ""}${modelOverride ? `, model=${modelOverride}` : ""})`)
       const result = await runJig(jigPath, {}, (event) => {
         if (event.type !== "skipped") applyRunEvent(runId, event)
         if (event.type !== "skipped") persistHandler?.(event)
@@ -64,7 +66,7 @@ export async function startJigRun(id: string, body: any): Promise<StartRunRespon
         } else if (event.type === "done") {
           console.log(`[run] ${id} done in ${event.durationMs}ms`)
         }
-      }, { dryRun, silent: true, signal: getSignalForRun(runId) })
+      }, { dryRun, silent: true, signal: getSignalForRun(runId), modelOverride })
       if (result.skipped && !dryRun) {
         skipped = true
         const db = openDb()

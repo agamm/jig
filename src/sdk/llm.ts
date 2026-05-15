@@ -30,7 +30,7 @@ export async function llm<T = string>(
   options?: { schema?: Record<string, string>; model?: string; maxTokens?: number; signal?: AbortSignal }
 ): Promise<T> {
   const ctx = runContext.getStore()
-  const model = options?.model ?? getMainModel()
+  const model = options?.model ?? runContext.getStore()?.currentModel ?? getMainModel()
   ctx?.addTool("llm", `llm(${model})`, true)
   const signal = options?.signal ?? ctx?.signal
 
@@ -137,7 +137,7 @@ export async function agent<T = string>(
 
   ctx?.enterAgent()
 
-  const model = options?.model ?? getMainModel()
+  const model = options?.model ?? runContext.getStore()?.currentModel ?? getMainModel()
   spinner.show("agent")
 
   try {
@@ -153,7 +153,7 @@ async function runAgent<T>(
   tools: JigTool<any, any>[],
   options?: { schema?: Record<string, string>; model?: string; maxTokens?: number }
 ): Promise<T> {
-  const model = options?.model ?? getMainModel()
+  const model = options?.model ?? runContext.getStore()?.currentModel ?? getMainModel()
   const maxTokens = options?.maxTokens ?? 4096
   logSessionEvent({
     source: "sdk.agent",

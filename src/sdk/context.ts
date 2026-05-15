@@ -59,12 +59,33 @@ export class Context {
   /** Label of the current block-scoped step (null between steps). */
   private _currentStepLabel: string | null = null
 
+  /** Base model for this run (jig code or dashboard override). null = use global default. */
+  private _baseModel: string | null = null
+
+  /** Stack of step-scoped model overrides — top of stack wins inside a step. */
+  private _stepModelStack: (string | null)[] = []
+
   get inAgent() { return this._inAgent }
   enterAgent() { this._inAgent = true }
   leaveAgent() { this._inAgent = false }
 
   get currentStepLabel(): string | null { return this._currentStepLabel }
   get currentStepToolNames(): string[] { return this._currentStepToolNames }
+
+  /**
+   * Current model to use for llm()/agent() calls with no explicit `model` option.
+   * Returns null when nothing is set; callers fall back to the global default.
+   */
+  get currentModel(): string | null {
+    return this._stepModelStack.length > 0
+      ? (this._stepModelStack[this._stepModelStack.length - 1] ?? this._baseModel)
+      : this._baseModel
+  }
+
+  /** Set the run-level default model (called once at run start from sdk/jig.ts). */
+  setBaseModel(model: string | null): void {
+    this._baseModel = model ?? null
+  }
 
   /** Returns true only if a step is active and the tool is in its allowed list. */
   isToolAllowedInCurrentStep(toolName: string): boolean {
@@ -83,8 +104,18 @@ export class Context {
   /** Attach a recorder for step-level tracking (used by API server). */
   setRecorder(recorder: RunRecorder) { this._recorder = recorder }
 
-  /** Block-scoped step: sets allowed tools, runs fn, clears tools on exit. */
-  async step<T>(label: string, tools: JigTool<any, any>[], fn: () => Promise<T>): Promise<T> {
+  /**
+   * Block-scoped step: sets allowed tools, runs fn, clears tools on exit.
+   *
+   * Optional `options.model` overrides the default LLM model for the duration
+   * of this step. Per-call options on llm()/agent() still win above it.
+   */
+  async step<T>(
+    label: string,
+    tools: JigTool<any, any>[],
+    fn: () => Promise<T>,
+    options?: { model?: string },
+  ): Promise<T> {
     // Reject nested steps — they hide structure from the dashboard and break tool scoping.
     if (this._currentStepLabel !== null) {
       throw new Error(
@@ -106,6 +137,9 @@ export class Context {
     }
     this._recorder?.onStepStart(this._stepSeq, label)
 
+    const pushedModel = typeof options?.model === "string" && options.model.trim().length > 0
+    if (pushedModel) this._stepModelStack.push(options!.model!.trim())
+
     try {
       const result = await fn()
       this.finalize()
@@ -116,6 +150,7 @@ export class Context {
     } finally {
       this._currentStepLabel = null
       this._currentStepToolNames = []
+      if (pushedModel) this._stepModelStack.pop()
     }
   }
 

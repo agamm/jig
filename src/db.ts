@@ -240,6 +240,10 @@ const MIGRATIONS: string[] = [
   // payload so the dashboard's Logs page can show LLM/tool details from a remote
   // Railway deploy — not just whatever made it to console.log.
   `ALTER TABLE logs ADD COLUMN payload TEXT;`,
+  // v14: per-jig model override. NULL = use jig code's declared model (or the
+  // global default). When set, the dashboard's override wins over jig code but
+  // still below per-step / per-call options. See SDK precedence in jig.ts.
+  `ALTER TABLE jigs ADD COLUMN model_override TEXT;`,
 ]
 
 // ---------------------------------------------------------------------------

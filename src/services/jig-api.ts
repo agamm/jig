@@ -5,7 +5,7 @@ import { prettifyId } from "../domain/jig-source.js"
 import { getActiveRunStatusForJig } from "./run-store.js"
 import { webhookToken } from "../scheduler/webhook-auth.js"
 import { introspectJig } from "./introspect-jig.js"
-import { listJigs as storeListJigs } from "./jig-store.js"
+import { getJigRow, listJigs as storeListJigs } from "./jig-store.js"
 import { publicUrl } from "../config/runtime.js"
 
 function deriveStatus(jigId: string): "healthy" | "attention" | "failed" {
@@ -76,6 +76,8 @@ export async function buildJigResponse(
 
   const activeRun = getActiveRunStatusForJig(id)
 
+  const row = getJigRow(id)
+
   return {
     id,
     name: prettifyId(id),
@@ -93,6 +95,8 @@ export async function buildJigResponse(
       tools: jig.tools,
       permissions: jig.permissions,
     },
+    modelOverride: row?.model_override ?? null,
+    modelInCode: jig.modelInCode ?? null,
     costMonth: "",
     costLifetime: "",
   }
@@ -126,6 +130,8 @@ export async function buildDraftJigResponse(
       tools: jig.tools,
       permissions: jig.permissions,
     },
+    modelOverride: null,
+    modelInCode: jig.modelInCode ?? null,
     costMonth: "",
     costLifetime: "",
   }

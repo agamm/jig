@@ -121,6 +121,14 @@ export function fetchOpenRouterCatalog(): Promise<OpenRouterCatalogResponse> {
   return fetchApi("modelsCatalog", "/api/models/catalog")
 }
 
+export function updateJigModel(jigId: string, model: string | null): Promise<ApiResponse<"updateJigModel">> {
+  return fetchApi("updateJigModel", `/api/jigs/${encodeURIComponent(jigId)}/model`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model }),
+  })
+}
+
 export function fetchConnections(): Promise<Connection[]> {
   return fetchApi("connections", "/api/connections")
 }

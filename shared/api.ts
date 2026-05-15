@@ -84,6 +84,10 @@ export interface JigData {
     tools?: JigTool[]
     permissions: ToolPermission[]
   }
+  /** Dashboard model override (OpenRouter id). null = use jig code / global default. */
+  modelOverride?: string | null
+  /** Model the jig's source code declares as default (via `jig(id, {model:"..."}, ...)`). */
+  modelInCode?: string | null
   costMonth?: string
   costLifetime?: string
 }
@@ -531,6 +535,7 @@ export interface ApiContracts {
   deleteJig: ApiContract<void, DeleteJigResponse>
   runJig: ApiContract<{ dryRun: boolean }, StartRunResponse>
   writeJigCode: ApiContract<{ code: string; message?: string; approve?: boolean }, { ok: true; pendingVersionId: number; activeVersionId: number | null }>
+  updateJigModel: ApiContract<{ model: string | null }, { ok: true; jigId: string; model: string | null }>
   getRun: ApiContract<void, RunDetail>
   activeRun: ApiContract<void, RunStatus>
   cancelRun: ApiContract<{ jigId?: string }, CancelRunResponse>

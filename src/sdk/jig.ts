@@ -19,6 +19,13 @@ export type JigTrigger =
 export type JigOptions = {
   trigger: JigTrigger
   tools?: JigTool<any, any>[]
+  /**
+   * Default LLM model for this jig's `llm()` and `agent()` calls. Lower
+   * precedence than per-step or per-call overrides, and lower than the
+   * dashboard's runtime override. Falls back to the global default if unset.
+   * Format: OpenRouter model id, e.g. "anthropic/claude-haiku-4.5".
+   */
+  model?: string
 }
 
 export type JigDefinition = {
@@ -46,12 +53,16 @@ export function jig(
 export async function run(
   definition: JigDefinition,
   params: Record<string, unknown> = {},
-  options?: { silent?: boolean; recorder?: RunRecorder; signal?: AbortSignal }
+  options?: { silent?: boolean; recorder?: RunRecorder; signal?: AbortSignal; modelOverride?: string | null }
 ): Promise<Context> {
   const toolNames = (definition.options.tools ?? []).map((t) => t._toolName)
   const ctx = new Context(params, toolNames, options?.signal)
   if (options?.silent) ctx.setSink(() => {})
   if (options?.recorder) ctx.setRecorder(options.recorder)
+  // Precedence (low → high inside ctx, with per-call/step overrides above):
+  //   global default ← jig code ← dashboard override
+  // Step model is pushed/popped inside ctx.step; per-call passes options.model.
+  ctx.setBaseModel(options?.modelOverride ?? definition.options.model ?? null)
   return runContext.run(ctx, async () => {
     try {
       await definition.handler(ctx)

@@ -17,6 +17,8 @@ export interface IntrospectedJig {
   connections: string[]
   steps: import("../../shared/api.js").JigStep[]
   permissions: ToolPermission[]
+  /** Model declared in the jig source via `jig(id, {model: "..."}, ...)`. */
+  modelInCode: string | null
 }
 
 export async function introspectJig(
@@ -43,6 +45,7 @@ export async function introspectJig(
   let trigger = code ? extractTrigger(code) : ""
   let tools: JigTool[] = []
   let steps: import("../../shared/api.js").JigStep[] = []
+  let modelInCode: string | null = null
 
   if (filePath) {
     try {
@@ -54,6 +57,9 @@ export async function introspectJig(
           name: tool._toolName,
           readOnly: tool._readOnly === true,
         })))
+      }
+      if (typeof def?.options?.model === "string" && def.options.model.trim().length > 0) {
+        modelInCode = def.options.model.trim()
       }
     } catch {
       trigger = extractTrigger(code)
@@ -84,5 +90,6 @@ export async function introspectJig(
     connections,
     steps,
     permissions,
+    modelInCode,
   }
 }

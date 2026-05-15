@@ -26,6 +26,8 @@ export interface JigRow {
   pending_version_id: number | null
   created_at: number
   archived_at: number | null
+  /** Dashboard-set model override (OpenRouter id); null = inherit jig code / global default. */
+  model_override: string | null
 }
 
 export interface JigVersionRow {
@@ -387,4 +389,13 @@ export function importVersion(args: {
 
 export function setActiveVersion(jigId: string, versionId: number): void {
   openDb().prepare(`UPDATE jigs SET active_version_id = ? WHERE id = ?`).run(versionId, jigId)
+}
+
+/**
+ * Set or clear the per-jig model override. Pass null to clear so the jig
+ * falls back to its code-declared model (or the global default).
+ */
+export function setModelOverride(jigId: string, model: string | null): void {
+  const value = typeof model === "string" && model.trim().length > 0 ? model.trim() : null
+  openDb().prepare(`UPDATE jigs SET model_override = ? WHERE id = ?`).run(value, jigId)
 }

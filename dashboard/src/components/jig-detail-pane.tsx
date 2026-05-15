@@ -22,8 +22,9 @@ import { MarkdownOutput } from "@/components/markdown-output";
 import { useElapsed } from "@/hooks/use-elapsed";
 import { useJigToolApproval } from "@/lib/jig-tool-approval";
 import { formatElapsed } from "@/lib/format";
-import { deleteJig, updateSchedule } from "@/lib/api";
-import { useJigSteps, useConnections, usePending } from "@/lib/swr";
+import { deleteJig, fetchOpenRouterCatalog, updateJigModel, updateSchedule } from "@/lib/api";
+import { useJigSteps, useConnections, useModels, usePending } from "@/lib/swr";
+import type { OpenRouterModelInfo } from "@shared/api";
 import { PendingChangesBanner } from "@/components/pending-changes-banner";
 import { ServiceIcon } from "@/components/service-icon";
 import { PaneHeader } from "@/components/pane-header";
@@ -560,20 +561,7 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
         </div>
 
         <div className="space-y-2">
-          {/* Model selector (disabled — coming soon) */}
-          <div className="flex items-center justify-between rounded-lg border border-[#17171a] bg-[#0d0d0f] px-3 py-1.5">
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="text-[10px] font-medium uppercase tracking-wider text-[#3f3f45]">Model</span>
-              <span className="text-[10px] text-[#5a5a61] font-mono truncate">claude-haiku-4.5</span>
-              <span className="text-[10px] text-[#323238] shrink-0">default</span>
-            </div>
-            <span
-              className="text-[10px] text-[#4b4b51] shrink-0"
-              title="Per-jig model override coming soon"
-            >
-              Locked
-            </span>
-          </div>
+          <ModelSelector jig={jig} onChange={() => onRefresh?.()} />
         </div>
 
         {/* Steps or Code */}
@@ -879,6 +867,150 @@ function MissingConnectionsDialog({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Model selector — per-jig override on top of the global default.
+//
+// Precedence (high → low): per-call > per-step > dashboard override (this
+// component) > jig source `{model: ...}` > global default. Clearing the
+// dropdown falls back to the next level down.
+// ---------------------------------------------------------------------------
+
+function ModelSelector({ jig, onChange }: { jig: Jig; onChange: () => void }) {
+  const { data: globalModels } = useModels();
+  const [catalog, setCatalog] = useState<OpenRouterModelInfo[] | null>(null);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [saving, setSaving] = useState(false);
+  const popRef = useRef<HTMLDivElement | null>(null);
+
+  const override = jig.modelOverride ?? null;
+  const codeModel = jig.modelInCode ?? null;
+  const globalMain = globalModels?.main.id ?? null;
+  const effective = override ?? codeModel ?? globalMain ?? "(default)";
+  const source: "override" | "code" | "default" = override
+    ? "override"
+    : codeModel
+    ? "code"
+    : "default";
+
+  // Lazy-load the catalog the first time the popover opens.
+  useEffect(() => {
+    if (!open || catalog) return;
+    fetchOpenRouterCatalog()
+      .then((res) => setCatalog(res.models))
+      .catch((e) => {
+        console.error("[model-selector] failed to load catalog:", e);
+        setCatalog([]);
+      });
+  }, [open, catalog]);
+
+  // Close on outside click.
+  useEffect(() => {
+    if (!open) return;
+    function onClick(e: MouseEvent) {
+      if (popRef.current && !popRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [open]);
+
+  const filtered = useMemo(() => {
+    if (!catalog) return [];
+    const q = query.trim().toLowerCase();
+    if (!q) return catalog.slice(0, 50);
+    return catalog
+      .filter((m) => m.id.toLowerCase().includes(q) || m.name.toLowerCase().includes(q))
+      .slice(0, 50);
+  }, [catalog, query]);
+
+  async function applyChoice(modelId: string | null) {
+    setSaving(true);
+    try {
+      await updateJigModel(jig.id, modelId);
+      onChange();
+      setOpen(false);
+      setQuery("");
+    } catch (e) {
+      toast.error((e as Error)?.message ?? "Failed to update model");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const shortLabel = (id: string) => id.split("/").pop() ?? id;
+
+  return (
+    <div className="relative" ref={popRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center justify-between rounded-lg border border-[#17171a] bg-[#0d0d0f] px-3 py-1.5 hover:border-[#26262b] transition-colors"
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-[10px] font-medium uppercase tracking-wider text-[#3f3f45]">Model</span>
+          <span className="text-[10px] text-[#9a9aa3] font-mono truncate">{shortLabel(effective)}</span>
+          <span className="text-[10px] text-[#5a5a61] shrink-0">
+            {source === "override" ? "override" : source === "code" ? "from code" : "default"}
+          </span>
+        </div>
+        <span className="text-[10px] text-[#5a5a61] shrink-0">{open ? "▲" : "▼"}</span>
+      </button>
+
+      {open && (
+        <div className="absolute left-0 right-0 top-full mt-1 z-20 rounded-lg border border-[#1f1f23] bg-[#0a0a0b] shadow-lg overflow-hidden">
+          <div className="px-2 py-1.5 border-b border-[#17171a]">
+            <input
+              type="search"
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search models…"
+              className="w-full bg-transparent text-[12px] text-[#ededed] placeholder:text-[#555] outline-none"
+            />
+          </div>
+          <div className="max-h-[280px] overflow-y-auto">
+            <button
+              type="button"
+              disabled={saving || override === null}
+              onClick={() => applyChoice(null)}
+              className={`w-full flex items-center justify-between px-3 py-1.5 text-left text-[11px] hover:bg-[#11111480] ${override === null ? "opacity-50" : ""}`}
+            >
+              <span className="text-[#ededed]">Use default</span>
+              <span className="text-[#5a5a61]">{codeModel ? `→ ${shortLabel(codeModel)} (from code)` : globalMain ? `→ ${shortLabel(globalMain)} (global)` : ""}</span>
+            </button>
+            {catalog === null ? (
+              <div className="px-3 py-2 text-[11px] text-[#5a5a61]">Loading…</div>
+            ) : filtered.length === 0 ? (
+              <div className="px-3 py-2 text-[11px] text-[#5a5a61]">{query ? "No matches" : "No models in catalog"}</div>
+            ) : (
+              filtered.map((m) => {
+                const active = override === m.id;
+                return (
+                  <button
+                    key={m.id}
+                    type="button"
+                    disabled={saving}
+                    onClick={() => applyChoice(m.id)}
+                    className={`w-full flex items-center justify-between px-3 py-1.5 text-left text-[11px] hover:bg-[#11111480] ${active ? "bg-[#11111480]" : ""}`}
+                  >
+                    <div className="flex flex-col min-w-0">
+                      <span className="font-mono text-[#ededed] truncate">{m.id}</span>
+                      {m.name && m.name !== m.id && (
+                        <span className="text-[10px] text-[#5a5a61] truncate">{m.name}</span>
+                      )}
+                    </div>
+                    {active && <span className="text-[10px] text-emerald-400 shrink-0">selected</span>}
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -46,6 +46,7 @@ import {
   listHistoryVersions as listJigHistoryVersions,
   listJigs as storeListJigs,
   restoreVersion as restoreToPendingVersion,
+  setModelOverride as storeSetModelOverride,
   writePending as storeWritePending,
   type JigVersion as JigVersionStoreRow,
 } from "./services/jig-store.js"
@@ -645,6 +646,26 @@ export function createApiServer(port: number) {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
             const body = await req.json().catch(() => ({}))
             return apiJson("runJig", await startJigRun(route.params.id, body))
+          }
+          case "updateJigModel": {
+            // PATCH /api/jigs/<id>/model — dashboard sets or clears the per-jig
+            // model override. Pass {model: null} to clear and fall back to the
+            // jig's code-declared model (or global default).
+            if (req.method !== "PATCH") return json({ error: "Method not allowed" }, 405)
+            const body = (await req.json().catch(() => ({}))) as { model?: unknown }
+            ensureJigExists(route.params.id)
+            let next: string | null = null
+            if (body.model === null || body.model === undefined) {
+              next = null
+            } else if (typeof body.model === "string") {
+              next = body.model.trim() || null
+            } else {
+              throw new ApiError(400, "model must be a string or null")
+            }
+            storeSetModelOverride(route.params.id, next)
+            invalidateJigsCache()
+            broadcastJigsUpdated()
+            return apiJson("updateJigModel", { ok: true as const, jigId: route.params.id, model: next })
           }
           case "writeJigCode": {
             // Direct code write for an existing jig — creates (or replaces) the

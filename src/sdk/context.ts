@@ -65,6 +65,9 @@ export class Context {
   /** Stack of step-scoped model overrides — top of stack wins inside a step. */
   private _stepModelStack: (string | null)[] = []
 
+  /** Dashboard-set per-step model overrides keyed by step seq (1-indexed). */
+  private _stepModelOverrides: Record<string, string> = {}
+
   get inAgent() { return this._inAgent }
   enterAgent() { this._inAgent = true }
   leaveAgent() { this._inAgent = false }
@@ -85,6 +88,11 @@ export class Context {
   /** Set the run-level default model (called once at run start from sdk/jig.ts). */
   setBaseModel(model: string | null): void {
     this._baseModel = model ?? null
+  }
+
+  /** Install dashboard-set per-step overrides. Called once at run start. */
+  setStepModelOverrides(map: Record<string, string>): void {
+    this._stepModelOverrides = { ...map }
   }
 
   /** Returns true only if a step is active and the tool is in its allowed list. */
@@ -137,8 +145,20 @@ export class Context {
     }
     this._recorder?.onStepStart(this._stepSeq, label)
 
-    const pushedModel = typeof options?.model === "string" && options.model.trim().length > 0
-    if (pushedModel) this._stepModelStack.push(options!.model!.trim())
+    // Precedence for this step's default model (high → low):
+    //   per-call options on llm()/agent()  ← still wins above whatever we push
+    //   dashboard step override (this._stepModelOverrides[seq])
+    //   code-declared step option (options.model)
+    //   jig-level base (already in _baseModel)
+    // We resolve the step's pushed value once at entry; the per-call layer
+    // is handled by llm()/agent() reading runContext.getStore()?.currentModel.
+    const codeStepModel = typeof options?.model === "string" && options.model.trim().length > 0
+      ? options.model.trim()
+      : null
+    const dashboardStepModel = this._stepModelOverrides[String(this._stepSeq)] ?? null
+    const stepModel = dashboardStepModel ?? codeStepModel
+    const pushedModel = stepModel !== null
+    if (pushedModel) this._stepModelStack.push(stepModel)
 
     try {
       const result = await fn()

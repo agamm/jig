@@ -88,6 +88,8 @@ export interface JigData {
   modelOverride?: string | null
   /** Model the jig's source code declares as default (via `jig(id, {model:"..."}, ...)`). */
   modelInCode?: string | null
+  /** Dashboard per-step model overrides keyed by step seq (1-indexed) as a string. */
+  stepModelOverrides?: Record<string, string>
   costMonth?: string
   costLifetime?: string
 }
@@ -536,6 +538,7 @@ export interface ApiContracts {
   runJig: ApiContract<{ dryRun: boolean }, StartRunResponse>
   writeJigCode: ApiContract<{ code: string; message?: string; approve?: boolean }, { ok: true; pendingVersionId: number; activeVersionId: number | null }>
   updateJigModel: ApiContract<{ model: string | null }, { ok: true; jigId: string; model: string | null }>
+  updateJigStepModel: ApiContract<{ seq: number; model: string | null }, { ok: true; jigId: string; seq: number; model: string | null }>
   getRun: ApiContract<void, RunDetail>
   activeRun: ApiContract<void, RunStatus>
   cancelRun: ApiContract<{ jigId?: string }, CancelRunResponse>

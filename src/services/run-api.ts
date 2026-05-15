@@ -7,7 +7,7 @@ import { abortRunForJig, applyRunEvent, discardTrackedRun, finishTrackedRun, get
 import { maybeNotifyRunFailure } from "./run-failure-notify.js"
 import { missingConnectionsForJig } from "./connection-preflight.js"
 import { materializeActiveVersion } from "./jig-runtime.js"
-import { getJigRow } from "./jig-store.js"
+import { getJigRow, getStepModelOverrides } from "./jig-store.js"
 
 /** Materialize the active version of a jig for the runner to import. */
 async function resolveRunnablePath(jigId: string): Promise<string | null> {
@@ -49,6 +49,7 @@ export async function startJigRun(id: string, body: any): Promise<StartRunRespon
   const startTime = Date.now()
   const persistHandler = !dryRun ? persist(runId, startTime) : null
   const modelOverride = jigRow.model_override ?? null
+  const stepModelOverrides = getStepModelOverrides(id)
 
   ;(async () => {
     let skipped = false
@@ -66,7 +67,7 @@ export async function startJigRun(id: string, body: any): Promise<StartRunRespon
         } else if (event.type === "done") {
           console.log(`[run] ${id} done in ${event.durationMs}ms`)
         }
-      }, { dryRun, silent: true, signal: getSignalForRun(runId), modelOverride })
+      }, { dryRun, silent: true, signal: getSignalForRun(runId), modelOverride, stepModelOverrides })
       if (result.skipped && !dryRun) {
         skipped = true
         const db = openDb()

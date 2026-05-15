@@ -129,6 +129,14 @@ export function updateJigModel(jigId: string, model: string | null): Promise<Api
   })
 }
 
+export function updateJigStepModel(jigId: string, seq: number, model: string | null): Promise<ApiResponse<"updateJigStepModel">> {
+  return fetchApi("updateJigStepModel", `/api/jigs/${encodeURIComponent(jigId)}/step-model`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ seq, model }),
+  })
+}
+
 export function fetchConnections(): Promise<Connection[]> {
   return fetchApi("connections", "/api/connections")
 }

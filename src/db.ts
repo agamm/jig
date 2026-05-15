@@ -244,6 +244,11 @@ const MIGRATIONS: string[] = [
   // global default). When set, the dashboard's override wins over jig code but
   // still below per-step / per-call options. See SDK precedence in jig.ts.
   `ALTER TABLE jigs ADD COLUMN model_override TEXT;`,
+  // v15: per-step model overrides. JSON object keyed by step seq (1-indexed):
+  // {"3": "openai/gpt-5"}. Dashboard sets one entry when the user clicks the
+  // llm chip in a specific step and picks a model. Reads at run start, pushed
+  // into ctx.step's model resolution. Higher precedence than per-jig override.
+  `ALTER TABLE jigs ADD COLUMN step_model_overrides TEXT;`,
 ]
 
 // ---------------------------------------------------------------------------

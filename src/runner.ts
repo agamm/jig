@@ -36,7 +36,13 @@ export async function runJig(
   jigPath: string,
   params: Record<string, unknown>,
   onEvent: (e: RunEvent) => void,
-  options?: { dryRun?: boolean; silent?: boolean; signal?: AbortSignal; modelOverride?: string | null }
+  options?: {
+    dryRun?: boolean
+    silent?: boolean
+    signal?: AbortSignal
+    modelOverride?: string | null
+    stepModelOverrides?: Record<string, string>
+  }
 ): Promise<RunResult> {
   const { dryRun, silent } = options ?? {}
 
@@ -49,6 +55,7 @@ export async function runJig(
       silent: silent ?? false,
       signal,
       modelOverride: options?.modelOverride ?? null,
+      stepModelOverrides: options?.stepModelOverrides ?? {},
     })
   )
 }
@@ -57,7 +64,13 @@ async function _runJig(
   jigPath: string,
   params: Record<string, unknown>,
   onEvent: (e: RunEvent) => void,
-  opts: { dryRun: boolean; silent: boolean; signal?: AbortSignal; modelOverride: string | null }
+  opts: {
+    dryRun: boolean
+    silent: boolean
+    signal?: AbortSignal
+    modelOverride: string | null
+    stepModelOverrides: Record<string, string>
+  }
 ): Promise<RunResult> {
   const { dryRun, silent, signal } = opts
   const start = Date.now()
@@ -154,13 +167,18 @@ async function _runJig(
     }
 
     // --- Run ---
-    log("executing-handler", { jigName: def.name, modelOverride: opts.modelOverride })
+    log("executing-handler", {
+      jigName: def.name,
+      modelOverride: opts.modelOverride,
+      stepModelOverrides: opts.stepModelOverrides,
+    })
     const { run } = await import("./sdk/jig.js")
     const ctx = await run(def, params, {
       ...(silent && { silent: true }),
       recorder,
       signal,
       modelOverride: opts.modelOverride,
+      stepModelOverrides: opts.stepModelOverrides,
     })
 
     // --- Post-run ---

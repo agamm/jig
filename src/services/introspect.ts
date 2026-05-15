@@ -147,9 +147,25 @@ export async function introspectToolOutput(args: {
 
   const startedAt = Date.now()
   const connection = await acquireConnection(args.server, config)
-  // callTool already emits [mcp.tool] events into the log buffer so this probe
-  // shows up in the dashboard logs alongside real jig runs.
-  const result = await callTool(connection, args.tool, (args.args ?? {}) as Record<string, unknown>)
+  // For proxy servers (composio, etc.), the cached schema names like
+  // `gmail_fetch_emails` aren't real MCP tools — they're proxied via
+  // `COMPOSIO_MULTI_EXECUTE_TOOL`. Detect via config.proxy and wrap the call
+  // the same way the generated binding does, then unwrap the envelope so the
+  // shape descriptor reflects what the jig actually sees inside its handler.
+  // callTool emits [mcp.tool] events, so probes show up in the dashboard logs.
+  let result: unknown
+  const proxyVia = (config as any)?.proxy?.via
+  if (typeof proxyVia === "string" && proxyVia.length > 0) {
+    const slug = args.tool.toUpperCase()
+    const raw: any = await callTool(connection, proxyVia, {
+      tools: [{ tool_slug: slug, arguments: args.args ?? {} }],
+      sync_response_to_workbench: false,
+    })
+    const execResult = raw?.data?.results?.[0] ?? {}
+    result = execResult?.response?.data ?? execResult?.response?.data_preview ?? execResult?.response ?? raw
+  } else {
+    result = await callTool(connection, args.tool, (args.args ?? {}) as Record<string, unknown>)
+  }
   const durationMs = Date.now() - startedAt
 
   const redacted = redact(result)

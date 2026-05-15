@@ -53,7 +53,13 @@ export function jig(
 export async function run(
   definition: JigDefinition,
   params: Record<string, unknown> = {},
-  options?: { silent?: boolean; recorder?: RunRecorder; signal?: AbortSignal; modelOverride?: string | null }
+  options?: {
+    silent?: boolean
+    recorder?: RunRecorder
+    signal?: AbortSignal
+    modelOverride?: string | null
+    stepModelOverrides?: Record<string, string>
+  }
 ): Promise<Context> {
   const toolNames = (definition.options.tools ?? []).map((t) => t._toolName)
   const ctx = new Context(params, toolNames, options?.signal)
@@ -63,6 +69,7 @@ export async function run(
   //   global default ← jig code ← dashboard override
   // Step model is pushed/popped inside ctx.step; per-call passes options.model.
   ctx.setBaseModel(options?.modelOverride ?? definition.options.model ?? null)
+  if (options?.stepModelOverrides) ctx.setStepModelOverrides(options.stepModelOverrides)
   return runContext.run(ctx, async () => {
     try {
       await definition.handler(ctx)

@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { JigStepTool } from "@shared/api";
+import type { JigStepTool, OpenRouterModelInfo } from "@shared/api";
+import { fetchOpenRouterCatalog, updateJigStepModel } from "@/lib/api";
+import { toast } from "@/components/toast";
 import { RotatingFrame } from "@/components/rotating-frame";
 import { ServiceIcon } from "@/components/service-icon";
 import { formatElapsed } from "@/lib/format";
@@ -59,6 +61,10 @@ export function RunSteps({
   pendingToolKeys,
   onApproveTool,
   toolsLocked = false,
+  jigId,
+  stepModelOverrides,
+  jigBaseModel,
+  onStepModelChange,
 }: {
   steps: RunStep[];
   mode?: RunStepsMode;
@@ -75,7 +81,17 @@ export function RunSteps({
   onApproveTool?: (tool: JigStepTool) => void;
   /** When true, show every tool in a pending/loading state (e.g. while the agent is rewriting the jig). */
   toolsLocked?: boolean;
+  /** Jig id — required if the step-scoped llm model picker is enabled. */
+  jigId?: string;
+  /** Current per-step overrides keyed by step seq (1-indexed) as string. */
+  stepModelOverrides?: Record<string, string>;
+  /** Effective jig-level model (override > code > global default) — shown as fallback in the picker. */
+  jigBaseModel?: string | null;
+  /** Called after a per-step override is updated; usually a parent SWR refresh. */
+  onStepModelChange?: () => void;
 }) {
+  // Step model picker state — null when closed; otherwise the step number being edited.
+  const [stepModelPickerSeq, setStepModelPickerSeq] = useState<number | null>(null);
   const [expandedStep, setExpandedStep] = useState<number | null>(null);
 
   // Auto-expand output when run completes
@@ -184,6 +200,10 @@ export function RunSteps({
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
+                              if (connection === "llm" && jigId) {
+                                setStepModelPickerSeq(step.num);
+                                return;
+                              }
                               onConnectionClick?.(connection);
                             }}
                             className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-[#2a2a2e] bg-[#1a1a1d] px-1.5 py-0.5 transition-colors hover:border-[#3a3a3e] hover:bg-[#202024]"
@@ -248,6 +268,10 @@ export function RunSteps({
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
+                              if (tool.connection === "llm" && jigId) {
+                                setStepModelPickerSeq(step.num);
+                                return;
+                              }
                               onConnectionClick?.(tool.connection);
                             }}
                             disabled={pending}
@@ -389,6 +413,152 @@ export function RunSteps({
         })}
       </div>
 
+      {stepModelPickerSeq !== null && jigId && (
+        <StepModelPicker
+          jigId={jigId}
+          seq={stepModelPickerSeq}
+          currentOverride={stepModelOverrides?.[String(stepModelPickerSeq)] ?? null}
+          fallbackModel={jigBaseModel ?? null}
+          onClose={() => setStepModelPickerSeq(null)}
+          onChange={() => onStepModelChange?.()}
+        />
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Step-scoped model picker — opens when the user clicks the `llm` chip on a
+// step. Sits at the higher (call → step) end of the precedence chain so a
+// click here actually changes what that step uses, regardless of the jig
+// override or code-declared default.
+// ---------------------------------------------------------------------------
+function StepModelPicker({
+  jigId, seq, currentOverride, fallbackModel, onClose, onChange,
+}: {
+  jigId: string;
+  seq: number;
+  currentOverride: string | null;
+  fallbackModel: string | null;
+  onClose: () => void;
+  onChange: () => void;
+}) {
+  const [catalog, setCatalog] = useState<OpenRouterModelInfo[] | null>(null);
+  const [query, setQuery] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetchOpenRouterCatalog()
+      .then((res) => setCatalog(res.models))
+      .catch((e) => { console.error("[step-model-picker] catalog load failed:", e); setCatalog([]); });
+  }, []);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) { if (e.key === "Escape") onClose(); }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const filtered = catalog
+    ? (() => {
+        const q = query.trim().toLowerCase();
+        const matches = q
+          ? catalog.filter((m) => m.id.toLowerCase().includes(q) || m.name.toLowerCase().includes(q))
+          : catalog;
+        const head = matches.slice(0, 50);
+        if (currentOverride && !head.some((m) => m.id === currentOverride)) {
+          const fromCatalog = catalog.find((m) => m.id === currentOverride);
+          const synthesized: OpenRouterModelInfo = fromCatalog ?? {
+            id: currentOverride, name: currentOverride, description: undefined,
+            contextLength: 0, promptPriceUsdPerM: 0, completionPriceUsdPerM: 0,
+            blendedPriceUsdPerM: 0, supportsTools: false, supportsReasoning: false,
+            createdAt: 0, rank: 0,
+          };
+          return [synthesized, ...head];
+        }
+        return head;
+      })()
+    : [];
+
+  async function apply(model: string | null) {
+    setSaving(true);
+    try {
+      await updateJigStepModel(jigId, seq, model);
+      onChange();
+      onClose();
+    } catch (e) {
+      toast.error((e as Error)?.message ?? "Failed to update step model");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const shortLabel = (id: string) => id.split("/").pop() ?? id;
+
+  return (
+    <div
+      className="fixed inset-0 z-30 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="w-[480px] max-w-[92vw] rounded-lg border border-[#1f1f23] bg-[#0a0a0b] shadow-xl overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-3 py-2 border-b border-[#17171a]">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-medium uppercase tracking-wider text-[#8b8b91]">Step {seq} · Model</span>
+            <span className="text-[10px] text-[#5a5a61]">{currentOverride ? `override: ${shortLabel(currentOverride)}` : fallbackModel ? `using: ${shortLabel(fallbackModel)}` : "using default"}</span>
+          </div>
+          <button onClick={onClose} className="text-[#5a5a61] hover:text-[#ededed] text-sm" aria-label="Close">×</button>
+        </div>
+        <div className="px-2 py-1.5 border-b border-[#17171a]">
+          <input
+            type="search"
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search models…"
+            className="w-full bg-transparent text-[12px] text-[#ededed] placeholder:text-[#555] outline-none"
+          />
+        </div>
+        <div className="max-h-[420px] overflow-y-auto">
+          <button
+            type="button"
+            disabled={saving || currentOverride === null}
+            onClick={() => apply(null)}
+            className={`w-full flex items-center justify-between px-3 py-1.5 text-left text-[11px] hover:bg-[#11111480] ${currentOverride === null ? "opacity-50" : ""}`}
+          >
+            <span className="text-[#ededed]">Use jig default</span>
+            <span className="text-[#5a5a61]">{fallbackModel ? `→ ${shortLabel(fallbackModel)}` : ""}</span>
+          </button>
+          {catalog === null ? (
+            <div className="px-3 py-2 text-[11px] text-[#5a5a61]">Loading…</div>
+          ) : filtered.length === 0 ? (
+            <div className="px-3 py-2 text-[11px] text-[#5a5a61]">{query ? "No matches" : "No models in catalog"}</div>
+          ) : (
+            filtered.map((m) => {
+              const active = currentOverride === m.id;
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  disabled={saving}
+                  onClick={() => apply(m.id)}
+                  className={`w-full flex items-center justify-between px-3 py-1.5 text-left text-[11px] hover:bg-[#11111480] ${active ? "bg-[#11111480]" : ""}`}
+                >
+                  <div className="flex flex-col min-w-0">
+                    <span className="font-mono text-[#ededed] truncate">{m.id}</span>
+                    {m.name && m.name !== m.id && (
+                      <span className="text-[10px] text-[#5a5a61] truncate">{m.name}</span>
+                    )}
+                  </div>
+                  {active && <span className="text-[10px] text-emerald-400 shrink-0">selected</span>}
+                </button>
+              );
+            })
+          )}
+        </div>
+      </div>
     </div>
   );
 }

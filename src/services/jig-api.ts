@@ -5,7 +5,7 @@ import { prettifyId } from "../domain/jig-source.js"
 import { getActiveRunStatusForJig } from "./run-store.js"
 import { webhookToken } from "../scheduler/webhook-auth.js"
 import { introspectJig } from "./introspect-jig.js"
-import { getJigRow, listJigs as storeListJigs } from "./jig-store.js"
+import { getJigRow, getStepModelOverrides, listJigs as storeListJigs } from "./jig-store.js"
 import { publicUrl } from "../config/runtime.js"
 
 function deriveStatus(jigId: string): "healthy" | "attention" | "failed" {
@@ -97,6 +97,7 @@ export async function buildJigResponse(
     },
     modelOverride: row?.model_override ?? null,
     modelInCode: jig.modelInCode ?? null,
+    stepModelOverrides: getStepModelOverrides(id),
     costMonth: "",
     costLifetime: "",
   }

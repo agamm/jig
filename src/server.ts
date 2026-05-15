@@ -47,6 +47,7 @@ import {
   listJigs as storeListJigs,
   restoreVersion as restoreToPendingVersion,
   setModelOverride as storeSetModelOverride,
+  setStepModelOverride as storeSetStepModelOverride,
   writePending as storeWritePending,
   type JigVersion as JigVersionStoreRow,
 } from "./services/jig-store.js"
@@ -647,6 +648,28 @@ export function createApiServer(port: number) {
             const body = await req.json().catch(() => ({}))
             return apiJson("runJig", await startJigRun(route.params.id, body))
           }
+          case "updateJigStepModel": {
+            // PATCH /api/jigs/<id>/step-model — set or clear a single step's
+            // model override. Step seq is 1-indexed (matches what the runner
+            // reports to onStepStart and what /api/jigs/<id>/steps returns).
+            if (req.method !== "PATCH") return json({ error: "Method not allowed" }, 405)
+            const body = (await req.json().catch(() => ({}))) as { seq?: unknown; model?: unknown }
+            ensureJigExists(route.params.id)
+            const seq = typeof body.seq === "number" && Number.isInteger(body.seq) && body.seq > 0 ? body.seq : NaN
+            if (!Number.isFinite(seq)) throw new ApiError(400, "seq must be a positive integer")
+            let next: string | null = null
+            if (body.model === null || body.model === undefined) {
+              next = null
+            } else if (typeof body.model === "string") {
+              next = body.model.trim() || null
+            } else {
+              throw new ApiError(400, "model must be a string or null")
+            }
+            storeSetStepModelOverride(route.params.id, seq, next)
+            invalidateJigsCache()
+            broadcastJigsUpdated()
+            return apiJson("updateJigStepModel", { ok: true as const, jigId: route.params.id, seq, model: next })
+          }
           case "updateJigModel": {
             // PATCH /api/jigs/<id>/model — dashboard sets or clears the per-jig
             // model override. Pass {model: null} to clear and fall back to the
@@ -672,6 +695,13 @@ export function createApiServer(port: number) {
             // pending version. With approve:true, immediately promotes pending
             // to active. Useful for scripted/CLI-driven edits when going through
             // the interactive authoring agent would be excessive.
+            //
+            // Safety parity with the agent's toolWriteJigFile path:
+            //   - rejects code that imports disconnected servers (early, with
+            //     a clear error vs an obscure runner import failure)
+            //   - refuses when an authoring session is actively editing this
+            //     jig (would silently clobber its in-progress draft)
+            //   - refuses while the jig is running
             if (req.method !== "PUT") return json({ error: "Method not allowed" }, 405)
             const body = (await req.json().catch(() => ({}))) as {
               code?: unknown; message?: unknown; approve?: unknown
@@ -683,6 +713,14 @@ export function createApiServer(port: number) {
             const { hasActiveRunForJig } = await import("./services/run-store.js")
             if (hasActiveRunForJig(route.params.id)) {
               throw new ApiError(409, "Cannot edit while the jig is running")
+            }
+            const { findDisconnectedImports, isJigBeingEdited } = await import("./services/agent-service.js")
+            if (isJigBeingEdited(route.params.id)) {
+              throw new ApiError(409, "An authoring session is currently editing this jig — close that session before scripted edits")
+            }
+            const disconnected = findDisconnectedImports(body.code)
+            if (disconnected.length > 0) {
+              throw new ApiError(400, `Code imports unconnected servers: ${disconnected.join(", ")}. Connect them first via the dashboard.`)
             }
             const message = typeof body.message === "string" ? body.message : null
             const { versionId } = storeWritePending({

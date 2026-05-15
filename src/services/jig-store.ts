@@ -28,6 +28,8 @@ export interface JigRow {
   archived_at: number | null
   /** Dashboard-set model override (OpenRouter id); null = inherit jig code / global default. */
   model_override: string | null
+  /** JSON object of per-step model overrides, keyed by step seq (1-indexed). */
+  step_model_overrides: string | null
 }
 
 export interface JigVersionRow {
@@ -398,4 +400,35 @@ export function setActiveVersion(jigId: string, versionId: number): void {
 export function setModelOverride(jigId: string, model: string | null): void {
   const value = typeof model === "string" && model.trim().length > 0 ? model.trim() : null
   openDb().prepare(`UPDATE jigs SET model_override = ? WHERE id = ?`).run(value, jigId)
+}
+
+/** Parse the JSON blob into a {seq: model} map. Returns {} for null/invalid JSON. */
+export function getStepModelOverrides(jigId: string): Record<string, string> {
+  const row = openDb().prepare(`SELECT step_model_overrides FROM jigs WHERE id = ?`).get(jigId) as { step_model_overrides: string | null } | undefined
+  if (!row?.step_model_overrides) return {}
+  try {
+    const parsed = JSON.parse(row.step_model_overrides)
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {}
+    const out: Record<string, string> = {}
+    for (const [k, v] of Object.entries(parsed)) {
+      if (typeof v === "string" && v.trim().length > 0) out[k] = v.trim()
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * Set or clear a single step's model override. Reads, mutates, writes — keeps
+ * the JSON object small (one row per jig, only modified entries persist).
+ */
+export function setStepModelOverride(jigId: string, seq: number, model: string | null): void {
+  const current = getStepModelOverrides(jigId)
+  const key = String(seq)
+  const value = typeof model === "string" && model.trim().length > 0 ? model.trim() : null
+  if (value) current[key] = value
+  else delete current[key]
+  const json = Object.keys(current).length > 0 ? JSON.stringify(current) : null
+  openDb().prepare(`UPDATE jigs SET step_model_overrides = ? WHERE id = ?`).run(json, jigId)
 }

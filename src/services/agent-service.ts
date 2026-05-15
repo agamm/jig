@@ -684,9 +684,14 @@ async function toolRenameJig(args: { newJigId: string }, session: AgentSession):
   return JSON.stringify({ ok: true, oldJigId, newJigId, draft: storeGetPending(newJigId) != null })
 }
 
-function findDisconnectedImports(code: string): string[] {
+export function findDisconnectedImports(code: string): string[] {
   const servers = getImportedServers(code)
   return servers.filter((server) => !existsSync(join(SCHEMAS_DIR, `${server}.json`)))
+}
+
+/** True if an authoring session is actively editing this jig. */
+export function isJigBeingEdited(jigId: string): boolean {
+  return activeAgentJigs.has(jigId)
 }
 
 function rewriteJigIdentifier(code: string, newJigId: string): string {

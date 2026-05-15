@@ -619,6 +619,10 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
                 reviewedToolKeys={reviewedToolKeys}
                 pendingToolKeys={pendingToolKeys}
                 toolsLocked={agent.isActive}
+                jigId={jig.id}
+                stepModelOverrides={jig.stepModelOverrides}
+                jigBaseModel={jig.modelOverride ?? jig.modelInCode ?? null}
+                onStepModelChange={() => onRefresh?.()}
                 onApproveTool={toolApproval.reviewRequired ? (tool) => {
                   setReviewedToolKeys((current) => new Set(current).add(toolKey(tool)));
                   setQueuedRemovalTools((current) => current.filter((candidate) => !sameTool(candidate, tool)));
@@ -921,11 +925,31 @@ function ModelSelector({ jig, onChange }: { jig: Jig; onChange: () => void }) {
   const filtered = useMemo(() => {
     if (!catalog) return [];
     const q = query.trim().toLowerCase();
-    if (!q) return catalog.slice(0, 50);
-    return catalog
-      .filter((m) => m.id.toLowerCase().includes(q) || m.name.toLowerCase().includes(q))
-      .slice(0, 50);
-  }, [catalog, query]);
+    const matches = q
+      ? catalog.filter((m) => m.id.toLowerCase().includes(q) || m.name.toLowerCase().includes(q))
+      : catalog;
+    const head = matches.slice(0, 50);
+    // Always surface the active override even if it's outside the top-50
+    // window — otherwise the picker hides what the user just picked.
+    if (override && !head.some((m) => m.id === override)) {
+      const fromCatalog = catalog.find((m) => m.id === override);
+      const synthesized: OpenRouterModelInfo = fromCatalog ?? {
+        id: override,
+        name: override,
+        description: undefined,
+        contextLength: 0,
+        promptPriceUsdPerM: 0,
+        completionPriceUsdPerM: 0,
+        blendedPriceUsdPerM: 0,
+        supportsTools: false,
+        supportsReasoning: false,
+        createdAt: 0,
+        rank: 0,
+      };
+      return [synthesized, ...head];
+    }
+    return head;
+  }, [catalog, query, override]);
 
   async function applyChoice(modelId: string | null) {
     setSaving(true);

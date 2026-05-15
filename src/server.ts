@@ -510,6 +510,17 @@ export function createApiServer(port: number) {
   const { clearAllStepCache } = require("./db.js")
   clearAllStepCache()
 
+  // Regenerate connection bindings on boot. The .ts wrappers under
+  // CONNECTIONS_DIR are templated from code (e.g. composio's proxyCallCode);
+  // when that template changes between releases, deployed instances need to
+  // re-emit their bindings or jigs keep running against the old wrapper.
+  // Best-effort — schemas may not exist yet on a fresh box.
+  void import("./mcp/typegen.js").then(async ({ generateConnectionArtifacts }) => {
+    try { await generateConnectionArtifacts() } catch (err: any) {
+      console.warn(`[typegen] boot-time regeneration failed: ${err?.message ?? err}`)
+    }
+  })
+
   // v12 migration: sync every legacy jigs/*.ts + git history into the
   // jig_versions table. Runs on every boot, per-jig idempotent — picks up
   // any new files that appeared since the previous boot.

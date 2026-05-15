@@ -154,4 +154,8 @@ export const proxyCallCode = `
       sync_response_to_workbench: false,
     })
     const execResult = raw?.data?.results?.[0] ?? {}
-    return execResult?.response?.data ?? execResult?.response ?? raw`
+    // Composio sometimes returns the payload under \`response.data_preview\` (e.g.
+    // GMAIL_FETCH_EMAILS) instead of \`response.data\`. Check both before falling
+    // back to the bare response — without this, callers got an unwrapped envelope
+    // and \`result.messages\` came back undefined, masking real data as "0 results".
+    return execResult?.response?.data ?? execResult?.response?.data_preview ?? execResult?.response ?? raw`

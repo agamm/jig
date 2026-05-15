@@ -18,6 +18,7 @@ function isOperationalLog(entry: ServerLogEntry): boolean {
   if (/^\[run\]\s/.test(msg)) return true;
   if (/^\[runner\]\s/.test(msg)) return true;
   if (/^\[sdk\.(llm|agent)\]\s/.test(msg)) return true;
+  if (/^\[mcp\.tool\]\s/.test(msg)) return true;
   if (/^\[authoring\.(agent|discovery)\]\s/.test(msg)) return true;
   if (/^\[session-log\]\s/.test(msg)) return true;
   if (/^\[scheduler\]\s/.test(msg) && /(started|done|failed|error|catch-up|marked|skipped|triggered)/i.test(msg)) return true;

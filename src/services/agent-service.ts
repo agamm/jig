@@ -479,6 +479,23 @@ const AGENT_TOOL_DEFS: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "introspect_tool_output",
+      description: "Run a chosen MCP tool live and return a compact shape descriptor of its output (keys, types, array lengths, short value samples — never the full data). Use this AFTER you've decided which tool to call, to learn the real response shape before writing unwrap code. Avoids the common 'result.items || result.messages || []' guess that silently collapses to empty when the actual key is something else. Refuses non-read-only tools unless allowWrite:true is set.",
+      parameters: {
+        type: "object",
+        properties: {
+          server: { type: "string", description: "Connection/server key, e.g. workspace, granola, apify, composio" },
+          tool: { type: "string", description: "MCP tool name (use the same name shown in the cached schema, e.g. gmail_fetch_emails)" },
+          args: { type: "object", description: "Arguments to pass to the tool. Use realistic values — Composio's GMAIL_FETCH_EMAILS for example needs a query/max_results to return anything meaningful.", additionalProperties: true },
+          allowWrite: { type: "boolean", description: "Set to true only when probing a non-read-only tool is safe (e.g. a test webhook, or a delete operation against a known-disposable record). Default false." },
+        },
+        required: ["server", "tool"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "browse",
       description: "Navigate to a URL and return the page content as text. Use only for external docs or API references that are not already in the prompt context.",
       parameters: {
@@ -681,6 +698,40 @@ function rewriteJigIdentifier(code: string, newJigId: string): string {
   })
 }
 
+async function toolIntrospectToolOutput(args: {
+  server?: string
+  tool?: string
+  args?: Record<string, unknown>
+  allowWrite?: boolean
+}): Promise<string> {
+  const server = args.server?.trim()
+  const tool = args.tool?.trim()
+  if (!server || !/^[a-zA-Z0-9_-]+$/.test(server)) {
+    return JSON.stringify({ ok: false, error: "Invalid server name" })
+  }
+  if (!tool || !/^[A-Za-z0-9_]+$/.test(tool)) {
+    return JSON.stringify({ ok: false, error: "Invalid tool name" })
+  }
+  const timeout = new Promise<string>((_, reject) =>
+    setTimeout(() => reject(new Error("introspect_tool_output timed out after 60s")), 60_000)
+  )
+  try {
+    const { introspectToolOutput } = await import("./introspect.js")
+    const result = await Promise.race([
+      timeout,
+      introspectToolOutput({
+        server,
+        tool,
+        args: args.args ?? {},
+        allowWrite: args.allowWrite === true,
+      }).then((r) => JSON.stringify(r)),
+    ])
+    return result
+  } catch (e: any) {
+    return JSON.stringify({ ok: false, error: e?.message ?? String(e) })
+  }
+}
+
 async function toolBrowse(args: { url: string }): Promise<string> {
   const timeout = new Promise<string>((_, reject) =>
     setTimeout(() => reject(new Error("Browse timed out after 45s")), 45_000)
@@ -724,6 +775,7 @@ async function executeAgentTool(name: string, args: Record<string, any>, session
     case "write_jig_file": return toolWriteJigFile(args as any, session)
     case "check_jig": return toolCheckJig(args, session)
     case "get_tool_schema": return toolGetToolSchema(args as any)
+    case "introspect_tool_output": return toolIntrospectToolOutput(args as any)
     case "rename_jig": return toolRenameJig(args as any, session)
     case "ask_user": return ASK_USER_SENTINEL
     case "browse": return toolBrowse(args as any)

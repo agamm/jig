@@ -271,9 +271,11 @@ const preview = meetings
 ctx.output(`Found ${meetings.length} meetings\n\n${preview}`)
 ```
 
-### 10. Tool return shapes vary — don't assume structure
+### 10. Tool return shapes vary — introspect, don't guess
 
-MCP tools return different shapes: arrays, `{items: [...]}`, `{data: {...}}`, plain strings (XML, Markdown, or prose), and sometimes an empty string. Do NOT blindly `Array.isArray(result) ? result : (result as any).items ?? []` — if the shape doesn't match, that silently collapses to `[]` and every downstream step starves on empty data.
+MCP tools return different shapes: arrays, `{items: [...]}`, `{messages: [...]}`, `{data: {...}}`, `{data_preview: {...}}`, plain strings (XML, Markdown, or prose), and sometimes an empty string. Do NOT blindly write `result.items ?? result.messages ?? []` — if the real key is `entries` / `data.results` / `data_preview.messages`, that silently collapses to `[]` and every downstream step starves on empty data while the run still reports success.
+
+**If you're the authoring agent: once you've decided which tool to call, run `introspect_tool_output({server, tool, args})` to get a real shape descriptor before writing unwrap code.** It invokes the tool live and returns a depth-limited descriptor (keys, types, array lengths, value samples) plus a redacted 1KB preview — never the full data. Refuses non-read-only tools unless `allowWrite: true`. Use realistic args (e.g. `{query: "is:unread", max_results: 3}`), then base the unwrap on what you got back. One probe call is much cheaper than shipping a jig that returns 0 results when the API returned 3.
 
 At each tool boundary:
 

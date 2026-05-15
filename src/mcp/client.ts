@@ -521,6 +521,22 @@ export async function closeConnection(name: string): Promise<void> {
   try { await conn.client.close() } catch {}
 }
 
+/**
+ * Get the open connection for a server, opening one if needed. Used by
+ * server-side callers (e.g. introspection) that want the same lazy-connect
+ * semantics generated bindings use.
+ */
+export async function acquireConnection(
+  name: string,
+  config: ServerConfig & { type: "stdio" | "remote" },
+): Promise<McpConnection> {
+  const existing = openConnections.get(name)
+  if (existing) return existing
+  const conn = await connectServer(name, config)
+  registerConnection(name, conn)
+  return conn
+}
+
 export async function callTool(
   connection: McpConnection,
   toolName: string,

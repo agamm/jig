@@ -408,30 +408,29 @@ export function RunSteps({
                   </div>
                 </div>
               )}
+              {stepModelPickerSeq === step.num && jigId && (
+                <StepModelPicker
+                  jigId={jigId}
+                  seq={step.num}
+                  currentOverride={stepModelOverrides?.[String(step.num)] ?? null}
+                  fallbackModel={jigBaseModel ?? null}
+                  onClose={() => setStepModelPickerSeq(null)}
+                  onChange={() => onStepModelChange?.()}
+                />
+              )}
             </RotatingFrame>
           );
         })}
       </div>
 
-      {stepModelPickerSeq !== null && jigId && (
-        <StepModelPicker
-          jigId={jigId}
-          seq={stepModelPickerSeq}
-          currentOverride={stepModelOverrides?.[String(stepModelPickerSeq)] ?? null}
-          fallbackModel={jigBaseModel ?? null}
-          onClose={() => setStepModelPickerSeq(null)}
-          onChange={() => onStepModelChange?.()}
-        />
-      )}
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Step-scoped model picker — opens when the user clicks the `llm` chip on a
-// step. Sits at the higher (call → step) end of the precedence chain so a
-// click here actually changes what that step uses, regardless of the jig
-// override or code-declared default.
+// Step-scoped model picker — opens inline beneath the step row when the user
+// clicks the `llm` chip. Same look as the jig-level ModelSelector dropdown.
+// Precedence-wise, sits above the code step option and the jig-level overrides.
 // ---------------------------------------------------------------------------
 function StepModelPicker({
   jigId, seq, currentOverride, fallbackModel, onClose, onChange,
@@ -496,68 +495,62 @@ function StepModelPicker({
   const shortLabel = (id: string) => id.split("/").pop() ?? id;
 
   return (
-    <div
-      className="fixed inset-0 z-30 flex items-center justify-center bg-black/40 backdrop-blur-sm"
-      onClick={onClose}
-    >
-      <div
-        className="w-[480px] max-w-[92vw] rounded-lg border border-[#1f1f23] bg-[#0a0a0b] shadow-xl overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-3 py-2 border-b border-[#17171a]">
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] font-medium uppercase tracking-wider text-[#8b8b91]">Step {seq} · Model</span>
-            <span className="text-[10px] text-[#5a5a61]">{currentOverride ? `override: ${shortLabel(currentOverride)}` : fallbackModel ? `using: ${shortLabel(fallbackModel)}` : "using default"}</span>
-          </div>
-          <button onClick={onClose} className="text-[#5a5a61] hover:text-[#ededed] text-sm" aria-label="Close">×</button>
+    <div className="mx-3 mb-2 ml-12 rounded-lg border border-[#1f1f23] bg-[#0a0a0b] overflow-hidden" style={{ animation: "fade-up 0.1s ease" }}>
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-[#17171a]">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-[10px] font-medium uppercase tracking-wider text-[#3f3f45]">Step {seq} · Model</span>
+          <span className="text-[10px] text-[#5a5a61] truncate">
+            {currentOverride ? `override: ${shortLabel(currentOverride)}` : fallbackModel ? `using ${shortLabel(fallbackModel)}` : "using default"}
+          </span>
         </div>
-        <div className="px-2 py-1.5 border-b border-[#17171a]">
-          <input
-            type="search"
-            autoFocus
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search models…"
-            className="w-full bg-transparent text-[12px] text-[#ededed] placeholder:text-[#555] outline-none"
-          />
-        </div>
-        <div className="max-h-[420px] overflow-y-auto">
-          <button
-            type="button"
-            disabled={saving || currentOverride === null}
-            onClick={() => apply(null)}
-            className={`w-full flex items-center justify-between px-3 py-1.5 text-left text-[11px] hover:bg-[#11111480] ${currentOverride === null ? "opacity-50" : ""}`}
-          >
-            <span className="text-[#ededed]">Use jig default</span>
-            <span className="text-[#5a5a61]">{fallbackModel ? `→ ${shortLabel(fallbackModel)}` : ""}</span>
-          </button>
-          {catalog === null ? (
-            <div className="px-3 py-2 text-[11px] text-[#5a5a61]">Loading…</div>
-          ) : filtered.length === 0 ? (
-            <div className="px-3 py-2 text-[11px] text-[#5a5a61]">{query ? "No matches" : "No models in catalog"}</div>
-          ) : (
-            filtered.map((m) => {
-              const active = currentOverride === m.id;
-              return (
-                <button
-                  key={m.id}
-                  type="button"
-                  disabled={saving}
-                  onClick={() => apply(m.id)}
-                  className={`w-full flex items-center justify-between px-3 py-1.5 text-left text-[11px] hover:bg-[#11111480] ${active ? "bg-[#11111480]" : ""}`}
-                >
-                  <div className="flex flex-col min-w-0">
-                    <span className="font-mono text-[#ededed] truncate">{m.id}</span>
-                    {m.name && m.name !== m.id && (
-                      <span className="text-[10px] text-[#5a5a61] truncate">{m.name}</span>
-                    )}
-                  </div>
-                  {active && <span className="text-[10px] text-emerald-400 shrink-0">selected</span>}
-                </button>
-              );
-            })
-          )}
-        </div>
+        <button onClick={onClose} className="text-[#5a5a61] hover:text-[#ededed] text-[10px] shrink-0" aria-label="Close">close</button>
+      </div>
+      <div className="px-2 py-1.5 border-b border-[#17171a]">
+        <input
+          type="search"
+          autoFocus
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search models…"
+          className="w-full bg-transparent text-[12px] text-[#ededed] placeholder:text-[#555] outline-none"
+        />
+      </div>
+      <div className="max-h-[280px] overflow-y-auto">
+        <button
+          type="button"
+          disabled={saving || currentOverride === null}
+          onClick={() => apply(null)}
+          className={`w-full flex items-center justify-between px-3 py-1.5 text-left text-[11px] hover:bg-[#11111480] ${currentOverride === null ? "opacity-50" : ""}`}
+        >
+          <span className="text-[#ededed]">Use jig default</span>
+          <span className="text-[#5a5a61]">{fallbackModel ? `→ ${shortLabel(fallbackModel)}` : ""}</span>
+        </button>
+        {catalog === null ? (
+          <div className="px-3 py-2 text-[11px] text-[#5a5a61]">Loading…</div>
+        ) : filtered.length === 0 ? (
+          <div className="px-3 py-2 text-[11px] text-[#5a5a61]">{query ? "No matches" : "No models in catalog"}</div>
+        ) : (
+          filtered.map((m) => {
+            const active = currentOverride === m.id;
+            return (
+              <button
+                key={m.id}
+                type="button"
+                disabled={saving}
+                onClick={() => apply(m.id)}
+                className={`w-full flex items-center justify-between px-3 py-1.5 text-left text-[11px] hover:bg-[#11111480] ${active ? "bg-[#11111480]" : ""}`}
+              >
+                <div className="flex flex-col min-w-0">
+                  <span className="font-mono text-[#ededed] truncate">{m.id}</span>
+                  {m.name && m.name !== m.id && (
+                    <span className="text-[10px] text-[#5a5a61] truncate">{m.name}</span>
+                  )}
+                </div>
+                {active && <span className="text-[10px] text-emerald-400 shrink-0">selected</span>}
+              </button>
+            );
+          })
+        )}
       </div>
     </div>
   );

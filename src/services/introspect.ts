@@ -21,6 +21,7 @@ import { acquireConnection, callTool } from "../mcp/client.js"
 import { getServerConfig } from "../mcp/config.js"
 import { SCHEMAS_DIR } from "../config/paths.js"
 import { redact } from "../debug/redact.js"
+import { unwrapComposioResult } from "../mcp/discover/composio-unwrap.js"
 
 export type Shape =
   | { type: "null" }
@@ -161,8 +162,7 @@ export async function introspectToolOutput(args: {
       tools: [{ tool_slug: slug, arguments: args.args ?? {} }],
       sync_response_to_workbench: false,
     })
-    const execResult = raw?.data?.results?.[0] ?? {}
-    result = execResult?.response?.data ?? execResult?.response?.data_preview ?? execResult?.response ?? raw
+    result = await unwrapComposioResult(raw, (toolName, toolArgs) => callTool(connection, toolName, toolArgs))
   } else {
     result = await callTool(connection, args.tool, (args.args ?? {}) as Record<string, unknown>)
   }

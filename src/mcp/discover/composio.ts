@@ -146,16 +146,14 @@ export async function discover(connection: McpConnection): Promise<Tool[]> {
 /**
  * Code inlined into the generated connection module.
  * Maps lowercase tool name back to uppercase slug for COMPOSIO_MULTI_EXECUTE_TOOL.
+ * Delegates envelope unwrapping (and spill-file recovery for large responses)
+ * to `unwrapComposioResult` so the logic stays testable in one place.
  */
 export const proxyCallCode = `
     const slug = name.toUpperCase()
-    const raw: any = await callTool(await conn(), "COMPOSIO_MULTI_EXECUTE_TOOL", {
+    const c = await conn()
+    const raw: any = await callTool(c, "COMPOSIO_MULTI_EXECUTE_TOOL", {
       tools: [{ tool_slug: slug, arguments: params ?? {} }],
       sync_response_to_workbench: false,
     })
-    const execResult = raw?.data?.results?.[0] ?? {}
-    // Composio sometimes returns the payload under \`response.data_preview\` (e.g.
-    // GMAIL_FETCH_EMAILS) instead of \`response.data\`. Check both before falling
-    // back to the bare response — without this, callers got an unwrapped envelope
-    // and \`result.messages\` came back undefined, masking real data as "0 results".
-    return execResult?.response?.data ?? execResult?.response?.data_preview ?? execResult?.response ?? raw`
+    return unwrapComposioResult(raw, (toolName, args) => callTool(c, toolName, args))`

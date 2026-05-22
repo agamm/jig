@@ -160,9 +160,9 @@ export async function introspectToolOutput(args: {
     const slug = args.tool.toUpperCase()
     const raw: any = await callTool(connection, proxyVia, {
       tools: [{ tool_slug: slug, arguments: args.args ?? {} }],
-      sync_response_to_workbench: true,
+      sync_response_to_workbench: false,
     })
-    result = await unwrapComposioResult(raw, (toolName, toolArgs) => callTool(connection, toolName, toolArgs))
+    result = await unwrapComposioResult(raw)
   } else {
     result = await callTool(connection, args.tool, (args.args ?? {}) as Record<string, unknown>)
   }

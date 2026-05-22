@@ -151,14 +151,8 @@ export async function discover(connection: McpConnection): Promise<Tool[]> {
  */
 export const proxyCallCode = `
     const slug = name.toUpperCase()
-    const c = await conn()
-    // sync_response_to_workbench: true — without it Composio still spills large
-    // responses to /mnt/files but the BASH/WORKBENCH sandbox can't see them
-    // ("No such file or directory") so recovery via cat fails. With sync=true
-    // the file is materialized in the workbench sandbox that the next
-    // COMPOSIO_REMOTE_BASH_TOOL call shares.
-    const raw: any = await callTool(c, "COMPOSIO_MULTI_EXECUTE_TOOL", {
+    const raw: any = await callTool(await conn(), "COMPOSIO_MULTI_EXECUTE_TOOL", {
       tools: [{ tool_slug: slug, arguments: params ?? {} }],
-      sync_response_to_workbench: true,
+      sync_response_to_workbench: false,
     })
-    return unwrapComposioResult(raw, (toolName, args) => callTool(c, toolName, args))`
+    return unwrapComposioResult(raw)`

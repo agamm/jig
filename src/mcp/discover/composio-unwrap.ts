@@ -34,7 +34,7 @@ export class ComposioSpillError extends Error {
     super(
       `composio: response was too large to return inline${sizeNote} and was spilled to ${filePath}, ` +
       `which is unreachable from the MCP session. Reduce max_results, drop verbose / include_payload, ` +
-      `or paginate via nextPageToken so the inline response stays under ~20k tokens.`,
+      `or paginate via nextPageToken so the inline response stays under ~10k tokens.`,
     )
     this.name = "ComposioSpillError"
     this.filePath = filePath

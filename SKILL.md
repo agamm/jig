@@ -278,6 +278,8 @@ MCP tools return different shapes: arrays, `{items: [...]}`, `{messages: [...]}`
 
 **If you're the authoring agent: once you've decided which tool to call, run `introspect_tool_output({server, tool, args})` to get a real shape descriptor before writing unwrap code.** It invokes the tool live and returns a depth-limited descriptor (keys, types, array lengths, value samples) plus a redacted 1KB preview — never the full data. Refuses non-read-only tools unless `allowWrite: true`. Use realistic args (e.g. `{query: "is:unread", max_results: 3}`), then base the unwrap on what you got back. One probe call is much cheaper than shipping a jig that returns 0 results when the API returned 3.
 
+**Composio tools cap inline responses at ~10k tokens.** Over that, the response spills to a sandbox file the MCP session can't reach and the wrapper throws `ComposioSpillError` at runtime. The bulkiest payloads come from Gmail (`messageText` is the full body, ~1-3k tokens each), Slack message history, GitHub file contents, and any tool with `verbose: true` / `include_payload: true`. **Default to small windows** — e.g. `max_results: 3-5` for any list/fetch on Composio — and paginate via `nextPageToken` if you need more. If `introspect_tool_output` returns `reason: "response_truncated"` or `warnings` mentioning sentinel strings, shrink your args before writing code; do not proceed against the truncated shape.
+
 At each tool boundary:
 
 1. Check `typeof result`.

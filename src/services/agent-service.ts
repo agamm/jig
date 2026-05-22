@@ -480,7 +480,7 @@ const AGENT_TOOL_DEFS: ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "introspect_tool_output",
-      description: "Run a chosen MCP tool live and return a compact shape descriptor of its output (keys, types, array lengths, short value samples — never the full data). Use this AFTER you've decided which tool to call, to learn the real response shape before writing unwrap code. Avoids the common 'result.items || result.messages || []' guess that silently collapses to empty when the actual key is something else. Refuses non-read-only tools unless allowWrite:true is set.",
+      description: "Run a chosen MCP tool live and return a compact shape descriptor of its output (keys, types, array lengths, short value samples — never the full data). Use this AFTER you've decided which tool to call, to learn the real response shape before writing unwrap code. Avoids the common 'result.items || result.messages || []' guess that silently collapses to empty when the actual key is something else. Refuses non-read-only tools unless allowWrite:true is set. Returns `reason:\"response_truncated\"` if the args cause a Composio spill (>~10k inline tokens) — in that case shrink the args (drop verbose/include_payload, lower max_results to ~3, or paginate) and re-introspect. The result may also include `warnings: [...]` flagging \"…N more items\" sentinel strings; if you see those, the inline data was truncated and you MUST adjust args before writing code.",
       parameters: {
         type: "object",
         properties: {

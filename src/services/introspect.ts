@@ -21,7 +21,7 @@ import { acquireConnection, callTool } from "../mcp/client.js"
 import { getServerConfig } from "../mcp/config.js"
 import { SCHEMAS_DIR } from "../config/paths.js"
 import { redact } from "../debug/redact.js"
-import { unwrapComposioResult } from "../mcp/discover/composio-unwrap.js"
+import { ComposioSpillError, unwrapComposioResult } from "../mcp/discover/composio-unwrap.js"
 
 export type Shape =
   | { type: "null" }
@@ -87,12 +87,13 @@ export interface IntrospectResult {
   preview: string
   durationMs: number
   readOnly: boolean
+  warnings?: string[]
 }
 
 export interface IntrospectRefusal {
   ok: false
   error: string
-  reason?: "not_read_only" | "no_schema" | "unknown_server"
+  reason?: "not_read_only" | "no_schema" | "unknown_server" | "response_truncated"
   hint?: string
 }
 
@@ -162,7 +163,26 @@ export async function introspectToolOutput(args: {
       tools: [{ tool_slug: slug, arguments: args.args ?? {} }],
       sync_response_to_workbench: false,
     })
-    result = await unwrapComposioResult(raw)
+    try {
+      result = await unwrapComposioResult(raw)
+    } catch (err: any) {
+      // Surface the spill case as a *refusal* — the agent introspected with
+      // these args so it could write code; if the args trigger a spill, the
+      // jig will hit ComposioSpillError at runtime. Returning early with a
+      // structured refusal forces the agent to shrink args before writing.
+      if (err instanceof ComposioSpillError) {
+        return {
+          ok: false,
+          error: err.message,
+          reason: "response_truncated",
+          hint:
+            "Re-introspect with smaller args: drop verbose / include_payload, " +
+            "reduce max_results (try 3 first), or paginate. Composio caps inline " +
+            "responses at ~10k tokens; over that they spill to an unreachable file.",
+        }
+      }
+      throw err
+    }
   } else {
     result = await callTool(connection, args.tool, (args.args ?? {}) as Record<string, unknown>)
   }
@@ -174,6 +194,8 @@ export async function introspectToolOutput(args: {
   try { preview = JSON.stringify(redacted).slice(0, PREVIEW_BYTES) } catch { preview = "<unserializable>" }
   if (preview.length === PREVIEW_BYTES) preview += "…"
 
+  const warnings = collectShapeWarnings(redacted, shape)
+
   return {
     ok: true,
     server: args.server,
@@ -182,5 +204,46 @@ export async function introspectToolOutput(args: {
     preview,
     durationMs,
     readOnly,
+    ...(warnings.length > 0 ? { warnings } : {}),
   }
+}
+
+/**
+ * Walk the introspected result and flag patterns that often indicate
+ * silent-truncation problems the agent should adjust for *before* writing
+ * code that consumes the response:
+ *
+ *   - "…N more items" / "...N more items" sentinel strings mixed into arrays
+ *     (Composio's `data_preview` shape when a response was partially trimmed)
+ *   - response was suspiciously close to a known size cap (best-effort
+ *     heuristic, not authoritative)
+ */
+export function collectShapeWarnings(value: unknown, _shape: Shape): string[] {
+  const warnings: string[] = []
+  const SENTINEL_RE = /^(\.\.\.|…)\s*\d+\s*more\s+items$/i
+  let sentinelCount = 0
+  const seen = new WeakSet<object>()
+  const walk = (v: unknown): void => {
+    if (typeof v === "string") {
+      if (SENTINEL_RE.test(v.trim())) sentinelCount++
+      return
+    }
+    if (v === null || typeof v !== "object") return
+    if (seen.has(v)) return
+    seen.add(v)
+    if (Array.isArray(v)) {
+      for (const item of v) walk(item)
+      return
+    }
+    for (const child of Object.values(v as Record<string, unknown>)) walk(child)
+  }
+  walk(value)
+  if (sentinelCount > 0) {
+    warnings.push(
+      `Detected ${sentinelCount} "…N more items" sentinel string(s) in the response. ` +
+      `This means the inline data was truncated. Do NOT write .map/.filter over the array ` +
+      `as-is — sentinel rows will become garbage entries. Re-introspect with smaller args.`,
+    )
+  }
+  return warnings
 }

@@ -698,15 +698,24 @@ export function DashboardShell({
 
         {(!view || view === "jigs") && (
           hasDetail && detailPane ? (
-            <ResizablePanelGroup direction="horizontal" className="flex-1">
-              <ResizablePanel defaultSize="52%" minSize="34%">
-                {jigsPane}
-              </ResizablePanel>
-              <ResizableHandle />
-              <ResizablePanel defaultSize="48%" minSize="34%" maxSize="66%">
-                {detailPane}
-              </ResizablePanel>
-            </ResizablePanelGroup>
+            // When creating / drafting / editing / reviewing a jig (i.e. a
+            // jig-scoped detail pane, not a connection pane), give it the
+            // full content area — the jig list isn't needed while focused on
+            // a single jig and the close button takes you back. Connection
+            // panes keep the split so the list stays reachable.
+            selectedConnection ? (
+              <ResizablePanelGroup direction="horizontal" className="flex-1">
+                <ResizablePanel defaultSize="52%" minSize="34%">
+                  {jigsPane}
+                </ResizablePanel>
+                <ResizableHandle />
+                <ResizablePanel defaultSize="48%" minSize="34%" maxSize="66%">
+                  {detailPane}
+                </ResizablePanel>
+              </ResizablePanelGroup>
+            ) : (
+              <div className="flex-1 overflow-hidden">{detailPane}</div>
+            )
           ) : (
             jigsPane
           )

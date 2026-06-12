@@ -7,6 +7,7 @@ import { closeConnection, connectServer, discoverTools, ensureAnnotations } from
 import { generateConnectionArtifacts } from "../mcp/typegen.js"
 import { isServiceMode } from "../config/runtime.js"
 import { waitForPendingAuthUrl } from "../mcp/auth.js"
+import { clearConnectionStatus } from "./connection-status.js"
 
 export type ConnectServerSuccess = {
   ok: true
@@ -126,6 +127,8 @@ export async function disconnectConfiguredServer(serverName: string): Promise<{
   // 2. Wipe every credentials row for this server (oauth:*:tokens, client,
   // verifier, any provider-custom keys). Harmless if the row set was empty.
   deleteCredentials(serverName)
+  // A deliberately disconnected server shouldn't keep showing "needs re-auth".
+  clearConnectionStatus(serverName)
 
   // 3. Remove the generated schema + typed runtime so the UI flips to "not
   // connected" and tool lookups fail loudly instead of silently reusing an

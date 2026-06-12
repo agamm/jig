@@ -274,6 +274,12 @@ export async function startServer(options?: { port?: number }) {
   }
   process.on("SIGINT", cleanup)
   process.on("SIGTERM", cleanup)
+  // Also covers the uncaughtException → process.exit(1) path (see server.ts):
+  // "exit" handlers run synchronously on any exit, so the Next.js subprocess
+  // never outlives a crashed parent.
+  process.on("exit", () => {
+    try { nextProcess.kill() } catch {}
+  })
 
   // Keep alive until Next.js exits
   await nextProcess.exited

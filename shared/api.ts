@@ -94,6 +94,15 @@ export interface JigData {
   costLifetime?: string
 }
 
+export type ConnectionStatusState = "ok" | "auth-required" | "unreachable"
+
+/** Last observed runtime health of a connection, written at MCP failure chokepoints. */
+export interface ConnectionStatusInfo {
+  state: ConnectionStatusState
+  detail?: string
+  at: string
+}
+
 export interface Connection {
   name: string
   connected: boolean
@@ -104,6 +113,8 @@ export interface Connection {
   proxyVia?: string
   /** URL to provider's dashboard for adding more connections (only set for proxy connections) */
   proxyDashboardUrl?: string
+  /** Runtime health (token expired, unreachable). null/absent = no signal recorded. */
+  status?: ConnectionStatusInfo | null
 }
 
 export interface ConnectionTool {
@@ -543,6 +554,12 @@ export interface NotifyTestResponse {
   errors: Array<{ channel: string; error: string }>
 }
 
+export interface SchedulerHealth {
+  running: boolean
+  /** ISO timestamp of the last completed scheduler loop, null before first tick. */
+  lastTickAt: string | null
+}
+
 export interface HealthResponse {
   version: string
   mode: "service" | "local"
@@ -553,6 +570,36 @@ export interface HealthResponse {
   has_openrouter_key?: boolean
   uptime_s?: number
   data_storage?: DataStorageHealth
+  scheduler?: SchedulerHealth
+  /** Can the API server write to SQLite right now? */
+  db_writable?: boolean
+  /** Runs stuck in 'running' for over 2 hours — should be 0 with run timeouts on. */
+  stalled_runs?: number
+  /** Whether the out-of-band Resend system-notification channel is set up. */
+  resend_configured?: boolean
+}
+
+// ---------------------------------------------------------------------------
+// Resend system notifications
+// ---------------------------------------------------------------------------
+
+export interface ResendSettingsResponse {
+  configured: boolean
+  /** Whether an API key is stored (key itself is never returned). */
+  hasKey: boolean
+  to: string | null
+  from: string | null
+}
+
+export interface ResendSettingsUpdate {
+  apiKey?: string
+  to?: string
+  from?: string
+}
+
+export interface ResendTestResponse {
+  ok: boolean
+  error?: string
 }
 
 export interface ApiContract<Request, Response> {
@@ -609,6 +656,8 @@ export interface ApiContracts {
   deleteAuthorizedSender: ApiContract<void, OkResponse>
   notificationSettings: ApiContract<NotificationSettings | void, NotificationSettingsResponse>
   notificationSettingsTest: ApiContract<void, NotifyTestResponse>
+  resendSettings: ApiContract<ResendSettingsUpdate | void, ResendSettingsResponse>
+  resendTest: ApiContract<void, ResendTestResponse>
   toolPermissions: ApiContract<void, ToolPermission[]>
   saveToolPermission: ApiContract<{ connection: string; tool: string; policy: ToolPermissionPolicy }, OkResponse>
   resetLocalState: ApiContract<void, ResetLocalStateResponse>

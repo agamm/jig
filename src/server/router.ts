@@ -134,6 +134,8 @@ export function matchRoute(pathname: string): { handler: string; params: Record<
 
   if (pathname === "/api/settings/notifications") return { handler: "notificationSettings", params: {} }
   if (pathname === "/api/settings/notifications/test") return { handler: "notificationSettingsTest", params: {} }
+  if (pathname === "/api/settings/resend") return { handler: "resendSettings", params: {} }
+  if (pathname === "/api/settings/resend/test") return { handler: "resendTest", params: {} }
   if (pathname === "/api/settings/system") return { handler: "systemSettings", params: {} }
   if (pathname === "/api/settings/reset-local") return { handler: "resetLocalState", params: {} }
   if (pathname === "/api/permissions") return { handler: "toolPermissions", params: {} }

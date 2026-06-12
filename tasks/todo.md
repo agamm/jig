@@ -1,3 +1,59 @@
+# 24/7 Reliability + Resend System Notifications (2026-06-11)
+
+### Phase 0 — housekeeping
+- [ ] Commit existing model-upgrade WIP as its own commit
+- [ ] Add tmp/ to .gitignore
+
+### Phase 1 — won't silently die or stall
+- [ ] uncaughtException handler in src/server.ts (log, cleanup, exit non-zero so supervisor restarts)
+- [ ] Global run timeout: AbortController in startBackgroundRun (default 30min)
+- [ ] LLM client retries + timeout in src/sdk/llm.ts
+- [ ] MCP reconnect backoff (3 attempts, 100ms/500ms/2s) in invokeWithReconnect
+
+### Phase 2 — you find out when something breaks
+- [ ] mcp.connection session events at failure chokepoints (token rejected, reconnect failed, composio discovery failure)
+- [ ] Resend out-of-band channel in notify.ts: kind "system", direct fetch, key in credentials table
+- [ ] System-notify on: connection auth failure, reconnect exhaustion, DB corruption wipe — debounced per source
+- [ ] Connection health in GET /api/connections (latest mcp.connection event per server)
+
+### Phase 3 — stays healthy over weeks
+- [ ] Daily retention pass: prune runs/run_steps older than N days (default 30)
+- [ ] Real health endpoint: scheduler ticking, DB writable, stalled runs count
+- [ ] DB corruption: back up file before wipe + system notification
+- [ ] Fix notify.ts Date.now() import cache leak
+
+### Phase 4 — dashboard
+- [ ] Resend onboarding: banner/setup card when no Resend key configured + settings UI to add it
+- [ ] Connection status (token expired / unreachable) on Connections page
+
+### Phase 5 — cleanup + ship
+- [x] gcRuntimeCache now USED by scheduler maintenance pass (kept, not deleted)
+- [x] Version bump both package.json files → 0.1.23
+- [x] Verify: backend+dashboard typecheck clean, server boots, health/resend/conn-status smoke-tested
+
+## Review (2026-06-12)
+
+Done in this pass:
+- **Crash safety**: uncaughtException handler in server.ts exits non-zero so a supervisor restarts; start.ts kills the Next child on any exit. recoverMissedRuns() already cleans orphaned runs on boot.
+- **Run watchdog**: 30min AbortController timeout in run-store (covers manual+cron+webhook via the shared chokepoint); timeout rewritten to a real "fail" in DB instead of looking user-cancelled. Override via JIG_RUN_TIMEOUT_MS.
+- **LLM resilience**: OpenAI client now maxRetries:3 + 180s timeout.
+- **MCP reconnect backoff**: invokeWithMcpReconnect (100/500/2000ms) replaces single instant retry in both typegen templates; exhaustion marks connection unreachable.
+- **Resend out-of-band channel**: src/services/system-notify.ts — direct fetch, key in credentials table, debounced per source via settings. Wired into notify() as a fallback that survives broken MCP, and fired on connection auth-failure/reconnect-exhaustion.
+- **Connection health**: src/services/connection-status.ts records auth-required/unreachable/ok at the MCP chokepoints; surfaced on GET /api/connections and cleared on disconnect.
+- **Retention**: pruneOldRuns(30d) + runtime-cache sweep in a daily scheduler maintenance pass. JIG_RUN_RETENTION_DAYS override.
+- **Real health endpoint**: /api/health now reports scheduler {running,lastTickAt}, db_writable, stalled_runs, resend_configured (admin-gated fields).
+- **DB corruption**: damaged file moved to .corrupt-<ts> instead of silent unlink.
+- **notify.ts leak fix**: cache-bust dynamic import on file mtime, not Date.now().
+- **Composio discovery**: throws on session-parse failure instead of returning [] (was silent 0-tools success).
+- **Dashboard**: ResendSettings component in Notifications tab + onboarding banner on the jigs page when resend_configured===false and jigs exist.
+
+Not done / deferred:
+- Concurrent manual+cron race (BEGIN IMMEDIATE) — low probability, left as-is.
+- openai SDK → raw fetch swap — larger refactor, separate change.
+- 2 pre-existing validate.test.ts failures (workspace/apify param checks) — fail on clean HEAD, unrelated.
+
+---
+
 # Steps Simplification
 
 ## Done

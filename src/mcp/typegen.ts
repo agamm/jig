@@ -50,7 +50,7 @@ function sourceFileUrl(path: string): string {
 
 function runtimeImports(): string {
   return `import { getServerConfig } from "${sourceFileUrl("src/mcp/config.ts")}"
-import { connectServer, callTool, registerConnection, shouldReconnectMcpConnection } from "${sourceFileUrl("src/mcp/client.ts")}"
+import { connectServer, callTool, registerConnection, invokeWithMcpReconnect } from "${sourceFileUrl("src/mcp/client.ts")}"
 import { buildDryRunToolResult, isDryRun, shouldStubToolInDryRun } from "${sourceFileUrl("src/sdk/dryrun.ts")}"
 import { runContext } from "${sourceFileUrl("src/sdk/context.ts")}"
 import type { JigTool } from "${sourceFileUrl("src/sdk/jig.ts")}"`
@@ -184,13 +184,7 @@ export async function closeConnection() {
 }
 
 async function invokeWithReconnect<T>(run: () => Promise<T>): Promise<T> {
-  try {
-    return await run()
-  } catch (error) {
-    if (!shouldReconnectMcpConnection(error)) throw error
-    await closeConnection()
-    return run()
-  }
+  return invokeWithMcpReconnect("${serverName}", closeConnection, run)
 }
 
 function tool<TInput extends Record<string, unknown>, TOutput = any>(name: string, readOnly: boolean): JigTool<TInput, TOutput> {
@@ -270,13 +264,7 @@ export async function closeConnection() {
 }
 
 async function invokeWithReconnect<T>(run: () => Promise<T>): Promise<T> {
-  try {
-    return await run()
-  } catch (error) {
-    if (!shouldReconnectMcpConnection(error)) throw error
-    await closeConnection()
-    return run()
-  }
+  return invokeWithMcpReconnect("${serverName}", closeConnection, run)
 }
 
 function tool<TInput extends Record<string, unknown>, TOutput = any>(name: string, readOnly: boolean): JigTool<TInput, TOutput> {

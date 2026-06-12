@@ -2,6 +2,7 @@ import type { LiveRunStep, RunStatus } from "../../shared/api.js"
 import type { RunEvent } from "../run-events.js"
 import { isCancellationMessage, USER_CANCELLED_MESSAGE } from "../run-cancel.js"
 import { broadcastJigsUpdated } from "../server/live-updates.js"
+import { openDb } from "../db.js"
 
 type RunRecord = {
   runId: number
@@ -20,6 +21,15 @@ type RunRecord = {
 
 const RECENT_RESULT_TTL_MS = 60_000
 
+// Hard ceiling on a single run. A hung tool call or infinite loop would
+// otherwise hold the per-jig "active run" slot forever — the scheduler skips
+// jigs with an active run, so a single hang silently kills that schedule
+// until restart. Overridable via JIG_RUN_TIMEOUT_MS.
+const RUN_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.JIG_RUN_TIMEOUT_MS)
+  return Number.isFinite(raw) && raw > 0 ? raw : 30 * 60_000
+})()
+
 /** jigId → runId for currently executing runs */
 const activeRuns = new Map<string, number>()
 /** runId → AbortController for cancellation */
@@ -28,6 +38,16 @@ const activeAborts = new Map<number, AbortController>()
 const runs = new Map<number, RunRecord>()
 /** runId → RunRecord for recently finished runs */
 const recentResults = new Map<number, RunRecord>()
+/** runId → timeout that aborts the run when it exceeds RUN_TIMEOUT_MS */
+const runTimeouts = new Map<number, ReturnType<typeof setTimeout>>()
+/** runId → timeout message, set when the watchdog fired for this run */
+const timedOutRuns = new Map<number, string>()
+
+function clearRunTimeout(runId: number): void {
+  const timer = runTimeouts.get(runId)
+  if (timer) clearTimeout(timer)
+  runTimeouts.delete(runId)
+}
 
 function isDryRunLimitedOutput(output?: string): boolean {
   return typeof output === "string" && output.includes("[dry-run]")
@@ -53,7 +73,19 @@ export function getSignalForRun(runId: number): AbortSignal | undefined {
 
 export function startTrackedRun(runId: number, jigId: string, dryRun: boolean): void {
   activeRuns.set(jigId, runId)
-  activeAborts.set(runId, new AbortController())
+  const controller = new AbortController()
+  activeAborts.set(runId, controller)
+  runTimeouts.set(runId, setTimeout(() => {
+    // If the run already finished, finishTrackedRun has cleared this timer's
+    // bookkeeping — bail so we don't relabel a completed run as timed-out at
+    // the exact boundary (JS is single-threaded; an in-progress
+    // finishTrackedRun can't interleave with this callback).
+    if (!runs.has(runId)) return
+    const message = `Run timed out after ${Math.round(RUN_TIMEOUT_MS / 60_000)} minutes`
+    timedOutRuns.set(runId, message)
+    console.error(`[runner] ${jigId} run ${runId}: ${message} — aborting`)
+    controller.abort()
+  }, RUN_TIMEOUT_MS))
   runs.set(runId, {
     runId,
     jigId,
@@ -123,6 +155,27 @@ export function applyRunEvent(runId: number, event: RunEvent): void {
 export function finishTrackedRun(runId: number): void {
   const run = runs.get(runId)
   if (!run) return
+  clearRunTimeout(runId)
+
+  // A timeout abort surfaces through the runner as a cancellation ("Run
+  // cancelled"), which would be skipped by failure notifications and shown
+  // as user-cancelled. Rewrite it to the real story — both in the live
+  // record and the persisted row (which is final by the time we get here).
+  const timeoutMessage = timedOutRuns.get(runId)
+  if (timeoutMessage) {
+    timedOutRuns.delete(runId)
+    run.error = timeoutMessage
+    run.output = undefined
+    if (runId > 0) {
+      try {
+        openDb().prepare(`UPDATE runs SET status = 'fail', error = ?, output = NULL WHERE id = ?`)
+          .run(timeoutMessage, runId)
+      } catch (e: any) {
+        console.error(`[runner] failed to persist timeout for run ${runId}: ${e?.message ?? e}`)
+      }
+    }
+  }
+
   run.finishedAt = Date.now()
   recentResults.set(runId, run)
   runs.delete(runId)
@@ -137,6 +190,8 @@ export function finishTrackedRun(runId: number): void {
 export function discardTrackedRun(runId: number): void {
   const run = runs.get(runId)
   if (!run) return
+  clearRunTimeout(runId)
+  timedOutRuns.delete(runId)
   runs.delete(runId)
   if (activeRuns.get(run.jigId) === runId) {
     activeRuns.delete(run.jigId)
@@ -151,6 +206,8 @@ export function clearTrackedRunsForJig(jigId: string): void {
     activeRuns.delete(jigId)
     activeAborts.delete(activeRunId)
     runs.delete(activeRunId)
+    clearRunTimeout(activeRunId)
+    timedOutRuns.delete(activeRunId)
   }
 
   for (const [runId, run] of recentResults) {
@@ -242,4 +299,6 @@ export function resetRunStoreForTests(): void {
   activeAborts.clear()
   runs.clear()
   recentResults.clear()
+  for (const runId of runTimeouts.keys()) clearRunTimeout(runId)
+  timedOutRuns.clear()
 }

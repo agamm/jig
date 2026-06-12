@@ -25,7 +25,7 @@ import { toast } from "@/components/toast";
 import { EmptyState, LoadingState, Notice } from "@/components/state-panel";
 import { isRecommendedConnection, sortConnectionsForDisplay } from "@/lib/connection-catalog";
 import { useConnectionCatalog } from "@/lib/hooks";
-import { useModels, useConnections } from "@/lib/swr";
+import { useModels, useConnections, useHealth } from "@/lib/swr";
 import { APP_VERSION } from "@/lib/version";
 import { addExampleJig, closeAgentSession, createCustomConnection, fetchModelUpgrades } from "@/lib/api";
 import type { DataStorageHealth, ExampleJig, ModelUpgradeSuggestion } from "@shared/api";
@@ -105,6 +105,23 @@ export function DashboardShell({
   }, []);
   const { data: models } = useModels();
   const { data: connections, isLoading: connectionsLoading, error: connectionsError } = useConnections();
+  const { data: health } = useHealth();
+  const [resendBannerDismissed, setResendBannerDismissed, resendBannerMounted] = useLocalStorage("jig-resend-banner-dismissed", false);
+  // Prompt to set up out-of-band alerting once the workspace is in use (has at
+  // least one jig) but Resend isn't configured — that's when an unattended
+  // failure would actually go unnoticed. health is admin-gated, so
+  // resend_configured is undefined until authed; only show on an explicit false.
+  const showResendOnboarding =
+    resendBannerMounted &&
+    !resendBannerDismissed &&
+    health?.resend_configured === false &&
+    jigs.length > 0;
+
+  function openResendSettings() {
+    closeDetail();
+    setView("settings");
+    setSettingsTab("notifications");
+  }
 
   const currentJig = jigs.find((j) => j.id === selectedJig) ?? null;
   const showOnboarding = !errorMessage && (phaseToggle ? phase === "day1" : jigs.length === 0 && !loading);
@@ -248,6 +265,21 @@ export function DashboardShell({
             className="mb-3"
           >
             {storageHealth.message} Run <code className="rounded bg-black/30 px-1 py-0.5 font-mono text-[10px] text-rose-100">{storageHealth.action}</code> from this checkout, then paste/save connection tokens again.
+          </Notice>
+        )}
+        {showResendOnboarding && (
+          <Notice
+            tone="warning"
+            title="Set up failure alerts"
+            className="mb-3"
+            actions={
+              <div className="flex items-center gap-2">
+                <Button onClick={openResendSettings} variant="accent" size="xs">Set up Resend</Button>
+                <Button onClick={() => setResendBannerDismissed(true)} variant="subtle" size="xs">Dismiss</Button>
+              </div>
+            }
+          >
+            Running 24/7? Add a Resend API key so Jig emails you when a jig fails or a connection breaks — even when its own integrations are down.
           </Notice>
         )}
         {loading && <LoadingState message="Loading workspace…" className="h-32" />}

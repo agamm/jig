@@ -32,13 +32,15 @@ import { buildJigResponse, discoverAllJigs } from "./services/jig-api.js"
 import { approveAgentDraft, closeAgentSession, getAgentSessionStatus, listUnderConstructionJigs, pushAgentMessage, startAgentSession, streamAgentSession } from "./services/agent-service.js"
 import { cancelActiveRun, getActiveRunSnapshot, getRunDetail, startJigRun } from "./services/run-api.js"
 import { getNotificationHealth, getNotificationSettings, getNotificationTestStatus, saveNotificationSettings, saveNotificationTestStatus, notify, type NotificationSettings } from "./services/notify.js"
+import { getResendStatus, isResendConfigured, saveResendSettings, sendResendEmail } from "./services/system-notify.js"
+import { getConnectionStatus } from "./services/connection-status.js"
 import { connectConfiguredServer, disconnectConfiguredServer } from "./services/connect-server.js"
 import { getDataStorageHealth } from "./services/data-storage.js"
 import { addExampleJig, listExampleJigs } from "./services/example-jigs.js"
 import { buildNotificationManifest } from "./mcp/discover/notification-manifest.js"
 import { handleWebhook } from "./scheduler/webhooks.js"
 import { getSchedule, listAllSchedules, setScheduleEnabled, listAuthorizedSenders, addAuthorizedSender, removeAuthorizedSender, listToolPermissions, setToolPermission, listCredentials, type ToolPermissionPolicy } from "./db.js"
-import { startScheduler } from "./scheduler/index.js"
+import { getSchedulerHealth, startScheduler } from "./scheduler/index.js"
 import { syncSchedules } from "./scheduler/sync.js"
 import {
   approvePending as approveJigPending,
@@ -260,6 +262,10 @@ async function handleGetConnections(): Promise<Response> {
         custom: Boolean(customConfigs[name]),
         proxyVia: config.proxy?.via,
         proxyDashboardUrl: config.proxy?.dashboardUrl,
+        // "connected" only means the schema file exists; this carries the
+        // runtime signal (token rejected / unreachable) the failure
+        // chokepoints recorded.
+        status: connected ? getConnectionStatus(name) : null,
       }
     })
   )
@@ -459,6 +465,31 @@ function hasOpenRouterKey(): boolean {
   }
 }
 
+function isDbWritable(): boolean {
+  try {
+    const db = openDb()
+    db.prepare(
+      `INSERT INTO settings (key, value, updated_at) VALUES ('health.last_check', ?, datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
+    ).run(JSON.stringify(Date.now()))
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Runs stuck in 'running' for over 2h — should be 0 with the run watchdog on. */
+function countStalledRuns(): number {
+  try {
+    const row = openDb().prepare(
+      `SELECT COUNT(*) AS n FROM runs WHERE status = 'running' AND started_at < datetime('now', '-2 hours')`,
+    ).get() as { n: number } | null
+    return row?.n ?? 0
+  } catch {
+    return 0
+  }
+}
+
 async function handleCompleteOnboarding(req: Request): Promise<Response> {
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
   const body = (await req.json().catch(() => ({}))) as { openrouter_key?: unknown }
@@ -607,6 +638,10 @@ export function createApiServer(port: number) {
               ...base,
               has_openrouter_key: hasOpenRouterKey(),
               uptime_s: Math.floor((Date.now() - SERVER_STARTED_AT) / 1000),
+              scheduler: getSchedulerHealth(),
+              db_writable: isDbWritable(),
+              stalled_runs: countStalledRuns(),
+              resend_configured: isResendConfigured(),
             })
           }
           case "completeOnboarding":
@@ -939,6 +974,31 @@ export function createApiServer(port: number) {
             saveNotificationTestStatus(report)
             return apiJson("notificationSettingsTest", report)
           }
+          case "resendSettings": {
+            if (req.method === "PUT") {
+              const body = (await req.json().catch(() => ({}))) as Record<string, unknown>
+              saveResendSettings({
+                apiKey: typeof body.apiKey === "string" ? body.apiKey : undefined,
+                to: typeof body.to === "string" ? body.to : undefined,
+                from: typeof body.from === "string" ? body.from : undefined,
+              })
+            } else if (req.method !== "GET") {
+              return json({ error: "Method not allowed" }, 405)
+            }
+            return apiJson("resendSettings", getResendStatus())
+          }
+          case "resendTest": {
+            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+            try {
+              await sendResendEmail({
+                subject: "Jig system notifications are working",
+                text: "If you can read this, Jig can reach you even when its MCP connections can't.",
+              })
+              return apiJson("resendTest", { ok: true as const })
+            } catch (e: any) {
+              return apiJson("resendTest", { ok: false as const, error: e?.message ?? String(e) })
+            }
+          }
           case "systemSettings": {
             if (req.method === "GET") return apiJson("systemSettings", getSystemSettings())
             if (req.method === "PUT") {
@@ -1018,6 +1078,16 @@ export function createApiServer(port: number) {
 
 process.on("unhandledRejection", (error) => {
   console.error("[server] unhandled rejection:", error)
+})
+
+// log-buffer.ts registers an uncaughtException listener to record the error,
+// which suppresses the runtime's default fatal exit — without this handler
+// the process would keep running in an undefined state after a crash.
+// Exit non-zero instead so a supervisor (systemd / Railway / launchd)
+// restarts us; recoverMissedRuns() marks orphaned runs failed on next boot.
+process.on("uncaughtException", (error) => {
+  console.error("[server] uncaught exception — exiting so the supervisor restarts us:", error)
+  process.exit(1)
 })
 
 if (import.meta.main) {

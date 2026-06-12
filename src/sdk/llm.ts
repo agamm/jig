@@ -15,7 +15,16 @@ const MAX_TOOL_ROUNDS = 30
 // unlock/re-lock cycle.
 export function getClient(): OpenAI {
   const apiKey = requireOpenRouterApiKey()
-  return new OpenAI({ baseURL: "https://openrouter.ai/api/v1", apiKey })
+  return new OpenAI({
+    baseURL: "https://openrouter.ai/api/v1",
+    apiKey,
+    // Scheduled runs must survive transient OpenRouter/network blips: retry
+    // connection errors and 429/5xx with the SDK's exponential backoff, and
+    // cap a single hung request well below the global run timeout instead of
+    // the SDK's 10-minute default.
+    maxRetries: 3,
+    timeout: 180_000,
+  })
 }
 
 /**

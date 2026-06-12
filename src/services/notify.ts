@@ -17,8 +17,10 @@
  *     same path jigs use.
  */
 import { join } from "node:path"
+import { statSync } from "node:fs"
 import { CONNECTIONS_DIR } from "../config/paths.js"
 import { getSetting, setSetting } from "../db.js"
+import { isResendConfigured, sendResendEmail } from "./system-notify.js"
 import { buildNotificationManifest, type NotificationCapableTool } from "../mcp/discover/notification-manifest.js"
 import { publicUrl } from "../config/runtime.js"
 import type {
@@ -72,6 +74,7 @@ export function getNotificationHealth(
   settings: NotificationSettings = getNotificationSettings(),
   manifest: NotificationCapableTool[] = buildNotificationManifest(),
   testStatus: NotificationTestStatus | null = getNotificationTestStatus(),
+  resendConfigured: boolean = isResendConfigured(),
 ): NotificationHealth {
   const reasons: string[] = []
   const manifestKeys = new Set(manifest.map((tool) => key(tool.connection, tool.tool)))
@@ -80,11 +83,13 @@ export function getNotificationHealth(
     reasons.push("Failure notifications are paused.")
   }
 
-  if (manifest.length === 0) {
-    reasons.push("No notification-capable tools are connected.")
+  // Resend counts as a delivery channel of its own — a setup with only
+  // Resend configured (no MCP notification tools) is healthy.
+  if (manifest.length === 0 && !resendConfigured) {
+    reasons.push("No notification-capable tools are connected and Resend email is not set up.")
   }
 
-  if (settings.channels.length === 0) {
+  if (settings.channels.length === 0 && !resendConfigured) {
     reasons.push("No failure notification channel is configured.")
   }
 
@@ -166,7 +171,8 @@ export async function notify(opts: {
   }
 
   if (!opts.ignoreTriggerGate && !settings.triggerOn?.[opts.kind]) return report
-  if (!settings.channels?.length) return report
+  const resendReady = isResendConfigured()
+  if (!settings.channels?.length && !resendReady) return report
 
   let manifest: NotificationCapableTool[]
   try {
@@ -217,6 +223,17 @@ export async function notify(opts: {
     }
   }
 
+  // Resend is the out-of-band channel: it doesn't depend on any MCP
+  // connection, so it still delivers when the failure IS a broken connection.
+  if (resendReady) {
+    try {
+      await sendResendEmail({ subject: opts.title, text: opts.body })
+      report.sent.push({ channel: "resend", ok: true })
+    } catch (e) {
+      report.errors.push({ channel: "resend", error: (e as Error)?.message ?? String(e) })
+    }
+  }
+
   return report
 }
 
@@ -250,8 +267,12 @@ async function defaultToolCaller(
   params: Record<string, unknown>,
 ): Promise<unknown> {
   // Dynamic import so a missing connection file doesn't break startup.
+  // Cache-bust on the file's mtime, not Date.now(): the module only needs
+  // re-importing when typegen rewrote it, and a unique query string per call
+  // would leak one Bun module-cache entry per notification in a 24/7 process.
   const modulePath = join(CONNECTIONS_DIR, `${connection}.ts`)
-  const mod = await import(`${modulePath}?_t=${Date.now()}`)
+  const mtimeMs = Math.floor(statSync(modulePath).mtimeMs)
+  const mod = await import(`${modulePath}?_t=${mtimeMs}`)
   const fn = (mod as Record<string, unknown>)[tool] as ((p: Record<string, unknown>) => Promise<unknown>) | undefined
   if (typeof fn !== "function") {
     throw new Error(`Generated connection module "${connection}" has no exported tool "${tool}"`)

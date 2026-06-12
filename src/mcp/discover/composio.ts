@@ -56,8 +56,13 @@ export async function discover(connection: McpConnection): Promise<Tool[]> {
     const sessionData = JSON.parse(sessionResult?.data?.stdout ?? "{}")
     connectedToolkits = Object.keys(sessionData?.config?.auth_configs ?? {})
   } catch (e: any) {
-    console.log(`[composio] Failed to parse session info: ${e?.message ?? e}`)
-    return []
+    // Don't return [] here — "discovery broke" and "nothing connected" are
+    // different conditions, and a silent empty result makes the connect flow
+    // report success with 0 tools instead of surfacing the real problem.
+    throw new Error(
+      `Composio session discovery failed (could not parse session info): ${e?.message ?? e}. ` +
+      `Try reconnecting composio.`,
+    )
   }
 
   if (connectedToolkits.length === 0) {

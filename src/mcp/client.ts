@@ -15,6 +15,7 @@ import { SCHEMAS_DIR } from "../config/paths.js"
 import { runContext } from "../sdk/context.js"
 import { USER_CANCELLED_MESSAGE } from "../run-cancel.js"
 import { logSessionEvent } from "../debug/session-log.js"
+import { reportConnectionIssue, reportConnectionOk } from "../services/connection-status.js"
 
 export type McpConnection = {
   client: Client
@@ -225,6 +226,10 @@ async function recoverOAuth(
   const hasSavedTokens = (await authProvider.tokens()) !== undefined
   if (hasSavedTokens) {
     console.warn(`[jig] ${name}: saved OAuth credentials were rejected. Clearing and re-authorizing.`)
+    // Surface this on the dashboard + system notification before attempting
+    // recovery: on a headless server nobody completes the browser flow below,
+    // so this is the operator's only signal that re-auth is needed.
+    reportConnectionIssue(name, "auth-required", errorMessageForReport(error))
     deleteCredentials(name)
     return handleOAuthRedirect(name, config, new JigOAuthProvider(name), options)
   }
@@ -500,6 +505,7 @@ const openConnections = new Map<string, McpConnection>()
 
 export function registerConnection(name: string, conn: McpConnection) {
   openConnections.set(name, conn)
+  reportConnectionOk(name)
 }
 
 /** Close all open MCP connections. Call at end of CLI runs and server shutdown. */
@@ -767,6 +773,59 @@ export function shouldReconnectMcpConnection(error: unknown): boolean {
 
 function isDisconnectedMcpClientError(error: unknown): boolean {
   return error instanceof Error && error.message === "Not connected"
+}
+
+function errorMessageForReport(error: unknown): string {
+  if (error instanceof Error) return error.message
+  return String(error)
+}
+
+// A server restarting or a dropped SSE stream often needs a moment before a
+// fresh connection succeeds — an instant single retry (the old behavior)
+// fails right back. Three retries with short backoff cover transient blips
+// without stalling a run for long.
+const MCP_RECONNECT_DELAYS_MS = [100, 500, 2000]
+
+/**
+ * Run an MCP tool call, reconnecting with backoff on transport/auth-shaped
+ * errors. `closeStaleConnection` drops the cached connection so the next
+ * attempt goes through connectServer() again. Used by the generated
+ * connection modules (typegen) — the single retry path for every tool call.
+ *
+ * Exhausting all retries marks the connection unreachable (dashboard status
+ * + debounced system notification) and rethrows the last error.
+ */
+export async function invokeWithMcpReconnect<T>(
+  serverName: string,
+  closeStaleConnection: () => Promise<void>,
+  run: () => Promise<T>,
+): Promise<T> {
+  let lastError: unknown
+  try {
+    return await run()
+  } catch (error) {
+    if (!shouldReconnectMcpConnection(error)) throw error
+    lastError = error
+  }
+  for (let attempt = 1; attempt <= MCP_RECONNECT_DELAYS_MS.length; attempt++) {
+    await Bun.sleep(MCP_RECONNECT_DELAYS_MS[attempt - 1])
+    logSessionEvent({
+      source: "mcp.connection",
+      event: "reconnect",
+      server: serverName,
+      attempt,
+      error: errorMessageForReport(lastError),
+    })
+    await closeStaleConnection()
+    try {
+      return await run()
+    } catch (error) {
+      if (!shouldReconnectMcpConnection(error)) throw error
+      lastError = error
+    }
+  }
+  reportConnectionIssue(serverName, "unreachable", errorMessageForReport(lastError))
+  throw lastError
 }
 
 /**

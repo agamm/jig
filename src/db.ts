@@ -335,9 +335,15 @@ export function openDb(path?: string): Database {
       )
     }
     if (dbPath !== ":memory:") {
-      // Treat remaining errors as likely corruption; wipe once and retry.
-      console.warn("DB error, recreating:", msg)
-      try { require("fs").unlinkSync(dbPath) } catch {}
+      // Treat remaining errors as likely corruption. Move the damaged file
+      // aside instead of deleting — run history, schedules, and credentials
+      // may be recoverable with sqlite3 .recover, and silently destroying
+      // them turns one failure into a permanent data loss.
+      const backupPath = `${dbPath}.corrupt-${new Date().toISOString().replace(/[:.]/g, "-")}`
+      console.error(`DB error, recreating: ${msg}. Damaged file saved to ${backupPath}`)
+      try { require("fs").renameSync(dbPath, backupPath) } catch {
+        try { require("fs").unlinkSync(dbPath) } catch {}
+      }
       try { require("fs").unlinkSync(dbPath + "-shm") } catch {}
       try { require("fs").unlinkSync(dbPath + "-wal") } catch {}
       _db = new Database(dbPath)
@@ -874,6 +880,25 @@ export function setToolPermission(connection: string, tool: string, policy: Tool
     `INSERT INTO tool_permissions (connection, tool, policy, updated_at) VALUES (?, ?, ?, datetime('now'))
      ON CONFLICT(connection, tool) DO UPDATE SET policy = excluded.policy, updated_at = datetime('now')`
   ).run(connection, tool, policy)
+}
+
+/**
+ * Retention: delete finished runs (and their steps) older than `days`.
+ * Called from the scheduler's daily maintenance pass so a 24/7 instance
+ * doesn't grow the runs/run_steps tables without bound.
+ */
+export function pruneOldRuns(days: number): { runs: number; steps: number } {
+  const db = openDb()
+  const cutoff = `-${Math.max(1, Math.floor(days))} days`
+  const steps = db.prepare(
+    `DELETE FROM run_steps WHERE run_id IN (
+       SELECT id FROM runs WHERE finished_at IS NOT NULL AND finished_at < datetime('now', ?)
+     )`
+  ).run(cutoff).changes
+  const runs = db.prepare(
+    `DELETE FROM runs WHERE finished_at IS NOT NULL AND finished_at < datetime('now', ?)`
+  ).run(cutoff).changes
+  return { runs, steps }
 }
 
 // ---------------------------------------------------------------------------

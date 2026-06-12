@@ -6,7 +6,7 @@ export type ConnectEvent =
   | { type: "tools-discovered"; server: string; count: number; tools: string[] }
   | { type: "server-ready"; server: string }
   | { type: "setup-instructions"; message: string }
-  | { type: "awaiting-oauth"; server: string; authorizationUrl: string }
+  | { type: "awaiting-oauth"; server: string; authorizationUrl: string; browserOpened?: boolean }
   | { type: "error"; code: string; message: string; details?: Record<string, any> }
 
 export interface ConnectIO {
@@ -42,7 +42,7 @@ export async function runConnectFlow(
   let result = await backend.connect(serverName)
   if (!result.ok) {
     if ("awaitingOAuth" in result && result.awaitingOAuth) {
-      io.emit({ type: "awaiting-oauth", server: serverName, authorizationUrl: result.authorizationUrl })
+      io.emit({ type: "awaiting-oauth", server: serverName, authorizationUrl: result.authorizationUrl, browserOpened: result.browserOpened })
       // Background connect keeps running on the server; it resolves when the
       // OAuth callback fires. The frontend polls /api/connections/:name and
       // flips the UI to connected once the schema appears. Nothing else to
@@ -65,7 +65,7 @@ export async function runConnectFlow(
     result = await backend.connect(serverName, credentials)
     if (!result.ok) {
       if ("awaitingOAuth" in result && result.awaitingOAuth) {
-        io.emit({ type: "awaiting-oauth", server: serverName, authorizationUrl: result.authorizationUrl })
+        io.emit({ type: "awaiting-oauth", server: serverName, authorizationUrl: result.authorizationUrl, browserOpened: result.browserOpened })
         return
       }
       const missingAfter = "missingCredentials" in result ? result.missingCredentials : []

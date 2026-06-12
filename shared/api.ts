@@ -160,6 +160,8 @@ export type ConnectConnectionResponse =
       awaitingOAuth: true
       server: string
       authorizationUrl: string
+      /** Local mode auto-opens the browser server-side — dashboard shouldn't re-open. */
+      browserOpened?: boolean
     }
 
 export interface DisconnectConnectionResponse {

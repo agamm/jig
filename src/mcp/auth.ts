@@ -306,6 +306,7 @@ export function renderOAuthErrorPage(serverName: string, error: string): string 
  */
 export class JigOAuthProvider implements OAuthClientProvider {
   private _authResolve?: (code: string) => void
+  private _authReject?: (err: Error) => void
   private _callbackServer?: Server
   private _activeState?: string
 
@@ -379,7 +380,12 @@ export class JigOAuthProvider implements OAuthClientProvider {
       return
     }
 
-    // Local dev: preserve the existing loopback + auto-open flow.
+    // Local dev: loopback callback server + auto-open the browser. Also stage
+    // the URL so the HTTP connect handler can return immediately (awaitingOAuth)
+    // instead of blocking the request through the whole browser dance — a
+    // blocked request gets killed by the server's idleTimeout long before a
+    // human finishes authorizing, which silently breaks every local OAuth.
+    setPendingAuthUrl(this.serverName, url)
     await this.startCallbackServer()
     await open(url)
   }
@@ -408,6 +414,7 @@ export class JigOAuthProvider implements OAuthClientProvider {
     return new Promise((resolve, reject) => {
       const cleanup = () => {
         signal?.removeEventListener("abort", onAbort)
+        this._authReject = undefined
       }
 
       const onAbort = () => {
@@ -418,12 +425,21 @@ export class JigOAuthProvider implements OAuthClientProvider {
           this._activeState = undefined
         }
         clearPendingAuthUrl(this.serverName)
+        // Free the loopback port so a retry can bind it.
+        this.stopCallbackServer()
         reject(new Error(USER_CANCELLED_MESSAGE))
       }
 
       this._authResolve = (code: string) => {
         cleanup()
         resolve(code)
+      }
+      // Lets the loopback server's bind-error handler fail the connect instead
+      // of leaving it to hang until the 10-min timeout.
+      this._authReject = (err: Error) => {
+        cleanup()
+        this._authResolve = undefined
+        reject(err)
       }
 
       if (signal?.aborted) {
@@ -452,7 +468,9 @@ export class JigOAuthProvider implements OAuthClientProvider {
       if (code) {
         res.writeHead(200, { "Content-Type": "text/html" })
         res.end(renderOAuthSuccessPage(this.serverName))
-        this._authResolve?.(code)
+        // resolveAuthCode (not _authResolve directly) so the staged pending
+        // URL is cleared — otherwise a re-connect could pick up a stale URL.
+        this.resolveAuthCode(code)
         setTimeout(() => this.stopCallbackServer(), 2000)
       } else {
         res.writeHead(400, { "Content-Type": "text/html" })
@@ -461,6 +479,14 @@ export class JigOAuthProvider implements OAuthClientProvider {
       }
     })
 
+    // Surface a bind failure (port already held by an abandoned flow, another
+    // process, etc.) instead of hanging the connect forever with no signal.
+    this._callbackServer.on("error", (err) => {
+      console.error(`[jig][oauth] ${this.serverName}: callback server on :${CALLBACK_PORT} failed: ${(err as Error).message}`)
+      clearPendingAuthUrl(this.serverName)
+      this.stopCallbackServer()
+      this._authReject?.(err as Error)
+    })
     this._callbackServer.listen(CALLBACK_PORT)
   }
 

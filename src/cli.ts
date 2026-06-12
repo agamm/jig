@@ -180,10 +180,15 @@ function renderEvent(event: JigEvent): void {
       console.log(`\n${event.message}\n`)
       break
     case "awaiting-oauth":
-      // Only reached when jig is running as a remote service; local CLI uses
-      // the loopback flow and never emits this event. Surface the URL anyway
-      // in case someone SSHs into a Railway shell and runs `jig connect`.
-      console.log(`\nOpen this URL in any browser to authorize ${event.server}:\n  ${event.authorizationUrl}\n`)
+      // Connect no longer blocks the HTTP request through the browser dance
+      // (that got killed by the server idleTimeout), so this fires in both
+      // modes now. Local mode also auto-opens the browser server-side; the
+      // background connect completes against the running server.
+      console.log(
+        event.browserOpened
+          ? `\nAuthorizing ${event.server} in your browser… if nothing opened, visit:\n  ${event.authorizationUrl}\n`
+          : `\nOpen this URL in any browser to authorize ${event.server}:\n  ${event.authorizationUrl}\n`,
+      )
       break
 
     // Run events

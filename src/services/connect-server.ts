@@ -28,6 +28,7 @@ export type ConnectServerAwaitingOAuth = {
   awaitingOAuth: true
   server: string
   authorizationUrl: string
+  browserOpened?: boolean
 }
 
 export type ConnectServerResult = ConnectServerSuccess | ConnectServerNeedsCredentials | ConnectServerAwaitingOAuth
@@ -63,38 +64,49 @@ export async function connectConfiguredServer(
 
   const config = await getServerConfig(serverName)
 
-  // In service mode, the caller is an HTTP request that can't drive a
-  // loopback OAuth flow — so we can't let the request block on
-  // waitForAuthCode. Kick off connect as a detached promise, and race it
-  // against `waitForPendingAuthUrl`: if an OAuth URL appears first, return
-  // it immediately so the dashboard can open it, and let the connect promise
-  // continue in the background (it will resolve when the callback fires and
-  // completePendingOAuth hands the code over).
-  if (isServiceMode()) {
-    const detached = runConnectToCompletion(serverName, rawConfig, config, input.signal).catch((err) => {
+  // The caller is an HTTP request. We must NOT block it through an interactive
+  // OAuth flow: a request held open through the browser dance is idle from the
+  // server's perspective and gets closed by Bun's idleTimeout (30s) long before
+  // a human finishes authorizing — which silently aborts the connect and breaks
+  // EVERY OAuth connect (local and service alike).
+  //
+  // So: kick off connect detached, and race it against `waitForPendingAuthUrl`.
+  // If an OAuth URL appears first, return it immediately (service mode: the
+  // dashboard opens it; local mode: the browser was already auto-opened) and
+  // let the connect resolve in the background when the callback fires — the
+  // loopback server (local) or /api/oauth/callback (service) hands over the code.
+  // The background connect runs on its own AbortController, NOT req.signal, so
+  // the request returning doesn't kill it; a generous timeout cleans up an
+  // abandoned authorization.
+  const oauthController = new AbortController()
+  const oauthTimeout = setTimeout(() => oauthController.abort(), 10 * 60_000)
+  const detached = runConnectToCompletion(serverName, rawConfig, config, oauthController.signal)
+    .catch((err) => {
       console.error(`[connection] ${serverName} failed:`, err?.message ?? err)
       return null
     })
-    const racer = Promise.race([
-      detached.then((res) => ({ kind: "done" as const, res })),
-      waitForPendingAuthUrl(serverName, 30_000).then((url) => ({ kind: "oauth" as const, url })),
-    ])
-    const outcome = await racer
-    if (outcome.kind === "oauth" && outcome.url) {
-      return {
-        ok: false,
-        awaitingOAuth: true,
-        server: serverName,
-        authorizationUrl: outcome.url,
-      }
-    }
-    // `done` won, or OAuth timed out. Await the detached result either way.
-    const finalRes = await detached
-    if (!finalRes) throw new Error(`Connect to ${serverName} failed — see server logs`)
-    return finalRes
-  }
+    .finally(() => clearTimeout(oauthTimeout))
 
-  return await runConnectToCompletion(serverName, rawConfig, config, input.signal)
+  const outcome = await Promise.race([
+    detached.then((res) => ({ kind: "done" as const, res })),
+    waitForPendingAuthUrl(serverName, 30_000).then((url) => ({ kind: "oauth" as const, url })),
+  ])
+  if (outcome.kind === "oauth" && outcome.url) {
+    return {
+      ok: false,
+      awaitingOAuth: true,
+      server: serverName,
+      authorizationUrl: outcome.url,
+      // Local mode auto-opens the browser server-side; tell the dashboard so it
+      // doesn't pop a second tab to the same URL.
+      browserOpened: !isServiceMode(),
+    }
+  }
+  // `done` won (non-OAuth server, or it finished fast), or OAuth never staged a
+  // URL within the window. Await the detached result either way.
+  const finalRes = await detached
+  if (!finalRes) throw new Error(`Connect to ${serverName} failed — see server logs`)
+  return finalRes
 }
 
 /**

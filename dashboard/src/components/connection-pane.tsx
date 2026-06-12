@@ -194,10 +194,11 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
             case "awaiting-oauth":
               setConnectStatus(`Opening authorization window for ${event.server}. If nothing opens, click the link below.`)
               setOauthUrl(event.authorizationUrl)
-              // Open in a new tab; the user authorizes, the callback fires
-              // server-side, and the background connect resolves. We poll
-              // fetchConnections to detect completion.
-              if (typeof window !== "undefined") {
+              // The user authorizes, the callback fires server-side, and the
+              // background connect resolves. We poll fetchConnections to detect
+              // completion. In local mode the browser was already auto-opened
+              // server-side (browserOpened) — don't pop a second tab.
+              if (typeof window !== "undefined" && !event.browserOpened) {
                 try { window.open(event.authorizationUrl, "_blank", "noopener,noreferrer") } catch {}
               }
               break

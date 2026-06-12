@@ -201,6 +201,43 @@ export interface OpenRouterCatalogResponse {
   fetchedAt: number
 }
 
+export interface ModelUpgradeSuggestion {
+  slot: ModelSlot
+  current: OpenRouterModelInfo
+  suggested: OpenRouterModelInfo
+  // Human-readable reason: "newer • 38% cheaper • rank 12 → 8"
+  reason: string
+  // Counts of jigs that explicitly reference the *current* model id. Override
+  // and step counts are auto-updatable on approval; code refs need a manual
+  // source edit and are surfaced read-only.
+  overrideRefCount: number
+  stepRefCount: number
+  codeRefCount: number
+}
+
+export interface ModelUpgradesResponse {
+  suggestions: ModelUpgradeSuggestion[]
+  fetchedAt: number
+}
+
+export interface ApplyModelUpgradeRequest {
+  slot: ModelSlot
+  modelId: string
+  updateJigs: boolean
+}
+
+export interface ApplyModelUpgradeResponse {
+  ok: true
+  slot: ModelSlot
+  modelId: string
+  jigsUpdated: number
+}
+
+export interface DismissModelUpgradeRequest {
+  slot: ModelSlot
+  modelId: string
+}
+
 export interface DataStorageHealth {
   ok: boolean
   path: string
@@ -211,7 +248,8 @@ export interface DataStorageHealth {
   action?: string
 }
 
-export type ModelSlot = "main" | "editor" | "fast"
+export const MODEL_SLOTS = ["main", "editor", "fast"] as const
+export type ModelSlot = (typeof MODEL_SLOTS)[number]
 
 export interface ModelOverrideInput {
   main?: string
@@ -530,6 +568,9 @@ export interface ApiContracts {
   changePassword: ApiContract<{ newPassword: string }, OkResponse>
   models: ApiContract<ModelOverrideInput | void, ModelCatalog>
   modelsCatalog: ApiContract<void, OpenRouterCatalogResponse>
+  modelUpgrades: ApiContract<void, ModelUpgradesResponse>
+  applyModelUpgrade: ApiContract<ApplyModelUpgradeRequest, ApplyModelUpgradeResponse>
+  dismissModelUpgrade: ApiContract<DismissModelUpgradeRequest, OkResponse>
   listJigs: ApiContract<void, JigData[]>
   listExamples: ApiContract<void, ExampleJig[]>
   addExample: ApiContract<void, AddExampleJigResponse>

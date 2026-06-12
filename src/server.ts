@@ -11,6 +11,12 @@ import { join } from "path"
 import { closeDb, deleteJigLocalState, openDb } from "./db.js"
 import { getModelCatalog, setModelOverrides } from "./config/models.js"
 import { fetchOpenRouterModels } from "./services/openrouter-catalog.js"
+import {
+  applyUpgrade as applyModelUpgradeImpl,
+  computeUpgradeSuggestions,
+  dismissUpgrade as dismissModelUpgradeImpl,
+} from "./services/model-upgrade.js"
+import { MODEL_SLOTS, type ModelSlot } from "../shared/api.js"
 import { CONNECTIONS_DIR, DB_PATH, JIGS_DIR, NOTIFICATION_TOOLS_PATH, SCHEMAS_DIR, TYPES_DIR } from "./config/paths.js"
 import { extractConnections } from "./domain/jig-source.js"
 import { invalidateJigsCache } from "./discover.js"
@@ -78,6 +84,20 @@ const SERVER_STARTED_AT = Date.now()
 
 function ensureJigExists(id: string): void {
   if (!discoverAllJigs().has(id)) throw new ApiError(404, `Jig not found: ${id}`)
+}
+
+function parseSlot(value: unknown): ModelSlot {
+  if (typeof value === "string" && (MODEL_SLOTS as readonly string[]).includes(value)) {
+    return value as ModelSlot
+  }
+  throw new ApiError(400, `slot must be one of: ${MODEL_SLOTS.join(", ")}`)
+}
+
+function parseModelId(value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new ApiError(400, "modelId is required")
+  }
+  return value.trim()
 }
 
 // ---------------------------------------------------------------------------
@@ -619,6 +639,22 @@ export function createApiServer(port: number) {
           }
           case "modelsCatalog":
             return apiJson("modelsCatalog", await fetchOpenRouterModels())
+          case "modelUpgrades":
+            return apiJson("modelUpgrades", await computeUpgradeSuggestions())
+          case "applyModelUpgrade": {
+            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+            const body = (await req.json().catch(() => ({}))) as Record<string, unknown>
+            return apiJson(
+              "applyModelUpgrade",
+              applyModelUpgradeImpl(parseSlot(body.slot), parseModelId(body.modelId), body.updateJigs === true),
+            )
+          }
+          case "dismissModelUpgrade": {
+            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+            const body = (await req.json().catch(() => ({}))) as Record<string, unknown>
+            dismissModelUpgradeImpl(parseSlot(body.slot), parseModelId(body.modelId))
+            return apiJson("dismissModelUpgrade", { ok: true as const })
+          }
           case "listJigs": {
             const jigs = await Promise.all(
               [...discoverAllJigs().keys()].map((id) => buildJigResponse(id, 10, true))

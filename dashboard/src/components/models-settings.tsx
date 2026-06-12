@@ -44,7 +44,7 @@ const SLOT_ORDER: ModelSlot[] = ["main", "editor", "fast"];
 const PRICE_CEILING_USD_PER_M = 5;
 const FAST_PRICE_CEILING_USD_PER_M = 1;
 
-const SLOT_META: Record<ModelSlot, { label: string; hint: string }> = {
+export const SLOT_META: Record<ModelSlot, { label: string; hint: string }> = {
   main: {
     label: "Main",
     hint: `Most popular agentic workflow models — tool-calling required, under $${PRICE_CEILING_USD_PER_M}/M blended.`,
@@ -63,13 +63,13 @@ const SLOT_META: Record<ModelSlot, { label: string; hint: string }> = {
 // Pure helpers — API-only, no brand/name regex
 // ---------------------------------------------------------------------------
 
-function fmtPrice(usdPerM: number): string {
+export function fmtPrice(usdPerM: number): string {
   if (usdPerM === 0) return "free";
   if (usdPerM < 0.01) return `$${usdPerM.toFixed(4)}`;
   return `$${usdPerM.toFixed(2)}`;
 }
 
-function fmtContext(n: number): string {
+export function fmtContext(n: number): string {
   if (!n) return "—";
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`;
   if (n >= 1000) return `${Math.round(n / 1000)}k`;

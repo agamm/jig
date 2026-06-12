@@ -16,6 +16,7 @@ import { ModelsSettings } from "@/components/models-settings";
 import { SystemSettings } from "@/components/system-settings";
 import { DangerSettings } from "@/components/danger-settings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { ModelUpgradeModal } from "@/components/model-upgrade-modal";
 import { ServiceIcon } from "@/components/service-icon";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/resizable";
 import { Button } from "@/components/button";
@@ -26,8 +27,8 @@ import { isRecommendedConnection, sortConnectionsForDisplay } from "@/lib/connec
 import { useConnectionCatalog } from "@/lib/hooks";
 import { useModels, useConnections } from "@/lib/swr";
 import { APP_VERSION } from "@/lib/version";
-import { addExampleJig, closeAgentSession, createCustomConnection } from "@/lib/api";
-import type { DataStorageHealth, ExampleJig } from "@shared/api";
+import { addExampleJig, closeAgentSession, createCustomConnection, fetchModelUpgrades } from "@/lib/api";
+import type { DataStorageHealth, ExampleJig, ModelUpgradeSuggestion } from "@shared/api";
 
 function useLocalStorage(key: string, initial: boolean): [boolean, (v: boolean) => void, boolean] {
   const [value, setValue] = useState(initial);
@@ -84,6 +85,24 @@ export function DashboardShell({
   const [customConnectionStatus, setCustomConnectionStatus] = useState<{ tone: "success" | "danger"; message: string } | null>(null);
   const [draftToDiscard, setDraftToDiscard] = useState<Jig | null>(null);
   const [discardingDraft, setDiscardingDraft] = useState(false);
+  const [modelUpgrades, setModelUpgrades] = useState<ModelUpgradeSuggestion[]>([]);
+
+  // Fire-and-forget check for newer-better models in the same family. Runs
+  // once per dashboard mount, fully off the render path so it never delays
+  // first paint. Dismissing sets the list to [] and the effect's empty deps
+  // mean we won't re-fetch this session.
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetchModelUpgrades({ signal: controller.signal })
+      .then((res) => {
+        if (controller.signal.aborted) return;
+        if (res.suggestions.length > 0) setModelUpgrades(res.suggestions);
+      })
+      .catch(() => {
+        // Best-effort — silent on network/abort errors.
+      });
+    return () => controller.abort();
+  }, []);
   const { data: models } = useModels();
   const { data: connections, isLoading: connectionsLoading, error: connectionsError } = useConnections();
 
@@ -498,6 +517,13 @@ export function DashboardShell({
       onConfirm={confirmDiscardUnderConstruction}
       onClose={() => !discardingDraft && setDraftToDiscard(null)}
     />
+
+    {modelUpgrades.length > 0 && (
+      <ModelUpgradeModal
+        suggestions={modelUpgrades}
+        onClose={() => setModelUpgrades([])}
+      />
+    )}
 
     <div className="flex h-full" style={{ background: "#0a0a0b" }}>
       <nav className={`flex shrink-0 flex-col border-r border-[#1f1f23] bg-[#0a0a0b] transition-all duration-200 overflow-hidden ${collapsed ? "w-[52px]" : "w-[180px]"}`}>

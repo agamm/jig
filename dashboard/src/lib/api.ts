@@ -16,6 +16,10 @@ import type {
   RestoreToPendingResponse,
   ModelCatalog,
   ModelOverrideInput,
+  ModelUpgradesResponse,
+  ApplyModelUpgradeRequest,
+  ApplyModelUpgradeResponse,
+  DismissModelUpgradeRequest,
   OpenRouterCatalogResponse,
   NotificationSettings,
   NotificationSettingsResponse,
@@ -119,6 +123,26 @@ export function updateModels(patch: ModelOverrideInput): Promise<ModelCatalog> {
 
 export function fetchOpenRouterCatalog(): Promise<OpenRouterCatalogResponse> {
   return fetchApi("modelsCatalog", "/api/models/catalog")
+}
+
+export function fetchModelUpgrades(init?: Pick<RequestInit, "signal">): Promise<ModelUpgradesResponse> {
+  return fetchApi("modelUpgrades", "/api/models/upgrades", { signal: init?.signal })
+}
+
+export function applyModelUpgrade(input: ApplyModelUpgradeRequest): Promise<ApplyModelUpgradeResponse> {
+  return fetchApi("applyModelUpgrade", "/api/models/upgrades/apply", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  })
+}
+
+export function dismissModelUpgrade(input: DismissModelUpgradeRequest): Promise<ApiResponse<"dismissModelUpgrade">> {
+  return fetchApi("dismissModelUpgrade", "/api/models/upgrades/dismiss", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  })
 }
 
 export function updateJigModel(jigId: string, model: string | null): Promise<ApiResponse<"updateJigModel">> {

@@ -10,6 +10,9 @@ export function matchRoute(pathname: string): { handler: string; params: Record<
   if (pathname === "/api/events") return { handler: "liveUpdates", params: {} }
   if (pathname === "/api/models") return { handler: "models", params: {} }
   if (pathname === "/api/models/catalog") return { handler: "modelsCatalog", params: {} }
+  if (pathname === "/api/models/upgrades") return { handler: "modelUpgrades", params: {} }
+  if (pathname === "/api/models/upgrades/apply") return { handler: "applyModelUpgrade", params: {} }
+  if (pathname === "/api/models/upgrades/dismiss") return { handler: "dismissModelUpgrade", params: {} }
   if (pathname === "/api/jigs") return { handler: "listJigs", params: {} }
   if (pathname === "/api/examples") return { handler: "listExamples", params: {} }
 

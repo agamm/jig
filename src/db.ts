@@ -288,6 +288,15 @@ function runMigrations(db: Database) {
 
 let _db: Database | null = null
 
+// Concurrent CLI + scheduler tick + API requests all touch the same SQLite
+// file. WAL allows parallel reads + one writer; busy_timeout makes the
+// writer queue instead of erroring with SQLITE_BUSY on collision.
+function configurePragmas(db: Database): void {
+  db.exec("PRAGMA journal_mode = WAL")
+  db.exec("PRAGMA foreign_keys = ON")
+  db.exec("PRAGMA busy_timeout = 5000")
+}
+
 export function openDb(path?: string): Database {
   if (_db) return _db
   const dbPath = path ?? DB_PATH
@@ -311,8 +320,7 @@ export function openDb(path?: string): Database {
 
   try {
     _db = new Database(dbPath)
-    _db.exec("PRAGMA journal_mode = WAL")
-    _db.exec("PRAGMA foreign_keys = ON")
+    configurePragmas(_db)
     _db.exec(SCHEMA)
     runMigrations(_db)
   } catch (e: any) {
@@ -333,8 +341,7 @@ export function openDb(path?: string): Database {
       try { require("fs").unlinkSync(dbPath + "-shm") } catch {}
       try { require("fs").unlinkSync(dbPath + "-wal") } catch {}
       _db = new Database(dbPath)
-      _db.exec("PRAGMA journal_mode = WAL")
-      _db.exec("PRAGMA foreign_keys = ON")
+      configurePragmas(_db)
       _db.exec(SCHEMA)
       runMigrations(_db)
     } else {

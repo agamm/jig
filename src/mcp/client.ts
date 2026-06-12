@@ -92,7 +92,7 @@ async function connectClient(
 export async function connectServer(
   name: string,
   config: ServerConfig & { type: "stdio" | "remote" },
-  options: { signal?: AbortSignal } = {}
+  options: { signal?: AbortSignal; interactive?: boolean } = {}
 ): Promise<McpConnection> {
   throwIfAborted(options.signal)
   const client = new Client({ name: "jig", version: "0.1.0" })
@@ -160,7 +160,7 @@ async function connectWithHeaders(
 async function connectWithOAuth(
   name: string,
   config: ServerConfig & { type: "remote" },
-  options: { signal?: AbortSignal } = {}
+  options: { signal?: AbortSignal; interactive?: boolean } = {}
 ): Promise<McpConnection> {
   throwIfAborted(options.signal)
   const authProvider = new JigOAuthProvider(name)
@@ -221,15 +221,28 @@ async function recoverOAuth(
   authProvider: JigOAuthProvider,
   transport: StreamableHTTPClientTransport | null,
   error: unknown,
-  options: { signal?: AbortSignal },
+  options: { signal?: AbortSignal; interactive?: boolean },
 ): Promise<McpConnection> {
   const hasSavedTokens = (await authProvider.tokens()) !== undefined
+
+  // Record + notify regardless of mode — this is the operator's signal that
+  // the connection needs re-authorization.
+  reportConnectionIssue(name, "auth-required", errorMessageForReport(error))
+
+  // CRITICAL: only the explicit connect flow (dashboard "Connect") may open a
+  // browser. A tool call during a jig run is non-interactive — opening a
+  // browser there blocks the run for minutes waiting for an authorization
+  // nobody will complete (this is the composio "stuck for 3 min, no error"
+  // bug). Fail fast with a clear, actionable error instead.
+  if (!options.interactive) {
+    throw new Error(
+      `${name}: authorization expired or was revoked — reconnect it from the dashboard ` +
+      `(Connections → ${name}). Skipping browser re-auth during a run.`,
+    )
+  }
+
   if (hasSavedTokens) {
     console.warn(`[jig] ${name}: saved OAuth credentials were rejected. Clearing and re-authorizing.`)
-    // Surface this on the dashboard + system notification before attempting
-    // recovery: on a headless server nobody completes the browser flow below,
-    // so this is the operator's only signal that re-auth is needed.
-    reportConnectionIssue(name, "auth-required", errorMessageForReport(error))
     deleteCredentials(name)
     return handleOAuthRedirect(name, config, new JigOAuthProvider(name), options)
   }

@@ -172,7 +172,8 @@ async function runConnectToCompletion(
   config: Awaited<ReturnType<typeof getServerConfig>>,
   signal?: AbortSignal,
 ): Promise<ConnectServerSuccess> {
-  const connection = await connectServer(serverName, config, { signal })
+  // Explicit connect flow — a human is driving it, so browser re-auth is OK.
+  const connection = await connectServer(serverName, config, { signal, interactive: true })
   try {
     let tools = await discoverTools(connection, { signal })
 

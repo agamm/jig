@@ -13,6 +13,10 @@ function priceLabel(usdPerM: number): string {
   return fmt === "free" ? "Free" : `${fmt}/M`
 }
 
+function latencyLabel(ms: number): string {
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`
+}
+
 /**
  * Compact one-line spec: price first (the figure that actually changes a
  * decision), then context and capability flags. `priceTone` lets the
@@ -29,6 +33,18 @@ function ModelStats({ model, priceTone }: { model: OpenRouterModelInfo; priceTon
       </span>
       <span className="opacity-40">·</span>
       <span>{fmtContext(model.contextLength)}</span>
+      {typeof model.latencyMs === "number" && (
+        <>
+          <span className="opacity-40">·</span>
+          <span title="p50 time to first token">{latencyLabel(model.latencyMs)}</span>
+        </>
+      )}
+      {typeof model.throughputTps === "number" && (
+        <>
+          <span className="opacity-40">·</span>
+          <span title="p50 output throughput">{Math.round(model.throughputTps)} tok/s</span>
+        </>
+      )}
       {model.supportsTools && <span className="opacity-40">·</span>}
       {model.supportsTools && <span>tools</span>}
       {model.supportsReasoning && <span className="opacity-40">·</span>}

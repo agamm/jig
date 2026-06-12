@@ -25,7 +25,7 @@ import {
   getMainModel,
   setModelOverrides,
 } from "../config/models.js"
-import { fetchOpenRouterModels } from "./openrouter-catalog.js"
+import { fetchModelPerf, fetchOpenRouterModels } from "./openrouter-catalog.js"
 import {
   getJigRow,
   getStepModelOverrides,
@@ -172,10 +172,25 @@ export async function computeUpgradeSuggestions(): Promise<ModelUpgradesResponse
   if (picks.length === 0) return { suggestions: [], fetchedAt }
 
   const counts = await countRefsForAllSlots(currentBySlot)
+
+  // Enrich only the models actually shown (current + suggested per pick) with
+  // latency/throughput — these aren't in the bulk /models list. Dedup by id so
+  // a model used in two slots is fetched once.
+  const perfIds = new Set<string>()
+  for (const p of picks) { perfIds.add(p.current.id); perfIds.add(p.suggested.id) }
+  const perfById = new Map<string, Awaited<ReturnType<typeof fetchModelPerf>>>()
+  await Promise.all(
+    [...perfIds].map(async (id) => { perfById.set(id, await fetchModelPerf(id)) }),
+  )
+  const withPerf = (m: OpenRouterModelInfo): OpenRouterModelInfo => {
+    const perf = perfById.get(m.id)
+    return perf ? { ...m, latencyMs: perf.latencyMs, throughputTps: perf.throughputTps } : m
+  }
+
   const suggestions: ModelUpgradeSuggestion[] = picks.map(({ slot, current, suggested }) => ({
     slot,
-    current,
-    suggested,
+    current: withPerf(current),
+    suggested: withPerf(suggested),
     reason: reasonString(current, suggested),
     overrideRefCount: counts[slot].override,
     stepRefCount: counts[slot].step,

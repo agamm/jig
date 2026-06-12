@@ -96,3 +96,57 @@ export async function fetchOpenRouterModels(): Promise<{ models: OpenRouterModel
   cache = { at: Date.now(), data: models }
   return { models, fetchedAt: cache.at }
 }
+
+// ---------------------------------------------------------------------------
+// Per-model performance (latency / throughput) — only the basic /models list
+// lacks these; they live on the per-model endpoints API. Fetched on demand for
+// the handful of models in upgrade suggestions, cached separately.
+// ---------------------------------------------------------------------------
+
+export interface ModelPerf {
+  /** p50 time-to-first-token in ms, from the fastest live endpoint. */
+  latencyMs?: number
+  /** p50 output throughput in tokens/sec, from that endpoint. */
+  throughputTps?: number
+}
+
+const perfCache = new Map<string, { at: number; data: ModelPerf | null }>()
+
+export async function fetchModelPerf(modelId: string): Promise<ModelPerf | null> {
+  const cached = perfCache.get(modelId)
+  if (cached && Date.now() - cached.at < TTL_MS) return cached.data
+
+  const headers: Record<string, string> = {}
+  const key = getOpenRouterApiKey()
+  if (key) headers.Authorization = `Bearer ${key}`
+
+  try {
+    const res = await fetch(`https://openrouter.ai/api/v1/models/${modelId}/endpoints`, {
+      headers,
+      signal: AbortSignal.timeout(10_000),
+    })
+    if (!res.ok) {
+      perfCache.set(modelId, { at: Date.now(), data: null })
+      return null
+    }
+    const body = (await res.json()) as {
+      data?: { endpoints?: Array<{ latency_last_30m?: { p50?: number }; throughput_last_30m?: { p50?: number } }> }
+    }
+    const endpoints = body.data?.endpoints ?? []
+    // Pick the endpoint with the lowest measured p50 latency — the best a
+    // routed call could see. Ignore endpoints with no recent stats.
+    let best: ModelPerf | null = null
+    for (const e of endpoints) {
+      const lat = e.latency_last_30m?.p50
+      if (typeof lat !== "number") continue
+      if (!best || lat < (best.latencyMs ?? Infinity)) {
+        best = { latencyMs: lat, throughputTps: e.throughput_last_30m?.p50 }
+      }
+    }
+    perfCache.set(modelId, { at: Date.now(), data: best })
+    return best
+  } catch {
+    perfCache.set(modelId, { at: Date.now(), data: null })
+    return null
+  }
+}

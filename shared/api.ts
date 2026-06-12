@@ -207,6 +207,10 @@ export interface OpenRouterModelInfo {
   supportsReasoning: boolean
   createdAt: number
   rank: number
+  /** p50 time-to-first-token (ms) from the fastest live endpoint. Only populated for upgrade suggestions. */
+  latencyMs?: number
+  /** p50 output throughput (tokens/sec). Only populated for upgrade suggestions. */
+  throughputTps?: number
 }
 
 export interface OpenRouterCatalogResponse {

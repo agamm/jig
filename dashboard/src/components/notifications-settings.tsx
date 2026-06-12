@@ -298,7 +298,7 @@ export function NotificationsSettings() {
                           </span>
                         </div>
                         {tool.description ? (
-                          <p className="mt-0.5 text-[10px] leading-relaxed text-[var(--text-dim)]">{tool.description}</p>
+                          <p className="mt-0.5 line-clamp-2 text-[10px] leading-relaxed text-[var(--text-dim)]" title={tool.description}>{tool.description}</p>
                         ) : null}
                       </div>
                     </div>

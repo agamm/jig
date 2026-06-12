@@ -85,6 +85,17 @@ a:focus-visible {
   color: var(--text-faint);
 }
 
+/* Kill the browser's yellow autofill background — keep the dark field. */
+.ui-input:-webkit-autofill,
+.ui-input:-webkit-autofill:hover,
+.ui-input:-webkit-autofill:focus,
+.ui-textarea:-webkit-autofill {
+  -webkit-text-fill-color: var(--text-primary);
+  -webkit-box-shadow: 0 0 0 1000px var(--surface-input) inset;
+  caret-color: var(--text-primary);
+  transition: background-color 9999s ease-in-out 0s;
+}
+
 .ui-input:hover,
 .ui-textarea:hover {
   border-color: var(--border-strong);

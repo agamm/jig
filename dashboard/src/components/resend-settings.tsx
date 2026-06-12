@@ -65,6 +65,19 @@ export function ResendSettings({ compact = false }: { compact?: boolean }) {
     setTesting(true);
     setStatus(null);
     try {
+      // Save first so a just-entered key/recipient is persisted before the
+      // server-side test reads them from the credentials/settings store —
+      // otherwise the test would run against the previously-saved state.
+      if (apiKey.trim() || to.trim()) {
+        const saved = await saveResendSettings({
+          ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+          to: to.trim(),
+          from: from.trim(),
+        });
+        setHasKey(saved.hasKey);
+        setConfigured(saved.configured);
+        setApiKey("");
+      }
       const result = await sendResendTest();
       if (result.ok) setStatus({ tone: "success", message: "Test email sent. Check your inbox." });
       else setStatus({ tone: "danger", message: `Test failed: ${result.error ?? "unknown error"}` });
@@ -113,6 +126,7 @@ export function ResendSettings({ compact = false }: { compact?: boolean }) {
             value={apiKey}
             placeholder={hasKey ? "•••••••••• (stored — leave blank to keep)" : "re_..."}
             inputClassName="ui-input-compact"
+            autoComplete="off"
             autoCapitalize="off"
             autoCorrect="off"
             spellCheck={false}
@@ -159,7 +173,7 @@ export function ResendSettings({ compact = false }: { compact?: boolean }) {
         <Button onClick={onSave} disabled={saving || !canSave} variant="success" size="md">
           {saving ? "Saving…" : "Save"}
         </Button>
-        <Button onClick={onTest} disabled={testing || !configured} variant="subtle" size="md">
+        <Button onClick={onTest} disabled={testing || (!canSave && !configured)} variant="subtle" size="md">
           {testing ? "Sending…" : "Send test"}
         </Button>
       </div>

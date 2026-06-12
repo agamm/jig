@@ -13,26 +13,26 @@ function priceLabel(usdPerM: number): string {
   return fmt === "free" ? "Free" : `${fmt}/M`
 }
 
-function ModelStats({ model }: { model: OpenRouterModelInfo }) {
+/**
+ * Compact one-line spec: price first (the figure that actually changes a
+ * decision), then context and capability flags. `priceTone` lets the
+ * suggested side flag a cost increase so "upgrade" doesn't hide a 10× bill.
+ */
+function ModelStats({ model, priceTone }: { model: OpenRouterModelInfo; priceTone?: "up" | "down" | "same" }) {
+  const priceClass =
+    priceTone === "up" ? "text-amber-400" : priceTone === "down" ? "text-emerald-400" : "text-[var(--text-secondary)]"
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-[var(--text-muted)]">
-      <span>{priceLabel(model.blendedPriceUsdPerM)}</span>
-      <span className="opacity-50">·</span>
-      <span>rank #{model.rank + 1}</span>
-      <span className="opacity-50">·</span>
-      <span>{fmtContext(model.contextLength)} ctx</span>
-      {model.supportsTools && (
-        <>
-          <span className="opacity-50">·</span>
-          <span>tools</span>
-        </>
-      )}
-      {model.supportsReasoning && (
-        <>
-          <span className="opacity-50">·</span>
-          <span>reasoning</span>
-        </>
-      )}
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-[var(--text-muted)]">
+      <span className={`font-medium ${priceClass}`}>
+        {priceLabel(model.blendedPriceUsdPerM)}
+        {priceTone === "up" ? " ↑" : priceTone === "down" ? " ↓" : ""}
+      </span>
+      <span className="opacity-40">·</span>
+      <span>{fmtContext(model.contextLength)}</span>
+      {model.supportsTools && <span className="opacity-40">·</span>}
+      {model.supportsTools && <span>tools</span>}
+      {model.supportsReasoning && <span className="opacity-40">·</span>}
+      {model.supportsReasoning && <span>reasoning</span>}
     </div>
   )
 }
@@ -81,31 +81,39 @@ function SuggestionCard({
     }
   }
 
+  // Compare blended cost so the suggested side can flag a price jump.
+  const priceTone: "up" | "down" | "same" =
+    s.suggested.blendedPriceUsdPerM > s.current.blendedPriceUsdPerM
+      ? "up"
+      : s.suggested.blendedPriceUsdPerM < s.current.blendedPriceUsdPerM
+        ? "down"
+        : "same"
+
   return (
-    <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <span className="rounded bg-[var(--surface-muted)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
-          {SLOT_META[s.slot].label} model
+    <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="rounded bg-[var(--surface-muted)] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+          {SLOT_META[s.slot].label}
         </span>
-        <span className="text-[10px] text-emerald-400">{s.reason}</span>
+        <span className="truncate text-[10px] text-emerald-400">{s.reason}</span>
       </div>
 
-      <div className="mb-3 grid grid-cols-[1fr_auto_1fr] items-start gap-3">
-        <div>
-          <div className="mb-1 text-[10px] uppercase text-[var(--text-muted)]">Current</div>
-          <div className="mb-1 truncate font-mono text-[11px] text-[var(--text-primary)]">{s.current.id}</div>
+      {/* min-w-0 on each column lets `truncate` actually shrink the id —
+          without it the grid track grows to the id width and overflows. */}
+      <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2.5">
+        <div className="min-w-0">
+          <div className="truncate font-mono text-[11px] text-[var(--text-secondary)]" title={s.current.id}>{s.current.id}</div>
           <ModelStats model={s.current} />
         </div>
-        <div className="mt-5 text-[var(--text-muted)]">→</div>
-        <div>
-          <div className="mb-1 text-[10px] uppercase text-emerald-400">Suggested</div>
-          <div className="mb-1 truncate font-mono text-[11px] text-emerald-200">{s.suggested.id}</div>
-          <ModelStats model={s.suggested} />
+        <div className="shrink-0 text-[var(--text-muted)]">→</div>
+        <div className="min-w-0">
+          <div className="truncate font-mono text-[11px] text-emerald-200" title={s.suggested.id}>{s.suggested.id}</div>
+          <ModelStats model={s.suggested} priceTone={priceTone} />
         </div>
       </div>
 
       {(autoUpdatable > 0 || s.codeRefCount > 0) && (
-        <div className="mb-3 rounded border border-[var(--border)] bg-[var(--surface-muted)] px-3 py-2 text-[11px] text-[var(--text-muted)]">
+        <div className="mt-2.5 rounded border border-[var(--border)] bg-[var(--surface-muted)] px-2.5 py-1.5 text-[10px] text-[var(--text-muted)]">
           {autoUpdatable > 0 && (
             <label className="flex cursor-pointer items-start gap-2">
               <input
@@ -122,17 +130,17 @@ function SuggestionCard({
           )}
           {s.codeRefCount > 0 && (
             <div className={autoUpdatable > 0 ? "mt-1 pl-6" : ""}>
-              {s.codeRefCount} jig{s.codeRefCount === 1 ? "" : "s"} hardcode this model in source — edit manually if you want them changed
+              {s.codeRefCount} jig{s.codeRefCount === 1 ? "" : "s"} hardcode this model in source — edit manually
             </div>
           )}
         </div>
       )}
 
-      <div className="flex justify-end gap-2">
-        <Button onClick={handleDismiss} disabled={working !== null} variant="subtle" size="md">
+      <div className="mt-2.5 flex justify-end gap-2">
+        <Button onClick={handleDismiss} disabled={working !== null} variant="subtle" size="sm">
           {working === "dismiss" ? "Dismissing…" : "Not now"}
         </Button>
-        <Button onClick={handleApprove} disabled={working !== null} variant="success" size="md">
+        <Button onClick={handleApprove} disabled={working !== null} variant="success" size="sm">
           {working === "approve" ? "Applying…" : "Upgrade"}
         </Button>
       </div>
@@ -172,7 +180,7 @@ export function ModelUpgradeModal({
           <div>
             <h3 className="text-[14px] font-semibold text-[#ededed]">Model upgrades available</h3>
             <p className="mt-1 text-[12px] leading-relaxed text-[#666]">
-              Newer models in the same family that look strictly better than what you're on today.
+              Newer, higher-ranked models in the same family. Check the price before upgrading.
             </p>
           </div>
           <button

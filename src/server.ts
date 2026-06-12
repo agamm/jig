@@ -57,6 +57,7 @@ import {
   restoreVersion as restoreToPendingVersion,
   setModelOverride as storeSetModelOverride,
   setStepModelOverride as storeSetStepModelOverride,
+  setJigTimeouts as storeSetJigTimeouts,
   writePending as storeWritePending,
   type JigVersion as JigVersionStoreRow,
 } from "./services/jig-store.js"
@@ -770,6 +771,35 @@ export function createApiServer(port: number) {
             invalidateJigsCache()
             broadcastJigsUpdated()
             return apiJson("updateJigModel", { ok: true as const, jigId: route.params.id, model: next })
+          }
+          case "updateJigTimeouts": {
+            // PATCH /api/jigs/<id>/timeouts — set or clear per-jig run/tool
+            // timeout overrides (ms). Omit a field to leave it; pass null or a
+            // non-positive value to clear it back to the global default.
+            if (req.method !== "PATCH") return json({ error: "Method not allowed" }, 405)
+            ensureJigExists(route.params.id)
+            const body = (await req.json().catch(() => ({}))) as { runTimeoutMs?: unknown; toolTimeoutMs?: unknown }
+            const parse = (v: unknown): number | null | undefined => {
+              if (v === undefined) return undefined
+              if (v === null) return null
+              if (typeof v !== "number" || !Number.isFinite(v)) throw new ApiError(400, "timeout must be a positive number, null, or omitted")
+              return v > 0 ? v : null
+            }
+            const runTimeoutMs = parse(body.runTimeoutMs)
+            const toolTimeoutMs = parse(body.toolTimeoutMs)
+            storeSetJigTimeouts(route.params.id, {
+              ...(runTimeoutMs !== undefined ? { runTimeoutMs } : {}),
+              ...(toolTimeoutMs !== undefined ? { toolTimeoutMs } : {}),
+            })
+            invalidateJigsCache()
+            broadcastJigsUpdated()
+            const updated = getJigRow(route.params.id)
+            return apiJson("updateJigTimeouts", {
+              ok: true as const,
+              jigId: route.params.id,
+              runTimeoutMs: updated?.run_timeout_ms ?? null,
+              toolTimeoutMs: updated?.tool_timeout_ms ?? null,
+            })
           }
           case "writeJigCode": {
             // Direct code write for an existing jig — creates (or replaces) the

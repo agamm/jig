@@ -30,6 +30,10 @@ export interface JigRow {
   model_override: string | null
   /** JSON object of per-step model overrides, keyed by step seq (1-indexed). */
   step_model_overrides: string | null
+  /** Per-jig run watchdog override in ms; null = global JIG_RUN_TIMEOUT_MS default. */
+  run_timeout_ms: number | null
+  /** Per-jig MCP tool-call timeout override in ms; null = global JIG_MCP_TOOL_TIMEOUT_MS default. */
+  tool_timeout_ms: number | null
 }
 
 export interface JigVersionRow {
@@ -400,6 +404,25 @@ export function setActiveVersion(jigId: string, versionId: number): void {
 export function setModelOverride(jigId: string, model: string | null): void {
   const value = typeof model === "string" && model.trim().length > 0 ? model.trim() : null
   openDb().prepare(`UPDATE jigs SET model_override = ? WHERE id = ?`).run(value, jigId)
+}
+
+/**
+ * Set or clear a per-jig timeout override (ms). Pass null for a field to clear
+ * it so the jig falls back to the global env default. A non-positive or
+ * non-finite value is treated as clear.
+ */
+export function setJigTimeouts(
+  jigId: string,
+  timeouts: { runTimeoutMs?: number | null; toolTimeoutMs?: number | null },
+): void {
+  const norm = (v: number | null | undefined): number | null =>
+    typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.round(v) : null
+  const sets: string[] = []
+  const args: (number | null)[] = []
+  if ("runTimeoutMs" in timeouts) { sets.push("run_timeout_ms = ?"); args.push(norm(timeouts.runTimeoutMs)) }
+  if ("toolTimeoutMs" in timeouts) { sets.push("tool_timeout_ms = ?"); args.push(norm(timeouts.toolTimeoutMs)) }
+  if (sets.length === 0) return
+  openDb().prepare(`UPDATE jigs SET ${sets.join(", ")} WHERE id = ?`).run(...args, jigId)
 }
 
 /** Parse the JSON blob into a {seq: model} map. Returns {} for null/invalid JSON. */

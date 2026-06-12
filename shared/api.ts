@@ -90,6 +90,10 @@ export interface JigData {
   modelInCode?: string | null
   /** Dashboard per-step model overrides keyed by step seq (1-indexed) as a string. */
   stepModelOverrides?: Record<string, string>
+  /** Per-jig run watchdog override in ms; null = global default. */
+  runTimeoutMs?: number | null
+  /** Per-jig MCP tool-call timeout override in ms; null = global default. */
+  toolTimeoutMs?: number | null
   costMonth?: string
   costLifetime?: string
 }
@@ -643,6 +647,7 @@ export interface ApiContracts {
   runJig: ApiContract<{ dryRun: boolean }, StartRunResponse>
   writeJigCode: ApiContract<{ code: string; message?: string; approve?: boolean }, { ok: true; pendingVersionId: number; activeVersionId: number | null }>
   updateJigModel: ApiContract<{ model: string | null }, { ok: true; jigId: string; model: string | null }>
+  updateJigTimeouts: ApiContract<{ runTimeoutMs?: number | null; toolTimeoutMs?: number | null }, { ok: true; jigId: string; runTimeoutMs: number | null; toolTimeoutMs: number | null }>
   updateJigStepModel: ApiContract<{ seq: number; model: string | null }, { ok: true; jigId: string; seq: number; model: string | null }>
   getRun: ApiContract<void, RunDetail>
   activeRun: ApiContract<void, RunStatus>

@@ -554,7 +554,6 @@ const MCP_TOOL_TIMEOUT_MS = (() => {
   const raw = Number(process.env.JIG_MCP_TOOL_TIMEOUT_MS)
   return Number.isFinite(raw) && raw > 0 ? raw : 5 * 60_000
 })()
-const MCP_TOOL_INACTIVITY_MS = Math.min(120_000, MCP_TOOL_TIMEOUT_MS)
 
 export async function callTool(
   connection: McpConnection,
@@ -566,6 +565,10 @@ export async function callTool(
   await validateRequiredToolArguments(connection, toolName, normalizedParams)
 
   const signal = options?.signal ?? runContext.getStore()?.signal
+  // Per-jig override (dashboard) wins over the global env default.
+  const jigToolTimeout = runContext.getStore()?.toolTimeoutMs
+  const toolTimeoutMs = typeof jigToolTimeout === "number" && jigToolTimeout > 0 ? jigToolTimeout : MCP_TOOL_TIMEOUT_MS
+  const toolInactivityMs = Math.min(120_000, toolTimeoutMs)
   const startedAt = Date.now()
   logSessionEvent({
     source: "mcp.tool",
@@ -583,9 +586,9 @@ export async function callTool(
       ...(signal ? { signal } : {}),
       // Let progress streams keep a legitimately-slow call alive between
       // updates, but never past the absolute ceiling.
-      timeout: MCP_TOOL_INACTIVITY_MS,
+      timeout: toolInactivityMs,
       resetTimeoutOnProgress: true,
-      maxTotalTimeout: MCP_TOOL_TIMEOUT_MS,
+      maxTotalTimeout: toolTimeoutMs,
     })
   } catch (err) {
     logSessionEvent({

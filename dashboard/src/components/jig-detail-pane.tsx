@@ -22,7 +22,7 @@ import { MarkdownOutput } from "@/components/markdown-output";
 import { useElapsed } from "@/hooks/use-elapsed";
 import { useJigToolApproval } from "@/lib/jig-tool-approval";
 import { formatElapsed } from "@/lib/format";
-import { deleteJig, fetchOpenRouterCatalog, updateJigModel, updateSchedule } from "@/lib/api";
+import { deleteJig, fetchOpenRouterCatalog, updateJigModel, updateJigTimeouts, updateSchedule } from "@/lib/api";
 import { useJigSteps, useConnections, useModels, usePending } from "@/lib/swr";
 import type { OpenRouterModelInfo } from "@shared/api";
 import { PendingChangesBanner } from "@/components/pending-changes-banner";
@@ -562,6 +562,7 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
 
         <div className="space-y-2">
           <ModelSelector jig={jig} onChange={() => onRefresh?.()} />
+          <TimeoutsEditor jig={jig} onChange={() => onRefresh?.()} />
         </div>
 
         {/* Steps or Code */}
@@ -888,6 +889,77 @@ function MissingConnectionsDialog({
 // component) > jig source `{model: ...}` > global default. Clearing the
 // dropdown falls back to the next level down.
 // ---------------------------------------------------------------------------
+
+// Per-jig timeout overrides (minutes). Empty = global default (run 30m, tool 5m).
+const DEFAULT_RUN_MIN = 30;
+const DEFAULT_TOOL_MIN = 5;
+
+function TimeoutsEditor({ jig, onChange }: { jig: Jig; onChange: () => void }) {
+  const msToMin = (ms: number | null | undefined): string =>
+    typeof ms === "number" && ms > 0 ? String(Math.round((ms / 60000) * 10) / 10) : "";
+  const [runMin, setRunMin] = useState(msToMin(jig.runTimeoutMs));
+  const [toolMin, setToolMin] = useState(msToMin(jig.toolTimeoutMs));
+  const [saving, setSaving] = useState(false);
+
+  // Resync when the jig prop changes (e.g. after a refresh from elsewhere).
+  useEffect(() => { setRunMin(msToMin(jig.runTimeoutMs)); setToolMin(msToMin(jig.toolTimeoutMs)); }, [jig.runTimeoutMs, jig.toolTimeoutMs]);
+
+  const dirty = runMin !== msToMin(jig.runTimeoutMs) || toolMin !== msToMin(jig.toolTimeoutMs);
+  const toMs = (v: string): number | null => {
+    const n = Number(v);
+    return v.trim() && Number.isFinite(n) && n > 0 ? Math.round(n * 60000) : null;
+  };
+
+  async function save() {
+    setSaving(true);
+    try {
+      await updateJigTimeouts(jig.id, { runTimeoutMs: toMs(runMin), toolTimeoutMs: toMs(toolMin) });
+      onChange();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to save timeouts");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-3 rounded-lg border border-[#1f1f23] bg-[#0e0e10] px-3 py-2">
+      <span className="text-[9px] font-medium uppercase tracking-[0.14em] text-[#555]">Timeouts</span>
+      <label className="flex items-center gap-1.5 text-[11px] text-[#888]">
+        <span>Run</span>
+        <input
+          type="number" min="1" inputMode="decimal"
+          value={runMin}
+          onChange={(e) => setRunMin(e.target.value)}
+          placeholder={String(DEFAULT_RUN_MIN)}
+          className="w-12 rounded border border-[#242428] bg-[#141416] px-1.5 py-0.5 text-right text-[11px] text-[#ededed] outline-none focus:border-emerald-500/40"
+        />
+        <span className="text-[#555]">min</span>
+      </label>
+      <label className="flex items-center gap-1.5 text-[11px] text-[#888]">
+        <span>Tool</span>
+        <input
+          type="number" min="1" inputMode="decimal"
+          value={toolMin}
+          onChange={(e) => setToolMin(e.target.value)}
+          placeholder={String(DEFAULT_TOOL_MIN)}
+          className="w-12 rounded border border-[#242428] bg-[#141416] px-1.5 py-0.5 text-right text-[11px] text-[#ededed] outline-none focus:border-emerald-500/40"
+        />
+        <span className="text-[#555]">min</span>
+      </label>
+      <span className="text-[9px] text-[#444]" title="Empty = use the global default (run 30m, tool 5m)">default if empty</span>
+      {dirty && (
+        <button
+          onClick={save}
+          disabled={saving}
+          className="ml-auto rounded-md bg-emerald-600/90 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-emerald-600 disabled:opacity-50"
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
+      )}
+    </div>
+  );
+}
 
 function ModelSelector({ jig, onChange }: { jig: Jig; onChange: () => void }) {
   const { data: globalModels } = useModels();

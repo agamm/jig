@@ -56,6 +56,12 @@ export function matchRoute(pathname: string): { handler: string; params: Record<
     return { handler: "updateJigModel", params: { id: decodeURIComponent(modelMatch[1]) } }
   }
 
+  const timeoutsMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/timeouts$/)
+  if (timeoutsMatch) {
+    if (!isValidJigId(decodeURIComponent(timeoutsMatch[1]))) return null
+    return { handler: "updateJigTimeouts", params: { id: decodeURIComponent(timeoutsMatch[1]) } }
+  }
+
   const stepModelMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/step-model$/)
   if (stepModelMatch) {
     if (!isValidJigId(decodeURIComponent(stepModelMatch[1]))) return null

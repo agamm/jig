@@ -249,6 +249,12 @@ const MIGRATIONS: string[] = [
   // llm chip in a specific step and picks a model. Reads at run start, pushed
   // into ctx.step's model resolution. Higher precedence than per-jig override.
   `ALTER TABLE jigs ADD COLUMN step_model_overrides TEXT;`,
+  // v16: per-jig timeout overrides (ms). NULL = use the global env default
+  // (JIG_RUN_TIMEOUT_MS / JIG_MCP_TOOL_TIMEOUT_MS). Lets a jig with a
+  // legitimately long-running tool call (big Apify actor, large email fetch)
+  // raise its ceiling from the dashboard without touching env config.
+  `ALTER TABLE jigs ADD COLUMN run_timeout_ms INTEGER;
+   ALTER TABLE jigs ADD COLUMN tool_timeout_ms INTEGER;`,
 ]
 
 // ---------------------------------------------------------------------------

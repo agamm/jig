@@ -9,6 +9,7 @@ import { applyRunEvent, discardTrackedRun, finishTrackedRun, getSignalForRun, ha
 import { maybeNotifyRunFailure } from "./run-failure-notify.js"
 import { missingConnectionsForJig } from "./connection-preflight.js"
 import { materializeActiveVersion } from "./jig-runtime.js"
+import { getJigRow } from "./jig-store.js"
 
 async function resolveRunnablePath(jigId: string): Promise<string | null> {
   const materialized = await materializeActiveVersion(jigId)
@@ -41,8 +42,9 @@ export async function startBackgroundRun(jigId: string, params?: Record<string, 
     return false
   }
 
+  const jigRow = getJigRow(jigId)
   const runId = insertRun(jigId, params)
-  startTrackedRun(runId, jigId, false)
+  startTrackedRun(runId, jigId, false, jigRow?.run_timeout_ms ?? undefined)
   let shouldFinishTrackedRun = true
 
   const startTime = Date.now()
@@ -64,7 +66,7 @@ export async function startBackgroundRun(jigId: string, params?: Record<string, 
       } else if (event.type === "done") {
         console.log(`[scheduler] ${jigId} done in ${event.durationMs}ms`)
       }
-    }, { silent: true, signal: getSignalForRun(runId) })
+    }, { silent: true, signal: getSignalForRun(runId), toolTimeoutMs: jigRow?.tool_timeout_ms ?? null })
 
     // If skipped, remove the run row — it never happened
     if (result.skipped) {

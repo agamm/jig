@@ -59,10 +59,11 @@ export async function run(
     signal?: AbortSignal
     modelOverride?: string | null
     stepModelOverrides?: Record<string, string>
+    toolTimeoutMs?: number | null
   }
 ): Promise<Context> {
   const toolNames = (definition.options.tools ?? []).map((t) => t._toolName)
-  const ctx = new Context(params, toolNames, options?.signal)
+  const ctx = new Context(params, toolNames, options?.signal, options?.toolTimeoutMs)
   if (options?.silent) ctx.setSink(() => {})
   if (options?.recorder) ctx.setRecorder(options.recorder)
   // Precedence (low → high inside ctx, with per-call/step overrides above):

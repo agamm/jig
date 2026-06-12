@@ -44,12 +44,13 @@ export async function startJigRun(id: string, body: any): Promise<StartRunRespon
   if (hasActiveRunForJig(id)) throw new ApiError(409, `A run is already in progress for ${id}`)
 
   const runId = dryRun ? -Date.now() : insertRun(id)
-  startTrackedRun(runId, id, dryRun)
+  startTrackedRun(runId, id, dryRun, jigRow.run_timeout_ms ?? undefined)
 
   const startTime = Date.now()
   const persistHandler = !dryRun ? persist(runId, startTime) : null
   const modelOverride = jigRow.model_override ?? null
   const stepModelOverrides = getStepModelOverrides(id)
+  const toolTimeoutMs = jigRow.tool_timeout_ms ?? null
 
   ;(async () => {
     let skipped = false
@@ -67,7 +68,7 @@ export async function startJigRun(id: string, body: any): Promise<StartRunRespon
         } else if (event.type === "done") {
           console.log(`[run] ${id} done in ${event.durationMs}ms`)
         }
-      }, { dryRun, silent: true, signal: getSignalForRun(runId), modelOverride, stepModelOverrides })
+      }, { dryRun, silent: true, signal: getSignalForRun(runId), modelOverride, stepModelOverrides, toolTimeoutMs })
       if (result.skipped && !dryRun) {
         skipped = true
         const db = openDb()

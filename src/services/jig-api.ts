@@ -161,6 +161,8 @@ export async function buildJigResponse(
     modelOverride: row?.model_override ?? null,
     modelInCode: jig.modelInCode ?? null,
     stepModelOverrides: stepOverrides,
+    runTimeoutMs: row?.run_timeout_ms ?? null,
+    toolTimeoutMs: row?.tool_timeout_ms ?? null,
     costMonth: "",
     costLifetime: "",
   }

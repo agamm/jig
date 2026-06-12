@@ -104,10 +104,14 @@ export class Context {
   constructor(
     public readonly params: Record<string, unknown>,
     private allowedTools: string[],
-    private readonly _signal?: AbortSignal
+    private readonly _signal?: AbortSignal,
+    private readonly _toolTimeoutMs?: number | null
   ) {}
 
   get signal(): AbortSignal | undefined { return this._signal }
+
+  /** Per-jig MCP tool-call timeout override (ms); null/undefined = global default. */
+  get toolTimeoutMs(): number | null | undefined { return this._toolTimeoutMs }
 
   /** Attach a recorder for step-level tracking (used by API server). */
   setRecorder(recorder: RunRecorder) { this._recorder = recorder }

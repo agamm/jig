@@ -160,6 +160,17 @@ export function updateJigModel(jigId: string, model: string | null): Promise<Api
   })
 }
 
+export function updateJigTimeouts(
+  jigId: string,
+  timeouts: { runTimeoutMs?: number | null; toolTimeoutMs?: number | null },
+): Promise<ApiResponse<"updateJigTimeouts">> {
+  return fetchApi("updateJigTimeouts", `/api/jigs/${encodeURIComponent(jigId)}/timeouts`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(timeouts),
+  })
+}
+
 export function updateJigStepModel(jigId: string, seq: number, model: string | null): Promise<ApiResponse<"updateJigStepModel">> {
   return fetchApi("updateJigStepModel", `/api/jigs/${encodeURIComponent(jigId)}/step-model`, {
     method: "PATCH",

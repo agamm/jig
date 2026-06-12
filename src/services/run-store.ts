@@ -71,21 +71,24 @@ export function getSignalForRun(runId: number): AbortSignal | undefined {
   return activeAborts.get(runId)?.signal
 }
 
-export function startTrackedRun(runId: number, jigId: string, dryRun: boolean): void {
+export function startTrackedRun(runId: number, jigId: string, dryRun: boolean, timeoutMs?: number): void {
   activeRuns.set(jigId, runId)
   const controller = new AbortController()
   activeAborts.set(runId, controller)
+  const runTimeoutMs = typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0
+    ? timeoutMs
+    : RUN_TIMEOUT_MS
   runTimeouts.set(runId, setTimeout(() => {
     // If the run already finished, finishTrackedRun has cleared this timer's
     // bookkeeping — bail so we don't relabel a completed run as timed-out at
     // the exact boundary (JS is single-threaded; an in-progress
     // finishTrackedRun can't interleave with this callback).
     if (!runs.has(runId)) return
-    const message = `Run timed out after ${Math.round(RUN_TIMEOUT_MS / 60_000)} minutes`
+    const message = `Run timed out after ${Math.round(runTimeoutMs / 60_000)} minutes`
     timedOutRuns.set(runId, message)
     console.error(`[runner] ${jigId} run ${runId}: ${message} — aborting`)
     controller.abort()
-  }, RUN_TIMEOUT_MS))
+  }, runTimeoutMs))
   runs.set(runId, {
     runId,
     jigId,

@@ -69,24 +69,22 @@ function pickBest(
   all: OpenRouterModelInfo[],
   dismissed: string[],
 ): OpenRouterModelInfo | null {
-  const currentProvider = provider(current.id)
   const candidates = all.filter((m) => {
     if (m.id === current.id) return false
     if (dismissed.includes(m.id)) return false
-    if (provider(m.id) !== currentProvider) return false
-    if (m.createdAt <= current.createdAt) return false
-    // Agent loop runs in the main slot — must support tool-calling.
-    if (slot === "main" && !m.supportsTools) return false
-    // Never silently upgrade a free model to a paid one.
+    // Agentic slots run tool-calling loops — a non-tool model would break them.
+    if ((slot === "main" || slot === "editor") && !m.supportsTools) return false
+    // Never silently move a free model to a paid one (keeps the fast/free slot free).
     if (isFree(current) && !isFree(m)) return false
-    // An "upgrade" may cost a little more for a better/newer model, but not a
-    // lot — a better-ranked yet far pricier model (e.g. haiku-4.5 $4/M →
-    // fable-5 $40/M, +900%) is a tradeoff, not an upgrade. Cap the premium at
-    // MAX_PRICE_INCREASE so suggestions stay roughly cost-equivalent.
+    // Stay within the cost cap: cheaper, or at most +20% pricier. A better-ranked
+    // but far pricier model (haiku-4.5 $4/M → fable-5 $40/M, +900%) is a tradeoff,
+    // not an upgrade.
     if (m.blendedPriceUsdPerM > current.blendedPriceUsdPerM * MAX_PRICE_INCREASE) return false
-    const cheaper = m.blendedPriceUsdPerM < current.blendedPriceUsdPerM
-    const betterRank = m.rank < current.rank
-    return cheaper || betterRank
+    // "Better" = higher OpenRouter rank. Cross-provider is allowed — the best
+    // model within your price often isn't from the same family (e.g. a cheap,
+    // low-ranked model has no same-provider upgrade under the price cap, but
+    // plenty of better-ranked options exist elsewhere).
+    return m.rank < current.rank
   })
   if (candidates.length === 0) return null
   candidates.sort((a, b) => {

@@ -85,6 +85,17 @@ a:focus-visible {
   color: var(--text-faint);
 }
 
+/* Hide the native number-input spin buttons for a cleaner look. */
+.ui-num::-webkit-outer-spin-button,
+.ui-num::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.ui-num {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
 /* Kill the browser's yellow autofill background — keep the dark field. */
 .ui-input:-webkit-autofill,
 .ui-input:-webkit-autofill:hover,

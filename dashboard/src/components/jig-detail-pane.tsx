@@ -562,7 +562,6 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
 
         <div className="space-y-2">
           <ModelSelector jig={jig} onChange={() => onRefresh?.()} />
-          <TimeoutsEditor jig={jig} onChange={() => onRefresh?.()} />
         </div>
 
         {/* Steps or Code */}
@@ -697,6 +696,10 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
         {jig.schedule && (
           <ScheduleSection schedule={jig.schedule} jigId={jigId} onRefresh={onRefresh} />
         )}
+
+        <PaneSection title="Timeouts">
+          <TimeoutsEditor jig={jig} onChange={() => onRefresh?.()} />
+        </PaneSection>
 
         <PaneSection
           title="Runs"
@@ -922,41 +925,49 @@ function TimeoutsEditor({ jig, onChange }: { jig: Jig; onChange: () => void }) {
     }
   }
 
+  const field = (
+    label: string,
+    value: string,
+    set: (v: string) => void,
+    placeholder: number,
+    hint: string,
+  ) => (
+    <div className="flex flex-1 items-center justify-between rounded-lg border border-[#1f1f23] bg-[#0e0e10] px-3 py-2.5">
+      <div className="min-w-0">
+        <div className="text-[12px] text-[#ededed]">{label}</div>
+        <div className="text-[10px] text-[#555]">{hint}</div>
+      </div>
+      <div className="flex items-baseline gap-1.5">
+        <input
+          type="number" min="1" inputMode="decimal"
+          value={value}
+          onChange={(e) => set(e.target.value)}
+          placeholder={String(placeholder)}
+          className="ui-num w-14 rounded-md border border-[#242428] bg-[#141416] px-2 py-1 text-right font-mono text-[13px] text-[#ededed] outline-none transition-colors focus:border-emerald-500/40"
+        />
+        <span className="text-[10px] text-[#555]">min</span>
+      </div>
+    </div>
+  );
+
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-[#1f1f23] bg-[#0e0e10] px-3 py-2">
-      <span className="text-[9px] font-medium uppercase tracking-[0.14em] text-[#555]">Timeouts</span>
-      <label className="flex items-center gap-1.5 text-[11px] text-[#888]">
-        <span>Run</span>
-        <input
-          type="number" min="1" inputMode="decimal"
-          value={runMin}
-          onChange={(e) => setRunMin(e.target.value)}
-          placeholder={String(DEFAULT_RUN_MIN)}
-          className="w-12 rounded border border-[#242428] bg-[#141416] px-1.5 py-0.5 text-right text-[11px] text-[#ededed] outline-none focus:border-emerald-500/40"
-        />
-        <span className="text-[#555]">min</span>
-      </label>
-      <label className="flex items-center gap-1.5 text-[11px] text-[#888]">
-        <span>Tool</span>
-        <input
-          type="number" min="1" inputMode="decimal"
-          value={toolMin}
-          onChange={(e) => setToolMin(e.target.value)}
-          placeholder={String(DEFAULT_TOOL_MIN)}
-          className="w-12 rounded border border-[#242428] bg-[#141416] px-1.5 py-0.5 text-right text-[11px] text-[#ededed] outline-none focus:border-emerald-500/40"
-        />
-        <span className="text-[#555]">min</span>
-      </label>
-      <span className="text-[9px] text-[#444]" title="Empty = use the global default (run 30m, tool 5m)">default if empty</span>
-      {dirty && (
-        <button
-          onClick={save}
-          disabled={saving}
-          className="ml-auto rounded-md bg-emerald-600/90 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-emerald-600 disabled:opacity-50"
-        >
-          {saving ? "Saving…" : "Save"}
-        </button>
-      )}
+    <div className="space-y-2">
+      <div className="flex gap-2">
+        {field("Run", runMin, setRunMin, DEFAULT_RUN_MIN, `default ${DEFAULT_RUN_MIN}m`)}
+        {field("Tool", toolMin, setToolMin, DEFAULT_TOOL_MIN, `default ${DEFAULT_TOOL_MIN}m`)}
+      </div>
+      <div className="flex items-center gap-3">
+        <span className="text-[10px] text-[#555]">Leave empty to use the global default. Lower = fail faster; raise for long jobs.</span>
+        {dirty && (
+          <button
+            onClick={save}
+            disabled={saving}
+            className="ml-auto rounded-md bg-emerald-600/90 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-emerald-600 disabled:opacity-50"
+          >
+            {saving ? "Saving…" : "Save"}
+          </button>
+        )}
+      </div>
     </div>
   );
 }

@@ -34,6 +34,14 @@ const TOOL_SVC: Record<string, string> = {
   list_meetings: "granola", get_meetings: "granola", query_granola: "granola",
   search_repositories: "github", list_commits: "github",
 };
+// Detect the "<server>: authorization expired … reconnect it from the dashboard
+// (Connections → <server>)" error the runner emits when a token is rejected, and
+// pull out the connection name so we can offer a one-click reconnect.
+function reconnectTargetFromError(text: string): string | null {
+  const m = text.match(/^([a-z0-9_-]+): authorization (?:expired|was revoked|expired or was revoked)/i);
+  return m ? m[1] : null;
+}
+
 function toolService(tool: string): string | null {
   for (const [prefix, svc] of Object.entries(TOOL_SVC)) {
     if (tool.startsWith(prefix)) return svc;
@@ -399,7 +407,23 @@ export function RunSteps({
                           <pre className="text-[10px] font-mono whitespace-pre-wrap text-[#ccc]">{step.output || modeError || ""}</pre>
                         </div>
                       ) : step.status === "fail" ? (
-                        <pre className="text-[10px] font-mono whitespace-pre-wrap text-[#ccc]">{step.output || modeError || ""}</pre>
+                        <div className="space-y-2">
+                          <pre className="text-[10px] font-mono whitespace-pre-wrap text-[#ccc]">{step.output || modeError || ""}</pre>
+                          {(() => {
+                            const target = reconnectTargetFromError(step.output || modeError || "");
+                            if (!target || !onConnectionClick) return null;
+                            return (
+                              <button
+                                onClick={() => onConnectionClick(target)}
+                                className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[11px] font-medium text-emerald-300 transition-colors hover:bg-emerald-500/20"
+                              >
+                                <ServiceIcon name={target} size={12} />
+                                Reconnect {target}
+                                <span aria-hidden>→</span>
+                              </button>
+                            );
+                          })()}
+                        </div>
                       ) : (
                         <MarkdownOutput markdown={step.output || modeError || ""} />
                       )}

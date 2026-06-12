@@ -600,7 +600,7 @@ export function createApiServer(port: number) {
     }
   })
 
-  return Bun.serve({
+  const apiServer = Bun.serve({
     port,
     // /api/events sends SSE heartbeats every 15s, so Bun's 10s default would
     // close the stream first and produce noisy "failed to pipe response" logs.
@@ -1108,6 +1108,10 @@ export function createApiServer(port: number) {
       }
     },
   })
+  // Publish the bound port so local OAuth can route its callback through this
+  // always-running server's /api/oauth/callback instead of an ephemeral loopback.
+  process.env.JIG_API_PORT = String(apiServer.port)
+  return apiServer
 }
 
 process.on("unhandledRejection", (error) => {

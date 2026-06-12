@@ -1,4 +1,4 @@
-import { createServer, type Server } from "node:http"
+import { type Server } from "node:http"
 import open from "open"
 import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js"
 import { getCredential, setCredential } from "../db.js"
@@ -9,8 +9,6 @@ type OAuthClientMetadata = OAuthClientProvider["clientMetadata"]
 type OAuthClientInformationMixed = NonNullable<Awaited<ReturnType<OAuthClientProvider["clientInformation"]>>>
 type OAuthTokens = NonNullable<Awaited<ReturnType<OAuthClientProvider["tokens"]>>>
 
-const CALLBACK_PORT = 9876
-const LOCAL_REDIRECT_URL = `http://localhost:${CALLBACK_PORT}/callback`
 const SERVICE_CALLBACK_PATH = "/api/oauth/callback"
 
 /** Derive the OAuth redirect URL jig is listening on. */
@@ -20,7 +18,11 @@ export function oauthRedirectUrl(): string {
     if (!base) throw new Error("Service mode detected but publicUrl() returned undefined")
     return `${base}${SERVICE_CALLBACK_PATH}`
   }
-  return LOCAL_REDIRECT_URL
+  // Local: route through the always-running API server's callback, NOT an
+  // ephemeral loopback that dies if the connect is interrupted or the server
+  // restarts. The API server publishes its bound port via JIG_API_PORT.
+  const apiPort = process.env.JIG_API_PORT || "4173"
+  return `http://localhost:${apiPort}${SERVICE_CALLBACK_PATH}`
 }
 
 function dashboardBaseUrl(): string {
@@ -306,7 +308,6 @@ export function renderOAuthErrorPage(serverName: string, error: string): string 
  */
 export class JigOAuthProvider implements OAuthClientProvider {
   private _authResolve?: (code: string) => void
-  private _authReject?: (err: Error) => void
   private _callbackServer?: Server
   private _activeState?: string
 
@@ -367,26 +368,20 @@ export class JigOAuthProvider implements OAuthClientProvider {
     const state = extractState(url) ?? `${this.serverName}-${Date.now()}`
     this._activeState = state
 
+    // Both modes register by state so the API server's /api/oauth/callback can
+    // route the code back here, and stage the URL so the HTTP connect handler
+    // returns immediately (awaitingOAuth) instead of blocking the request.
+    pendingProvidersByState.set(state, this)
+    setPendingAuthUrl(this.serverName, url)
+
     if (isServiceMode()) {
-      // Headless: don't open a browser or a loopback server. Register ourselves
-      // so /api/oauth/callback can find us by state, surface the URL for the
-      // dashboard (via waitForPendingAuthUrl), and log it so it's also visible
-      // in platform log viewers.
-      pendingProvidersByState.set(state, this)
-      setPendingAuthUrl(this.serverName, url)
-      console.log(
-        `[jig][oauth] ${this.serverName}: click to authorize → ${url}`,
-      )
+      // Headless: don't open a browser; the dashboard opens the URL.
+      console.log(`[jig][oauth] ${this.serverName}: click to authorize → ${url}`)
       return
     }
 
-    // Local dev: loopback callback server + auto-open the browser. Also stage
-    // the URL so the HTTP connect handler can return immediately (awaitingOAuth)
-    // instead of blocking the request through the whole browser dance — a
-    // blocked request gets killed by the server's idleTimeout long before a
-    // human finishes authorizing, which silently breaks every local OAuth.
-    setPendingAuthUrl(this.serverName, url)
-    await this.startCallbackServer()
+    // Local dev: auto-open the browser. The callback lands on the always-running
+    // API server (no ephemeral loopback to die mid-flow).
     await open(url)
   }
 
@@ -414,7 +409,6 @@ export class JigOAuthProvider implements OAuthClientProvider {
     return new Promise((resolve, reject) => {
       const cleanup = () => {
         signal?.removeEventListener("abort", onAbort)
-        this._authReject = undefined
       }
 
       const onAbort = () => {
@@ -425,21 +419,12 @@ export class JigOAuthProvider implements OAuthClientProvider {
           this._activeState = undefined
         }
         clearPendingAuthUrl(this.serverName)
-        // Free the loopback port so a retry can bind it.
-        this.stopCallbackServer()
         reject(new Error(USER_CANCELLED_MESSAGE))
       }
 
       this._authResolve = (code: string) => {
         cleanup()
         resolve(code)
-      }
-      // Lets the loopback server's bind-error handler fail the connect instead
-      // of leaving it to hang until the 10-min timeout.
-      this._authReject = (err: Error) => {
-        cleanup()
-        this._authResolve = undefined
-        reject(err)
       }
 
       if (signal?.aborted) {
@@ -451,45 +436,11 @@ export class JigOAuthProvider implements OAuthClientProvider {
     })
   }
 
-  private async startCallbackServer(): Promise<void> {
-    if (this._callbackServer) return
-
-    this._callbackServer = createServer((req, res) => {
-      if (!req.url || req.url === "/favicon.ico") {
-        res.writeHead(404)
-        res.end()
-        return
-      }
-
-      const parsed = new URL(req.url, `http://localhost:${CALLBACK_PORT}`)
-      const code = parsed.searchParams.get("code")
-      const error = parsed.searchParams.get("error")
-
-      if (code) {
-        res.writeHead(200, { "Content-Type": "text/html" })
-        res.end(renderOAuthSuccessPage(this.serverName))
-        // resolveAuthCode (not _authResolve directly) so the staged pending
-        // URL is cleared — otherwise a re-connect could pick up a stale URL.
-        this.resolveAuthCode(code)
-        setTimeout(() => this.stopCallbackServer(), 2000)
-      } else {
-        res.writeHead(400, { "Content-Type": "text/html" })
-        res.end(renderOAuthErrorPage(this.serverName, error ?? "Unknown error"))
-        setTimeout(() => this.stopCallbackServer(), 2000)
-      }
-    })
-
-    // Surface a bind failure (port already held by an abandoned flow, another
-    // process, etc.) instead of hanging the connect forever with no signal.
-    this._callbackServer.on("error", (err) => {
-      console.error(`[jig][oauth] ${this.serverName}: callback server on :${CALLBACK_PORT} failed: ${(err as Error).message}`)
-      clearPendingAuthUrl(this.serverName)
-      this.stopCallbackServer()
-      this._authReject?.(err as Error)
-    })
-    this._callbackServer.listen(CALLBACK_PORT)
-  }
-
+  /**
+   * No-op retained for the connect-flow cleanup callbacks. Local OAuth used to
+   * run an ephemeral loopback server here; it now routes through the API
+   * server's /api/oauth/callback, so there's nothing to tear down.
+   */
   stopCallbackServer(): void {
     this._callbackServer?.close()
     this._callbackServer = undefined

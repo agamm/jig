@@ -543,6 +543,19 @@ export async function acquireConnection(
   return conn
 }
 
+// Hard ceiling on a single MCP tool call. The MCP SDK's per-request timeout
+// resets on every progress notification, so a server that streams keepalives
+// (composio does) can hold a call open indefinitely — a `gmail_fetch_emails`
+// stuck for 12+ minutes is exactly this. `maxTotalTimeout` is an absolute cap
+// the SDK enforces regardless of progress; `timeout` is the per-inactivity
+// window. Both well under the 30-min run watchdog so a wedged call fails fast
+// with a clear error instead of stalling the whole run. Override via env.
+const MCP_TOOL_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.JIG_MCP_TOOL_TIMEOUT_MS)
+  return Number.isFinite(raw) && raw > 0 ? raw : 5 * 60_000
+})()
+const MCP_TOOL_INACTIVITY_MS = Math.min(120_000, MCP_TOOL_TIMEOUT_MS)
+
 export async function callTool(
   connection: McpConnection,
   toolName: string,
@@ -566,7 +579,14 @@ export async function callTool(
     result = await connection.client.callTool({
       name: toolName,
       arguments: normalizedParams,
-    }, undefined, signal ? { signal } : undefined)
+    }, undefined, {
+      ...(signal ? { signal } : {}),
+      // Let progress streams keep a legitimately-slow call alive between
+      // updates, but never past the absolute ceiling.
+      timeout: MCP_TOOL_INACTIVITY_MS,
+      resetTimeoutOnProgress: true,
+      maxTotalTimeout: MCP_TOOL_TIMEOUT_MS,
+    })
   } catch (err) {
     logSessionEvent({
       source: "mcp.tool",

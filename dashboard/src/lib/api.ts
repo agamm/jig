@@ -128,6 +128,10 @@ export function fetchOpenRouterCatalog(): Promise<OpenRouterCatalogResponse> {
   return fetchApi("modelsCatalog", "/api/models/catalog")
 }
 
+export function fetchOpenRouterCredits(): Promise<ApiResponse<"openrouterCredits">> {
+  return fetchApi("openrouterCredits", "/api/models/credits")
+}
+
 export function fetchModelUpgrades(init?: Pick<RequestInit, "signal">): Promise<ModelUpgradesResponse> {
   return fetchApi("modelUpgrades", "/api/models/upgrades", { signal: init?.signal })
 }

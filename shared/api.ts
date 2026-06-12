@@ -602,6 +602,16 @@ export interface ResendTestResponse {
   error?: string
 }
 
+export interface OpenRouterCredits {
+  /** Lifetime credits granted to the account (USD). */
+  totalCredits: number
+  /** Lifetime usage charged against those credits (USD). */
+  totalUsage: number
+  /** max(0, totalCredits - totalUsage) (USD). */
+  remaining: number
+  fetchedAt: number
+}
+
 export interface ApiContract<Request, Response> {
   request: Request
   response: Response
@@ -615,6 +625,7 @@ export interface ApiContracts {
   changePassword: ApiContract<{ newPassword: string }, OkResponse>
   models: ApiContract<ModelOverrideInput | void, ModelCatalog>
   modelsCatalog: ApiContract<void, OpenRouterCatalogResponse>
+  openrouterCredits: ApiContract<void, OpenRouterCredits | null>
   modelUpgrades: ApiContract<void, ModelUpgradesResponse>
   applyModelUpgrade: ApiContract<ApplyModelUpgradeRequest, ApplyModelUpgradeResponse>
   dismissModelUpgrade: ApiContract<DismissModelUpgradeRequest, OkResponse>

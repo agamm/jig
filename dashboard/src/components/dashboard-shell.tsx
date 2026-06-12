@@ -25,10 +25,27 @@ import { toast } from "@/components/toast";
 import { EmptyState, LoadingState, Notice } from "@/components/state-panel";
 import { isRecommendedConnection, sortConnectionsForDisplay } from "@/lib/connection-catalog";
 import { useConnectionCatalog } from "@/lib/hooks";
-import { useModels, useConnections, useHealth } from "@/lib/swr";
+import { useModels, useConnections, useHealth, useOpenRouterCredits } from "@/lib/swr";
 import { APP_VERSION } from "@/lib/version";
 import { addExampleJig, closeAgentSession, createCustomConnection, fetchModelUpgrades } from "@/lib/api";
-import type { DataStorageHealth, ExampleJig, ModelUpgradeSuggestion } from "@shared/api";
+import type { Connection, DataStorageHealth, ExampleJig, ModelUpgradeSuggestion } from "@shared/api";
+
+/**
+ * Derive the dot + label for a connection's runtime health. "connected" only
+ * means a schema exists on disk; the `status` field (written at MCP failure
+ * chokepoints) is what tells us a token expired or the server is unreachable.
+ */
+function connectionStatusDisplay(c: Connection): { dot: string; label: string; labelClass: string } {
+  if (!c.connected) return { dot: "bg-[#444]", label: "Available", labelClass: "text-[#555]" };
+  switch (c.status?.state) {
+    case "auth-required":
+      return { dot: "bg-amber-400", label: "Reconnect", labelClass: "text-amber-300" };
+    case "unreachable":
+      return { dot: "bg-rose-400", label: "Unreachable", labelClass: "text-rose-300" };
+    default:
+      return { dot: "bg-emerald-400", label: "Connected", labelClass: "text-[#555]" };
+  }
+}
 
 function useLocalStorage(key: string, initial: boolean): [boolean, (v: boolean) => void, boolean] {
   const [value, setValue] = useState(initial);
@@ -106,6 +123,7 @@ export function DashboardShell({
   const { data: models } = useModels();
   const { data: connections, isLoading: connectionsLoading, error: connectionsError } = useConnections();
   const { data: health } = useHealth();
+  const { data: credits } = useOpenRouterCredits();
   const [resendBannerDismissed, setResendBannerDismissed, resendBannerMounted] = useLocalStorage("jig-resend-banner-dismissed", false);
   // Prompt to set up out-of-band alerting once the workspace is in use (has at
   // least one jig) but Resend isn't configured — that's when an unattended
@@ -460,8 +478,15 @@ export function DashboardShell({
                 </span>
               )}
               <span className="text-[11px] text-[#555]">{c.toolCount} tools</span>
-              <span className={`ml-auto h-2 w-2 rounded-full ${c.connected ? "bg-emerald-400" : "bg-[#444]"}`} />
-              <span className="text-[11px] text-[#555]">{c.connected ? "Connected" : "Available"}</span>
+              {(() => {
+                const st = connectionStatusDisplay(c);
+                return (
+                  <>
+                    <span className={`ml-auto h-2 w-2 rounded-full ${st.dot}`} />
+                    <span className={`text-[11px] ${st.labelClass}`}>{st.label}</span>
+                  </>
+                );
+              })()}
             </button>
           ))}
           {firstDisconnectedConnection ? (
@@ -606,36 +631,45 @@ export function DashboardShell({
           <NavItem icon={NavIcons.logs} label="Logs" href="/?view=logs" active={view === "logs"} collapsed={collapsed} onActivate={() => { setView("logs"); closeDetail(); }} />
         </div>
 
-        {!collapsed && models && (
+        {!collapsed && credits && (
+          <button
+            onClick={() => { setView("settings"); setSettingsTab("models"); setSettingsFocus("main"); closeDetail(); }}
+            className="group block w-full border-t border-[#1f1f23] px-3 py-2 text-left transition-colors hover:bg-[#111113]"
+            title={`OpenRouter: $${credits.remaining.toFixed(2)} of $${credits.totalCredits.toFixed(2)} remaining — manage models & key`}
+          >
+            <div className="mb-1 flex items-center justify-between">
+              <span className="text-[9px] text-[#444] uppercase tracking-wider">OpenRouter</span>
+              <span className="text-[9px] text-[#444] group-hover:text-[#9a9aa3]">Manage</span>
+            </div>
+            <div className="flex items-baseline gap-1">
+              <span className="font-mono text-[13px] text-[#ededed]">${credits.remaining.toFixed(2)}</span>
+              <span className="text-[9px] text-[#555]">left</span>
+            </div>
+            {credits.totalCredits > 0 && (
+              <>
+                <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-[#1a1a1d]">
+                  <div
+                    className={`h-full rounded-full ${credits.remaining / credits.totalCredits < 0.1 ? "bg-rose-400" : credits.remaining / credits.totalCredits < 0.25 ? "bg-amber-400" : "bg-emerald-400/70"}`}
+                    style={{ width: `${Math.max(2, Math.min(100, (credits.remaining / credits.totalCredits) * 100))}%` }}
+                  />
+                </div>
+                <div className="mt-1 text-[9px] text-[#555]">
+                  ${credits.totalUsage.toFixed(2)} used of ${credits.totalCredits.toFixed(2)}
+                </div>
+              </>
+            )}
+          </button>
+        )}
+        {!collapsed && !credits && models && (
           <div className="border-t border-[#1f1f23] px-2 py-2">
             <div className="mb-1 flex items-center justify-between px-1">
               <span className="text-[9px] text-[#444] uppercase tracking-wider">Models</span>
-              <span className="text-[9px] text-[#444]">Change</span>
-            </div>
-            <div className="space-y-0.5">
-              {(["main", "editor", "fast"] as const).map((k) => models[k] && (
-                <button
-                  key={k}
-                  onClick={() => {
-                    setView("settings");
-                    setSettingsTab("models");
-                    setSettingsFocus(k);
-                    closeDetail();
-                  }}
-                  className="group flex w-full items-start justify-between gap-1.5 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-[#111113]"
-                  title={`Change ${k} model — currently ${models[k].id}`}
-                >
-                  <div className="min-w-0 flex-1">
-                    <span className="block text-[9px] text-[#555] capitalize">{k}</span>
-                    <span className="block truncate font-mono text-[10px] text-[#888] group-hover:text-[#ededed]">
-                      {models[k].label}
-                    </span>
-                  </div>
-                  <span className="mt-[7px] text-[10px] text-[#333] opacity-0 transition-opacity group-hover:opacity-100">
-                    ›
-                  </span>
-                </button>
-              ))}
+              <button
+                onClick={() => { setView("settings"); setSettingsTab("models"); setSettingsFocus("main"); closeDetail(); }}
+                className="text-[9px] text-[#444] hover:text-[#9a9aa3]"
+              >
+                Change
+              </button>
             </div>
           </div>
         )}

@@ -1,7 +1,7 @@
 /** SWR keys and fetchers for jig data. */
 import useSWR, { type SWRConfiguration } from "swr"
-import { fetchJigs, fetchJig, fetchModels, fetchJigSteps, fetchConnections, fetchConnection, fetchActiveRunForJig, fetchExamples, fetchHealth, fetchSystemSettings, fetchPending, fetchVersionsV2 } from "./api"
-import type { JigData, ModelCatalog, StepList, Connection, ConnectionDetail, RunStatus, ExampleJig, HealthResponse, SystemSettings, PendingState, JigVersionListResponse } from "@shared/api"
+import { fetchJigs, fetchJig, fetchModels, fetchJigSteps, fetchConnections, fetchConnection, fetchActiveRunForJig, fetchExamples, fetchHealth, fetchSystemSettings, fetchPending, fetchVersionsV2, fetchOpenRouterCredits } from "./api"
+import type { JigData, ModelCatalog, StepList, Connection, ConnectionDetail, RunStatus, ExampleJig, HealthResponse, SystemSettings, PendingState, JigVersionListResponse, OpenRouterCredits } from "@shared/api"
 
 const REFRESH_INTERVAL = 10_000
 
@@ -37,6 +37,13 @@ export function useJig(jigId: string | null, config?: SWRConfiguration<JigData>)
 export function useModels() {
   return useSWR<ModelCatalog>("models", fetchModels, {
     revalidateOnFocus: false,
+  })
+}
+
+export function useOpenRouterCredits() {
+  return useSWR<OpenRouterCredits | null>("openrouter-credits", fetchOpenRouterCredits, {
+    refreshInterval: 60_000,
+    revalidateOnFocus: true,
   })
 }
 

@@ -337,6 +337,17 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
 
         {conn && (
           <>
+            {conn.connected && conn.status && conn.status.state !== "ok" && (
+              <Notice
+                tone={conn.status.state === "auth-required" ? "warning" : "danger"}
+                title={conn.status.state === "auth-required" ? "Reconnect needed" : "Connection unreachable"}
+              >
+                {conn.status.state === "auth-required"
+                  ? "This connection's credentials were rejected (expired or revoked). Jigs using it will fail until you reconnect below."
+                  : "Recent tool calls couldn't reach this server after retries. Check the provider, then refresh or reconnect below."}
+                {conn.status.detail ? <span className="mt-1 block text-[10px] opacity-70">{conn.status.detail}</span> : null}
+              </Notice>
+            )}
             {conn.description && (
               <p className="text-[12px] text-[var(--text-muted)] leading-relaxed">{conn.description}</p>
             )}

@@ -37,6 +37,10 @@ import { introspectJig } from "./introspect-jig.js"
 
 const DISMISSED_KEY = "modelUpgrades"
 
+// A suggestion may cost at most this factor more than the current model.
+// Beyond it, a "better rank" model is a price tradeoff, not an upgrade.
+const MAX_PRICE_INCREASE = 1.2
+
 type DismissedMap = Partial<Record<ModelSlot, string[]>>
 
 function getSlotModel(slot: ModelSlot): string {
@@ -75,6 +79,11 @@ function pickBest(
     if (slot === "main" && !m.supportsTools) return false
     // Never silently upgrade a free model to a paid one.
     if (isFree(current) && !isFree(m)) return false
+    // An "upgrade" may cost a little more for a better/newer model, but not a
+    // lot — a better-ranked yet far pricier model (e.g. haiku-4.5 $4/M →
+    // fable-5 $40/M, +900%) is a tradeoff, not an upgrade. Cap the premium at
+    // MAX_PRICE_INCREASE so suggestions stay roughly cost-equivalent.
+    if (m.blendedPriceUsdPerM > current.blendedPriceUsdPerM * MAX_PRICE_INCREASE) return false
     const cheaper = m.blendedPriceUsdPerM < current.blendedPriceUsdPerM
     const betterRank = m.rank < current.rank
     return cheaper || betterRank

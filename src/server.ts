@@ -11,6 +11,7 @@ import { join } from "path"
 import { closeDb, deleteJigLocalState, openDb } from "./db.js"
 import { getModelCatalog, setModelOverrides } from "./config/models.js"
 import { fetchOpenRouterModels } from "./services/openrouter-catalog.js"
+import { fetchOpenRouterCredits } from "./services/openrouter-credits.js"
 import {
   applyUpgrade as applyModelUpgradeImpl,
   computeUpgradeSuggestions,
@@ -315,6 +316,7 @@ async function handleGetConnection(name: string): Promise<Response> {
     custom: Boolean(customConfigs[name]),
     proxyVia: config.proxy?.via,
     proxyDashboardUrl: config.proxy?.dashboardUrl,
+    status: connected ? getConnectionStatus(name) : null,
     tools,
     usedBy,
   })
@@ -674,6 +676,8 @@ export function createApiServer(port: number) {
           }
           case "modelsCatalog":
             return apiJson("modelsCatalog", await fetchOpenRouterModels())
+          case "openrouterCredits":
+            return apiJson("openrouterCredits", await fetchOpenRouterCredits())
           case "modelUpgrades":
             return apiJson("modelUpgrades", await computeUpgradeSuggestions())
           case "applyModelUpgrade": {

@@ -163,7 +163,7 @@ async function connectWithOAuth(
   options: { signal?: AbortSignal; interactive?: boolean } = {}
 ): Promise<McpConnection> {
   throwIfAborted(options.signal)
-  const authProvider = new JigOAuthProvider(name)
+  const authProvider = new JigOAuthProvider(name, options.interactive ?? false)
   const url = new URL(config.url)
   const client = new Client({ name: "jig", version: "0.1.0" })
   const transport = new StreamableHTTPClientTransport(url, {
@@ -225,9 +225,13 @@ async function recoverOAuth(
 ): Promise<McpConnection> {
   const hasSavedTokens = (await authProvider.tokens()) !== undefined
 
-  // Record + notify regardless of mode — this is the operator's signal that
-  // the connection needs re-authorization.
-  reportConnectionIssue(name, "auth-required", errorMessageForReport(error))
+  // Only alert when previously-working credentials stopped working. A fresh
+  // interactive connect with no saved tokens ALSO lands here (connect → 401 →
+  // recoverOAuth) — that's the normal first-auth path, not an incident, and
+  // alerting on it would both cry wolf and burn the 6h notify debounce window.
+  if (!options.interactive || hasSavedTokens) {
+    reportConnectionIssue(name, "auth-required", errorMessageForReport(error))
+  }
 
   // CRITICAL: only the explicit connect flow (dashboard "Connect") may open a
   // browser. A tool call during a jig run is non-interactive — opening a
@@ -244,7 +248,7 @@ async function recoverOAuth(
   if (hasSavedTokens) {
     console.warn(`[jig] ${name}: saved OAuth credentials were rejected. Clearing and re-authorizing.`)
     deleteCredentials(name)
-    return handleOAuthRedirect(name, config, new JigOAuthProvider(name), options)
+    return handleOAuthRedirect(name, config, new JigOAuthProvider(name, true), options)
   }
   // Fresh auth — reuse the existing transport when we have one so the SDK
   // can call finishAuth on the same instance.
@@ -580,8 +584,13 @@ export async function callTool(
   const signal = options?.signal ?? runContext.getStore()?.signal
   // Per-jig override (dashboard) wins over the global env default.
   const jigToolTimeout = runContext.getStore()?.toolTimeoutMs
-  const toolTimeoutMs = typeof jigToolTimeout === "number" && jigToolTimeout > 0 ? jigToolTimeout : MCP_TOOL_TIMEOUT_MS
-  const toolInactivityMs = Math.min(120_000, toolTimeoutMs)
+  const hasJigOverride = typeof jigToolTimeout === "number" && jigToolTimeout > 0
+  const toolTimeoutMs = hasJigOverride ? jigToolTimeout : MCP_TOOL_TIMEOUT_MS
+  // The SDK only consults maxTotalTimeout when progress notifications arrive;
+  // a server that never streams progress dies at the inactivity `timeout`. So
+  // a per-jig override must set the inactivity window too, or raising the
+  // dashboard "Tool" timeout would be a no-op for non-streaming servers.
+  const toolInactivityMs = hasJigOverride ? toolTimeoutMs : Math.min(120_000, toolTimeoutMs)
   const startedAt = Date.now()
   logSessionEvent({
     source: "mcp.tool",

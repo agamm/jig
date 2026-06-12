@@ -33,6 +33,18 @@ export type ConnectServerAwaitingOAuth = {
 
 export type ConnectServerResult = ConnectServerSuccess | ConnectServerNeedsCredentials | ConnectServerAwaitingOAuth
 
+/**
+ * Detached connects still running after their HTTP request returned
+ * (awaitingOAuth). Lets /api/connections report `connectInProgress` so the
+ * dashboard can poll until the background connect actually finishes, and
+ * dedupes a second Connect click into the same in-flight attempt.
+ */
+const inFlightConnects = new Map<string, Promise<ConnectServerSuccess | null>>()
+
+export function isConnectInProgress(serverName: string): boolean {
+  return inFlightConnects.has(serverName)
+}
+
 export async function connectConfiguredServer(
   serverName: string,
   input: { credentials?: Record<string, string>; signal?: AbortSignal } = {}
@@ -74,18 +86,30 @@ export async function connectConfiguredServer(
   // If an OAuth URL appears first, return it immediately (service mode: the
   // dashboard opens it; local mode: the browser was already auto-opened) and
   // let the connect resolve in the background when the callback fires — the
-  // loopback server (local) or /api/oauth/callback (service) hands over the code.
-  // The background connect runs on its own AbortController, NOT req.signal, so
-  // the request returning doesn't kill it; a generous timeout cleans up an
-  // abandoned authorization.
-  const oauthController = new AbortController()
-  const oauthTimeout = setTimeout(() => oauthController.abort(), 10 * 60_000)
-  const detached = runConnectToCompletion(serverName, rawConfig, config, oauthController.signal)
-    .catch((err) => {
-      console.error(`[connection] ${serverName} failed:`, err?.message ?? err)
-      return null
-    })
-    .finally(() => clearTimeout(oauthTimeout))
+  // /api/oauth/callback handler hands over the code. The background connect
+  // runs on its own AbortController, NOT req.signal, so the request returning
+  // doesn't kill it; a generous timeout cleans up an abandoned authorization.
+  //
+  // Dedupe: if a connect for this server is already in flight (user clicked
+  // Connect again, or polled into a second attempt), reuse it instead of
+  // racing two OAuth flows for the same server.
+  let detached = inFlightConnects.get(serverName)
+  let lastConnectError: string | null = null
+  if (!detached) {
+    const oauthController = new AbortController()
+    const oauthTimeout = setTimeout(() => oauthController.abort(), 10 * 60_000)
+    detached = runConnectToCompletion(serverName, rawConfig, config, oauthController.signal)
+      .catch((err) => {
+        lastConnectError = err?.message ?? String(err)
+        console.error(`[connection] ${serverName} failed:`, lastConnectError)
+        return null
+      })
+      .finally(() => {
+        clearTimeout(oauthTimeout)
+        inFlightConnects.delete(serverName)
+      })
+    inFlightConnects.set(serverName, detached)
+  }
 
   const outcome = await Promise.race([
     detached.then((res) => ({ kind: "done" as const, res })),
@@ -105,7 +129,11 @@ export async function connectConfiguredServer(
   // `done` won (non-OAuth server, or it finished fast), or OAuth never staged a
   // URL within the window. Await the detached result either way.
   const finalRes = await detached
-  if (!finalRes) throw new Error(`Connect to ${serverName} failed — see server logs`)
+  if (!finalRes) {
+    throw new Error(lastConnectError
+      ? `Connect to ${serverName} failed: ${lastConnectError}`
+      : `Connect to ${serverName} failed — see server logs`)
+  }
   return finalRes
 }
 

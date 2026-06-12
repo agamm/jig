@@ -70,6 +70,8 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
   } | null>(null)
   const connectAbortRef = useRef<AbortController | null>(null)
   const connectRunRef = useRef(0)
+  /** Connection state snapshot taken when OAuth started — see completion effect. */
+  const oauthBaselineRef = useRef<{ connected: boolean; status?: string; sawInProgress: boolean } | null>(null)
 
   useEffect(() => {
     credentialValuesRef.current = credentialValues
@@ -101,22 +103,44 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
     setCredentialValues({})
     setAwaitingCredentialKey(null)
     setOauthUrl(null)
+    oauthBaselineRef.current = null
   }, [name])
 
-  // Poll for completion while awaiting OAuth callback. Once the connection
-  // flips to connected, dismiss the pending-URL notice and refresh tools.
+  // Poll for completion while awaiting OAuth callback (and while the detached
+  // server-side connect is still running after it).
   useEffect(() => {
-    if (!oauthUrl) return
+    if (!oauthUrl && !conn?.connectInProgress) return
     const timer = setInterval(() => { void reload() }, 2000)
     return () => clearInterval(timer)
-  }, [oauthUrl, reload])
+  }, [oauthUrl, conn?.connectInProgress, reload])
 
+  // Completion detection. `conn.connected` alone is wrong for a RE-connect —
+  // the schema file already exists, so it's true before OAuth even starts,
+  // which used to flip the UI to "Connected." prematurely and leave the user
+  // mashing Refresh. Instead wait for the server-side detached connect to
+  // actually finish (connectInProgress true → false), with status/connected
+  // transitions as fallbacks for older servers that don't report the flag.
   useEffect(() => {
-    if (oauthUrl && conn?.connected) {
-      setOauthUrl(null)
-      setConnectStatus("Connected.")
+    if (!oauthUrl || !conn) return
+    const base = oauthBaselineRef.current
+    if (conn.connectInProgress) {
+      if (base) base.sawInProgress = true
+      return
     }
-  }, [oauthUrl, conn?.connected])
+    const finished =
+      (base?.sawInProgress && conn.connectInProgress === false) ||
+      (base?.status === "auth-required" && conn.status?.state === "ok") ||
+      (!base?.connected && conn.connected)
+    if (!finished) return
+    setOauthUrl(null)
+    oauthBaselineRef.current = null
+    void mutate("connections")
+    if (conn.connected && conn.status?.state !== "auth-required") {
+      setConnectStatus(`Connected. ${conn.toolCount} tool${conn.toolCount === 1 ? "" : "s"} available.`)
+    } else {
+      setConnectStatus("Authorization didn't complete — click Connect to try again.")
+    }
+  }, [oauthUrl, conn])
 
   function prettifyUsedByLabel(jigId: string): string {
     return jigId
@@ -193,6 +217,11 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
               break
             case "awaiting-oauth":
               setConnectStatus(`Opening authorization window for ${event.server}. If nothing opens, click the link below.`)
+              oauthBaselineRef.current = {
+                connected: !!conn?.connected,
+                status: conn?.status?.state,
+                sawInProgress: false,
+              }
               setOauthUrl(event.authorizationUrl)
               // The user authorizes, the callback fires server-side, and the
               // background connect resolves. We poll fetchConnections to detect

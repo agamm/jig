@@ -35,7 +35,7 @@ import { cancelActiveRun, getActiveRunSnapshot, getRunDetail, startJigRun } from
 import { getNotificationHealth, getNotificationSettings, getNotificationTestStatus, saveNotificationSettings, saveNotificationTestStatus, notify, type NotificationSettings } from "./services/notify.js"
 import { getResendStatus, isResendConfigured, saveResendSettings, sendResendEmail } from "./services/system-notify.js"
 import { getConnectionStatus } from "./services/connection-status.js"
-import { connectConfiguredServer, disconnectConfiguredServer } from "./services/connect-server.js"
+import { connectConfiguredServer, disconnectConfiguredServer, isConnectInProgress } from "./services/connect-server.js"
 import { getDataStorageHealth } from "./services/data-storage.js"
 import { addExampleJig, listExampleJigs } from "./services/example-jigs.js"
 import { buildNotificationManifest } from "./mcp/discover/notification-manifest.js"
@@ -268,6 +268,7 @@ async function handleGetConnections(): Promise<Response> {
         // runtime signal (token rejected / unreachable) the failure
         // chokepoints recorded.
         status: connected ? getConnectionStatus(name) : null,
+        connectInProgress: isConnectInProgress(name),
       }
     })
   )
@@ -318,6 +319,7 @@ async function handleGetConnection(name: string): Promise<Response> {
     proxyVia: config.proxy?.via,
     proxyDashboardUrl: config.proxy?.dashboardUrl,
     status: connected ? getConnectionStatus(name) : null,
+    connectInProgress: isConnectInProgress(name),
     tools,
     usedBy,
   })

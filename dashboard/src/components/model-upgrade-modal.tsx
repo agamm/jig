@@ -196,7 +196,7 @@ export function ModelUpgradeModal({
           <div>
             <h3 className="text-[14px] font-semibold text-[#ededed]">Model upgrades available</h3>
             <p className="mt-1 text-[12px] leading-relaxed text-[#666]">
-              Newer, higher-ranked models in the same family. Check the price before upgrading.
+              Higher-ranked models at a similar or lower price — any provider. Check the stats before upgrading.
             </p>
           </div>
           <button

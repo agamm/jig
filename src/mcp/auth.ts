@@ -311,7 +311,14 @@ export class JigOAuthProvider implements OAuthClientProvider {
   private _callbackServer?: Server
   private _activeState?: string
 
-  constructor(private serverName: string) {}
+  /**
+   * `interactive: false` (tool calls during a run) makes redirectToAuthorization
+   * a no-op: no browser, no pending-state registration. The SDK invokes it
+   * BEFORE throwing UnauthorizedError, so without this gate a mid-run auth
+   * failure would still pop a browser tab and leak a pendingProvidersByState
+   * entry that could hijack the next dashboard connect's callback.
+   */
+  constructor(private serverName: string, private interactive: boolean = true) {}
 
   get redirectUrl(): string {
     return oauthRedirectUrl()
@@ -367,6 +374,12 @@ export class JigOAuthProvider implements OAuthClientProvider {
     const url = authorizationUrl.toString()
     const state = extractState(url) ?? `${this.serverName}-${Date.now()}`
     this._activeState = state
+
+    // Non-interactive (tool call mid-run): do nothing. The SDK will throw
+    // UnauthorizedError right after this, and recoverOAuth fails fast with a
+    // "reconnect from the dashboard" error. Opening a browser or registering
+    // pending state here would leak both.
+    if (!this.interactive) return
 
     // Both modes register by state so the API server's /api/oauth/callback can
     // route the code back here, and stage the URL so the HTTP connect handler

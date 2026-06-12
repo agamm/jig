@@ -2,10 +2,11 @@
  * Computes "equivalent but better" model upgrade suggestions for the user's
  * main / editor / fast slots, and applies them on approval.
  *
- * Matching rule (locked in with user): same provider prefix, newer than the
- * current model, AND strictly cheaper or higher OpenRouter rank. Free-tier
- * models will never be upgraded to paid models silently. The main slot also
- * requires `supportsTools` so the agent loop keeps working.
+ * Matching rule: a higher OpenRouter rank than the current model, at no more
+ * than +20% of its blended price (cross-provider allowed — the best model in
+ * your price band often isn't the same family). Free-tier models are never
+ * upgraded to paid ones silently. The agentic main/editor slots also require
+ * `supportsTools` so the agent loop keeps working.
  *
  * Dismissals are persisted in a single settings row so a suggestion the user
  * said "no" to once doesn't keep nagging them on every dashboard open.

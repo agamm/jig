@@ -38,8 +38,43 @@ const TOOL_SVC: Record<string, string> = {
 // (Connections → <server>)" error the runner emits when a token is rejected, and
 // pull out the connection name so we can offer a one-click reconnect.
 function reconnectTargetFromError(text: string): string | null {
-  const m = text.match(/^([a-z0-9_-]+): authorization (?:expired|was revoked|expired or was revoked)/i);
+  const m = text.match(/^([a-z0-9_-]+): authorization (?:expired|was revoked|expired or was revoked)/im);
   return m ? m[1] : null;
+}
+
+// Some stdio servers (e.g. workspace) report "No browser available for
+// authentication. Please run: <command>". Surface the command as a copyable
+// block instead of burying it in the error text. We only display it — never
+// execute commands parsed from error text.
+function loginCommandFromError(text: string): string | null {
+  const m = text.match(/No browser available for authentication\.?\s*Please run:?\s*([^\n(]+)/i);
+  return m ? m[1].trim() : null;
+}
+
+/** Copyable terminal-command hint for servers that need a CLI login step. */
+function LoginCommandHint({ command }: { command: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="space-y-1.5 rounded-md border border-amber-500/20 bg-amber-500/[0.05] p-2.5">
+      <p className="text-[10px] text-amber-200/90">
+        This connection needs a one-time login from your terminal, then re-run the jig:
+      </p>
+      <div className="flex items-center gap-2">
+        <code className="flex-1 overflow-x-auto rounded bg-black/40 px-2 py-1 font-mono text-[10px] text-amber-100">{command}</code>
+        <button
+          onClick={() => {
+            void navigator.clipboard.writeText(command).then(() => {
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1500);
+            });
+          }}
+          className="shrink-0 rounded-md border border-amber-500/30 px-2 py-1 text-[10px] font-medium text-amber-200 transition-colors hover:bg-amber-500/15"
+        >
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function toolService(tool: string): string | null {
@@ -410,18 +445,23 @@ export function RunSteps({
                         <div className="space-y-2">
                           <pre className="text-[10px] font-mono whitespace-pre-wrap text-[#ccc]">{step.output || modeError || ""}</pre>
                           {(() => {
-                            const target = reconnectTargetFromError(step.output || modeError || "");
-                            if (!target || !onConnectionClick) return null;
-                            return (
-                              <button
-                                onClick={() => onConnectionClick(target)}
-                                className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[11px] font-medium text-emerald-300 transition-colors hover:bg-emerald-500/20"
-                              >
-                                <ServiceIcon name={target} size={12} />
-                                Reconnect {target}
-                                <span aria-hidden>→</span>
-                              </button>
-                            );
+                            const errText = [step.output, modeError].filter(Boolean).join("\n");
+                            const target = reconnectTargetFromError(errText);
+                            const loginCmd = loginCommandFromError(errText);
+                            if (target && onConnectionClick) {
+                              return (
+                                <button
+                                  onClick={() => onConnectionClick(target)}
+                                  className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[11px] font-medium text-emerald-300 transition-colors hover:bg-emerald-500/20"
+                                >
+                                  <ServiceIcon name={target} size={12} />
+                                  Reconnect {target}
+                                  <span aria-hidden>→</span>
+                                </button>
+                              );
+                            }
+                            if (loginCmd) return <LoginCommandHint command={loginCmd} />;
+                            return null;
                           })()}
                         </div>
                       ) : (

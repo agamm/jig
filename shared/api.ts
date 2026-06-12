@@ -119,6 +119,8 @@ export interface Connection {
   proxyDashboardUrl?: string
   /** Runtime health (token expired, unreachable). null/absent = no signal recorded. */
   status?: ConnectionStatusInfo | null
+  /** A detached connect (OAuth in flight) is still running server-side. */
+  connectInProgress?: boolean
 }
 
 export interface ConnectionTool {

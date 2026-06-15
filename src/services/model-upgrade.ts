@@ -56,10 +56,6 @@ function readDismissed(): DismissedMap {
   return getSetting<DismissedMap>(DISMISSED_KEY) ?? {}
 }
 
-function provider(id: string): string {
-  return id.split("/")[0] ?? id
-}
-
 function isFree(m: OpenRouterModelInfo): boolean {
   return m.blendedPriceUsdPerM === 0 || m.id.endsWith(":free")
 }

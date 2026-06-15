@@ -26,10 +26,9 @@ export async function classifyAuthFailure(errorText: string): Promise<boolean> {
   const cached = cache.get(key)
   if (cached && Date.now() - cached.at < TTL_MS) return cached.needsReauth
 
-  const apiKey = getOpenRouterApiKey()
-  if (!apiKey) return false
-
   try {
+    const apiKey = getOpenRouterApiKey()
+    if (!apiKey) return false
     const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },

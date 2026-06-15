@@ -1,5 +1,7 @@
 {
   "workspace": {
+    "disabled": true,
+    "_note": "DISABLED 2026-06-15. The gemini-cli workspace server does its OWN Google OAuth outside jig's flow: a browser+localhost-callback path (works only on a local machine whose browser can reach the server's localhost) OR a headless copy-paste flow (show a Google URL -> user authorizes -> copies the credentials JSON Google returns -> pastes it back). On a deployed/headless host neither works as a plain clickable link, so re-auth fails (the connection shows green 'Connected' because a schema file exists, but the Google token is dead). Fixing it needs a custom in-dashboard paste flow we chose not to build: it'd serve only this 1-of-17 server (all others use jig's standard browser OAuth or a token command). To re-enable: remove this 'disabled' flag AND build that paste flow, OR keep it for local-only use. For Gmail on a deployed instance, use composio instead.",
     "type": "repo",
     "repo": "https://github.com/gemini-cli-extensions/workspace",
     "entry": "workspace-server/dist/index.js",

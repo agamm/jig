@@ -49,6 +49,10 @@ export type ServerConfig = (StdioServerConfig | RemoteServerConfig | RepoServerC
   proxy?: ProxyConfig
   /** Authoring-time discovery hook used by jig generation to resolve dynamic runtime targets. */
   authoringDiscovery?: string
+  /** When true, the server is kept in the registry for reference but not offered/loadable. */
+  disabled?: boolean
+  /** Free-text note (e.g. why it's disabled). Ignored at runtime. */
+  _note?: string
 }
 
 type ServerRegistry = Record<string, ServerConfig>
@@ -148,7 +152,13 @@ export async function loadServerConfigs(): Promise<ServerRegistry> {
   const custom = await loadCustomServerConfigs()
   const merged = { ...raw, ...custom }
 
-  for (const config of Object.values(merged)) {
+  for (const [name, config] of Object.entries(merged)) {
+    // Disabled servers stay in default.json for reference (see their `_note`)
+    // but are never offered, connected, or loadable.
+    if (config.disabled) {
+      delete merged[name]
+      continue
+    }
     if (config.type === "stdio") {
       config.args = config.args.map(expandHome)
     }

@@ -681,6 +681,13 @@ export function createApiServer(port: number) {
             return apiJson("modelsCatalog", await fetchOpenRouterModels())
           case "openrouterCredits":
             return apiJson("openrouterCredits", await fetchOpenRouterCredits())
+          case "classifyFailure": {
+            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+            const body = (await req.json().catch(() => ({}))) as { error?: unknown }
+            const text = typeof body.error === "string" ? body.error : ""
+            const { classifyAuthFailure } = await import("./services/classify-failure.js")
+            return apiJson("classifyFailure", { needsReauth: text ? await classifyAuthFailure(text) : false })
+          }
           case "modelUpgrades":
             return apiJson("modelUpgrades", await computeUpgradeSuggestions())
           case "applyModelUpgrade": {

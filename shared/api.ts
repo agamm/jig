@@ -638,6 +638,7 @@ export interface ApiContracts {
   models: ApiContract<ModelOverrideInput | void, ModelCatalog>
   modelsCatalog: ApiContract<void, OpenRouterCatalogResponse>
   openrouterCredits: ApiContract<void, OpenRouterCredits | null>
+  classifyFailure: ApiContract<{ error: string }, { needsReauth: boolean }>
   modelUpgrades: ApiContract<void, ModelUpgradesResponse>
   applyModelUpgrade: ApiContract<ApplyModelUpgradeRequest, ApplyModelUpgradeResponse>
   dismissModelUpgrade: ApiContract<DismissModelUpgradeRequest, OkResponse>

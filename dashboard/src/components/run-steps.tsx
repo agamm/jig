@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import useSWR from "swr";
 import type { JigStepTool, OpenRouterModelInfo } from "@shared/api";
-import { fetchOpenRouterCatalog, updateJigStepModel } from "@/lib/api";
+import { classifyFailure, fetchOpenRouterCatalog, updateJigStepModel } from "@/lib/api";
 import { toast } from "@/components/toast";
 import { RotatingFrame } from "@/components/rotating-frame";
 import { ServiceIcon } from "@/components/service-icon";
@@ -34,17 +35,41 @@ const TOOL_SVC: Record<string, string> = {
   list_meetings: "granola", get_meetings: "granola", query_granola: "granola",
   search_repositories: "github", list_commits: "github",
 };
-// Generic: does this failure look like the connection needs (re)authentication?
-// Covers jig's own "authorization expired" message, OAuth 401/403, and the
-// auth/login phrasing arbitrary MCP servers use. Connection-agnostic — we get
-// the connection name from the step's own tool metadata, not by parsing text.
-function looksLikeAuthFailure(text: string): boolean {
-  return /\b(unauthor|authoriz|authenticat|credential|access[_ -]?token|invalid[_ -]?grant|expired|revoked|re-?auth|sign[ -]?in|login required|no browser available|oauth|401|403)\b/i.test(text);
-}
-
 /** The connection a failed step was talking to, from its tool/connection metadata. */
 function stepConnection(step: { tools?: JigStepTool[]; connections?: string[] }): string | null {
   return step.tools?.[0]?.connection ?? step.connections?.[0] ?? null;
+}
+
+/**
+ * Offers a one-click reconnect when a failed step's error means the connection
+ * needs re-auth. The verdict is an LLM classification (cached server-side and
+ * by SWR per error text) — not keyword matching — so any MCP server's phrasing
+ * is understood. Renders nothing until/unless the model says re-auth is needed.
+ */
+function ReauthPrompt({ errorText, connection, onConnectionClick }: {
+  errorText: string;
+  connection: string;
+  onConnectionClick: (name: string) => void;
+}) {
+  const { data } = useSWR(
+    errorText ? ["classify-failure", errorText] : null,
+    () => classifyFailure(errorText),
+    { revalidateOnFocus: false, dedupingInterval: 60 * 60 * 1000 },
+  );
+  if (!data?.needsReauth) return null;
+  return (
+    <div className="flex items-center gap-2 rounded-md border border-amber-500/25 bg-amber-500/[0.06] px-2.5 py-2">
+      <span className="text-[11px] text-amber-200/90">This connection needs to be re-authenticated.</span>
+      <button
+        onClick={() => onConnectionClick(connection)}
+        className="ml-auto inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[11px] font-medium text-emerald-300 transition-colors hover:bg-emerald-500/20"
+      >
+        <ServiceIcon name={connection} size={12} />
+        Reconnect {connection}
+        <span aria-hidden>→</span>
+      </button>
+    </div>
+  );
 }
 
 function toolService(tool: string): string | null {
@@ -417,20 +442,8 @@ export function RunSteps({
                           {(() => {
                             const errText = [step.output, modeError].filter(Boolean).join("\n");
                             const target = stepConnection(step);
-                            if (!target || !onConnectionClick || !looksLikeAuthFailure(errText)) return null;
-                            return (
-                              <div className="flex items-center gap-2 rounded-md border border-amber-500/25 bg-amber-500/[0.06] px-2.5 py-2">
-                                <span className="text-[11px] text-amber-200/90">This connection needs to be re-authenticated.</span>
-                                <button
-                                  onClick={() => onConnectionClick(target)}
-                                  className="ml-auto inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[11px] font-medium text-emerald-300 transition-colors hover:bg-emerald-500/20"
-                                >
-                                  <ServiceIcon name={target} size={12} />
-                                  Reconnect {target}
-                                  <span aria-hidden>→</span>
-                                </button>
-                              </div>
-                            );
+                            if (!target || !onConnectionClick || !errText) return null;
+                            return <ReauthPrompt errorText={errText} connection={target} onConnectionClick={onConnectionClick} />;
                           })()}
                         </div>
                       ) : (

@@ -132,6 +132,14 @@ export function fetchOpenRouterCredits(): Promise<ApiResponse<"openrouterCredits
   return fetchApi("openrouterCredits", "/api/models/credits")
 }
 
+export function classifyFailure(error: string): Promise<ApiResponse<"classifyFailure">> {
+  return fetchApi("classifyFailure", "/api/classify-failure", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ error }),
+  })
+}
+
 export function fetchModelUpgrades(init?: Pick<RequestInit, "signal">): Promise<ModelUpgradesResponse> {
   return fetchApi("modelUpgrades", "/api/models/upgrades", { signal: init?.signal })
 }

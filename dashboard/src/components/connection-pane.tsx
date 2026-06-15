@@ -71,7 +71,7 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
   const connectAbortRef = useRef<AbortController | null>(null)
   const connectRunRef = useRef(0)
   /** Connection state snapshot taken when OAuth started — see completion effect. */
-  const oauthBaselineRef = useRef<{ connected: boolean; status?: string; sawInProgress: boolean } | null>(null)
+  const oauthBaselineRef = useRef<{ connected: boolean; status?: string; sawInProgress: boolean; startedAt: number } | null>(null)
 
   useEffect(() => {
     credentialValuesRef.current = credentialValues
@@ -115,11 +115,11 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
   }, [oauthUrl, conn?.connectInProgress, reload])
 
   // Completion detection. `conn.connected` alone is wrong for a RE-connect —
-  // the schema file already exists, so it's true before OAuth even starts,
-  // which used to flip the UI to "Connected." prematurely and leave the user
-  // mashing Refresh. Instead wait for the server-side detached connect to
-  // actually finish (connectInProgress true → false), with status/connected
-  // transitions as fallbacks for older servers that don't report the flag.
+  // the schema file already exists, so it's true before OAuth even starts.
+  // The server-side detached connect runs while connectInProgress is true;
+  // we resolve once it's no longer in progress AND it actually ran (we saw the
+  // flag, OR enough time has elapsed that it must have — a hard backstop so the
+  // pane can never stick on the OAuth link if a poll missed the transition).
   useEffect(() => {
     if (!oauthUrl || !conn) return
     const base = oauthBaselineRef.current
@@ -127,11 +127,15 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
       if (base) base.sawInProgress = true
       return
     }
-    const finished =
-      (base?.sawInProgress && conn.connectInProgress === false) ||
+    const ran =
+      base?.sawInProgress ||
+      // Positive transitions resolve immediately: the connect cleared a stale
+      // auth-required status, or a previously-unconnected server connected.
       (base?.status === "auth-required" && conn.status?.state === "ok") ||
-      (!base?.connected && conn.connected)
-    if (!finished) return
+      (!base?.connected && conn.connected) ||
+      // Hard backstop so it can never stick if a poll missed the transition.
+      (base ? Date.now() - base.startedAt > 12_000 : false)
+    if (!ran) return
     setOauthUrl(null)
     oauthBaselineRef.current = null
     void mutate("connections")
@@ -221,6 +225,7 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
                 connected: !!conn?.connected,
                 status: conn?.status?.state,
                 sawInProgress: false,
+                startedAt: Date.now(),
               }
               setOauthUrl(event.authorizationUrl)
               // The user authorizes, the callback fires server-side, and the

@@ -7,7 +7,7 @@ import { closeConnection, connectServer, discoverTools, ensureAnnotations } from
 import { generateConnectionArtifacts } from "../mcp/typegen.js"
 import { isServiceMode } from "../config/runtime.js"
 import { waitForPendingAuthUrl } from "../mcp/auth.js"
-import { clearConnectionStatus } from "./connection-status.js"
+import { clearConnectionStatus, reportConnectionOk } from "./connection-status.js"
 
 export type ConnectServerSuccess = {
   ok: true
@@ -213,6 +213,9 @@ async function runConnectToCompletion(
     await ensureAnnotations(tools, { signal })
     await Bun.write(join(SCHEMAS_DIR, `${serverName}.json`), JSON.stringify(tools, null, 2))
     await generateConnectionArtifacts()
+    // Connect succeeded — clear any stale auth-required/unreachable status so
+    // the pane stops showing "Reconnect needed" next to "Connection ready".
+    reportConnectionOk(serverName)
     console.log(`[connection] ${serverName} ready (${tools.length} tool${tools.length === 1 ? "" : "s"})`)
 
     return {

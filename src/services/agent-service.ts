@@ -832,6 +832,7 @@ async function buildAgentSystemPromptWithCode(
       buildHints: authoring.context.buildHints,
       currentCode: nextCurrentCode,
       exampleJig: authoring.context.exampleJig,
+      unavailableConnections: authoring.unavailableImports,
     }),
     authoringPolicy: {
       requiresIntegration: authoring.requiresIntegration || authoring.allServers.length > 0,
@@ -918,6 +919,94 @@ async function approveDraft(session: AgentSession): Promise<void> {
     sessionId: session.sessionId,
     jigId: session.jigId,
   })
+}
+
+const HEAL_SYSTEM_PROMPT = `You are a repair pass for "jig" workflow files (TypeScript). A jig the authoring agent produced failed validation. You are given the user's intent, the exact validation error, and the current file.
+
+Return the COMPLETE corrected TypeScript file and NOTHING else — no prose, no explanation, no markdown fences.
+
+Rules:
+- Make the SMALLEST change that resolves the validation error while honoring the user's intent.
+- Preserve the jig() structure and keep every agent()/ctx.output() call inside a ctx.step().
+- Never import a connection that isn't set up. If the error indicates a connection is unavailable, remove its usage and rely on an available one consistent with the intent.
+- Keep all working logic intact.`
+
+/** Strip a leading/trailing ```ts fence some models add despite instructions. */
+function stripCodeFence(raw: string): string {
+  const fenced = raw.match(/```(?:ts|typescript)?\s*([\s\S]*?)```/)
+  return (fenced ? fenced[1] : raw).trim()
+}
+
+type HealResult = { healed: boolean; error: string | null }
+
+/** Parse a tool's JSON result and return its `error` field, if any. */
+function toolResultError(result: string): string | undefined {
+  try {
+    return JSON.parse(result)?.error
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Self-heal: one focused LLM repair call after the authoring agent fails to
+ * converge to a passing check. Given the broken code + exact validation error +
+ * user intent, ask for a corrected file, write it, and re-check. Heals only if
+ * the rewrite passes; otherwise restores the agent's last version so we never
+ * leave a different-but-still-broken file behind. Returns the latest validation
+ * error so the caller can report it without re-running the check.
+ */
+async function healJig(session: AgentSession, round: number): Promise<HealResult> {
+  const jigId = session.jigId
+  if (!jigId) return { healed: false, error: null }
+  const code = await getSessionCode(session, jigId)
+  if (!code) return { healed: false, error: null }
+  const error = await toolCheckJig({}, session)
+  if (error === "ok") return { healed: false, error: null } // nothing to heal
+
+  setSessionStatus(session, "thinking")
+  session.events.push({ type: "text", content: "Edit didn't pass validation — attempting an automatic fix…" })
+  persistSession(session)
+  logSessionEvent({ source: "authoring.agent", event: "heal-start", sessionId: session.sessionId, jigId, round, error })
+
+  let fixed: string
+  try {
+    const resp = await getAgentClient().chat.completions.create({
+      model: getEditorModel(),
+      max_tokens: 16384,
+      messages: [
+        { role: "system", content: HEAL_SYSTEM_PROMPT },
+        { role: "user", content: `User intent:\n${session.authoringIntent || "(edit this jig)"}\n\nValidation error:\n${error}\n\nCurrent jig file:\n${code}` },
+      ],
+    })
+    if (stopIfClosed(session)) return { healed: false, error }
+    fixed = stripCodeFence(resp.choices[0]?.message?.content ?? "")
+  } catch (e: any) {
+    logSessionEvent({ source: "authoring.agent", event: "heal-error", sessionId: session.sessionId, jigId, round, error: e?.message ?? String(e) })
+    return { healed: false, error }
+  }
+
+  if (!fixed || fixed === code.trim()) {
+    logSessionEvent({ source: "authoring.agent", event: "heal-noop", sessionId: session.sessionId, jigId, round })
+    return { healed: false, error }
+  }
+
+  const writeErr = toolResultError(await toolWriteJigFile({ code: fixed, jigId }, session))
+  if (writeErr) {
+    await toolWriteJigFile({ code, jigId }, session) // restore agent's version
+    logSessionEvent({ source: "authoring.agent", event: "heal-failed", sessionId: session.sessionId, jigId, round, error: writeErr })
+    return { healed: false, error }
+  }
+
+  const recheck = await toolCheckJig({}, session)
+  if (recheck === "ok") {
+    logSessionEvent({ source: "authoring.agent", event: "heal-done", sessionId: session.sessionId, jigId, round })
+    return { healed: true, error: null }
+  }
+
+  await toolWriteJigFile({ code, jigId }, session) // restore agent's version
+  logSessionEvent({ source: "authoring.agent", event: "heal-failed", sessionId: session.sessionId, jigId, round, error: recheck })
+  return { healed: false, error: recheck }
 }
 
 async function runAgentLoop(session: AgentSession): Promise<void> {
@@ -1278,7 +1367,42 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
     }
   }
 
-  session.events.push({ type: "text", content: "Agent reached maximum rounds." })
+  // The agent didn't converge to a passing check within its rounds. Try one
+  // focused repair pass before giving up.
+  const heal = await healJig(session, MAX_AGENT_ROUNDS)
+  if (heal.healed) {
+    if (stopIfClosed(session)) return
+    if (session.creationMode && getDraftCode(session)) {
+      session.draftApproval = await buildDraftApproval(session)
+      session.events.push({
+        type: "text",
+        content: `Draft ready (auto-fixed). Approve to create ${session.jigId}, or reply with changes to revise it.`,
+      })
+      setSessionStatus(session, "waiting")
+    } else {
+      session.events.push({
+        type: "text",
+        content: `Auto-fixed ${session.jigId ?? "the jig"} and it passed the jig check.`,
+      })
+      setSessionStatus(session, "done")
+    }
+    persistSession(session)
+    logSessionEvent({
+      source: "authoring.agent",
+      event: "done",
+      sessionId: session.sessionId,
+      jigId: session.jigId,
+      reason: "healed",
+    })
+    return
+  }
+
+  session.events.push({
+    type: "text",
+    content: heal.error
+      ? `Couldn't finish the edit automatically. Last validation error:\n${heal.error}`
+      : "Agent reached maximum rounds.",
+  })
   setSessionStatus(session, "done")
   persistSession(session)
   logSessionEvent({

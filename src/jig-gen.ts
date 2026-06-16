@@ -128,6 +128,8 @@ export interface AuthoringState {
   requiresIntegration: boolean
   allServers: string[]
   newServers: string[]
+  /** Connections the existing jig imports that aren't currently set up (edit mode). */
+  unavailableImports: string[]
   relevantTools: string[]
   buildResolutions: BuildTimeResolution[]
   context: AuthoringContext
@@ -158,7 +160,13 @@ export async function buildAuthoringState(
 
   ensureResolvedIntegration(plan.needsIntegration, allServers, plan.unknownServers)
   if (allServers.length > 0 || plan.unknownServers.length > 0) {
-    checkConnections(allServers, plan.unknownServers, serverConfigs)
+    // Connections the jig ALREADY imports are non-blocking: editing a jig
+    // shouldn't be refused because a connection it already references is
+    // missing — the user is often editing precisely to remove or replace it
+    // (e.g. "use composio instead of workspace"). The write-time guard
+    // (findDisconnectedImports in toolWriteJigFile) still rejects code that
+    // actually uses an unconnected server, so this only relaxes the preflight.
+    checkConnections(allServers, plan.unknownServers, serverConfigs, undefined, importedServers)
   }
 
   const buildResolutions = await resolveBuildTimeTargets(description, buildResolutionServers, serverConfigs, options.ask)
@@ -179,6 +187,14 @@ export async function buildAuthoringState(
     includeAllToolsWhenUnscoped,
   })
 
+  // Imported connections that aren't set up. The preflight no longer blocks on
+  // these (see above), so tell the agent explicitly — otherwise it would try to
+  // rewrite around them, hit the write-time guard, and flail. With this it can
+  // ask the user to connect them or migrate off them deliberately.
+  const unavailableImports = importedServers.filter(
+    (server) => !existsSync(join(SCHEMAS_DIR, `${server}.json`))
+  )
+
   return {
     name: plan.name,
     servers: plan.servers,
@@ -186,6 +202,7 @@ export async function buildAuthoringState(
     requiresIntegration: plan.needsIntegration,
     allServers,
     newServers,
+    unavailableImports,
     relevantTools,
     buildResolutions,
     context,
@@ -478,7 +495,9 @@ function checkConnections(
   knownServers: string[],
   unknownServers: string[],
   serverConfigs: Record<string, any>,
-  emit?: (event: JigEvent) => void
+  emit?: (event: JigEvent) => void,
+  /** Servers that may be missing without blocking (already imported by the jig being edited). */
+  nonBlocking: string[] = []
 ): void {
   const servers = knownServers.map(s => ({
     name: s,
@@ -500,10 +519,13 @@ function checkConnections(
     emit?.({ type: "connections-unknown", servers: unknownServers.map(name => ({ name })) })
   }
 
-  if (missing.length > 0 || unknownServers.length > 0) {
+  // Only a NEW required connection (or an unknown server) blocks authoring;
+  // already-imported missing connections are surfaced above but don't throw.
+  const blockingMissing = missing.filter(s => !nonBlocking.includes(s.name))
+  if (blockingMissing.length > 0 || unknownServers.length > 0) {
     throw new CreatorError("missing-connections", "Required connections are not set up", {
       suggestedConnections: servers.map((server) => server.name),
-      requiredConnections: missing.map((server) => server.name),
+      requiredConnections: blockingMissing.map((server) => server.name),
       connectionStatuses: servers.map(({ name, connected }) => ({ name, connected })),
       unknownConnections: unknownServers,
     })

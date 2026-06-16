@@ -23,6 +23,8 @@ type AgentPromptInput = {
   buildHints?: string
   currentCode?: string
   exampleJig?: string
+  /** Connections the current jig imports that aren't set up (edit mode). */
+  unavailableConnections?: string[]
 }
 
 function joinSections(sections: Array<string | null | undefined>) {
@@ -101,6 +103,7 @@ export function buildAgentJigSystemPrompt({
   buildHints,
   currentCode,
   exampleJig,
+  unavailableConnections,
 }: AgentPromptInput): string {
   return joinSections([
     `You are a jig creation and editing agent. You write TypeScript jig files that automate workflows.
@@ -118,6 +121,12 @@ IMPORTANT: Act immediately. Do NOT describe what you plan to do — just do it. 
     section("Tool Schemas (exact param names, types, required fields — also read each tool's description for the return shape; some tools return plain strings, XML, or Markdown rather than JSON)", relevantSchemas),
     section("Build-Time Resolved Runtime Targets", buildHints),
     currentCode ? section(`Current Jig Code (${jigId})`, `\`\`\`typescript\n${currentCode}\n\`\`\``) : null,
+    unavailableConnections && unavailableConnections.length > 0
+      ? section(
+          "Connections Not Set Up",
+          `The current jig imports these connections, but they are not connected: ${unavailableConnections.join(", ")}.\n- If the edit still needs one, call ask_user to have the user connect it (or switch to an available connection that serves the same purpose).\n- Otherwise, remove its usage entirely — do NOT keep an import for an unconnected connection (the write will be rejected).`
+        )
+      : null,
     exampleJig && jigId !== "weekly-update"
       ? section("Example Jig", `\`\`\`typescript\n${exampleJig}\n\`\`\``)
       : null,

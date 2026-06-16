@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from "bun:test"
 import { closeDb, openDb, getCredential, listCredentials } from "../src/db.js"
-import { JigOAuthProvider } from "../src/mcp/auth.js"
+import { JigOAuthProvider, oauthRedirectUrl } from "../src/mcp/auth.js"
 import { USER_CANCELLED_MESSAGE } from "../src/run-cancel.js"
 
 beforeEach(() => {
@@ -43,17 +43,29 @@ describe("JigOAuthProvider SQLite storage", () => {
     expect(loaded).toEqual(tokens as any)
   })
 
-  it("round-trips client information", async () => {
+  it("round-trips client information whose redirect matches the current callback", async () => {
     const provider = new JigOAuthProvider("composio")
     const clientInfo = {
       client_id: "client_abc",
-      redirect_uris: ["http://localhost:9876/callback"],
+      redirect_uris: [oauthRedirectUrl()],
       client_id_issued_at: 1775436724,
     }
     await provider.saveClientInformation(clientInfo as any)
 
     const loaded = await provider.clientInformation()
     expect(loaded).toEqual(clientInfo as any)
+  })
+
+  it("drops a stale client registration whose redirect_uris no longer match (self-heal)", async () => {
+    const provider = new JigOAuthProvider("composio")
+    await provider.saveClientInformation({
+      client_id: "client_stale",
+      redirect_uris: ["http://localhost:9876/callback"], // old loopback scheme
+      client_id_issued_at: 1775436724,
+    } as any)
+
+    // Returning undefined forces the SDK to re-register with the current redirect.
+    expect(await provider.clientInformation()).toBeUndefined()
   })
 
   it("round-trips the PKCE code verifier", async () => {

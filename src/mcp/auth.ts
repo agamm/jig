@@ -338,7 +338,21 @@ export class JigOAuthProvider implements OAuthClientProvider {
     const raw = getCredential(`oauth:${this.serverName}:client`)
     if (!raw) return undefined
     try {
-      return JSON.parse(raw) as OAuthClientInformationMixed
+      const info = JSON.parse(raw) as OAuthClientInformationMixed
+      // Self-heal stale registrations. If the stored client's redirect_uris no
+      // longer include our current callback (the redirect URL changed — e.g.
+      // the old ephemeral `:9876/callback` scheme, a different API port, or a
+      // new public URL), reusing this client_id makes the provider reject the
+      // authorize request with "redirect URI provided was invalid". Returning
+      // undefined drops it so the SDK re-runs dynamic client registration with
+      // the current redirect URL and saveClientInformation overwrites the row.
+      const current = oauthRedirectUrl()
+      const registered = (info as { redirect_uris?: string[] }).redirect_uris
+      if (Array.isArray(registered) && registered.length > 0 && !registered.includes(current)) {
+        console.log(`[jig][oauth] ${this.serverName}: stored client redirect_uris ${JSON.stringify(registered)} don't include ${current} — re-registering`)
+        return undefined
+      }
+      return info
     } catch {
       return undefined
     }

@@ -222,6 +222,39 @@ a:focus-visible {
   animation: shimmer 3s ease-in-out infinite;
 }
 
+/*
+ * Loading text shine — the design-language treatment for any "in progress"
+ * label (paired with <Spinner/>). A bright blue highlight sweeps across muted
+ * text, with a soft glow matching the spinner's blue. Use the .text-shimmer
+ * class (or the ShimmerText component) for every loading/pending label.
+ */
+@keyframes text-shimmer {
+  0% { background-position: 150% 0; }
+  100% { background-position: -150% 0; }
+}
+.text-shimmer {
+  background: linear-gradient(
+    100deg,
+    var(--text-muted) 30%,
+    rgba(160, 210, 255, 0.95) 50%,
+    var(--text-muted) 70%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  filter: drop-shadow(0 0 6px rgba(110, 190, 255, 0.22));
+  animation: text-shimmer 2.4s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .text-shimmer {
+    animation: none;
+    -webkit-text-fill-color: var(--text-muted);
+    color: var(--text-muted);
+  }
+}
+
 /* Steps/Code flip animation */
 @keyframes flip-in {
   0% { transform: rotateX(90deg) perspective(400px); opacity: 0; }

@@ -78,7 +78,7 @@ export function LoadingState({
       >
         <div className="flex items-center justify-center gap-2 px-4 py-6">
           <Spinner size={14} />
-          <span className="text-[11px] text-[var(--text-muted)]">{message}</span>
+          <span className="text-shimmer text-[11px]">{message}</span>
         </div>
       </RotatingFrame>
     );

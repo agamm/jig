@@ -8,6 +8,7 @@ import { PaneHeader } from "@/components/pane-header"
 import { PaneSection } from "@/components/pane-section"
 import { RotatingFrame } from "@/components/rotating-frame"
 import { ServiceIcon } from "@/components/service-icon"
+import { Spinner } from "@/components/spinner"
 import { EmptyState, LoadingState, Notice } from "@/components/state-panel"
 import { connectConnection, disconnectConnection, fetchConnection, fetchConnections } from "@/lib/api"
 import { ConfirmDialog } from "@/components/confirm-dialog"
@@ -464,7 +465,10 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
                 ) : null}
                 {connectStatus ? (
                   <Notice tone={connectStatus.toLowerCase().startsWith("connected") ? "success" : connectStatus.toLowerCase().includes("failed") || connectStatus.toLowerCase().includes("error") ? "danger" : "neutral"}>
-                    <div className="whitespace-pre-wrap">{connectStatus}</div>
+                    <div className="flex items-start gap-2">
+                      {(connecting || oauthUrl) && <Spinner size={12} className="mt-0.5" />}
+                      <div className={`whitespace-pre-wrap ${connecting || oauthUrl ? "text-shimmer" : ""}`.trim()}>{connectStatus}</div>
+                    </div>
                   </Notice>
                 ) : null}
               </div>

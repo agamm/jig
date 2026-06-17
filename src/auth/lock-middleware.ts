@@ -25,6 +25,7 @@ const PUBLIC_HANDLERS = new Set<string>([
   "setupPassword",
   "oauthCallback",
   "webhook", // external webhook triggers carry their own per-jig token
+  "emailInbound", // AgentMail inbound webhook — authed by Svix signature + owner check
 ])
 
 /**

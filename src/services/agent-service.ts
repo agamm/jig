@@ -1571,6 +1571,42 @@ export async function approveAgentDraft(sessionId: string): Promise<OkResponse> 
   return { ok: true }
 }
 
+/**
+ * Subscribe to a session's frame stream — the callback fires whenever session
+ * state changes (same signal the SSE handler uses). Returns an unsubscribe fn.
+ * Used by the email bridge to react to a session's progress out-of-band.
+ */
+export function subscribeToSessionFrames(sessionId: string, cb: () => void): () => void {
+  const stream = getSessionStream(sessionId)
+  const handler = () => cb()
+  stream.on("frame", handler)
+  return () => stream.off("frame", handler)
+}
+
+/**
+ * Approve whatever pending version a session produced, for either a creation
+ * (draft approval) or an edit (pending diff) — both promote the same way via
+ * approveDraft. Returns false if there's nothing to approve, or if the pending
+ * doesn't pass the jig check. Used by the email bridge to auto-approve edits
+ * made by reply, where there's no human review of the diff.
+ *
+ * The validation gate matters: the agent can settle into "done" via the
+ * max-rounds/heal-failed path while a *broken* last write is still pending.
+ * Without a human to eyeball the diff, we re-run the check before shipping.
+ */
+export async function autoApproveSession(sessionId: string): Promise<boolean> {
+  const session = loadSession(sessionId)
+  if (!session?.jigId) return false
+  if (!storeGetPending(session.jigId)) return false
+
+  const materialized = await materializePendingVersion(session.jigId)
+  if (!materialized) return false
+  if ((await checkJigFile(materialized.path)) !== "ok") return false
+
+  await approveDraft(session)
+  return true
+}
+
 export async function closeAgentSession(sessionId: string): Promise<OkResponse> {
   const session = loadSession(sessionId)
   if (!session) return { ok: true }

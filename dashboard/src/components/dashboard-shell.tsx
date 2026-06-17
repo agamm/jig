@@ -126,13 +126,14 @@ export function DashboardShell({
   const { data: credits } = useOpenRouterCredits();
   const [resendBannerDismissed, setResendBannerDismissed, resendBannerMounted] = useLocalStorage("jig-resend-banner-dismissed", false);
   // Prompt to set up out-of-band alerting once the workspace is in use (has at
-  // least one jig) but Resend isn't configured — that's when an unattended
-  // failure would actually go unnoticed. health is admin-gated, so
-  // resend_configured is undefined until authed; only show on an explicit false.
+  // least one jig) but neither email channel is configured — that's when an
+  // unattended failure would actually go unnoticed. health is admin-gated, so
+  // these are undefined until authed; only show on an explicit false for both.
   const showResendOnboarding =
     resendBannerMounted &&
     !resendBannerDismissed &&
     health?.resend_configured === false &&
+    health?.agentmail_configured === false &&
     jigs.length > 0;
 
   function openResendSettings() {
@@ -292,12 +293,12 @@ export function DashboardShell({
             className="mb-3"
             actions={
               <div className="flex items-center gap-2">
-                <Button onClick={openResendSettings} variant="accent" size="xs">Set up Resend</Button>
+                <Button onClick={openResendSettings} variant="accent" size="xs">Set up alerts</Button>
                 <Button onClick={() => setResendBannerDismissed(true)} variant="subtle" size="xs">Dismiss</Button>
               </div>
             }
           >
-            Running 24/7? Add a Resend API key so Jig emails you when a jig fails or a connection breaks — even when its own integrations are down.
+            Running 24/7? Set up email alerts so Jig tells you when a jig fails or a connection breaks — even when its own integrations are down. With AgentMail you can reply to fix the jig on the spot.
           </Notice>
         )}
         {loading && <LoadingState message="Loading workspace…" className="h-32" />}

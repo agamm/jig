@@ -589,6 +589,8 @@ export interface HealthResponse {
   stalled_runs?: number
   /** Whether the out-of-band Resend system-notification channel is set up. */
   resend_configured?: boolean
+  /** Whether the repliable AgentMail failure-alert channel is set up. */
+  agentmail_configured?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -610,6 +612,39 @@ export interface ResendSettingsUpdate {
 }
 
 export interface ResendTestResponse {
+  ok: boolean
+  error?: string
+}
+
+// ---------------------------------------------------------------------------
+// AgentMail — repliable jig-failure emails (reply to edit the jig)
+// ---------------------------------------------------------------------------
+
+export interface AgentMailSettingsResponse {
+  /** True once an API key, an inbox, a webhook secret, and an owner are all set. */
+  configured: boolean
+  /** Whether an API key is stored (key itself is never returned). */
+  hasKey: boolean
+  /** The provisioned inbox address (e.g. jig-xxxx@agentmail.to), if set up. */
+  address: string | null
+  /** The sole address allowed to drive edits by reply. */
+  owner: string | null
+  /** Whether the inbound webhook has been registered (signing secret stored). */
+  webhookReady: boolean
+}
+
+export interface AgentMailSettingsUpdate {
+  apiKey?: string
+  owner?: string
+}
+
+export interface AgentMailSetupResponse {
+  ok: boolean
+  address?: string
+  error?: string
+}
+
+export interface AgentMailTestResponse {
   ok: boolean
   error?: string
 }
@@ -683,6 +718,9 @@ export interface ApiContracts {
   notificationSettingsTest: ApiContract<void, NotifyTestResponse>
   resendSettings: ApiContract<ResendSettingsUpdate | void, ResendSettingsResponse>
   resendTest: ApiContract<void, ResendTestResponse>
+  agentMailSettings: ApiContract<AgentMailSettingsUpdate | void, AgentMailSettingsResponse>
+  agentMailSetup: ApiContract<void, AgentMailSetupResponse>
+  agentMailTest: ApiContract<void, AgentMailTestResponse>
   toolPermissions: ApiContract<void, ToolPermission[]>
   saveToolPermission: ApiContract<{ connection: string; tool: string; policy: ToolPermissionPolicy }, OkResponse>
   resetLocalState: ApiContract<void, ResetLocalStateResponse>

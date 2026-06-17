@@ -19,8 +19,9 @@
 import { join } from "node:path"
 import { statSync } from "node:fs"
 import { CONNECTIONS_DIR } from "../config/paths.js"
-import { getSetting, setSetting } from "../db.js"
+import { getSetting, setSetting, recordEmailThread } from "../db.js"
 import { isResendConfigured, sendResendEmail } from "./system-notify.js"
+import { getAgentMailSettings, isAgentMailConfigured, sendAgentMailEmail } from "./agentmail.js"
 import { buildNotificationManifest, type NotificationCapableTool } from "../mcp/discover/notification-manifest.js"
 import { publicUrl } from "../config/runtime.js"
 import type {
@@ -75,21 +76,23 @@ export function getNotificationHealth(
   manifest: NotificationCapableTool[] = buildNotificationManifest(),
   testStatus: NotificationTestStatus | null = getNotificationTestStatus(),
   resendConfigured: boolean = isResendConfigured(),
+  agentMailConfigured: boolean = isAgentMailConfigured(),
 ): NotificationHealth {
   const reasons: string[] = []
   const manifestKeys = new Set(manifest.map((tool) => key(tool.connection, tool.tool)))
+  // Either email channel can deliver a failure alert on its own, with no MCP
+  // connection in play — so a setup with just one of them is healthy.
+  const emailConfigured = resendConfigured || agentMailConfigured
 
   if (!settings.triggerOn?.fail) {
     reasons.push("Failure notifications are paused.")
   }
 
-  // Resend counts as a delivery channel of its own — a setup with only
-  // Resend configured (no MCP notification tools) is healthy.
-  if (manifest.length === 0 && !resendConfigured) {
-    reasons.push("No notification-capable tools are connected and Resend email is not set up.")
+  if (manifest.length === 0 && !emailConfigured) {
+    reasons.push("No notification-capable tools are connected and email is not set up.")
   }
 
-  if (settings.channels.length === 0 && !resendConfigured) {
+  if (settings.channels.length === 0 && !emailConfigured) {
     reasons.push("No failure notification channel is configured.")
   }
 
@@ -172,7 +175,10 @@ export async function notify(opts: {
 
   if (!opts.ignoreTriggerGate && !settings.triggerOn?.[opts.kind]) return report
   const resendReady = isResendConfigured()
-  if (!settings.channels?.length && !resendReady) return report
+  // AgentMail only carries failure emails that name a jig — a reply needs a jig
+  // to route to. Without opts.jigId it can't be the email channel.
+  const agentMailReady = isAgentMailConfigured() && !!opts.jigId
+  if (!settings.channels?.length && !resendReady && !agentMailReady) return report
 
   let manifest: NotificationCapableTool[]
   try {
@@ -223,9 +229,25 @@ export async function notify(opts: {
     }
   }
 
-  // Resend is the out-of-band channel: it doesn't depend on any MCP
-  // connection, so it still delivers when the failure IS a broken connection.
-  if (resendReady) {
+  // Email is the out-of-band channel: it doesn't depend on any MCP connection,
+  // so it still delivers when the failure IS a broken connection. Prefer
+  // AgentMail when configured — its emails are repliable, so the user can reply
+  // to fix the jig — and record the thread→jig mapping so the inbound webhook
+  // can route that reply. Fall back to Resend when AgentMail isn't set up.
+  if (agentMailReady) {
+    try {
+      const owner = getAgentMailSettings().owner!
+      const { threadId } = await sendAgentMailEmail({
+        to: owner,
+        subject: opts.title,
+        text: `${opts.body}\n\nReply to this email to fix the jig — your reply goes straight to its authoring agent.`,
+      })
+      recordEmailThread(threadId, opts.jigId!)
+      report.sent.push({ channel: "agentmail", ok: true })
+    } catch (e) {
+      report.errors.push({ channel: "agentmail", error: (e as Error)?.message ?? String(e) })
+    }
+  } else if (resendReady) {
     try {
       await sendResendEmail({ subject: opts.title, text: opts.body })
       report.sent.push({ channel: "resend", ok: true })

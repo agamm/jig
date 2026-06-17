@@ -255,6 +255,17 @@ const MIGRATIONS: string[] = [
   // raise its ceiling from the dashboard without touching env config.
   `ALTER TABLE jigs ADD COLUMN run_timeout_ms INTEGER;
    ALTER TABLE jigs ADD COLUMN tool_timeout_ms INTEGER;`,
+  // v17: map an inbound mail thread to the jig its failure email was about, so a
+  // reply to that email (delivered via the AgentMail webhook) can be routed to
+  // the right jig's authoring agent. agent_session_id remembers the live editing
+  // session so a back-and-forth thread continues the same session.
+  `CREATE TABLE IF NOT EXISTS email_threads (
+     thread_id TEXT PRIMARY KEY,
+     jig_id TEXT NOT NULL,
+     agent_session_id TEXT,
+     created_at TEXT NOT NULL DEFAULT (datetime('now')),
+     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+   );`,
 ]
 
 // ---------------------------------------------------------------------------
@@ -852,6 +863,41 @@ export function setSetting(key: string, value: unknown): void {
     `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`
   ).run(key, JSON.stringify(value))
+}
+
+// ---------------------------------------------------------------------------
+// Email threads — correlate an inbound mail reply back to the jig it concerns
+// ---------------------------------------------------------------------------
+
+export interface EmailThreadRow {
+  thread_id: string
+  jig_id: string
+  agent_session_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+/** Remember that `threadId` (an AgentMail thread) is about `jigId`. Upsert so a
+ *  repeated failure email for the same jig keeps one row per thread. */
+export function recordEmailThread(threadId: string, jigId: string): void {
+  const db = openDb()
+  db.prepare(
+    `INSERT INTO email_threads (thread_id, jig_id) VALUES (?, ?)
+     ON CONFLICT(thread_id) DO UPDATE SET jig_id = excluded.jig_id, updated_at = datetime('now')`
+  ).run(threadId, jigId)
+}
+
+export function getEmailThread(threadId: string): EmailThreadRow | null {
+  const db = openDb()
+  return db.prepare(`SELECT * FROM email_threads WHERE thread_id = ?`).get(threadId) as EmailThreadRow | null
+}
+
+/** Attach (or clear) the live authoring session driving edits for this thread. */
+export function setEmailThreadSession(threadId: string, sessionId: string | null): void {
+  const db = openDb()
+  db.prepare(
+    `UPDATE email_threads SET agent_session_id = ?, updated_at = datetime('now') WHERE thread_id = ?`
+  ).run(sessionId, threadId)
 }
 
 // ---------------------------------------------------------------------------

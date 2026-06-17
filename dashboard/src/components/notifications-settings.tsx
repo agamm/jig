@@ -6,6 +6,7 @@ import { TextInput } from "@/components/input";
 import { ServiceIcon } from "@/components/service-icon";
 import { LoadingState, Notice } from "@/components/state-panel";
 import { ResendSettings } from "@/components/resend-settings";
+import { AgentMailSettings } from "@/components/agentmail-settings";
 import { fetchNotificationSettings, saveNotificationSettings, sendTestNotification } from "@/lib/api";
 import type {
   NotificationCapableTool,
@@ -182,6 +183,10 @@ export function NotificationsSettings() {
     <div className="space-y-4">
       <div className="rounded-xl border border-[#1f1f23] bg-[#111113] px-4 py-4">
         <ResendSettings />
+      </div>
+
+      <div className="rounded-xl border border-[#1f1f23] bg-[#111113] px-4 py-4">
+        <AgentMailSettings />
       </div>
 
       <div className="rounded-xl border border-[#1f1f23] bg-[#111113] px-4 py-4 space-y-3.5">

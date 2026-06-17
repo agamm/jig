@@ -27,6 +27,10 @@ import type {
   ResendSettingsResponse,
   ResendSettingsUpdate,
   ResendTestResponse,
+  AgentMailSettingsResponse,
+  AgentMailSettingsUpdate,
+  AgentMailSetupResponse,
+  AgentMailTestResponse,
   ResetLocalStateResponse,
   RunDetail,
   RunStatus,
@@ -369,6 +373,26 @@ export function saveResendSettings(update: ResendSettingsUpdate): Promise<Resend
 
 export function sendResendTest(): Promise<ResendTestResponse> {
   return fetchApi("resendTest", "/api/settings/resend/test", { method: "POST" })
+}
+
+export function fetchAgentMailSettings(): Promise<AgentMailSettingsResponse> {
+  return fetchApi("agentMailSettings", "/api/settings/agentmail")
+}
+
+export function saveAgentMailSettings(update: AgentMailSettingsUpdate): Promise<AgentMailSettingsResponse> {
+  return fetchApi("agentMailSettings", "/api/settings/agentmail", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(update),
+  })
+}
+
+export function setupAgentMail(): Promise<AgentMailSetupResponse> {
+  return fetchApi("agentMailSetup", "/api/settings/agentmail/setup", { method: "POST" })
+}
+
+export function sendAgentMailTest(): Promise<AgentMailTestResponse> {
+  return fetchApi("agentMailTest", "/api/settings/agentmail/test", { method: "POST" })
 }
 
 export function fetchSystemSettings(): Promise<SystemSettings> {

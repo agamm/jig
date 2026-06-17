@@ -40,3 +40,30 @@ export function publicUrl(): string | undefined {
 function stripTrailingSlash(url: string): string {
   return url.endsWith("/") ? url.slice(0, -1) : url
 }
+
+/**
+ * Best-effort public origin derived from the incoming request — the URL the
+ * dashboard was actually loaded from. Used as a fallback when no platform env
+ * var resolved a public URL (e.g. a self-hosted reverse proxy on a custom
+ * domain). Returns undefined for hosts no external service could reach back to
+ * (localhost / private ranges), since those can't receive an inbound webhook.
+ */
+export function publicUrlFromRequest(req: Request): string | undefined {
+  const fwdHost = req.headers.get("x-forwarded-host")
+  const host = fwdHost ?? new URL(req.url).host
+  if (!host) return undefined
+
+  const hostname = host.split(":")[0].toLowerCase()
+  const unreachable =
+    hostname === "localhost" ||
+    hostname.endsWith(".local") ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    /^10\./.test(hostname) ||
+    /^192\.168\./.test(hostname) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(hostname)
+  if (unreachable) return undefined
+
+  const proto = req.headers.get("x-forwarded-proto")?.split(",")[0].trim() || "https"
+  return stripTrailingSlash(`${proto}://${host}`)
+}

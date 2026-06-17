@@ -34,6 +34,15 @@ import { approveAgentDraft, closeAgentSession, getAgentSessionStatus, listUnderC
 import { cancelActiveRun, getActiveRunSnapshot, getRunDetail, startJigRun } from "./services/run-api.js"
 import { getNotificationHealth, getNotificationSettings, getNotificationTestStatus, saveNotificationSettings, saveNotificationTestStatus, notify, type NotificationSettings } from "./services/notify.js"
 import { getResendStatus, isResendConfigured, saveResendSettings, sendResendEmail } from "./services/system-notify.js"
+import {
+  getAgentMailSettings,
+  getAgentMailStatus,
+  isAgentMailConfigured,
+  saveAgentMailSettings,
+  sendAgentMailEmail,
+  setupAgentMail,
+} from "./services/agentmail.js"
+import { handleInboundEmail } from "./services/email-inbound.js"
 import { getConnectionStatus } from "./services/connection-status.js"
 import { connectConfiguredServer, disconnectConfiguredServer, isConnectInProgress } from "./services/connect-server.js"
 import { getDataStorageHealth } from "./services/data-storage.js"
@@ -67,7 +76,7 @@ import { broadcastJigsUpdated, createLiveUpdatesResponse, startLiveUpdateWatcher
 import { matchRoute } from "./server/router.js"
 import { firstLineSummary } from "./text.js"
 import { isCancellationError, USER_CANCELLED_MESSAGE } from "./run-cancel.js"
-import { isServiceMode, publicUrl } from "./config/runtime.js"
+import { isServiceMode, publicUrl, publicUrlFromRequest } from "./config/runtime.js"
 import { getSystemSettings, saveSystemSettings, seedSystemSettingsDefaults } from "./config/timezone.js"
 import { changePassword, isPasswordSet, isUnlocked, setPassword, unlock } from "./crypto/password.js"
 import { checkAccess, requireAdminAccess } from "./auth/lock-middleware.js"
@@ -647,6 +656,7 @@ export function createApiServer(port: number) {
               db_writable: isDbWritable(),
               stalled_runs: countStalledRuns(),
               resend_configured: isResendConfigured(),
+              agentmail_configured: isAgentMailConfigured(),
             })
           }
           case "completeOnboarding":
@@ -1041,6 +1051,61 @@ export function createApiServer(port: number) {
             } catch (e: any) {
               return apiJson("resendTest", { ok: false as const, error: e?.message ?? String(e) })
             }
+          }
+          case "agentMailSettings": {
+            if (req.method === "PUT") {
+              const body = (await req.json().catch(() => ({}))) as Record<string, unknown>
+              saveAgentMailSettings({
+                apiKey: typeof body.apiKey === "string" ? body.apiKey : undefined,
+                owner: typeof body.owner === "string" ? body.owner : undefined,
+              })
+            } else if (req.method !== "GET") {
+              return json({ error: "Method not allowed" }, 405)
+            }
+            return apiJson("agentMailSettings", getAgentMailStatus())
+          }
+          case "agentMailSetup": {
+            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+            // Auto-detected from the platform (Railway/Render/Fly) or the
+            // dashboard's own origin; JIG_PUBLIC_URL is only needed when neither
+            // resolves (e.g. running on localhost without a tunnel).
+            const base = publicUrl() ?? publicUrlFromRequest(req)
+            if (!base) {
+              return apiJson("agentMailSetup", {
+                ok: false as const,
+                error: "Couldn't determine a public URL for the inbound webhook. Deploy behind a public domain, or set JIG_PUBLIC_URL.",
+              })
+            }
+            try {
+              const address = await setupAgentMail(`${base}/api/email/inbound`)
+              return apiJson("agentMailSetup", { ok: true as const, address })
+            } catch (e: any) {
+              return apiJson("agentMailSetup", { ok: false as const, error: e?.message ?? String(e) })
+            }
+          }
+          case "agentMailTest": {
+            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+            const owner = getAgentMailSettings().owner
+            if (!isAgentMailConfigured() || !owner) {
+              return apiJson("agentMailTest", { ok: false as const, error: "AgentMail is not fully configured." })
+            }
+            try {
+              await sendAgentMailEmail({
+                to: owner,
+                subject: "Jig can receive your replies",
+                text: "Reply to this email and Jig will route your message to a jig's authoring agent. (This is just a test — no jig is attached to this thread.)",
+              })
+              return apiJson("agentMailTest", { ok: true as const })
+            } catch (e: any) {
+              return apiJson("agentMailTest", { ok: false as const, error: e?.message ?? String(e) })
+            }
+          }
+          case "emailInbound": {
+            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+            // Svix verification needs the raw, unparsed body bytes.
+            const rawBody = await req.text()
+            const result = await handleInboundEmail(rawBody, req.headers)
+            return json(result.body, result.status)
           }
           case "systemSettings": {
             if (req.method === "GET") return apiJson("systemSettings", getSystemSettings())

@@ -88,6 +88,11 @@ export async function handleInboundEmail(
     return { status: 200, body: { ignored: "empty instruction" } }
   }
 
+  // Acknowledge immediately so the thread shows we received it and are working —
+  // the authoring agent can take a while, and the final reply lands later.
+  // Best-effort and awaited so the ack always precedes the result.
+  await replyAgentMail({ messageId, text: "👀 On it — editing the jig now. I'll reply here when it's done." }).catch(() => {})
+
   // Continue an in-flight session if it's waiting on the user (e.g. an ask_user
   // question); otherwise start a fresh edit session for the jig.
   const liveSessionId = liveWaitingSession(thread.agent_session_id)

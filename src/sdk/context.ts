@@ -105,7 +105,8 @@ export class Context {
     public readonly params: Record<string, unknown>,
     private allowedTools: string[],
     private readonly _signal?: AbortSignal,
-    private readonly _toolTimeoutMs?: number | null
+    private readonly _toolTimeoutMs?: number | null,
+    private readonly _jigId?: string
   ) {}
 
   get signal(): AbortSignal | undefined { return this._signal }
@@ -203,6 +204,38 @@ export class Context {
 
   /** @deprecated Use ctx.output() instead. */
   log(...args: any[]) { this.output(...args) }
+
+  /**
+   * Email the user (the configured AgentMail owner) a repliable message —
+   * replying to it opens THIS jig's authoring agent (reply-to-edit). Use for
+   * output meant for the user themselves (digests, briefings, things they may
+   * want to revise). For one-way mail to other recipients, use an MCP email
+   * tool (e.g. gmail_send) instead. Call inside a `ctx.step(...)`.
+   *
+   * Sends only to the owner (a reply from anyone else is rejected on inbound).
+   * No-ops during dry-run. Throws if AgentMail isn't set up.
+   */
+  async email(opts: { subject: string; text?: string; html?: string }): Promise<{ threadId: string; messageId: string }> {
+    // Dry-run first: a preview must never send, and must not fail just because
+    // AgentMail isn't configured.
+    const { isDryRun } = await import("./dryrun.js")
+    if (isDryRun()) {
+      this.output(`[dry-run] would email you: ${opts.subject}`)
+      return { threadId: "dry-run", messageId: "dry-run" }
+    }
+    const { canSendAgentMail, getAgentMailSettings, sendAgentMailEmail } = await import("../services/agentmail.js")
+    const owner = getAgentMailSettings().owner
+    if (!canSendAgentMail() || !owner) {
+      throw new Error("ctx.email needs AgentMail — connect an inbox in Settings → Notifications.")
+    }
+    const res = await sendAgentMailEmail({ to: owner, subject: opts.subject, text: opts.text, html: opts.html })
+    // Map the thread to this jig so the user's reply routes to its authoring agent.
+    if (this._jigId) {
+      const { recordEmailThread } = await import("../db.js")
+      recordEmailThread(res.threadId, this._jigId)
+    }
+    return res
+  }
 
   /** Get all captured output. Used by dry-run and dashboard. */
   getOutput(): string[] { return this._output }

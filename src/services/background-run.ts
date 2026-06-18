@@ -66,7 +66,7 @@ export async function startBackgroundRun(jigId: string, params?: Record<string, 
       } else if (event.type === "done") {
         console.log(`[scheduler] ${jigId} done in ${event.durationMs}ms`)
       }
-    }, { silent: true, signal: getSignalForRun(runId), toolTimeoutMs: jigRow?.tool_timeout_ms ?? null })
+    }, { silent: true, signal: getSignalForRun(runId), toolTimeoutMs: jigRow?.tool_timeout_ms ?? null, jigId })
 
     // If skipped, remove the run row — it never happened
     if (result.skipped) {

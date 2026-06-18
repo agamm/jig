@@ -43,6 +43,7 @@ export async function runJig(
     modelOverride?: string | null
     stepModelOverrides?: Record<string, string>
     toolTimeoutMs?: number | null
+    jigId?: string
   }
 ): Promise<RunResult> {
   const { dryRun, silent } = options ?? {}
@@ -58,6 +59,7 @@ export async function runJig(
       modelOverride: options?.modelOverride ?? null,
       stepModelOverrides: options?.stepModelOverrides ?? {},
       toolTimeoutMs: options?.toolTimeoutMs ?? null,
+      jigId: options?.jigId,
     })
   )
 }
@@ -73,6 +75,7 @@ async function _runJig(
     modelOverride: string | null
     stepModelOverrides: Record<string, string>
     toolTimeoutMs: number | null
+    jigId?: string
   }
 ): Promise<RunResult> {
   const { dryRun, silent, signal } = opts
@@ -183,6 +186,7 @@ async function _runJig(
       modelOverride: opts.modelOverride,
       stepModelOverrides: opts.stepModelOverrides,
       toolTimeoutMs: opts.toolTimeoutMs,
+      jigId: opts.jigId,
     })
 
     // --- Post-run ---

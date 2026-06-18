@@ -68,7 +68,7 @@ export async function startJigRun(id: string, body: any): Promise<StartRunRespon
         } else if (event.type === "done") {
           console.log(`[run] ${id} done in ${event.durationMs}ms`)
         }
-      }, { dryRun, silent: true, signal: getSignalForRun(runId), modelOverride, stepModelOverrides, toolTimeoutMs })
+      }, { dryRun, silent: true, signal: getSignalForRun(runId), modelOverride, stepModelOverrides, toolTimeoutMs, jigId: id })
       if (result.skipped && !dryRun) {
         skipped = true
         const db = openDb()

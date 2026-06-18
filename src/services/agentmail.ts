@@ -168,18 +168,20 @@ export async function setupAgentMail(
   return { address, webhookReady }
 }
 
-/** Send a plain-text email from the Jig inbox. Returns thread + message ids. */
+/** Send an email from the Jig inbox (plain text and/or HTML). Returns thread + message ids. */
 export async function sendAgentMailEmail(opts: {
   to: string
   subject: string
-  text: string
+  text?: string
+  html?: string
 }): Promise<{ threadId: string; messageId: string }> {
   const { inboxId } = getAgentMailSettings()
   if (!inboxId) throw new Error("AgentMail inbox is not provisioned")
   const data = await apiFetch(`/inboxes/${encodeURIComponent(inboxId)}/messages/send`, {
     to: [opts.to],
     subject: opts.subject,
-    text: opts.text,
+    ...(opts.text != null && { text: opts.text }),
+    ...(opts.html != null && { html: opts.html }),
   })
   return { threadId: data.thread_id, messageId: data.message_id }
 }

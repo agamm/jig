@@ -338,6 +338,35 @@ await workspace.gmail_send({ to, subject, body: htmlBody, isHtml: true })
 ctx.output(`Email sent to ${to}\n\nPreview:\n- Key insights: ${insightCount}\n- Questions: ${questionCount}`)
 ```
 
+### 11b. Email the user a repliable message with `ctx.email()`
+
+When the jig's output is **for the user themselves** and they might want to act
+on it — a daily digest, a morning briefing, a "here's what I found, reply to
+adjust" report — send it with `ctx.email()` instead of an MCP email tool.
+`ctx.email()` sends from Jig's own inbox, and **replying to it opens this jig's
+authoring agent** (reply-to-edit): the user replies "also include X next time"
+and the jig is edited. No MCP email connection needed.
+
+```typescript
+await ctx.step("Email the digest", [], async () => {
+  const html = await llm(
+    `Write today's reading digest as a valid HTML fragment (h2/h3, ul/li, p, strong). Return only HTML.`,
+    { items },
+  ) as string
+  await ctx.email({ subject: `Daily digest — ${new Date().toLocaleDateString()}`, html })
+  ctx.output(`Emailed the digest (${items.length} items). Reply to it to tweak this jig.`)
+})
+```
+
+- Signature: `ctx.email({ subject: string; text?: string; html?: string }): Promise<{ threadId, messageId }>`. Pass `text`, `html`, or both.
+- Always sends to the configured user (the AgentMail owner) — there is no `to`
+  field, because reply-to-edit only works for replies from that address.
+- Call it **inside a `ctx.step(...)`**, like any other send.
+- **Use `ctx.email()`** when the recipient is the user and a reply should be able
+  to change the jig. **Use `gmail_send`/MCP email tools** for one-way mail to
+  *other* people (teammates, clients) — those aren't repliable-to-edit.
+- It throws if AgentMail isn't set up, and is a no-op during dry-run.
+
 ### 12. Runtime performance guardrails
 
 Slow jigs are usually caused by broad tool calls, too many detail reads, or

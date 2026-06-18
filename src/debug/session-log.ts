@@ -109,6 +109,38 @@ function deriveHeadline(entry: Record<string, unknown>): { msg: string; level: L
   return { msg, level }
 }
 
+// The system prompt (SKILL.md + tool catalog + schemas for authoring) is static
+// within a session but gets re-logged inside the full `messages` array on every
+// round. Elide system-role message content to a short placeholder so the logs
+// don't carry N copies of it — the full prompt is still captured once at
+// session-start via the separate `systemPrompt` field. Non-mutating: callers
+// log the live `session.messages`, so we copy rather than edit in place.
+const ELIDE_MIN_LEN = 200
+
+function looksLikeMessages(v: unknown): v is Array<Record<string, unknown>> {
+  return (
+    Array.isArray(v) &&
+    v.length > 0 &&
+    v.every((m) => m != null && typeof m === "object" && "role" in (m as object) && "content" in (m as object))
+  )
+}
+
+function leanEntry(entry: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(entry)) {
+    if (looksLikeMessages(v)) {
+      out[k] = v.map((m) =>
+        m.role === "system" && typeof m.content === "string" && m.content.length > ELIDE_MIN_LEN
+          ? { ...m, content: `[system prompt elided: ${m.content.length} chars]` }
+          : m,
+      )
+    } else {
+      out[k] = v
+    }
+  }
+  return out
+}
+
 function stringifyPayload(entry: unknown): string | null {
   try {
     const s = JSON.stringify(entry)
@@ -120,11 +152,13 @@ function stringifyPayload(entry: unknown): string | null {
 }
 
 export function logSessionEvent(entry: Record<string, unknown>): void {
+  // Drop repeated system-prompt copies out of logged `messages` arrays.
+  const lean = leanEntry(entry)
   queue.push(
     stringifyLine({
       ts: new Date().toISOString(),
       pid: process.pid,
-      ...entry,
+      ...lean,
     }) + "\n"
   )
 
@@ -136,7 +170,7 @@ export function logSessionEvent(entry: Record<string, unknown>): void {
   // Mirror into SQLite for the dashboard Logs view. Redact first so secrets
   // never reach the row. Wrapped so a logging failure can't break the caller.
   try {
-    const redacted = redact(entry) as Record<string, unknown>
+    const redacted = redact(lean) as Record<string, unknown>
     const { msg, level } = deriveHeadline(redacted)
     recordStructured(level, msg, stringifyPayload(redacted))
   } catch {}

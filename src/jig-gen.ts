@@ -331,11 +331,12 @@ ${serverList}
 For this workflow: "${description}"
 
 1. "servers": which server keys does this need?
-2. "unknownServers": services mentioned that don't match any server above
+2. "unknownServers": external *services/providers* mentioned that don't match any server above. Do NOT put built-in jig capabilities here.
 3. "name": a short kebab-case filename, 2-3 words, descriptive
 4. "needsIntegration": true if the workflow clearly depends on an external service, MCP server, or provider integration; false only if it can be done with pure logic and no external service
 
 Important:
+- \`ctx.email\` is a BUILT-IN jig capability (it emails the user a repliable message — reply-to-edit — with NO connection or server). Never treat "ctx email", "ctx.email", or "reply-to-edit email" as a server or an unknownServer. Likewise \`llm()\`, \`agent()\`, \`ctx.step\`, \`ctx.output\`, \`ctx.parallel\` are built in and need no server. An instruction like "replace gmail send with ctx email" REMOVES a server dependency — it does not add one.
 - Prefer the smallest sufficient server set
 - Strongly prefer servers tagged [connected]. If a [connected] server can cover the task (including via composio's listed connected toolkits), pick it instead of a [not connected] alternative — do not pick a [not connected] server when a [connected] one suffices
 - Only pick a [not connected] server when no [connected] server can do the task
@@ -351,9 +352,13 @@ Important:
   const validServers = (result.servers || []).filter(s => s in serverConfigs)
   const invalidServers = (result.servers || []).filter(s => !(s in serverConfigs))
 
+  // Guard: built-in jig capabilities (ctx.email, llm, agent, ctx.*) are not
+  // servers — never let the planner block authoring by flagging one as unknown.
+  const isBuiltin = (s: string) => /\bctx\b|ctx[.\s]?email|reply.?to.?edit|^(llm|agent)$/i.test(s.trim())
+
   return {
     servers: validServers,
-    unknownServers: [...(result.unknownServers || []), ...invalidServers],
+    unknownServers: [...(result.unknownServers || []), ...invalidServers].filter(s => !isBuiltin(s)),
     name: (result.name || "new-jig")
       .toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "new-jig",
     needsIntegration: result.needsIntegration === true,

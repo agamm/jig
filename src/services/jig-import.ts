@@ -183,6 +183,3 @@ export async function syncLegacyJigs(jigsDir: string = JIGS_DIR): Promise<Import
   }
   return summary
 }
-
-/** @deprecated alias for syncLegacyJigs — name is no longer accurate. */
-export const importLegacyJigsIfEmpty = syncLegacyJigs

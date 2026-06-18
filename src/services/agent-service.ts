@@ -299,13 +299,6 @@ function releaseStaleJigLock(jigId: string): boolean {
   return true
 }
 
-function hasPersistedDraftForJig(_jigId: string, _sessionId: string): boolean {
-  // v12: pending is durable in jig_versions and freely inheritable by the next
-  // session. We don't refuse a new session on the basis of a leftover pending —
-  // the lock check (releaseStaleJigLock) is the only gate that matters.
-  return false
-}
-
 function hasCompletedTool(session: AgentSession, tool: string): boolean {
   return session.events.some((event) =>
     event.type === "tool-call" && event.tool === tool && event.status === "done"

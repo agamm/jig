@@ -4,7 +4,7 @@
  * connect. The dashboard's Connections page reads this so "connected" means
  * "actually working", not just "schema file exists on disk".
  *
- * A broken transition also fires a debounced system notification (Resend) so
+ * A broken transition also fires a debounced system notification (AgentMail) so
  * an unattended server tells the operator instead of failing silently.
  */
 import { getSetting, setSetting } from "../db.js"

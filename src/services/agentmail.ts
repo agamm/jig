@@ -9,7 +9,7 @@
  * classifying authenticated mail as `message.received` and everything else as
  * `.spam`/`.blocked`/`.unauthenticated`.
  *
- * Raw `fetch` only — no SDK — matching how Resend is used in system-notify.ts.
+ * Raw `fetch` only — no SDK — to keep dependencies and moving parts minimal.
  * Inbox + webhook creation are idempotent via a fixed `client_id`, so setup is
  * safe to re-run.
  */
@@ -61,23 +61,31 @@ function getWebhookSecret(): string | null {
   }
 }
 
-/** Fully wired: key + provisioned inbox + registered webhook + a known owner. */
-export function isAgentMailConfigured(): boolean {
+/**
+ * Can send outbound mail (failure + system alerts). Needs only key + inbox +
+ * owner — NOT the inbound webhook. So alerting works even on a host with no
+ * public URL, where reply-to-edit can't.
+ */
+export function canSendAgentMail(): boolean {
   const s = getAgentMailSettings()
-  return getApiKey() != null && s.inboxId != null && s.owner != null && getWebhookSecret() != null
+  return getApiKey() != null && s.inboxId != null && s.owner != null
+}
+
+/** Fully wired for reply-to-edit: can send AND has the inbound webhook registered. */
+export function isAgentMailConfigured(): boolean {
+  return canSendAgentMail() && getWebhookSecret() != null
 }
 
 /** Dashboard-facing status — never exposes the API key or signing secret. */
 export function getAgentMailStatus(): AgentMailSettingsResponse {
   const s = getAgentMailSettings()
-  const hasKey = getApiKey() != null
-  const webhookReady = getWebhookSecret() != null
   return {
-    configured: hasKey && s.inboxId != null && s.owner != null && webhookReady,
-    hasKey,
+    configured: isAgentMailConfigured(),
+    canSend: canSendAgentMail(),
+    hasKey: getApiKey() != null,
     address: s.address,
     owner: s.owner,
-    webhookReady,
+    webhookReady: getWebhookSecret() != null,
   }
 }
 
@@ -133,16 +141,31 @@ async function registerWebhook(url: string): Promise<string> {
 }
 
 /**
- * Idempotent setup: provision the inbox + inbound webhook and persist the
- * inbox id, address, and webhook signing secret. Returns the inbox address.
+ * Idempotent setup. Provisions the inbox and persists it FIRST — that alone
+ * makes alerting work (send-only). The inbound webhook (which enables
+ * reply-to-edit) is then attempted best-effort: if no public URL is available
+ * (e.g. localhost) or registration fails, the inbox still sends alerts and the
+ * webhook can be added later by re-running setup once a URL exists.
  */
-export async function setupAgentMail(webhookUrl: string): Promise<string> {
+export async function setupAgentMail(
+  webhookUrl: string | null,
+): Promise<{ address: string; webhookReady: boolean }> {
   const { inboxId, address } = await createInbox()
-  const secret = await registerWebhook(webhookUrl)
-  setCredential(WEBHOOK_SECRET_CREDENTIAL, secret, "agentmail")
   const current = getAgentMailSettings()
   setSetting(SETTINGS_KEY, { ...current, inboxId, address })
-  return address
+
+  let webhookReady = false
+  if (webhookUrl) {
+    try {
+      const secret = await registerWebhook(webhookUrl)
+      setCredential(WEBHOOK_SECRET_CREDENTIAL, secret, "agentmail")
+      webhookReady = true
+    } catch (e) {
+      // Inbox is usable for alerts; reply-to-edit just isn't wired up yet.
+      console.warn(`[agentmail] inbox created but webhook registration failed: ${(e as Error)?.message ?? e}`)
+    }
+  }
+  return { address, webhookReady }
 }
 
 /** Send a plain-text email from the Jig inbox. Returns thread + message ids. */

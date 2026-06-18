@@ -23,6 +23,7 @@ export function AgentMailSettings({ compact = false }: { compact?: boolean }) {
   const [testing, setTesting] = useState(false);
   const [hasKey, setHasKey] = useState(false);
   const [configured, setConfigured] = useState(false);
+  const [canSend, setCanSend] = useState(false);
   const [webhookReady, setWebhookReady] = useState(false);
   const [address, setAddress] = useState<string | null>(null);
   const [apiKey, setApiKey] = useState("");
@@ -36,6 +37,7 @@ export function AgentMailSettings({ compact = false }: { compact?: boolean }) {
         if (cancelled) return;
         setHasKey(data.hasKey);
         setConfigured(data.configured);
+        setCanSend(data.canSend);
         setWebhookReady(data.webhookReady);
         setAddress(data.address);
         setOwner(data.owner ?? "");
@@ -56,6 +58,7 @@ export function AgentMailSettings({ compact = false }: { compact?: boolean }) {
     });
     setHasKey(data.hasKey);
     setConfigured(data.configured);
+    setCanSend(data.canSend);
     setWebhookReady(data.webhookReady);
     setApiKey("");
     return data;
@@ -82,9 +85,14 @@ export function AgentMailSettings({ compact = false }: { compact?: boolean }) {
       const result = await setupAgentMail();
       if (result.ok) {
         setAddress(result.address ?? null);
-        setWebhookReady(true);
-        setConfigured(true);
-        setStatus({ tone: "success", message: `Inbox ready: ${result.address}` });
+        setCanSend(true);
+        setWebhookReady(!!result.webhookReady);
+        setConfigured(!!result.webhookReady);
+        setStatus(
+          result.webhookReady
+            ? { tone: "success", message: `Inbox ready: ${result.address} — alerts + reply-to-edit are live.` }
+            : { tone: "neutral", message: `Inbox ready: ${result.address}. Alerts are live; reply-to-edit needs a public URL — set JIG_PUBLIC_URL (or deploy) and reconnect.` },
+        );
       } else {
         setStatus({ tone: "danger", message: `Setup failed: ${result.error ?? "unknown error"}` });
       }
@@ -130,10 +138,19 @@ export function AgentMailSettings({ compact = false }: { compact?: boolean }) {
         </div>
       )}
 
+      {!canSend && (
+        <Notice tone="danger" title="No failure alerting set up">
+          If a jig fails or an integration breaks while you&apos;re away, nothing will reach you. Add an AgentMail
+          API key and your email, then connect an inbox to start getting alerts.
+        </Notice>
+      )}
+
       {address && (
-        <Notice tone={configured ? "success" : "neutral"} title={configured ? "Active" : "Inbox provisioned"}>
+        <Notice tone={configured ? "success" : "neutral"} title={configured ? "Active" : "Alerts on"}>
           Failure emails come from <span className="font-medium text-[#ededed]">{address}</span>
-          {configured ? " — reply to any of them to edit the jig." : " — finish setup to enable replies."}
+          {configured
+            ? " — reply to any of them to edit the jig."
+            : " — reply-to-edit needs a public URL; set JIG_PUBLIC_URL (or deploy) and reconnect."}
         </Notice>
       )}
 
@@ -176,9 +193,9 @@ export function AgentMailSettings({ compact = false }: { compact?: boolean }) {
           {saving ? "Saving…" : "Save"}
         </Button>
         <Button onClick={onConnect} disabled={connecting || !canConnect} variant="accent" size="md">
-          {connecting ? "Connecting…" : webhookReady ? "Reconnect inbox" : "Connect inbox"}
+          {connecting ? "Connecting…" : canSend ? "Reconnect inbox" : "Connect inbox"}
         </Button>
-        <Button onClick={onTest} disabled={testing || !configured} variant="subtle" size="md">
+        <Button onClick={onTest} disabled={testing || !canSend} variant="subtle" size="md">
           {testing ? "Sending…" : "Send test"}
         </Button>
       </div>

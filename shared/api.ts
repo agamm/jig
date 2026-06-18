@@ -587,33 +587,8 @@ export interface HealthResponse {
   db_writable?: boolean
   /** Runs stuck in 'running' for over 2 hours — should be 0 with run timeouts on. */
   stalled_runs?: number
-  /** Whether the out-of-band Resend system-notification channel is set up. */
-  resend_configured?: boolean
   /** Whether the repliable AgentMail failure-alert channel is set up. */
   agentmail_configured?: boolean
-}
-
-// ---------------------------------------------------------------------------
-// Resend system notifications
-// ---------------------------------------------------------------------------
-
-export interface ResendSettingsResponse {
-  configured: boolean
-  /** Whether an API key is stored (key itself is never returned). */
-  hasKey: boolean
-  to: string | null
-  from: string | null
-}
-
-export interface ResendSettingsUpdate {
-  apiKey?: string
-  to?: string
-  from?: string
-}
-
-export interface ResendTestResponse {
-  ok: boolean
-  error?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -621,8 +596,10 @@ export interface ResendTestResponse {
 // ---------------------------------------------------------------------------
 
 export interface AgentMailSettingsResponse {
-  /** True once an API key, an inbox, a webhook secret, and an owner are all set. */
+  /** Fully wired for reply-to-edit: can send AND the inbound webhook is registered. */
   configured: boolean
+  /** Can send alerts (key + inbox + owner) — independent of the inbound webhook. */
+  canSend: boolean
   /** Whether an API key is stored (key itself is never returned). */
   hasKey: boolean
   /** The provisioned inbox address (e.g. jig-xxxx@agentmail.to), if set up. */
@@ -641,6 +618,8 @@ export interface AgentMailSettingsUpdate {
 export interface AgentMailSetupResponse {
   ok: boolean
   address?: string
+  /** Whether the inbound reply-to-edit webhook was registered during setup. */
+  webhookReady?: boolean
   error?: string
 }
 
@@ -716,8 +695,6 @@ export interface ApiContracts {
   deleteAuthorizedSender: ApiContract<void, OkResponse>
   notificationSettings: ApiContract<NotificationSettings | void, NotificationSettingsResponse>
   notificationSettingsTest: ApiContract<void, NotifyTestResponse>
-  resendSettings: ApiContract<ResendSettingsUpdate | void, ResendSettingsResponse>
-  resendTest: ApiContract<void, ResendTestResponse>
   agentMailSettings: ApiContract<AgentMailSettingsUpdate | void, AgentMailSettingsResponse>
   agentMailSetup: ApiContract<void, AgentMailSetupResponse>
   agentMailTest: ApiContract<void, AgentMailTestResponse>

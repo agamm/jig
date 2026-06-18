@@ -24,9 +24,6 @@ import type {
   NotificationSettings,
   NotificationSettingsResponse,
   NotifyTestResponse,
-  ResendSettingsResponse,
-  ResendSettingsUpdate,
-  ResendTestResponse,
   AgentMailSettingsResponse,
   AgentMailSettingsUpdate,
   AgentMailSetupResponse,
@@ -357,22 +354,6 @@ export function saveNotificationSettings(settings: NotificationSettings): Promis
 
 export function sendTestNotification(): Promise<NotifyTestResponse> {
   return fetchApi("notificationSettingsTest", "/api/settings/notifications/test", { method: "POST" })
-}
-
-export function fetchResendSettings(): Promise<ResendSettingsResponse> {
-  return fetchApi("resendSettings", "/api/settings/resend")
-}
-
-export function saveResendSettings(update: ResendSettingsUpdate): Promise<ResendSettingsResponse> {
-  return fetchApi("resendSettings", "/api/settings/resend", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(update),
-  })
-}
-
-export function sendResendTest(): Promise<ResendTestResponse> {
-  return fetchApi("resendTest", "/api/settings/resend/test", { method: "POST" })
 }
 
 export function fetchAgentMailSettings(): Promise<AgentMailSettingsResponse> {

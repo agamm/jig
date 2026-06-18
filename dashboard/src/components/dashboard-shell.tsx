@@ -124,19 +124,18 @@ export function DashboardShell({
   const { data: connections, isLoading: connectionsLoading, error: connectionsError } = useConnections();
   const { data: health } = useHealth();
   const { data: credits } = useOpenRouterCredits();
-  const [resendBannerDismissed, setResendBannerDismissed, resendBannerMounted] = useLocalStorage("jig-resend-banner-dismissed", false);
+  const [alertBannerDismissed, setAlertBannerDismissed, alertBannerMounted] = useLocalStorage("jig-alert-banner-dismissed", false);
   // Prompt to set up out-of-band alerting once the workspace is in use (has at
-  // least one jig) but neither email channel is configured — that's when an
+  // least one jig) but AgentMail email isn't configured — that's when an
   // unattended failure would actually go unnoticed. health is admin-gated, so
-  // these are undefined until authed; only show on an explicit false for both.
-  const showResendOnboarding =
-    resendBannerMounted &&
-    !resendBannerDismissed &&
-    health?.resend_configured === false &&
+  // agentmail_configured is undefined until authed; only show on explicit false.
+  const showAlertOnboarding =
+    alertBannerMounted &&
+    !alertBannerDismissed &&
     health?.agentmail_configured === false &&
     jigs.length > 0;
 
-  function openResendSettings() {
+  function openAlertSettings() {
     closeDetail();
     setView("settings");
     setSettingsTab("notifications");
@@ -286,19 +285,19 @@ export function DashboardShell({
             {storageHealth.message} Run <code className="rounded bg-black/30 px-1 py-0.5 font-mono text-[10px] text-rose-100">{storageHealth.action}</code> from this checkout, then paste/save connection tokens again.
           </Notice>
         )}
-        {showResendOnboarding && (
+        {showAlertOnboarding && (
           <Notice
             tone="warning"
             title="Set up failure alerts"
             className="mb-3"
             actions={
               <div className="flex items-center gap-2">
-                <Button onClick={openResendSettings} variant="accent" size="xs">Set up alerts</Button>
-                <Button onClick={() => setResendBannerDismissed(true)} variant="subtle" size="xs">Dismiss</Button>
+                <Button onClick={openAlertSettings} variant="accent" size="xs">Set up AgentMail</Button>
+                <Button onClick={() => setAlertBannerDismissed(true)} variant="subtle" size="xs">Dismiss</Button>
               </div>
             }
           >
-            Running 24/7? Set up email alerts so Jig tells you when a jig fails or a connection breaks — even when its own integrations are down. With AgentMail you can reply to fix the jig on the spot.
+            Running 24/7? Set up AgentMail so Jig emails you when a jig fails or a connection breaks — even when its own integrations are down — and you can reply to fix the jig on the spot.
           </Notice>
         )}
         {loading && <LoadingState message="Loading workspace…" className="h-32" />}

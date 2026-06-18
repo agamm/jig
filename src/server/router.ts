@@ -142,8 +142,6 @@ export function matchRoute(pathname: string): { handler: string; params: Record<
 
   if (pathname === "/api/settings/notifications") return { handler: "notificationSettings", params: {} }
   if (pathname === "/api/settings/notifications/test") return { handler: "notificationSettingsTest", params: {} }
-  if (pathname === "/api/settings/resend") return { handler: "resendSettings", params: {} }
-  if (pathname === "/api/settings/resend/test") return { handler: "resendTest", params: {} }
   if (pathname === "/api/settings/agentmail") return { handler: "agentMailSettings", params: {} }
   if (pathname === "/api/settings/agentmail/setup") return { handler: "agentMailSetup", params: {} }
   if (pathname === "/api/settings/agentmail/test") return { handler: "agentMailTest", params: {} }

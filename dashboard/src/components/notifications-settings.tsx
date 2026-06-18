@@ -5,7 +5,6 @@ import { Button } from "@/components/button";
 import { TextInput } from "@/components/input";
 import { ServiceIcon } from "@/components/service-icon";
 import { LoadingState, Notice } from "@/components/state-panel";
-import { ResendSettings } from "@/components/resend-settings";
 import { AgentMailSettings } from "@/components/agentmail-settings";
 import { fetchNotificationSettings, saveNotificationSettings, sendTestNotification } from "@/lib/api";
 import type {
@@ -182,10 +181,6 @@ export function NotificationsSettings() {
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-[#1f1f23] bg-[#111113] px-4 py-4">
-        <ResendSettings />
-      </div>
-
-      <div className="rounded-xl border border-[#1f1f23] bg-[#111113] px-4 py-4">
         <AgentMailSettings />
       </div>
 
@@ -194,7 +189,7 @@ export function NotificationsSettings() {
           <div className="space-y-1">
             <h4 className="text-[13px] font-medium text-[#ededed]">Connection-based alerts</h4>
             <p className="text-[11px] leading-relaxed text-[#666]">
-              Send failure alerts through a connected tool (e.g. Telegram, Slack). These depend on the connection working — pair them with Resend above for a fallback that doesn&apos;t.
+              Send failure alerts through a connected tool (e.g. Telegram, Slack). These depend on the connection working — pair them with AgentMail above for a fallback that doesn&apos;t.
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface-input)] px-2 py-1">

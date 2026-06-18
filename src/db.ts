@@ -266,6 +266,11 @@ const MIGRATIONS: string[] = [
      created_at TEXT NOT NULL DEFAULT (datetime('now')),
      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
    );`,
+  // v18: Resend was removed as a notification channel (AgentMail is now the
+  // only email channel). Drop its orphaned credential + settings rows so a dead
+  // API key isn't left sitting in the DB.
+  `DELETE FROM credentials WHERE server = 'resend';
+   DELETE FROM settings WHERE key = 'resend';`,
 ]
 
 // ---------------------------------------------------------------------------

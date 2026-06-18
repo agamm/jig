@@ -33,11 +33,10 @@ import { buildJigResponse, discoverAllJigs } from "./services/jig-api.js"
 import { approveAgentDraft, closeAgentSession, getAgentSessionStatus, listUnderConstructionJigs, pushAgentMessage, startAgentSession, streamAgentSession } from "./services/agent-service.js"
 import { cancelActiveRun, getActiveRunSnapshot, getRunDetail, startJigRun } from "./services/run-api.js"
 import { getNotificationHealth, getNotificationSettings, getNotificationTestStatus, saveNotificationSettings, saveNotificationTestStatus, notify, type NotificationSettings } from "./services/notify.js"
-import { getResendStatus, isResendConfigured, saveResendSettings, sendResendEmail } from "./services/system-notify.js"
 import {
+  canSendAgentMail,
   getAgentMailSettings,
   getAgentMailStatus,
-  isAgentMailConfigured,
   saveAgentMailSettings,
   sendAgentMailEmail,
   setupAgentMail,
@@ -655,8 +654,7 @@ export function createApiServer(port: number) {
               scheduler: getSchedulerHealth(),
               db_writable: isDbWritable(),
               stalled_runs: countStalledRuns(),
-              resend_configured: isResendConfigured(),
-              agentmail_configured: isAgentMailConfigured(),
+              agentmail_configured: canSendAgentMail(),
             })
           }
           case "completeOnboarding":
@@ -1027,31 +1025,6 @@ export function createApiServer(port: number) {
             saveNotificationTestStatus(report)
             return apiJson("notificationSettingsTest", report)
           }
-          case "resendSettings": {
-            if (req.method === "PUT") {
-              const body = (await req.json().catch(() => ({}))) as Record<string, unknown>
-              saveResendSettings({
-                apiKey: typeof body.apiKey === "string" ? body.apiKey : undefined,
-                to: typeof body.to === "string" ? body.to : undefined,
-                from: typeof body.from === "string" ? body.from : undefined,
-              })
-            } else if (req.method !== "GET") {
-              return json({ error: "Method not allowed" }, 405)
-            }
-            return apiJson("resendSettings", getResendStatus())
-          }
-          case "resendTest": {
-            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
-            try {
-              await sendResendEmail({
-                subject: "Jig system notifications are working",
-                text: "If you can read this, Jig can reach you even when its MCP connections can't.",
-              })
-              return apiJson("resendTest", { ok: true as const })
-            } catch (e: any) {
-              return apiJson("resendTest", { ok: false as const, error: e?.message ?? String(e) })
-            }
-          }
           case "agentMailSettings": {
             if (req.method === "PUT") {
               const body = (await req.json().catch(() => ({}))) as Record<string, unknown>
@@ -1066,19 +1039,14 @@ export function createApiServer(port: number) {
           }
           case "agentMailSetup": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
-            // Auto-detected from the platform (Railway/Render/Fly) or the
-            // dashboard's own origin; JIG_PUBLIC_URL is only needed when neither
-            // resolves (e.g. running on localhost without a tunnel).
+            // Public URL (for the inbound reply-to-edit webhook) is auto-detected
+            // from the platform (Railway/Render/Fly) or the dashboard's own
+            // origin. If none resolves (e.g. localhost), we still provision a
+            // send-only inbox — alerts work; reply-to-edit just isn't wired up.
             const base = publicUrl() ?? publicUrlFromRequest(req)
-            if (!base) {
-              return apiJson("agentMailSetup", {
-                ok: false as const,
-                error: "Couldn't determine a public URL for the inbound webhook. Deploy behind a public domain, or set JIG_PUBLIC_URL.",
-              })
-            }
             try {
-              const address = await setupAgentMail(`${base}/api/email/inbound`)
-              return apiJson("agentMailSetup", { ok: true as const, address })
+              const { address, webhookReady } = await setupAgentMail(base ? `${base}/api/email/inbound` : null)
+              return apiJson("agentMailSetup", { ok: true as const, address, webhookReady })
             } catch (e: any) {
               return apiJson("agentMailSetup", { ok: false as const, error: e?.message ?? String(e) })
             }
@@ -1086,14 +1054,14 @@ export function createApiServer(port: number) {
           case "agentMailTest": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
             const owner = getAgentMailSettings().owner
-            if (!isAgentMailConfigured() || !owner) {
-              return apiJson("agentMailTest", { ok: false as const, error: "AgentMail is not fully configured." })
+            if (!canSendAgentMail() || !owner) {
+              return apiJson("agentMailTest", { ok: false as const, error: "AgentMail can't send yet — add a key + email and connect an inbox." })
             }
             try {
               await sendAgentMailEmail({
                 to: owner,
-                subject: "Jig can receive your replies",
-                text: "Reply to this email and Jig will route your message to a jig's authoring agent. (This is just a test — no jig is attached to this thread.)",
+                subject: "Jig alerts are working",
+                text: "If you can read this, Jig can email you when a jig fails — even when its MCP connections are down. If reply-to-edit is set up, replying routes your message to the jig's authoring agent.",
               })
               return apiJson("agentMailTest", { ok: true as const })
             } catch (e: any) {

@@ -108,7 +108,7 @@ export function AgentMailSettings({ compact = false }: { compact?: boolean }) {
     setStatus(null);
     try {
       const result = await sendAgentMailTest();
-      if (result.ok) setStatus({ tone: "success", message: "Test email sent. Reply to it to confirm the loop works." });
+      if (result.ok) setStatus({ tone: "success", message: "Test email sent. If it's not in your inbox, check Spam/Promotions and mark it “Not spam” so future emails arrive." });
       else setStatus({ tone: "danger", message: `Test failed: ${result.error ?? "unknown error"}` });
     } catch (e) {
       setStatus({ tone: "danger", message: `Test failed: ${(e as Error)?.message ?? String(e)}` });
@@ -151,6 +151,14 @@ export function AgentMailSettings({ compact = false }: { compact?: boolean }) {
           {configured
             ? " — reply to any of them to edit the jig."
             : " — reply-to-edit needs a public URL; set JIG_PUBLIC_URL (or deploy) and reconnect."}
+        </Notice>
+      )}
+
+      {canSend && address && (
+        <Notice tone="warning" title="Check spam on the first email">
+          New mail from <span className="font-medium text-[#ededed]">{address}</span> often lands in
+          Spam/Promotions at first. Send a test below, find it, and mark it “Not spam” (or add the address to
+          your contacts) — after that, alerts and digests land in your inbox.
         </Notice>
       )}
 

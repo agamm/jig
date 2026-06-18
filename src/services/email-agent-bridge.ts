@@ -20,6 +20,8 @@ import {
   subscribeToSessionFrames,
 } from "./agent-service.js"
 import { replyAgentMail } from "./agentmail.js"
+import { getPending } from "./jig-store.js"
+import { summarizeJigChange } from "./summarize-change.js"
 
 function latestText(events: Array<{ type: string; content?: string }>): string {
   for (let i = events.length - 1; i >= 0; i--) {
@@ -91,6 +93,12 @@ export function attachEmailBridge(sessionId: string, threadId: string, replyToMe
 
     // "waiting" + draftApproval (new jig) or "done" with a pending edit: approve
     // and confirm. A plain "done" with nothing pending just relays the answer.
+    // Capture the diff BEFORE approval — approving promotes (and clears) pending.
+    let changeDiff: string | null = null
+    if (jigId) {
+      try { changeDiff = getPending(jigId)?.diff ?? null } catch { /* best-effort */ }
+    }
+
     const approved = await autoApproveSession(sessionId).catch((e) => {
       console.error(`[email] auto-approve failed: ${(e as Error)?.message ?? e}`)
       return false
@@ -98,9 +106,11 @@ export function attachEmailBridge(sessionId: string, threadId: string, replyToMe
     setEmailThreadSession(threadId, null)
 
     if (approved) {
-      // Don't echo the agent's "draft ready / approve to create" line back —
-      // it already shipped. Keep the confirmation clean for both create + edit.
-      await reply(replyToMessageId, `✅ Shipped${jigId ? ` to ${jigId}` : ""}. The change is live.${jigLink(jigId)}`)
+      // Summarize what actually changed so the confirmation is useful — not just
+      // "the change is live". Best-effort; falls back to a generic line.
+      const summary = changeDiff ? await summarizeJigChange(changeDiff) : null
+      const what = summary ? `\n\n${summary}` : " The change is live."
+      await reply(replyToMessageId, `✅ Shipped${jigId ? ` to ${jigId}` : ""}.${what}${jigLink(jigId)}`)
     } else {
       await reply(replyToMessageId, latestText(events) || "Done.")
     }

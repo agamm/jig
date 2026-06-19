@@ -21,7 +21,7 @@
   "github": {
     "type": "remote",
     "url": "https://api.githubcopilot.com/mcp/",
-    "auth": "gh auth token",
+    "auth": "gh auth token 2>/dev/null || printf '%s' \"$GITHUB_TOKEN\"",
     "description": "GitHub repos, issues, pull requests, commits, and code-hosting workflows",
     "meta": {
       "authoringHints": [

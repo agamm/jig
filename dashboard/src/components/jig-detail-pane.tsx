@@ -736,14 +736,20 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
                     <span className={`text-[9px] text-[#333] transition-transform duration-150 shrink-0 ${expandedRun === i ? "rotate-90" : ""}`}>&#9656;</span>
                   </button>
                   {expandedRun === i && (
-                    <div className="border-t border-[#1a1a1d] px-4 py-2.5" style={{ animation: "fade-up 0.15s ease" }}>
+                    <div className="border-t border-[#1a1a1d] px-4 py-2.5 space-y-2" style={{ animation: "fade-up 0.15s ease" }}>
+                      {run.status === "fail" && run.error && (
+                        <div className="max-h-48 overflow-y-auto rounded-md border border-rose-500/20 bg-rose-500/5 p-3">
+                          <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-rose-400/80 mb-1">Error</p>
+                          <pre className="whitespace-pre-wrap break-words text-[10px] leading-relaxed text-rose-200/90 font-mono">{run.error}</pre>
+                        </div>
+                      )}
                       {runOutput ? (
                         <div className="max-h-48 overflow-y-auto rounded-md border border-[#1f1f23] bg-[#0a0a0b] p-3">
                           <MarkdownOutput markdown={runOutput} />
                         </div>
-                      ) : (
+                      ) : !(run.status === "fail" && run.error) ? (
                         <p className="text-[10px] text-[#555] italic">No output recorded</p>
-                      )}
+                      ) : null}
                     </div>
                   )}
                 </div>

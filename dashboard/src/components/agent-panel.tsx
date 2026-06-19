@@ -195,7 +195,7 @@ export function AgentPanel({
           <p className="text-[10px] font-medium uppercase tracking-wider text-emerald-400">Suggested Connections</p>
           <p className="mt-1 text-[11px] leading-relaxed text-emerald-100/75">
             {requiredConnections.length > 0
-              ? "The planner suggested these connections. Open any one to inspect setup. Tags marked setup needed are blocking the agent."
+              ? "These connections are needed. The ones marked setup needed are blocking — connect them, then Retry."
               : "The planner suggested these connections for this jig. Open any one to inspect setup."}
           </p>
           <div className="mt-2 flex flex-wrap gap-2">
@@ -208,6 +208,17 @@ export function AgentPanel({
               />
             ))}
           </div>
+          {suggestedConnections.some((c) => !c.connected) && (
+            <div className="mt-2.5 flex flex-wrap gap-2">
+              {suggestedConnections
+                .filter((c) => !c.connected)
+                .map(({ name }) => (
+                  <Button key={name} onClick={() => onConnectionClick?.(name)} variant="success" size="xs">
+                    Connect {name}
+                  </Button>
+                ))}
+            </div>
+          )}
         </div>
       )}
     </div>

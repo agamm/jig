@@ -30,6 +30,8 @@ export interface JigRun {
   status: RunOutcomeStatus
   cost: string
   output?: string
+  /** Failure message for failed runs (so the UI can show why, not "no output"). */
+  error?: string
   steps?: JigRunStep[]
 }
 

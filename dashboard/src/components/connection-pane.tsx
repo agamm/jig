@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { mutate } from "swr"
 import { Button } from "@/components/button"
 import { TextInput } from "@/components/input"
@@ -71,6 +71,21 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
   } | null>(null)
   const connectAbortRef = useRef<AbortController | null>(null)
   const connectRunRef = useRef(0)
+
+  // Proxy connections (composio) front many integrations behind one connection;
+  // discovery only generates tools for the ones actually connected. Group the
+  // discovered tools by toolkit so the user can verify what got pulled.
+  const discoveredIntegrations = useMemo(() => {
+    if (!conn?.proxyVia || !conn.tools?.length) return [] as { name: string; count: number }[]
+    const counts = new Map<string, number>()
+    for (const t of conn.tools) {
+      const key = t.name.split("_")[0]
+      if (key) counts.set(key, (counts.get(key) ?? 0) + 1)
+    }
+    return [...counts.entries()]
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }, [conn?.proxyVia, conn?.tools])
   /** Connection state snapshot taken when OAuth started — see completion effect. */
   const oauthBaselineRef = useRef<{ connected: boolean; status?: string; sawInProgress: boolean; startedAt: number } | null>(null)
 
@@ -494,6 +509,27 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
                 </a>
               )
             })()}
+
+            {discoveredIntegrations.length > 0 && (
+              <PaneSection
+                title="Discovered integrations"
+                meta={<span className="text-[10px] text-[#444]">{discoveredIntegrations.length}</span>}
+              >
+                <div className="flex flex-wrap gap-1.5">
+                  {discoveredIntegrations.map(({ name, count }) => (
+                    <span
+                      key={name}
+                      title={`${count} tool${count === 1 ? "" : "s"} via ${conn.proxyVia}`}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-[#232327] bg-[#111113] px-2 py-1 text-[11px] text-[#ccc] capitalize"
+                    >
+                      <ServiceIcon name={name} size={12} />
+                      {name}
+                      <span className="text-[9px] text-[#555]">{count}</span>
+                    </span>
+                  ))}
+                </div>
+              </PaneSection>
+            )}
 
             <PaneSection
               title="Tools"

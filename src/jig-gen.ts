@@ -625,10 +625,18 @@ async function assembleContext(
   const exampleJig = existsSync(examplePath) ? await Bun.file(examplePath).text() : ""
 
   const configs = await loadServerConfigs()
+  const composioToolkits = servers.includes("composio") ? readConnectedToolkitsFromComposio() : []
   const serverDescriptions = servers
     .map((serverName) => {
       const cfg = (configs as any)[serverName]
       const lines = [`- ${serverName}: ${cfg?.description ?? ""}`]
+      // composio is a proxy: the agent must know WHICH integrations are actually
+      // connected through it (and that they're reached as composio.<toolkit>_*),
+      // not just that "250+" exist. Without this it can't tell that e.g. Gmail
+      // is available here rather than via a dedicated connection.
+      if (serverName === "composio" && composioToolkits.length > 0) {
+        lines.push(`  Connected integrations (call their tools as composio.<name>_*): ${composioToolkits.join(", ")}`)
+      }
       for (const hint of cfg?.meta?.authoringHints ?? []) {
         lines.push(`  Hint: ${hint}`)
       }

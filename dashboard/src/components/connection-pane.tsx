@@ -262,6 +262,11 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
       if (connectRunRef.current === runId) {
         setConnecting(false)
         connectAbortRef.current = null
+        // Never leave an in-progress label ("Connecting to …") hanging without
+        // its spinner once the flow has ended — that reads as a stuck/hiccupy
+        // state. Drop it; a terminal event (tools-discovered/error) already set
+        // its own message if there was one.
+        setConnectStatus((s) => (s && /^(connecting|opening|discovering|authoriz)/i.test(s.trim())) ? null : s)
       }
     }
   }

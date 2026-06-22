@@ -19,6 +19,8 @@
     "description": "Meeting notes and transcripts"
   },
   "github": {
+    "disabled": true,
+    "_note": "DISABLED 2026-06-15. Use GitHub via composio instead. The remote GitHub MCP server (api.githubcopilot.com/mcp) does NOT support the app-free browser OAuth jig uses for every other remote server: GitHub's auth server has no Dynamic Client Registration (verified — github.com/login/oauth metadata has no registration_endpoint; jig connect errors 'Incompatible auth server: does not support dynamic client registration'). Per GitHub's own docs/host-integration.md, OAuth there requires a pre-registered GitHub App / OAuth App WITH a client_secret, which GitHub explicitly warns is unsafe to ship in a self-hosted/'uncontrolled environment' client like jig. The only no-secret OAuth path is device-flow with a registered app's client_id (custom code, not built). The PAT-header config below works but requires pasting a token. To re-enable: remove 'disabled' and either accept the PAT paste, or build the device flow. We chose composio.",
     "type": "remote",
     "url": "https://api.githubcopilot.com/mcp/",
     "headers": { "Authorization": "Bearer $GITHUB_TOKEN" },

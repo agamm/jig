@@ -21,7 +21,8 @@
   "github": {
     "type": "remote",
     "url": "https://api.githubcopilot.com/mcp/",
-    "auth": "gh auth token 2>/dev/null || printf '%s' \"$GITHUB_TOKEN\"",
+    "headers": { "Authorization": "Bearer $GITHUB_TOKEN" },
+    "setup": "Paste a GitHub token. Create a fine-grained PAT at github.com/settings/tokens with read access to the repos, issues, and pull requests you want (a classic token with 'repo' scope also works).",
     "description": "GitHub repos, issues, pull requests, commits, and code-hosting workflows",
     "meta": {
       "authoringHints": [

@@ -483,14 +483,21 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
                     </div>
                   </Notice>
                 ) : null}
-                {connectStatus ? (
-                  <Notice tone={connectStatus.toLowerCase().startsWith("connected") ? "success" : connectStatus.toLowerCase().includes("failed") || connectStatus.toLowerCase().includes("error") ? "danger" : "neutral"}>
-                    <div className="flex items-start gap-2">
-                      {(connecting || oauthUrl) && <Spinner size={12} className="mt-0.5" />}
-                      <div className={`whitespace-pre-wrap ${connecting || oauthUrl ? "text-shimmer" : ""}`.trim()}>{connectStatus}</div>
-                    </div>
-                  </Notice>
-                ) : null}
+                {connectStatus ? (() => {
+                  // Busy = local request in flight OR the server-side detached
+                  // connect still running (connectInProgress) OR awaiting OAuth.
+                  // Without connectInProgress the status reverts to plain text
+                  // while discovery is still happening server-side (no spinner).
+                  const busy = connecting || !!oauthUrl || !!conn.connectInProgress
+                  return (
+                    <Notice tone={connectStatus.toLowerCase().startsWith("connected") ? "success" : connectStatus.toLowerCase().includes("failed") || connectStatus.toLowerCase().includes("error") ? "danger" : "neutral"}>
+                      <div className="flex items-start gap-2">
+                        {busy && <Spinner size={12} className="mt-0.5" />}
+                        <div className={`whitespace-pre-wrap ${busy ? "text-shimmer" : ""}`.trim()}>{connectStatus}</div>
+                      </div>
+                    </Notice>
+                  )
+                })() : null}
               </div>
             </RotatingFrame>
 

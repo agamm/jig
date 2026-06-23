@@ -10,7 +10,7 @@ function buttonClasses({
   size: "xs" | "sm" | "md" | "lg"
 }) {
   const base =
-    "inline-flex items-center justify-center rounded-md font-medium outline-none transition-[background-color,border-color,color,transform,box-shadow] duration-150 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-45"
+    "inline-flex items-center justify-center whitespace-nowrap rounded-md font-medium outline-none transition-[background-color,border-color,color,transform,box-shadow] duration-150 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-45"
   const variants = {
     subtle: "border border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)] hover:border-[var(--border-strong)] hover:bg-[var(--surface-muted)] hover:text-[var(--text-primary)]",
     danger: "border border-rose-500/20 bg-rose-500/[0.07] text-rose-200 hover:border-rose-500/30 hover:bg-rose-500/[0.12]",

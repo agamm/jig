@@ -15,10 +15,21 @@
  *   3. The From address matches the configured owner.
  *   4. The thread maps to a known jig.
  */
-import { getEmailThread, setEmailThreadSession } from "../db.js"
+import { getEmailThread, setEmailThreadSession, type EmailThreadRow } from "../db.js"
 import { getAgentMailSettings, replyAgentMail, verifyAgentMailWebhook } from "./agentmail.js"
-import { getAgentSessionStatus, pushAgentMessage, startAgentSession } from "./agent-service.js"
+import {
+  approvePendingByJig,
+  closeAgentSession,
+  findApprovableSessionForJig,
+  getAgentSessionStatus,
+  pushAgentMessage,
+  startAgentSession,
+  validatePendingFix,
+} from "./agent-service.js"
+import { classifyApprovalReply } from "./classify-reply.js"
 import { attachEmailBridge } from "./email-agent-bridge.js"
+import { getPending } from "./jig-store.js"
+import { summarizeJigChange } from "./summarize-change.js"
 
 /** Pull the bare address out of `Name <a@b.com>` or `a@b.com`. */
 function parseAddress(raw: string | undefined | null): string | null {
@@ -88,24 +99,42 @@ export async function handleInboundEmail(
     return { status: 200, body: { ignored: "empty instruction" } }
   }
 
+  // When a fix is awaiting approval (see run-repair.ts), a reply that approves
+  // it ships it instead of going to the authoring agent. Intent is read by the
+  // LLM — replies are free-form. Guard: if the session is waiting on a
+  // question, the reply (e.g. a bare "yes") answers that question instead.
+  if (
+    hasPendingFix(thread.jig_id) &&
+    !awaitingQuestion(thread.agent_session_id) &&
+    (await classifyApprovalReply(instruction))
+  ) {
+    return applyPendingFix(thread, threadId, messageId)
+  }
+
   // Acknowledge immediately so the thread shows we received it and are working —
   // the authoring agent can take a while, and the final reply lands later.
   // Best-effort and awaited so the ack always precedes the result.
   await replyAgentMail({ messageId, text: "👀 On it — editing the jig now. I'll reply here when it's done." }).catch(() => {})
 
+  // Propose threads (unsolicited auto-repair) keep proposing across revisions
+  // and question-answers — the fix ships only on an explicit "apply", not on
+  // any reply. The mode is persisted on the thread, so it survives beyond the
+  // first reply (a plain restart would default to auto and silently self-ship).
+  const bridgeOpts = thread.approval === "propose" ? { approval: "propose" as const } : undefined
+
   // Continue an in-flight session if it's waiting on the user (e.g. an ask_user
-  // question); otherwise start a fresh edit session for the jig.
-  const liveSessionId = liveWaitingSession(thread.agent_session_id)
+  // question) or holding an unapproved edit; otherwise start a fresh session.
+  const liveSessionId = continuableSession(thread.agent_session_id, thread.jig_id)
   try {
     if (liveSessionId) {
       await pushAgentMessage(liveSessionId, { message: instruction })
-      attachEmailBridge(liveSessionId, threadId, messageId)
+      attachEmailBridge(liveSessionId, threadId, messageId, bridgeOpts)
     } else {
       const { sessionId } = await startAgentSession({ instruction, jigId: thread.jig_id })
       // Record the session on the thread before bridging so a fast-settling
       // session releases the mapping cleanly.
       setEmailThreadSession(threadId, sessionId)
-      attachEmailBridge(sessionId, threadId, messageId)
+      attachEmailBridge(sessionId, threadId, messageId, bridgeOpts)
     }
   } catch (e) {
     const msg = (e as Error)?.message ?? String(e)
@@ -122,12 +151,87 @@ export async function handleInboundEmail(
   return { status: 200, body: { ok: true, jigId: thread.jig_id } }
 }
 
-/** A session id is "live" for continuation only if it exists and is waiting. */
-function liveWaitingSession(sessionId: string | null): string | null {
+/**
+ * A session can continue this thread if it's waiting on the user (question or
+ * draft approval), or settled "done" while its edit still awaits approval — a
+ * reply then revises that edit with the session's full context
+ * (pushAgentMessage rebuilds the prompt around the draft code).
+ */
+function continuableSession(sessionId: string | null, jigId: string): string | null {
   if (!sessionId) return null
   try {
-    return getAgentSessionStatus(sessionId, 0).status === "waiting" ? sessionId : null
+    const status = getAgentSessionStatus(sessionId, 0).status
+    if (status === "waiting") return sessionId
+    if (status === "done" && hasPendingFix(jigId)) return sessionId
   } catch {
-    return null
+    // session gone — start fresh below
   }
+  return null
+}
+
+function hasPendingFix(jigId: string): boolean {
+  try {
+    return getPending(jigId) != null
+  } catch {
+    return false
+  }
+}
+
+/** Waiting on an ask_user question (waiting without a draft), per the bridge's
+ * own convention — approvals must not swallow answers to questions. */
+function awaitingQuestion(sessionId: string | null): boolean {
+  if (!sessionId) return false
+  try {
+    const s = getAgentSessionStatus(sessionId, 0)
+    return s.status === "waiting" && !s.draftApproval
+  } catch {
+    return false
+  }
+}
+
+/** Ship the pending fix the owner just approved and confirm in-thread.
+ * Approval is by jigId, not the repair session — the pending version is
+ * durable in the store and ships even if the session was pruned or released. */
+async function applyPendingFix(
+  thread: EmailThreadRow,
+  threadId: string,
+  messageId: string,
+): Promise<{ status: number; body: unknown }> {
+  const jigId = thread.jig_id
+  // Re-check the fix still passes before shipping (no human eyeballed it), and
+  // capture the diff before approval promotes and clears the pending version.
+  if (!(await validatePendingFix(jigId))) {
+    await replyAgentMail({
+      messageId,
+      text: "⚠️ Couldn't apply the fix — it no longer passes the jig check. Review it on the dashboard.",
+    }).catch(() => {})
+    return { status: 200, body: { error: "apply failed", jigId } }
+  }
+  let diff: string | null = null
+  try {
+    diff = getPending(jigId)?.diff ?? null
+  } catch {
+    // best-effort — only used for the confirmation summary
+  }
+
+  const approved = await approvePendingByJig(jigId).catch(() => false)
+  if (!approved) {
+    await replyAgentMail({
+      messageId,
+      text: "⚠️ Couldn't apply the fix — review it on the dashboard.",
+    }).catch(() => {})
+    return { status: 200, body: { error: "apply failed", jigId } }
+  }
+
+  // Settle any live repair session for this jig so it doesn't dangle.
+  const staleSession = thread.agent_session_id ?? findApprovableSessionForJig(jigId)
+  if (staleSession) await closeAgentSession(staleSession).catch(() => {})
+  setEmailThreadSession(threadId, null)
+
+  const summary = diff ? await summarizeJigChange(diff) : null
+  await replyAgentMail({
+    messageId,
+    text: `✅ Shipped to ${jigId}.${summary ? `\n\n${summary}` : ""}`,
+  }).catch(() => {})
+  return { status: 200, body: { ok: true, applied: true, jigId } }
 }

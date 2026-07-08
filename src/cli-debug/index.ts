@@ -271,6 +271,7 @@ function isInterestingForDebug(entry: ServerLogEntry): boolean {
   if (/^\[sdk\.(llm|agent)\]\s/.test(msg)) return true
   if (/^\[mcp\.tool\]\s/.test(msg)) return true
   if (/^\[authoring\.(agent|discovery)\]\s/.test(msg)) return true
+  if (/^\[repair\]\s/.test(msg)) return true
   if (/^\[scheduler\]\s/.test(msg)) return true
   if (/^\[connection\]\s/.test(msg)) return true
   if (/^\[composio\]\s/.test(msg)) return true

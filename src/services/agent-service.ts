@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { existsSync, readFileSync } from "fs"
 import { join } from "path"
 import OpenAI from "openai"
@@ -72,6 +73,32 @@ type AgentSession = {
 const agentSessions = new Map<string, AgentSession>()
 const activeAgentJigs = new Set<string>()
 const closedAgentSessions = new Set<string>()
+
+// Circuit breaker for identical failing tool calls (the write→check→same-write
+// death spiral). Warn the model after 2 identical failures, refuse the call
+// after 5. Keyed on the raw serialized arguments — the spiral we're breaking is
+// verbatim retries. In-memory only; a restart resets the counters, which is fine.
+const IDENTICAL_FAILURE_WARN_AT = 2
+const IDENTICAL_FAILURE_BLOCK_AT = 5
+const failedCallCounts = new WeakMap<AgentSession, Map<string, number>>()
+
+function callSignature(toolCall: { function: { name: string; arguments: string } }): string {
+  return `${toolCall.function.name}:${createHash("sha256").update(toolCall.function.arguments).digest("hex").slice(0, 16)}`
+}
+
+function countFailedCall(session: AgentSession, signature: string): number {
+  let counts = failedCallCounts.get(session)
+  if (!counts) failedCallCounts.set(session, (counts = new Map()))
+  const n = (counts.get(signature) ?? 0) + 1
+  counts.set(signature, n)
+  return n
+}
+
+/** One template for warn and block — deliberately says nothing about WHY the
+ * call fails (open-ended space); it only pushes the model off verbatim retries. */
+function retryGuardrailNote(failures: number): string {
+  return `This exact call has failed ${failures} times. Do not retry it unchanged — change the arguments or approach, or explain the blocker.`
+}
 
 function parseJson<T>(value: string | null | undefined, fallback: T): T {
   if (!value) return fallback
@@ -873,24 +900,31 @@ async function prepareDraftApproval(session: AgentSession): Promise<AgentDraftAp
   return buildDraftApproval(session)
 }
 
-async function approveDraft(session: AgentSession): Promise<void> {
-  if (!session.jigId) throw new ApiError(409, "No pending draft approval")
-  const pending = storeGetPending(session.jigId)
-  if (!pending) throw new ApiError(409, "No pending draft approval")
+/**
+ * Promote a jig's pending version to active and auto-approve its declared
+ * tools. The durable core of approval — it needs only the jigId and the
+ * pending code, no live authoring session — so an emailed "apply" can ship a
+ * valid fix even after its repair session was pruned or released. Returns
+ * false when there is no pending version. Callers that ship without a human
+ * eyeballing the diff (autoApproveSession, email apply) must validate first.
+ */
+export async function approvePendingByJig(jigId: string): Promise<boolean> {
+  const pending = storeGetPending(jigId)
+  if (!pending) return false
 
   // v12: promote pending to active in one atomic store call. No filesystem
   // writes, no git commits — the version row already holds the code, we just
   // move the active pointer.
-  storeApprovePending(session.jigId)
+  storeApprovePending(jigId)
 
   // Auto-approve every tool declared by the approved code, whether this is a
   // create or an edit. Sourced from the materialized active version so the
   // behavior is symmetric across flows (the old code path only ran for
   // creation, leaving edit-introduced tools waiting in the tool-review UI).
   try {
-    const materialized = await materializeActiveVersion(session.jigId)
+    const materialized = await materializeActiveVersion(jigId)
     if (materialized) {
-      const introspected = await buildDraftJigResponse(session.jigId, pending.code, materialized.path, false)
+      const introspected = await buildDraftJigResponse(jigId, pending.code, materialized.path, false)
       for (const tool of introspected.settings.tools ?? []) {
         setToolPermission(tool.connection, tool.name, "always")
       }
@@ -900,7 +934,14 @@ async function approveDraft(session: AgentSession): Promise<void> {
   }
 
   invalidateJigsCache()
-  activeAgentJigs.delete(session.jigId)
+  activeAgentJigs.delete(jigId)
+  return true
+}
+
+async function approveDraft(session: AgentSession): Promise<void> {
+  if (!session.jigId) throw new ApiError(409, "No pending draft approval")
+  if (!(await approvePendingByJig(session.jigId))) throw new ApiError(409, "No pending draft approval")
+
   session.draftFilePath = undefined
   session.draftApproval = undefined
   deleteAgentSession(session.sessionId)
@@ -1213,6 +1254,27 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
         continue
       }
 
+      const signature = callSignature(toolCall)
+      const priorFailures = failedCallCounts.get(session)?.get(signature) ?? 0
+      if (priorFailures >= IDENTICAL_FAILURE_BLOCK_AT) {
+        const blocked = `Blocked: ${retryGuardrailNote(priorFailures)}`
+        session.events.push({ type: "tool-call", tool: toolCall.function.name, args, status: "error", result: blocked })
+        session.messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ error: blocked }) })
+        roundHadToolError = true
+        persistSession(session)
+        logSessionEvent({
+          source: "authoring.agent",
+          event: "tool-blocked",
+          sessionId: session.sessionId,
+          jigId: session.jigId,
+          round,
+          tool: toolCall.function.name,
+          args,
+          failures: priorFailures,
+        })
+        continue
+      }
+
       const event: AgentEvent = { type: "tool-call", tool: toolCall.function.name, args, status: "running" }
       session.events.push(event)
       session.metrics = {
@@ -1297,7 +1359,10 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
           args,
           error: e,
         })
-        session.messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ error: e?.message }) })
+        const failures = countFailedCall(session, signature)
+        const payload: Record<string, unknown> = { error: e?.message }
+        if (failures >= IDENTICAL_FAILURE_WARN_AT) payload.note = retryGuardrailNote(failures)
+        session.messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify(payload) })
         persistSession(session)
       }
     }
@@ -1590,14 +1655,38 @@ export function subscribeToSessionFrames(sessionId: string, cb: () => void): () 
 export async function autoApproveSession(sessionId: string): Promise<boolean> {
   const session = loadSession(sessionId)
   if (!session?.jigId) return false
-  if (!storeGetPending(session.jigId)) return false
-
-  const materialized = await materializePendingVersion(session.jigId)
-  if (!materialized) return false
-  if ((await checkJigFile(materialized.path)) !== "ok") return false
+  if (!(await validatePendingFix(session.jigId))) return false
 
   await approveDraft(session)
   return true
+}
+
+/**
+ * A pending version exists, materializes, and passes the jig check. The gate
+ * shared by autoApproveSession (before shipping) and the propose-mode email
+ * bridge (before emailing a diff) — a broken pending never reaches either.
+ */
+export async function validatePendingFix(jigId: string): Promise<boolean> {
+  if (!storeGetPending(jigId)) return false
+  const materialized = await materializePendingVersion(jigId)
+  if (!materialized) return false
+  return (await checkJigFile(materialized.path)) === "ok"
+}
+
+/**
+ * Most recent open session that could own the jig's pending version — used to
+ * route an emailed "apply" that landed on a different thread than the proposal
+ * (e.g. the owner replied to the failure notice instead). Question-waiting
+ * sessions are excluded: a "yes" there answers the question, not an approval.
+ */
+export function findApprovableSessionForJig(jigId: string): string | null {
+  for (const row of listAgentSessions()) {
+    if (row.jig_id !== jigId || row.pending_ask_tool_call_id) continue
+    if (row.status !== "waiting" && row.status !== "done") continue
+    if (closedAgentSessions.has(row.session_id)) continue
+    return row.session_id
+  }
+  return null
 }
 
 export async function closeAgentSession(sessionId: string): Promise<OkResponse> {

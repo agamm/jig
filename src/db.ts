@@ -271,6 +271,12 @@ const MIGRATIONS: string[] = [
   // API key isn't left sitting in the DB.
   `DELETE FROM credentials WHERE server = 'resend';
    DELETE FROM settings WHERE key = 'resend';`,
+  // v19: remember whether a thread's edits are owner-solicited ('auto', the
+  // default — replies ship immediately) or an unsolicited auto-repair proposal
+  // ('propose' — the fix ships only on an explicit "apply"). Persisting it on
+  // the thread keeps the proposal gate intact across revisions and questions,
+  // not just the first reply.
+  `ALTER TABLE email_threads ADD COLUMN approval TEXT;`,
 ]
 
 // ---------------------------------------------------------------------------
@@ -291,21 +297,69 @@ function runMigrations(db: Database) {
       db.exec("COMMIT")
     } catch (e: any) {
       db.exec("ROLLBACK")
-      const msg = e?.message ?? ""
-      // Some historical migrations were written to be re-runnable (IF NOT EXISTS
-      // etc.). The "already exists"/"duplicate column" paths below bump the
-      // version forward so a re-entrant migration doesn't block boot.
-      if (
-        msg.includes("duplicate column") ||
-        msg.includes("already exists") ||
-        msg.includes("no such column")
-      ) {
+      // Fresh DBs get the full current SCHEMA before historical migrations run,
+      // so early ALTER/CREATE migrations can fail on already-present schema.
+      // Skip forward only when the schema structurally shows the migration's
+      // work is already done — never by matching the engine's error prose,
+      // where a phrasing change or coincidental wording would silently mask a
+      // real migration failure.
+      if (migrationAlreadyApplied(db, MIGRATIONS[i])) {
         db.exec(`PRAGMA user_version = ${i + 1}`)
         continue
       }
-      throw new Error(`Migration ${i + 1} failed: ${msg}`)
+      throw new Error(`Migration ${i + 1} failed: ${e?.message ?? e}`)
     }
   }
+}
+
+/**
+ * The migration's intended END STATE is already present in the schema, checked
+ * against sqlite_master / PRAGMA table_info. DDL statements fold into one
+ * expected state per schema object with last-statement-wins, so a
+ * drop-then-recreate (e.g. v6's idx_step_cache_jig) resolves to "present"
+ * rather than contradicting itself statement-by-statement. Parses only our own
+ * migration SQL (a closed set this file authors). DML (INSERT/UPDATE/DELETE)
+ * has no "already applied" state to verify, so it neither confirms nor denies;
+ * a migration with no verifiable DDL is never skipped.
+ */
+function migrationAlreadyApplied(db: Database, sql: string): boolean {
+  const expected = new Map<string, { present: boolean; exists: () => boolean }>()
+  for (const raw of sql.split(";")) {
+    const statement = raw.trim()
+    if (!statement) continue
+    let m: RegExpMatchArray | null
+    if ((m = statement.match(/^ALTER\s+TABLE\s+(\w+)\s+(ADD|DROP)\s+COLUMN\s+(\w+)/i))) {
+      const [, table, verb, column] = m
+      expected.set(`column:${table}.${column}`, {
+        present: verb.toUpperCase() === "ADD",
+        exists: () => tableHasColumn(db, table, column),
+      })
+    } else if ((m = statement.match(/^(CREATE|DROP)\s+(?:UNIQUE\s+)?(TABLE|INDEX)\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?(\w+)/i))) {
+      const [, verb, kind, name] = m
+      expected.set(`${kind.toLowerCase()}:${name}`, {
+        present: verb.toUpperCase() === "CREATE",
+        exists: () => schemaObjectExists(db, kind.toLowerCase(), name),
+      })
+    }
+  }
+  if (expected.size === 0) return false
+  for (const { present, exists } of expected.values()) {
+    if (exists() !== present) return false
+  }
+  return true
+}
+
+function tableHasColumn(db: Database, table: string, column: string): boolean {
+  try {
+    const cols = db.prepare(`PRAGMA table_info("${table}")`).all() as { name: string }[]
+    return cols.some((c) => c.name === column)
+  } catch {
+    return false
+  }
+}
+
+function schemaObjectExists(db: Database, type: string, name: string): boolean {
+  return db.prepare(`SELECT 1 FROM sqlite_master WHERE type = ? AND name = ?`).get(type, name) != null
 }
 
 let _db: Database | null = null
@@ -874,22 +928,29 @@ export function setSetting(key: string, value: unknown): void {
 // Email threads — correlate an inbound mail reply back to the jig it concerns
 // ---------------------------------------------------------------------------
 
+/** How replies on this thread are treated. 'auto' (or null, legacy default):
+ * owner-solicited, edits ship on reply. 'propose': unsolicited auto-repair fix
+ * that ships only on an explicit "apply". */
+export type EmailThreadApproval = "auto" | "propose"
+
 export interface EmailThreadRow {
   thread_id: string
   jig_id: string
   agent_session_id: string | null
+  approval: EmailThreadApproval | null
   created_at: string
   updated_at: string
 }
 
 /** Remember that `threadId` (an AgentMail thread) is about `jigId`. Upsert so a
- *  repeated failure email for the same jig keeps one row per thread. */
-export function recordEmailThread(threadId: string, jigId: string): void {
+ *  repeated failure email for the same jig keeps one row per thread. Optionally
+ *  set the approval mode ('propose' for auto-repair proposals). */
+export function recordEmailThread(threadId: string, jigId: string, approval: EmailThreadApproval = "auto"): void {
   const db = openDb()
   db.prepare(
-    `INSERT INTO email_threads (thread_id, jig_id) VALUES (?, ?)
-     ON CONFLICT(thread_id) DO UPDATE SET jig_id = excluded.jig_id, updated_at = datetime('now')`
-  ).run(threadId, jigId)
+    `INSERT INTO email_threads (thread_id, jig_id, approval) VALUES (?, ?, ?)
+     ON CONFLICT(thread_id) DO UPDATE SET jig_id = excluded.jig_id, approval = excluded.approval, updated_at = datetime('now')`
+  ).run(threadId, jigId, approval)
 }
 
 export function getEmailThread(threadId: string): EmailThreadRow | null {

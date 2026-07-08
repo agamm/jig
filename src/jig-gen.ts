@@ -304,6 +304,20 @@ function readConnectedToolkitsFromComposio(): string[] {
   }
 }
 
+/** Built-in jig capabilities — not servers. One list feeds both the planner
+ * prompt and the unknown-server filter below, so the two can never drift. */
+const BUILTIN_CAPABILITIES = ["ctx.email", "llm()", "agent()", "ctx.step", "ctx.output", "ctx.parallel"]
+const normalizeCapability = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "")
+const BUILTIN_CAPABILITY_KEYS = new Set(BUILTIN_CAPABILITIES.map(normalizeCapability))
+
+/** The planner echoes capabilities back as free-form text ("ctx email",
+ * "reply-to-edit email"), so membership is checked on a normalized key. The
+ * ctx namespace is jig's own — any ctx.* mention is built-in by definition. */
+function isBuiltinCapability(s: string): boolean {
+  const key = normalizeCapability(s)
+  return key.startsWith("ctx") || key.startsWith("replytoedit") || BUILTIN_CAPABILITY_KEYS.has(key)
+}
+
 async function planJig(
   description: string,
   serverConfigs: Record<string, any>
@@ -336,7 +350,7 @@ For this workflow: "${description}"
 4. "needsIntegration": true if the workflow clearly depends on an external service, MCP server, or provider integration; false only if it can be done with pure logic and no external service
 
 Important:
-- \`ctx.email\` is a BUILT-IN jig capability (it emails the user a repliable message — reply-to-edit — with NO connection or server). Never treat "ctx email", "ctx.email", or "reply-to-edit email" as a server or an unknownServer. Likewise \`llm()\`, \`agent()\`, \`ctx.step\`, \`ctx.output\`, \`ctx.parallel\` are built in and need no server. An instruction like "replace gmail send with ctx email" REMOVES a server dependency — it does not add one.
+- \`ctx.email\` is a BUILT-IN jig capability (it emails the user a repliable message — reply-to-edit — with NO connection or server). Never treat "ctx email", "ctx.email", or "reply-to-edit email" as a server or an unknownServer. Likewise ${BUILTIN_CAPABILITIES.slice(1).map((c) => `\`${c}\``).join(", ")} are built in and need no server. An instruction like "replace gmail send with ctx email" REMOVES a server dependency — it does not add one.
 - Prefer the smallest sufficient server set
 - Strongly prefer servers tagged [connected]. If a [connected] server can cover the task (including via composio's listed connected toolkits), pick it instead of a [not connected] alternative — do not pick a [not connected] server when a [connected] one suffices
 - Only pick a [not connected] server when no [connected] server can do the task
@@ -352,13 +366,11 @@ Important:
   const validServers = (result.servers || []).filter(s => s in serverConfigs)
   const invalidServers = (result.servers || []).filter(s => !(s in serverConfigs))
 
-  // Guard: built-in jig capabilities (ctx.email, llm, agent, ctx.*) are not
-  // servers — never let the planner block authoring by flagging one as unknown.
-  const isBuiltin = (s: string) => /\bctx\b|ctx[.\s]?email|reply.?to.?edit|^(llm|agent)$/i.test(s.trim())
-
   return {
     servers: validServers,
-    unknownServers: [...(result.unknownServers || []), ...invalidServers].filter(s => !isBuiltin(s)),
+    // Guard: built-in capabilities are not servers — never let the planner
+    // block authoring by flagging one as unknown.
+    unknownServers: [...(result.unknownServers || []), ...invalidServers].filter(s => !isBuiltinCapability(s)),
     name: (result.name || "new-jig")
       .toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "new-jig",
     needsIntegration: result.needsIntegration === true,

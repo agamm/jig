@@ -1,6 +1,7 @@
 import { getRun } from "../db.js"
 import { isCancellationMessage } from "../run-cancel.js"
 import { formatFailureBody, notify } from "./notify.js"
+import { maybeStartAutoRepair } from "./run-repair.js"
 
 export async function maybeNotifyRunFailure(
   jigId: string,
@@ -9,6 +10,7 @@ export async function maybeNotifyRunFailure(
   deps: {
     getRun?: typeof getRun
     notify?: typeof notify
+    startAutoRepair?: typeof maybeStartAutoRepair
   } = {}
 ): Promise<boolean> {
   if (dryRun || runId <= 0) return false
@@ -29,6 +31,10 @@ export async function maybeNotifyRunFailure(
     jigId,
     runId,
   })
+
+  // Same chokepoint covers auto-repair: every real failure is a candidate,
+  // and the guards in run-repair.ts decide whether this one warrants a fix.
+  void (deps.startAutoRepair ?? maybeStartAutoRepair)(jigId, runId).catch(() => {})
 
   return true
 }

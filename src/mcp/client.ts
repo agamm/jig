@@ -473,12 +473,21 @@ ${schemaHints}`,
   }
 }
 
+/**
+ * Deterministic fallback when the LLM classifier is unavailable. Name keywords
+ * on arbitrary vendor tools are guesses, so every guess here must only ever
+ * make the tool HARDER to use: destructive hints add a confirmation, so false
+ * positives are safe. readOnlyHint is the opposite — it grants auto-invocation
+ * (introspection calls read-only tools live, see services/introspect.ts) — so
+ * the fallback never marks anything read-only. A tool named "get_or_create_*"
+ * marked read-only by keyword would be invoked with real side effects.
+ * Under-classification heals on the next successful connect/refresh.
+ */
 function inferToolAnnotations(tools: Tool[]): {
   readOnly: string[]
   destructive: string[]
   notification: Array<{ name: string; label: string; textField: string; recipientField: string; extraRequired?: string[] }>
 } {
-  const readOnly: string[] = []
   const destructive: string[] = []
   const notification: Array<{ name: string; label: string; textField: string; recipientField: string; extraRequired?: string[] }> = []
 
@@ -486,8 +495,6 @@ function inferToolAnnotations(tools: Tool[]): {
     const name = tool.name.toLowerCase()
     if (/\b(delete|remove|trash|revoke|terminate)\b|_(delete|remove|trash|revoke|terminate)_?/.test(name)) {
       destructive.push(tool.name)
-    } else if (/^(get|list|search|fetch|read|find)_|_(get|list|search|fetch|read|find)_/.test(name)) {
-      readOnly.push(tool.name)
     }
 
     const props = ((tool.inputSchema as any)?.properties ?? {}) as Record<string, unknown>
@@ -507,7 +514,7 @@ function inferToolAnnotations(tools: Tool[]): {
     }
   }
 
-  return { readOnly, destructive, notification }
+  return { readOnly: [], destructive, notification }
 }
 
 function firstExistingKey(props: Record<string, unknown>, keys: string[]): string | null {

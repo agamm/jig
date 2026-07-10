@@ -20,6 +20,7 @@ import { join } from "node:path"
 import { statSync } from "node:fs"
 import { CONNECTIONS_DIR } from "../config/paths.js"
 import { getSetting, setSetting, recordEmailThread } from "../db.js"
+import { mintReplyToken, replyTokenFooter, subjectWithReplyToken } from "./reply-token.js"
 import { canSendAgentMail, getAgentMailSettings, isAgentMailConfigured, sendAgentMailEmail } from "./agentmail.js"
 import { buildNotificationManifest, type NotificationCapableTool } from "../mcp/discover/notification-manifest.js"
 import { publicUrl } from "../config/runtime.js"
@@ -233,11 +234,13 @@ export async function notify(opts: {
     try {
       const owner = getAgentMailSettings().owner!
       const repliable = isAgentMailConfigured() && !!opts.jigId
+      const token = repliable ? mintReplyToken() : null
       const text = repliable
-        ? `${opts.body}\n\nReply to this email to fix the jig — your reply goes straight to its authoring agent.`
+        ? `${opts.body}\n\nReply to this email to fix the jig — your reply goes straight to its authoring agent.${replyTokenFooter(token!)}`
         : opts.body
-      const { threadId } = await sendAgentMailEmail({ to: owner, subject: opts.title, text })
-      if (repliable) recordEmailThread(threadId, opts.jigId!)
+      const subject = token ? subjectWithReplyToken(opts.title, token) : opts.title
+      const { threadId } = await sendAgentMailEmail({ to: owner, subject, text })
+      if (repliable) recordEmailThread(threadId, opts.jigId!, "auto", token)
       report.sent.push({ channel: "agentmail", ok: true })
     } catch (e) {
       report.errors.push({ channel: "agentmail", error: (e as Error)?.message ?? String(e) })

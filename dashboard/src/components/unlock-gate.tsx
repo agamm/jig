@@ -57,7 +57,8 @@ export function UnlockGate({ children }: { children: ReactNode }) {
       </Frame>
     );
   }
-  if (!health.password_set) return <PasswordForm mode="set" onDone={refresh} />;
+  if (!health.password_set)
+    return <PasswordForm mode="set" setupCodeRequired={!!health.setup_code_required} onDone={refresh} />;
   if (health.locked) return <PasswordForm mode="unlock" onDone={refresh} />;
   if (!health.onboarding_complete) return <OnboardingForm onDone={refresh} />;
   return <>{children}</>;
@@ -80,9 +81,18 @@ function StorageProblem({ storage }: { storage: DataStorageHealth }) {
   );
 }
 
-function PasswordForm({ mode, onDone }: { mode: "set" | "unlock"; onDone: () => void }) {
+function PasswordForm({
+  mode,
+  setupCodeRequired = false,
+  onDone,
+}: {
+  mode: "set" | "unlock";
+  setupCodeRequired?: boolean;
+  onDone: () => void;
+}) {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [setupCode, setSetupCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const isSet = mode === "set";
@@ -91,12 +101,13 @@ function PasswordForm({ mode, onDone }: { mode: "set" | "unlock"; onDone: () => 
     e.preventDefault();
     setErr(null);
     if (isSet) {
+      if (setupCodeRequired && !setupCode.trim()) return setErr("Enter the setup code from your server logs.");
       if (password.length < 8) return setErr("Password must be at least 8 characters.");
       if (password !== confirm) return setErr("Passwords don't match.");
     }
     setBusy(true);
     try {
-      if (isSet) await setupPassword(password);
+      if (isSet) await setupPassword(password, setupCodeRequired ? setupCode.trim() : undefined);
       else await unlock(password);
       onDone();
     } catch (e: any) {
@@ -114,10 +125,28 @@ function PasswordForm({ mode, onDone }: { mode: "set" | "unlock"; onDone: () => 
           ? "Set a password to encrypt your credentials. It's never stored on disk — you'll re-enter it after any service restart."
           : "Enter your password to unlock the dashboard and resume scheduled jigs."}
       </p>
+      {isSet && setupCodeRequired && (
+        <p className="mt-2 text-[13px] text-[#aaa]">
+          This instance is unclaimed. Paste the one-time{" "}
+          <span className="text-[#ededed]">setup code</span> printed in your server logs to claim it.
+        </p>
+      )}
       <form onSubmit={submit} className="mt-5 flex flex-col gap-3">
+        {isSet && setupCodeRequired && (
+          <input
+            type="text"
+            autoFocus
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="Setup code (e.g. ABCD-EFGH-JKMN)"
+            value={setupCode}
+            onChange={(e) => setSetupCode(e.target.value)}
+            className="rounded-md border border-[#222226] bg-[#111113] px-3 py-2 font-mono text-[13px] tracking-wide text-[#ededed] placeholder-[#555] outline-none focus:border-[#3f3f46]"
+          />
+        )}
         <input
           type="password"
-          autoFocus
+          autoFocus={!(isSet && setupCodeRequired)}
           autoComplete={isSet ? "new-password" : "current-password"}
           placeholder="Password"
           value={password}
@@ -137,7 +166,7 @@ function PasswordForm({ mode, onDone }: { mode: "set" | "unlock"; onDone: () => 
         {err && <p className="text-[13px] text-[#fb7185]">{err}</p>}
         <button
           type="submit"
-          disabled={busy || !password}
+          disabled={busy || !password || (isSet && setupCodeRequired && !setupCode.trim())}
           className="mt-1 rounded-md bg-emerald-500 px-3 py-2 text-[14px] font-semibold text-white transition disabled:opacity-40"
         >
           {busy ? "Working…" : isSet ? "Set password" : "Unlock"}

@@ -81,11 +81,11 @@ export function completeOnboarding(openrouterKey?: string): Promise<ApiResponse<
   })
 }
 
-export function setupPassword(password: string): Promise<ApiResponse<"setupPassword">> {
+export function setupPassword(password: string, setupCode?: string): Promise<ApiResponse<"setupPassword">> {
   return fetchApi("setupPassword", "/api/setup-password", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password }),
+    body: JSON.stringify({ password, ...(setupCode ? { setupCode } : {}) }),
   })
 }
 
@@ -252,24 +252,26 @@ export function updateSchedule(jigId: string, input: UpdateScheduleRequest): Pro
 export function startAgentSession(
   instruction: string,
   jigId?: string,
-  history?: AgentConversationTurn[]
+  history?: AgentConversationTurn[],
+  images?: string[]
 ): Promise<StartAgentResponse> {
   return fetchApi("startAgent", "/api/agent", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ instruction, jigId, history }),
+    body: JSON.stringify({ instruction, jigId, history, images }),
   })
 }
 
 export function sendAgentMessage(
   sessionId: string,
   message: string,
-  history?: AgentConversationTurn[]
+  history?: AgentConversationTurn[],
+  images?: string[]
 ): Promise<ApiResponse<"agentMessage">> {
   return fetchApi("agentMessage", `/api/agent/${sessionId}/message`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, history }),
+    body: JSON.stringify({ message, history, images }),
   })
 }
 

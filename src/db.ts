@@ -277,6 +277,12 @@ const MIGRATIONS: string[] = [
   // the thread keeps the proposal gate intact across revisions and questions,
   // not just the first reply.
   `ALTER TABLE email_threads ADD COLUMN approval TEXT;`,
+  // v20: per-thread reply token. Reply-to-edit was authorized only by the (SMTP-
+  // spoofable) From header. The token is a shared secret we place in the outbound
+  // email's subject + body footer; a genuine reply echoes it, so a spoofed From
+  // alone can no longer drive edits. NULL for pre-v20 threads (grandfathered —
+  // they fall back to the From-only check).
+  `ALTER TABLE email_threads ADD COLUMN reply_token TEXT;`,
 ]
 
 // ---------------------------------------------------------------------------
@@ -938,19 +944,28 @@ export interface EmailThreadRow {
   jig_id: string
   agent_session_id: string | null
   approval: EmailThreadApproval | null
+  /** Shared secret echoed by a genuine reply. NULL for pre-v20 threads. */
+  reply_token: string | null
   created_at: string
   updated_at: string
 }
 
 /** Remember that `threadId` (an AgentMail thread) is about `jigId`. Upsert so a
  *  repeated failure email for the same jig keeps one row per thread. Optionally
- *  set the approval mode ('propose' for auto-repair proposals). */
-export function recordEmailThread(threadId: string, jigId: string, approval: EmailThreadApproval = "auto"): void {
+ *  set the approval mode ('propose' for auto-repair proposals) and the per-thread
+ *  reply token that inbound replies must echo. */
+export function recordEmailThread(
+  threadId: string,
+  jigId: string,
+  approval: EmailThreadApproval = "auto",
+  replyToken: string | null = null,
+): void {
   const db = openDb()
   db.prepare(
-    `INSERT INTO email_threads (thread_id, jig_id, approval) VALUES (?, ?, ?)
-     ON CONFLICT(thread_id) DO UPDATE SET jig_id = excluded.jig_id, approval = excluded.approval, updated_at = datetime('now')`
-  ).run(threadId, jigId, approval)
+    `INSERT INTO email_threads (thread_id, jig_id, approval, reply_token) VALUES (?, ?, ?, ?)
+     ON CONFLICT(thread_id) DO UPDATE SET jig_id = excluded.jig_id, approval = excluded.approval,
+       reply_token = COALESCE(excluded.reply_token, email_threads.reply_token), updated_at = datetime('now')`
+  ).run(threadId, jigId, approval, replyToken)
 }
 
 export function getEmailThread(threadId: string): EmailThreadRow | null {

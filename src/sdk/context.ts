@@ -228,11 +228,22 @@ export class Context {
     if (!canSendAgentMail() || !owner) {
       throw new Error("ctx.email needs AgentMail — connect an inbox in Settings → Notifications.")
     }
-    const res = await sendAgentMailEmail({ to: owner, subject: opts.subject, text: opts.text, html: opts.html })
+    // Reply-to-edit opens this jig's authoring agent, so the reply needs the same
+    // spoof-resistant token as failure emails. Only mint one when we'll actually
+    // map the thread (jig context present).
+    const { mintReplyToken, subjectWithReplyToken, replyTokenFooter, replyTokenHtmlFooter } =
+      await import("../services/reply-token.js")
+    const token = this._jigId ? mintReplyToken() : null
+    const res = await sendAgentMailEmail({
+      to: owner,
+      subject: token ? subjectWithReplyToken(opts.subject, token) : opts.subject,
+      text: token && opts.text != null ? `${opts.text}${replyTokenFooter(token)}` : opts.text,
+      html: token && opts.html != null ? `${opts.html}${replyTokenHtmlFooter(token)}` : opts.html,
+    })
     // Map the thread to this jig so the user's reply routes to its authoring agent.
     if (this._jigId) {
       const { recordEmailThread } = await import("../db.js")
-      recordEmailThread(res.threadId, this._jigId)
+      recordEmailThread(res.threadId, this._jigId, "auto", token)
     }
     return res
   }

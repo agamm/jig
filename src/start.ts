@@ -237,7 +237,10 @@ export async function startServer(options?: { port?: number }) {
       },
     )
   } else {
-    nextProcess = Bun.spawn([nextBin, "dev", "--port", String(userPort)], {
+    // Local mode has NO auth gate (checkAccess is a no-op off-service), so bind
+    // the dashboard to loopback — never the LAN. Exposing jig to other machines
+    // is what service mode (which turns auth on) is for.
+    nextProcess = Bun.spawn([nextBin, "dev", "--hostname", "127.0.0.1", "--port", String(userPort)], {
       cwd: DASHBOARD_DIR,
       stdout: "inherit",
       stderr: "inherit",

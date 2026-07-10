@@ -2,7 +2,9 @@ import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
 
 const API_PORT = process.env.JIG_API_PORT ?? "4173"
-const API_BASE = `http://localhost:${API_PORT}`
+// 127.0.0.1 (not `localhost`) so this always hits the Bun API's IPv4 loopback
+// bind — `localhost` can resolve to ::1 first, which the API doesn't listen on.
+const API_BASE = `http://127.0.0.1:${API_PORT}`
 const MAX_RETRIES = 5
 const RETRY_DELAY = 500
 

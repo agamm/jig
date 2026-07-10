@@ -23,6 +23,7 @@ import { getJigRuns, recordEmailThread, setEmailThreadSession, type RunRow, type
 import { logSessionEvent } from "../debug/session-log.js"
 import { startAgentSession } from "./agent-service.js"
 import { getAgentMailSettings, isAgentMailConfigured, sendAgentMailEmail } from "./agentmail.js"
+import { mintReplyToken, replyTokenFooter, subjectWithReplyToken } from "./reply-token.js"
 import { attachEmailBridge } from "./email-agent-bridge.js"
 import { getPending } from "./jig-store.js"
 
@@ -105,14 +106,15 @@ function buildRepairInstruction(jigId: string, f: { streak: number; error: strin
 async function openEmailThread(jigId: string, sessionId: string): Promise<void> {
   if (!isAgentMailConfigured()) return
   try {
+    const token = mintReplyToken()
     const { threadId, messageId } = await sendAgentMailEmail({
       to: getAgentMailSettings().owner!,
-      subject: `Jig "${jigId}" failed twice — working on a fix`,
-      text: `This jig has now failed twice in a row, so I'm diagnosing it. I'll reply here with a proposed fix for your approval.`,
+      subject: subjectWithReplyToken(`Jig "${jigId}" failed twice — working on a fix`, token),
+      text: `This jig has now failed twice in a row, so I'm diagnosing it. I'll reply here with a proposed fix for your approval.${replyTokenFooter(token)}`,
     })
     // 'propose' persists on the thread so every reply (revision, question) keeps
     // the approval gate — the fix ships only on an explicit "apply".
-    recordEmailThread(threadId, jigId, "propose")
+    recordEmailThread(threadId, jigId, "propose", token)
     setEmailThreadSession(threadId, sessionId)
     attachEmailBridge(sessionId, threadId, messageId, { approval: "propose" })
   } catch (e) {

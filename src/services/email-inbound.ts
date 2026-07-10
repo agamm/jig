@@ -14,6 +14,8 @@
  *      SPF/DKIM/DMARC to AgentMail.
  *   3. The From address matches the configured owner.
  *   4. The thread maps to a known jig.
+ *   5. The reply echoes the thread's secret token (defeats From spoofing — the
+ *      token reached only the owner's inbox). Grandfathered for pre-v20 threads.
  */
 import { getEmailThread, setEmailThreadSession, type EmailThreadRow } from "../db.js"
 import { getAgentMailSettings, replyAgentMail, verifyAgentMailWebhook } from "./agentmail.js"
@@ -27,6 +29,7 @@ import {
   validatePendingFix,
 } from "./agent-service.js"
 import { classifyApprovalReply } from "./classify-reply.js"
+import { replyCarriesToken } from "./reply-token.js"
 import { attachEmailBridge } from "./email-agent-bridge.js"
 import { getPending } from "./jig-store.js"
 import { summarizeJigChange } from "./summarize-change.js"
@@ -92,6 +95,23 @@ export async function handleInboundEmail(
   const thread = getEmailThread(threadId)
   if (!thread) {
     return { status: 200, body: { ignored: "unknown thread" } }
+  }
+
+  // Gate 5: the reply must echo the thread's secret token. Gate 3 is only a
+  // From-header match, which SMTP lets an attacker spoof; the token was placed
+  // in the outbound subject + body and delivered ONLY to the owner's inbox, so a
+  // spoofed reply that never saw the email can't produce it. Check the raw body
+  // (quoted history) and subject. Pre-v20 threads have no token — grandfathered.
+  if (thread.reply_token) {
+    const subject: string | undefined = typeof message.subject === "string" ? message.subject : undefined
+    if (!replyCarriesToken(thread.reply_token, { subject, text: message.text })) {
+      console.warn(`[email] ignoring reply missing the thread token for jig ${thread.jig_id}`)
+      await replyAgentMail({
+        messageId,
+        text: "⚠️ I couldn't verify that reply — the security reference was missing. Reply again keeping the quoted message and its \"reply ref\" line, or edit this jig on the dashboard.",
+      }).catch(() => {})
+      return { status: 200, body: { ignored: "reply token missing or mismatched" } }
+    }
   }
 
   const instruction = stripQuotedReply(message.text ?? "")

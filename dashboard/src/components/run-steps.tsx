@@ -517,7 +517,7 @@ function StepModelPicker({
             id: currentOverride, name: currentOverride, description: undefined,
             contextLength: 0, promptPriceUsdPerM: 0, completionPriceUsdPerM: 0,
             blendedPriceUsdPerM: 0, supportsTools: false, supportsReasoning: false,
-            createdAt: 0, rank: 0,
+            supportsImages: false, createdAt: 0, rank: 0,
           };
           return [synthesized, ...head];
         }

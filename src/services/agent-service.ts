@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import { existsSync, readFileSync } from "fs"
 import { join } from "path"
 import OpenAI from "openai"
-import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions"
+import type { ChatCompletionContentPart, ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions"
 import type { AgentConversationTurn, AgentDraftApproval, AgentEvent, AgentMetrics, AgentStatusResponse, JigData, OkResponse, StartAgentResponse } from "../../shared/api.js"
 import { getEditorModel } from "../config/models.js"
 import { SCHEMAS_DIR } from "../config/paths.js"
@@ -375,17 +375,56 @@ export function normalizeConversationHistory(
 }
 
 export function renderConversationIntent(history: AgentConversationTurn[]): string {
+  // Text-only by design — images can't ride the flattened intent string. They
+  // only reach the model through buildConversationMessages.
   if (history.length === 0) return ""
   return history
     .map((turn) => `${turn.role === "assistant" ? "Assistant" : "User"}: ${turn.content}`)
     .join("\n\n")
 }
 
+/** Keep only well-formed image data: URLs from an untrusted request body. */
+function normalizeImages(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((x): x is string => typeof x === "string" && x.startsWith("data:image/"))
+}
+
+/**
+ * Build the `content` for a user message. With images, emit OpenRouter's
+ * multimodal array (text part + one image_url part per data: URL); without,
+ * keep it a plain string exactly as before.
+ */
+function buildUserMessageContent(text: string, images?: string[]): string | ChatCompletionContentPart[] {
+  if (!images?.length) return text
+  return [
+    { type: "text", text },
+    ...images.map((url): ChatCompletionContentPart => ({ type: "image_url", image_url: { url } })),
+  ]
+}
+
+/**
+ * Return a copy of `history` with `images` attached to its last user turn, so
+ * buildConversationMessages emits multimodal content for that turn. Non-mutating
+ * — the stored conversationHistory stays text-only (images live in session.messages).
+ */
+function attachImagesToLastUserTurn(history: AgentConversationTurn[], images: string[]): AgentConversationTurn[] {
+  if (!images.length) return history
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].role !== "user") continue
+    const copy = history.slice()
+    copy[i] = { ...copy[i], images }
+    return copy
+  }
+  return history
+}
+
 function buildConversationMessages(history: AgentConversationTurn[]): ChatCompletionMessageParam[] {
-  return history.map((turn) => ({
-    role: turn.role,
-    content: turn.content,
-  }))
+  return history.map((turn): ChatCompletionMessageParam => {
+    if (turn.role === "user" && turn.images?.length) {
+      return { role: "user", content: buildUserMessageContent(turn.content, turn.images) }
+    }
+    return { role: turn.role, content: turn.content }
+  })
 }
 
 function setSessionConversationHistory(
@@ -1485,6 +1524,10 @@ export async function startAgentSession(body: any): Promise<StartAgentResponse> 
 
   const conversationHistory = normalizeConversationHistory(body?.history, instruction)
   const authoringIntent = renderConversationIntent(conversationHistory) || instruction
+  // Pasted images attach to the latest user turn for the model input only; the
+  // stored conversationHistory stays text-only (avoids re-streaming data URLs).
+  const images = normalizeImages(body?.images)
+  const messagesHistory = attachImagesToLastUserTurn(conversationHistory, images)
   const sessionId = crypto.randomUUID()
   closedAgentSessions.delete(sessionId)
   const { prompt: systemPrompt, authoringPolicy } = await buildAgentSystemPrompt(authoringIntent, jigId)
@@ -1498,7 +1541,7 @@ export async function startAgentSession(body: any): Promise<StartAgentResponse> 
     authoringPolicy,
     messages: [
       { role: "system", content: systemPrompt },
-      ...buildConversationMessages(conversationHistory),
+      ...buildConversationMessages(messagesHistory),
     ],
     events: [],
     status: "thinking",
@@ -1786,6 +1829,7 @@ export async function pushAgentMessage(sessionId: string, body: any): Promise<Ok
 
   const message = body?.message as string
   if (!message) throw new ApiError(400, "message is required")
+  const images = normalizeImages(body?.images)
   const conversationHistory = normalizeConversationHistory(body?.history, message)
   logSessionEvent({
     source: "authoring.agent",
@@ -1816,7 +1860,7 @@ export async function pushAgentMessage(sessionId: string, body: any): Promise<Ok
     )
     session.authoringPolicy = authoringPolicy
     session.messages[0] = { role: "system", content: prompt }
-    session.messages.push({ role: "user", content: message })
+    session.messages.push({ role: "user", content: buildUserMessageContent(message, images) })
   }
   setSessionStatus(session, "thinking")
   persistSession(session)

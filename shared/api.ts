@@ -213,6 +213,8 @@ export interface OpenRouterModelInfo {
   blendedPriceUsdPerM: number
   supportsTools: boolean
   supportsReasoning: boolean
+  /** Whether the model accepts image input (multimodal). Derived from OpenRouter's input_modalities. */
+  supportsImages: boolean
   createdAt: number
   rank: number
   /** p50 time-to-first-token (ms) from the fastest live endpoint. Only populated for upgrade suggestions. */
@@ -285,6 +287,9 @@ export interface ModelOverrideInput {
 export interface AgentConversationTurn {
   role: "user" | "assistant"
   content: string
+  /** Pasted image data: URLs attached to a user turn (multimodal input). Only rides through to
+   * the LLM via buildConversationMessages; stripped from history round-trips and intent rendering. */
+  images?: string[]
 }
 
 export type AgentEvent =
@@ -580,6 +585,9 @@ export interface HealthResponse {
   public_url: string | null
   locked: boolean
   password_set: boolean
+  /** Service mode + no password yet: the setup form must collect the one-time
+   * setup code printed in the server logs before it can claim the instance. */
+  setup_code_required?: boolean
   onboarding_complete: boolean
   has_openrouter_key?: boolean
   uptime_s?: number
@@ -648,7 +656,7 @@ export interface ApiContract<Request, Response> {
 export interface ApiContracts {
   health: ApiContract<void, HealthResponse>
   completeOnboarding: ApiContract<{ openrouter_key?: string }, OkResponse>
-  setupPassword: ApiContract<{ password: string }, OkResponse>
+  setupPassword: ApiContract<{ password: string; setupCode?: string }, OkResponse>
   unlock: ApiContract<{ password: string }, OkResponse>
   changePassword: ApiContract<{ newPassword: string }, OkResponse>
   models: ApiContract<ModelOverrideInput | void, ModelCatalog>
@@ -678,9 +686,9 @@ export interface ApiContracts {
   disconnectConnection: ApiContract<void, DisconnectConnectionResponse>
   getSteps: ApiContract<void, StepList>
   updateTrigger: ApiContract<{ trigger: string }, TriggerUpdateResponse>
-  startAgent: ApiContract<{ instruction: string; jigId?: string; history?: AgentConversationTurn[] }, StartAgentResponse>
+  startAgent: ApiContract<{ instruction: string; jigId?: string; history?: AgentConversationTurn[]; images?: string[] }, StartAgentResponse>
   agentStatus: ApiContract<void, AgentStatusResponse>
-  agentMessage: ApiContract<{ message: string; history?: AgentConversationTurn[] }, OkResponse>
+  agentMessage: ApiContract<{ message: string; history?: AgentConversationTurn[]; images?: string[] }, OkResponse>
   agentApprove: ApiContract<void, OkResponse>
   agentClose: ApiContract<void, OkResponse>
   // v12 — code-as-versions endpoints

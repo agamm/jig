@@ -1038,6 +1038,7 @@ function ModelSelector({ jig, onChange }: { jig: Jig; onChange: () => void }) {
         blendedPriceUsdPerM: 0,
         supportsTools: false,
         supportsReasoning: false,
+        supportsImages: false,
         createdAt: 0,
         rank: 0,
       };

@@ -172,6 +172,7 @@ export function ModelUpgradeModal({
   onClose: () => void
 }) {
   const [pending, setPending] = useState<ModelUpgradeSuggestion[]>(suggestions)
+  const [closing, setClosing] = useState(false)
 
   // Auto-close once every card has been actioned. Driven by effect so we
   // don't call the parent setter from inside our setState updater.
@@ -183,10 +184,22 @@ export function ModelUpgradeModal({
     setPending((curr) => curr.filter((s) => s.slot !== slot))
   }
 
+  // Dismissing the modal (× or click-away) is an implicit "not now" for every
+  // suggestion still showing — persist them so they don't nag again on the next
+  // refresh (onClose alone only clears local state; the server would re-suggest).
+  async function handleClose() {
+    if (closing) return
+    setClosing(true)
+    await Promise.allSettled(
+      pending.map((s) => dismissModelUpgrade({ slot: s.slot, modelId: s.suggested.id })),
+    )
+    onClose()
+  }
+
   if (pending.length === 0) return null
 
   return (
-    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/60 px-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/60 px-4" onClick={handleClose}>
       <div
         className="w-full max-w-xl rounded-xl border border-[#2a2a2e] bg-[#111113] shadow-2xl"
         onClick={(e) => e.stopPropagation()}
@@ -200,8 +213,9 @@ export function ModelUpgradeModal({
             </p>
           </div>
           <button
-            onClick={onClose}
-            className="ml-3 text-[18px] leading-none text-[#666] hover:text-[#ededed]"
+            onClick={handleClose}
+            disabled={closing}
+            className="ml-3 text-[18px] leading-none text-[#666] hover:text-[#ededed] disabled:opacity-50"
             aria-label="Close"
           >
             ×

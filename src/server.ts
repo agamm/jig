@@ -80,6 +80,7 @@ import { getSystemSettings, saveSystemSettings, seedSystemSettingsDefaults } fro
 import { changePassword, isPasswordSet, isUnlocked, setPassword, unlock } from "./crypto/password.js"
 import { checkAccess, requireAdminAccess } from "./auth/lock-middleware.js"
 import { issueToken, setCookieHeader } from "./auth/session.js"
+import { announceSetupCode, clearSetupCode, verifySetupCode } from "./auth/setup-code.js"
 import {
   checkUnlockLimit,
   clientIpFromRequest,
@@ -411,6 +412,15 @@ async function handleResetLocalState(): Promise<Response> {
   invalidateJigsCache()
   openDb()
 
+  // The reset wiped the password + session secret, so the instance is unclaimed
+  // again. In service mode, mint & print a fresh setup code so the operator can
+  // re-claim it — otherwise setup-password would demand a code that was never
+  // generated (deadlock).
+  if (isServiceMode()) {
+    clearSetupCode()
+    announceSetupCode()
+  }
+
   return apiJson("resetLocalState", { ok: true, deletedJigs, disconnectedConnections })
 }
 
@@ -516,13 +526,20 @@ async function handleCompleteOnboarding(req: Request): Promise<Response> {
 async function handleSetupPassword(req: Request): Promise<Response> {
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
   if (isPasswordSet()) return json({ error: "Password already set." }, 409)
-  const body = (await req.json().catch(() => ({}))) as { password?: unknown }
+  const body = (await req.json().catch(() => ({}))) as { password?: unknown; setupCode?: unknown }
+  // Service mode: this endpoint is internet-reachable and public, so gate it on
+  // the one-time setup code printed to the server logs — only the operator can
+  // read those, so a network attacker can't claim the instance first.
+  if (isServiceMode() && !verifySetupCode(typeof body.setupCode === "string" ? body.setupCode : null)) {
+    return json({ error: "Invalid or missing setup code. Check the server logs for the current code.", setupCodeRequired: true }, 403)
+  }
   if (typeof body.password !== "string") return json({ error: "password is required" }, 400)
   try {
     setPassword(body.password)
   } catch (e: any) {
     return json({ error: e?.message ?? "Failed to set password" }, 400)
   }
+  clearSetupCode()
   const token = issueToken()
   return apiJsonWithHeaders("setupPassword", { ok: true }, { "Set-Cookie": setCookieHeader(token) })
 }
@@ -577,6 +594,9 @@ async function handleUnlock(req: Request): Promise<Response> {
 export function createApiServer(port: number) {
   openDb()
   seedSystemSettingsDefaults()
+  // Unclaimed internet-exposed instance: print the one-time setup code the
+  // owner needs to claim it (closes the first-boot takeover race).
+  if (isServiceMode() && !isPasswordSet()) announceSetupCode()
   startLiveUpdateWatchers()
   // Clear step cache on startup — ensures stale derivations from old SDK versions don't persist
   const { clearAllStepCache } = require("./db.js")
@@ -612,6 +632,12 @@ export function createApiServer(port: number) {
 
   const apiServer = Bun.serve({
     port,
+    // Bind loopback only. The Bun API is an internal service — the co-located
+    // Next.js proxy (same host in every mode) is its sole client, reaching it
+    // over 127.0.0.1. Never expose it on 0.0.0.0: in local mode `checkAccess`
+    // is a no-op, so a 0.0.0.0 bind would serve the whole unauthenticated API
+    // to the LAN. See start.ts for the user-facing (Next) bind.
+    hostname: "127.0.0.1",
     // /api/events sends SSE heartbeats every 15s, so Bun's 10s default would
     // close the stream first and produce noisy "failed to pipe response" logs.
     idleTimeout: 30,
@@ -643,6 +669,7 @@ export function createApiServer(port: number) {
               // the set-password form, the unlock form, and the dashboard.
               locked: isServiceMode() && (!isPasswordSet() || !isUnlocked()),
               password_set: isPasswordSet(),
+              setup_code_required: isServiceMode() && !isPasswordSet(),
               onboarding_complete: isOnboardingComplete(),
               data_storage: await getDataStorageHealth(),
             }

@@ -1,7 +1,7 @@
 /** SWR keys and fetchers for jig data. */
 import useSWR, { type SWRConfiguration } from "swr"
-import { fetchJigs, fetchJig, fetchModels, fetchJigSteps, fetchConnections, fetchConnection, fetchActiveRunForJig, fetchExamples, fetchHealth, fetchSystemSettings, fetchPending, fetchVersionsV2, fetchOpenRouterCredits } from "./api"
-import type { JigData, ModelCatalog, StepList, Connection, ConnectionDetail, RunStatus, ExampleJig, HealthResponse, SystemSettings, PendingState, JigVersionListResponse, OpenRouterCredits } from "@shared/api"
+import { fetchJigs, fetchJig, fetchModels, fetchJigSteps, fetchConnections, fetchConnection, fetchActiveRunForJig, fetchExamples, fetchHealth, fetchSystemSettings, fetchPending, fetchVersionsV2, fetchOpenRouterCredits, fetchOpenRouterCatalog } from "./api"
+import type { JigData, ModelCatalog, StepList, Connection, ConnectionDetail, RunStatus, ExampleJig, HealthResponse, SystemSettings, PendingState, JigVersionListResponse, OpenRouterCredits, OpenRouterCatalogResponse } from "@shared/api"
 
 const REFRESH_INTERVAL = 10_000
 
@@ -38,6 +38,27 @@ export function useModels() {
   return useSWR<ModelCatalog>("models", fetchModels, {
     revalidateOnFocus: false,
   })
+}
+
+export function useOpenRouterCatalog() {
+  return useSWR<OpenRouterCatalogResponse>("openrouter-catalog", fetchOpenRouterCatalog, {
+    revalidateOnFocus: false,
+  })
+}
+
+/**
+ * The editor-slot model id plus whether it accepts image input. `supportsImages`
+ * is `undefined` until both the model catalog and the OpenRouter catalog load;
+ * callers gate image sends on `=== true` (only send when known-capable).
+ */
+export function useEditorImageCapability(): { editorModelId: string | null; supportsImages: boolean | undefined } {
+  const { data: models } = useModels()
+  const { data: catalog } = useOpenRouterCatalog()
+  const editorModelId = models?.editor.id ?? null
+  const supportsImages = editorModelId && catalog
+    ? (catalog.models.find((m) => m.id === editorModelId)?.supportsImages ?? false)
+    : undefined
+  return { editorModelId, supportsImages }
 }
 
 export function useOpenRouterCredits() {

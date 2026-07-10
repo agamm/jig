@@ -21,6 +21,8 @@ export interface OpenRouterModelInfo {
   blendedPriceUsdPerM: number
   supportsTools: boolean
   supportsReasoning: boolean
+  /** Whether the model accepts image input, from architecture.input_modalities (or modality fallback). */
+  supportsImages: boolean
   /** Unix-seconds timestamp from OpenRouter's `created` field. 0 if missing. */
   createdAt: number
   /** Ranking index from OpenRouter's default sort order (lower = more popular). */
@@ -64,7 +66,7 @@ export async function fetchOpenRouterModels(): Promise<{ models: OpenRouterModel
         created?: number
         pricing?: { prompt?: string; completion?: string }
         supported_parameters?: string[]
-        architecture?: { modality?: string }
+        architecture?: { modality?: string; input_modalities?: string[] }
       }
       if (!e.id || !e.pricing) return null
       // Meta-routing and BYOK entries report sentinel pricing (often negative).
@@ -76,6 +78,11 @@ export async function fetchOpenRouterModels(): Promise<{ models: OpenRouterModel
       const completion = toPricePerMillion(e.pricing.completion)
       if (prompt < 0 || completion < 0) return null
       const blended = (prompt + 3 * completion) / 4
+      // Prefer the explicit input_modalities array; fall back to the legacy modality string.
+      const inputModalities = Array.isArray(e.architecture?.input_modalities) ? e.architecture!.input_modalities : null
+      const supportsImages = inputModalities
+        ? inputModalities.includes("image")
+        : e.architecture?.modality?.includes("image") ?? false
       const info: OpenRouterModelInfo = {
         id: e.id,
         name,
@@ -86,6 +93,7 @@ export async function fetchOpenRouterModels(): Promise<{ models: OpenRouterModel
         blendedPriceUsdPerM: blended,
         supportsTools: supported.includes("tools"),
         supportsReasoning: supported.includes("reasoning") || supported.includes("include_reasoning"),
+        supportsImages,
         createdAt: typeof e.created === "number" ? e.created : 0,
         rank: idx,
       }

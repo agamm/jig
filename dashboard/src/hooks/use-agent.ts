@@ -106,7 +106,7 @@ export function useAgent(
     })
   }, [applySnapshot, closeStream])
 
-  const startSession = useCallback(async (instruction: string, targetJigId?: string): Promise<boolean> => {
+  const startSession = useCallback(async (instruction: string, targetJigId?: string, images?: string[]): Promise<boolean> => {
     const previousSessionId = sessionIdRef.current
     if (previousSessionId && !options.persistOnUnmount) {
       await closeAgentSession(previousSessionId).catch(() => {})
@@ -126,7 +126,7 @@ export function useAgent(
     setConversation(nextConversation)
 
     try {
-      const data = await startAgentSession(instruction, targetJigId, nextConversation)
+      const data = await startAgentSession(instruction, targetJigId, nextConversation, images)
       setSessionId(data.sessionId)
       sessionIdRef.current = data.sessionId
       setJigId(data.jigId ?? null)
@@ -159,13 +159,13 @@ export function useAgent(
     return true
   }, [closeStream, subscribe])
 
-  const sendMessage = useCallback(async (message: string): Promise<boolean> => {
+  const sendMessage = useCallback(async (message: string, images?: string[]): Promise<boolean> => {
     if (!sessionId) return false
     setStatus("thinking")
     const nextConversation = [...conversation, { role: "user" as const, content: message.trim() }].filter((t) => t.content)
     setConversation(nextConversation)
     try {
-      await sendAgentMessage(sessionId, message, nextConversation)
+      await sendAgentMessage(sessionId, message, nextConversation, images)
       // SSE stream is already open; backend will emit new frames.
       if (!sourceRef.current) subscribe(sessionId)
       return true

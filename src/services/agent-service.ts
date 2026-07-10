@@ -808,6 +808,15 @@ async function _toolBrowse(args: { url: string }): Promise<string> {
   if (url.startsWith("file://") || url.startsWith("/")) {
     return JSON.stringify({ error: "Cannot browse local files. Tool schemas and type definitions are already in your system prompt — look there instead." })
   }
+  // SSRF guard: reject loopback/private/link-local/metadata targets before the
+  // headless browser fetches them — otherwise a prompt-injected URL like
+  // http://169.254.169.254/... could pull cloud-metadata/IAM creds into context.
+  try {
+    const { assertPublicUrl } = await import("../net/ssrf.js")
+    await assertPublicUrl(url)
+  } catch (e: any) {
+    return JSON.stringify({ error: `Refused to browse ${url}: ${e?.message ?? "blocked address"}. Only public http(s) URLs are allowed.` })
+  }
   try {
     const proc = Bun.spawn(
       ["npx", "agent-browser", "--engine", "chromium", "--headless", "open", args.url],

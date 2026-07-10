@@ -152,13 +152,30 @@ function stringifyPayload(entry: unknown): string | null {
 }
 
 export function logSessionEvent(entry: Record<string, unknown>): void {
-  // Drop repeated system-prompt copies out of logged `messages` arrays.
+  // Drop repeated system-prompt copies out of logged `messages` arrays, then
+  // REDACT ONCE and reuse for both sinks. The log file previously received the
+  // raw object, so bearer tokens / api keys landed in jig.log (the persistent
+  // /data volume in service mode) in cleartext even though the SQLite mirror
+  // was redacted. Redact before the file write too so neither sink leaks.
   const lean = leanEntry(entry)
+  let redacted: Record<string, unknown>
+  try {
+    redacted = redact(lean) as Record<string, unknown>
+  } catch {
+    // Redaction failed — never fall back to the raw object (that's the leak we
+    // are closing). Emit a minimal breadcrumb instead.
+    redacted = {
+      source: entry.source ?? entry.type ?? "session",
+      event: entry.event ?? "?",
+      note: "[redaction failed — payload omitted]",
+    }
+  }
+
   queue.push(
     stringifyLine({
       ts: new Date().toISOString(),
       pid: process.pid,
-      ...lean,
+      ...redacted,
     }) + "\n"
   )
 
@@ -167,10 +184,9 @@ export function logSessionEvent(entry: Record<string, unknown>): void {
     queueMicrotask(flush)
   }
 
-  // Mirror into SQLite for the dashboard Logs view. Redact first so secrets
-  // never reach the row. Wrapped so a logging failure can't break the caller.
+  // Mirror into SQLite for the dashboard Logs view (same redacted payload).
+  // Wrapped so a logging failure can't break the caller.
   try {
-    const redacted = redact(lean) as Record<string, unknown>
     const { msg, level } = deriveHeadline(redacted)
     recordStructured(level, msg, stringifyPayload(redacted))
   } catch {}

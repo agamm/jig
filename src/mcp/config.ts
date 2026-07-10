@@ -189,14 +189,17 @@ export async function createCustomRemoteServer(input: {
   if (name === "custom") {
     throw new Error("Connection name \"custom\" is reserved")
   }
+  // SSRF guard: an internet-reachable dashboard would otherwise let a custom
+  // connection point at http://169.254.169.254/... (cloud metadata) or an
+  // internal host and have the server fetch it on connect. assertPublicUrl
+  // enforces http(s) and rejects loopback/private/link-local/metadata targets.
   let parsedUrl: URL
   try {
-    parsedUrl = new URL(url)
-  } catch {
-    throw new Error("Custom MCP URL must be a valid absolute URL")
-  }
-  if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
-    throw new Error("Custom MCP URL must start with http:// or https://")
+    const { assertPublicUrl } = await import("../net/ssrf.js")
+    parsedUrl = await assertPublicUrl(url)
+  } catch (e) {
+    const msg = (e as Error)?.message ?? "invalid URL"
+    throw new Error(`Custom MCP URL rejected: ${msg}`)
   }
 
   const defaultConfigs = await Bun.file(join(PROJECT_ROOT, "servers/default.json")).json() as ServerRegistry

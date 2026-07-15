@@ -68,7 +68,11 @@ export function useAgent(
 
   const applySnapshot = useCallback((snapshot: AgentStatusResponse) => {
     if (snapshot.events?.length) {
-      setEvents((prev) => [...prev, ...snapshot.events])
+      // The server re-sends events whose status settled after first emit
+      // (running → done/error), so splice the slice in at its absolute
+      // position rather than appending — re-delivery is idempotent.
+      const start = Math.max(0, snapshot.totalEvents - snapshot.events.length)
+      setEvents((prev) => [...prev.slice(0, start), ...snapshot.events])
     }
     setStatus(snapshot.status)
     setJigId(snapshot.jigId ?? null)
@@ -144,20 +148,26 @@ export function useAgent(
   }, [closeStream, conversation, options.persistOnUnmount, subscribe])
 
   const resumeSession = useCallback(async (sid: string): Promise<boolean> => {
-    if (!sid || sessionIdRef.current === sid) return true
-    closeStream()
-    setEvents([])
-    setStatus("thinking")
-    setSessionId(sid)
-    sessionIdRef.current = sid
-    setJigId(null)
-    setRequiredConnections([])
-    setSuggestedConnections([])
-    setMetrics(undefined)
-    setDraftApproval(undefined)
+    if (!sid) return false
+    // Already subscribed with a live stream — nothing to do. Keyed on the
+    // stream, not just the session id: React StrictMode's dev double-mount
+    // closes the EventSource in the simulated unmount, so a same-session
+    // resume must be able to re-subscribe.
+    if (sessionIdRef.current === sid && sourceRef.current) return true
+    if (sessionIdRef.current !== sid) {
+      setEvents([])
+      setStatus("thinking")
+      setSessionId(sid)
+      sessionIdRef.current = sid
+      setJigId(null)
+      setRequiredConnections([])
+      setSuggestedConnections([])
+      setMetrics(undefined)
+      setDraftApproval(undefined)
+    }
     subscribe(sid)
     return true
-  }, [closeStream, subscribe])
+  }, [subscribe])
 
   const sendMessage = useCallback(async (message: string, images?: string[]): Promise<boolean> => {
     if (!sessionId) return false

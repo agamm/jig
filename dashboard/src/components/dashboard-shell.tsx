@@ -94,6 +94,9 @@ export function DashboardShell({
   const [createInstruction, setCreateInstruction] = useState("");
   const [createStartToken, setCreateStartToken] = useState(0);
   const [createResumeSessionId, setCreateResumeSessionId] = useState<string | null>(null);
+  // Draft authoring session id, kept in the URL so a refresh resumes the
+  // create pane instead of losing it (the session itself lives server-side).
+  const [draftSessionId, setDraftSessionId] = useQueryState("draft", parseAsString);
   const [showCustomConnectionForm, setShowCustomConnectionForm] = useState(false);
   const [creatingCustomConnection, setCreatingCustomConnection] = useState(false);
   const [customConnectionName, setCustomConnectionName] = useState("");
@@ -143,7 +146,7 @@ export function DashboardShell({
 
   const currentJig = jigs.find((j) => j.id === selectedJig) ?? null;
   const showOnboarding = !errorMessage && (phaseToggle ? phase === "day1" : jigs.length === 0 && !loading);
-  const hasDetail = createOpen || (selectedJig && currentJig) || selectedConnection;
+  const hasDetail = createOpen || draftSessionId || (selectedJig && currentJig) || selectedConnection;
   const collapsed = sidebarMounted ? sidebarSlim : false;
   const {
     availableConnections,
@@ -154,6 +157,7 @@ export function DashboardShell({
 
   function openJigDetail(jigId: string) {
     setCreateOpen(false);
+    setDraftSessionId(null);
     setView(null);
     setSelectedJig(jigId);
     setReviewMode(null);
@@ -163,6 +167,7 @@ export function DashboardShell({
   function handleJigClick(jig: Jig) {
     if (jig.underConstruction) {
       setCreateOpen(false);
+      setDraftSessionId(null);
       setView(null);
       setSelectedJig(jig.id);
       setReviewMode(null);
@@ -178,6 +183,7 @@ export function DashboardShell({
     setReviewMode(null);
     setSelectedConnection(null);
     setCreateOpen(false);
+    setDraftSessionId(null);
     setCreateResumeSessionId(null);
   }
 
@@ -187,6 +193,7 @@ export function DashboardShell({
     setSelectedConnection(null);
     setView(null);
     setCreateOpen(true);
+    setDraftSessionId(null);
     setCreateResumeSessionId(null);
     setCreateInstruction(instruction);
     if (autoStart && instruction.trim()) {
@@ -504,12 +511,15 @@ export function DashboardShell({
   );
 
   const detailPane =
-    createOpen && !selectedConnection ? (
+    (createOpen || draftSessionId) && !selectedConnection ? (
       <CreateJigPane
         initialInstruction={createInstruction}
         startToken={createStartToken}
+        resumeSessionId={createOpen ? undefined : draftSessionId}
+        onSessionStarted={(sessionId) => setDraftSessionId(sessionId)}
         onClose={() => {
           setCreateOpen(false);
+          setDraftSessionId(null);
           setCreateResumeSessionId(null);
         }}
         onConnectionClick={(name) => {

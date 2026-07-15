@@ -10,7 +10,9 @@ import { toast } from "@/components/toast"
 
 type AgentStatus = "thinking" | "tool-calling" | "waiting" | "done" | "error" | "idle"
 
-const ACTIVE_STATUSES = new Set<AgentStatus>(["thinking", "tool-calling", "waiting"])
+// "waiting" is NOT active: the agent has paused for the user (a question or
+// draft approval) — that's exactly when Approve must be clickable.
+const ACTIVE_STATUSES = new Set<AgentStatus>(["thinking", "tool-calling"])
 
 /**
  * Shows the current pending change for a jig. Three visual states driven by
@@ -25,12 +27,20 @@ export function PendingChangesBanner({
   jigId,
   pending,
   agentStatus,
+  onApprove,
   onApproved,
   onDiscarded,
 }: {
   jigId: string
   pending: PendingState
   agentStatus: AgentStatus
+  /**
+   * Replaces the default store-level approve. The creation flow passes the
+   * session-level draft approve here so approving also finalizes the agent
+   * session (auto-approves declared tools, marks it done, clears the draft).
+   * Returns false when the approve failed and the caller already surfaced it.
+   */
+  onApprove?: () => Promise<boolean>
   onApproved?: () => void | Promise<void>
   onDiscarded?: () => void | Promise<void>
 }) {
@@ -43,7 +53,11 @@ export function PendingChangesBanner({
     if (agentWorking) return
     setBusy("approve")
     try {
-      await approvePending(jigId)
+      if (onApprove) {
+        if (!(await onApprove())) return
+      } else {
+        await approvePending(jigId)
+      }
       toast.success("Changes approved")
       await onApproved?.()
     } catch (err: any) {

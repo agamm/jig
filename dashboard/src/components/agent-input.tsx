@@ -80,7 +80,7 @@ export function AgentInput({
   autoFocus?: boolean
 }) {
   const prevStatusRef = useRef(agent.status)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const input = useInputHistory({ externalValue, onExternalValueChange })
   const [pastedImages, setPastedImages] = useState<string[]>([])
   const { editorModelId, supportsImages: editorSupportsImages } = useEditorImageCapability()
@@ -101,7 +101,15 @@ export function AgentInput({
     return () => window.clearTimeout(timer)
   }, [autoFocus])
 
-  async function handlePaste(e: React.ClipboardEvent<HTMLInputElement>) {
+  // Grow the textarea with its content, up to the CSS max-height cap.
+  useEffect(() => {
+    const el = inputRef.current
+    if (!el) return
+    el.style.height = "auto"
+    el.style.height = `${el.scrollHeight}px`
+  }, [input.value])
+
+  async function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
     const items = Array.from(e.clipboardData?.items ?? [])
     const imageFiles = items
       .filter((it) => it.kind === "file" && it.type.startsWith("image/"))
@@ -189,24 +197,28 @@ export function AgentInput({
         </div>
       )}
 
-      <div className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 transition-colors duration-150 focus-within:border-emerald-500/40 focus-within:ring-1 focus-within:ring-emerald-500/20">
-        <input
+      <div className="flex items-end gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 transition-colors duration-150 focus-within:border-emerald-500/40 focus-within:ring-1 focus-within:ring-emerald-500/20">
+        <textarea
           ref={inputRef}
-          type="text"
+          rows={1}
           value={input.value}
           onChange={(e) => input.setValue(e.target.value)}
           onPaste={handlePaste}
           onKeyDown={(e) => {
-            if (e.key === "Enter") {
+            // Enter sends; Shift+Enter falls through to insert a newline.
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault()
               void handleSend()
               return
             }
-            if (e.key === "ArrowUp") {
+            const el = e.currentTarget
+            // Only browse history when the caret can't move further up/down.
+            if (e.key === "ArrowUp" && !el.value.slice(0, el.selectionStart).includes("\n")) {
               e.preventDefault()
               input.browsePrevious()
               return
             }
-            if (e.key === "ArrowDown") {
+            if (e.key === "ArrowDown" && !el.value.slice(el.selectionEnd).includes("\n")) {
               e.preventDefault()
               input.browseNext()
             }
@@ -214,7 +226,7 @@ export function AgentInput({
           placeholder={placeholder}
           disabled={!agent.canSend}
           autoFocus={autoFocus}
-          className="flex-1 bg-transparent text-[12px] text-[var(--text-primary)] outline-none border-0 ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 placeholder:text-[var(--text-dim)] disabled:opacity-50"
+          className="flex-1 resize-none max-h-32 overflow-y-auto bg-transparent text-[12px] leading-[18px] text-[var(--text-primary)] outline-none border-0 ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 placeholder:text-[var(--text-dim)] disabled:opacity-50"
         />
         {(agent.status === "done" || agent.status === "error") && (
           <Button

@@ -1749,12 +1749,28 @@ export async function closeAgentSession(sessionId: string): Promise<OkResponse> 
 }
 
 /**
+ * Where the SSE cursor should advance to after emitting a frame. Tool-call
+ * events are mutated in place when they settle (running → done/error), so the
+ * cursor must not move past one that's still running — the next frame then
+ * re-sends it with its final status. The client merges re-sent slices by
+ * absolute index via totalEvents, so re-delivery is idempotent.
+ */
+export function nextStreamCursor(events: AgentEvent[], cursor: number): number {
+  for (let i = cursor; i < events.length; i++) {
+    const ev = events[i]
+    if (ev.type === "tool-call" && ev.status === "running") return i
+  }
+  return events.length
+}
+
+/**
  * Server-Sent Events stream of agent session updates. Each frame is the
  * AgentStatusResponse shape with only new events since the client's cursor.
  *
  * Frame format: `id: <seq>\nevent: snapshot\ndata: <json>\n\n` where seq is
- * session.events.length at emit time. Clients pass Last-Event-ID on
- * reconnect to skip already-seen events.
+ * the cursor position after this frame (events.length, unless held back at a
+ * still-running tool call). Clients pass Last-Event-ID on reconnect to skip
+ * already-seen events.
  */
 export function streamAgentSession(sessionId: string, lastEventId: number, signal: AbortSignal): Response {
   const session = loadSession(sessionId)
@@ -1790,7 +1806,8 @@ export function streamAgentSession(sessionId: string, lastEventId: number, signa
         const seq = s.events.length
         if (seq <= cursor && s.status === lastStatusSent) return
         lastStatusSent = s.status
-        send(seq, {
+        const next = nextStreamCursor(s.events, cursor)
+        send(next, {
           status: s.status,
           jigId: s.jigId,
           events: s.events.slice(cursor),
@@ -1799,7 +1816,7 @@ export function streamAgentSession(sessionId: string, lastEventId: number, signa
           draftApproval: s.draftApproval,
           conversationHistory: s.conversationHistory,
         })
-        cursor = seq
+        cursor = next
       }
 
       // Subscribe FIRST, then push initial replay — avoids any window where a

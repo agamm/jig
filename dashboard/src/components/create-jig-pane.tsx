@@ -66,6 +66,7 @@ export function CreateJigPane({
   onClose,
   onCreated,
   onConnectionClick,
+  onSessionStarted,
 }: {
   initialInstruction?: string;
   startToken?: number;
@@ -73,6 +74,9 @@ export function CreateJigPane({
   onClose: () => void;
   onCreated?: (jigId?: string) => Promise<void> | void;
   onConnectionClick?: (name: string) => void;
+  /** Fires once when the pane's agent session id becomes known — the shell
+   *  persists it in the URL so a refresh can resume the draft. */
+  onSessionStarted?: (sessionId: string) => void;
 }) {
   const [input, setInput] = useState(initialInstruction);
   const [detailTab, setDetailTab] = useState<"steps" | "code">("steps");
@@ -91,7 +95,6 @@ export function CreateJigPane({
     }
   };
   const startedTokenRef = useRef(0);
-  const resumedSessionRef = useRef<string | null>(null);
   const listedDraftRef = useRef<string | null>(null);
   const agent = useAgent(async (jigId) => {
     await onCreated?.(jigId);
@@ -124,8 +127,9 @@ export function CreateJigPane({
   }, [initialInstruction, startToken]);
 
   useEffect(() => {
-    if (!resumeSessionId || resumedSessionRef.current === resumeSessionId) return;
-    resumedSessionRef.current = resumeSessionId;
+    if (!resumeSessionId) return;
+    // No once-guard here — resumeSession is idempotent while its stream is
+    // live, and must re-run after StrictMode's dev double-mount closes it.
     void resumeAgentSession(resumeSessionId);
   }, [resumeAgentSession, resumeSessionId]);
 
@@ -134,6 +138,13 @@ export function CreateJigPane({
     listedDraftRef.current = agent.jigId;
     void mutate("jigs");
   }, [agent.jigId]);
+
+  const notifiedSessionRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!agent.sessionId || notifiedSessionRef.current === agent.sessionId) return;
+    notifiedSessionRef.current = agent.sessionId;
+    onSessionStarted?.(agent.sessionId);
+  }, [agent.sessionId, onSessionStarted]);
 
   const steps: RunStep[] = previewJig?.steps?.map((s) => ({
     num: s.num,
@@ -284,6 +295,7 @@ export function CreateJigPane({
                 jigId={agent.jigId}
                 pending={pending}
                 agentStatus={agent.status}
+                onApprove={agent.draftApproval ? agent.approveDraft : undefined}
                 onApproved={async () => {
                   await revalidatePending();
                   await onCreated?.(agent.jigId ?? undefined);

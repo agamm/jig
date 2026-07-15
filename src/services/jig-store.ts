@@ -361,6 +361,24 @@ export function deleteJig(jigId: string): void {
 }
 
 /**
+ * Remove creation-draft jig rows no session can reach anymore: never approved
+ * (no active version) and no agent session referencing them. Such orphans are
+ * invisible in the UI but still claim their id, so the next create attempt for
+ * the same request errors "Jig already exists" and the authoring agent invents
+ * a duplicate variant name. Returns the removed jig ids.
+ */
+export function sweepOrphanedDraftJigs(): string[] {
+  const db = openDb()
+  const rows = db.prepare(`
+    SELECT j.id FROM jigs j
+    WHERE j.active_version_id IS NULL
+      AND NOT EXISTS (SELECT 1 FROM agent_sessions s WHERE s.jig_id = j.id)
+  `).all() as { id: string }[]
+  for (const row of rows) deleteJig(row.id)
+  return rows.map((r) => r.id)
+}
+
+/**
  * Import path — used by the migration to ingest pre-rehaul `jigs/*.ts` files into
  * the new tables. Each call appends one version. The caller chains parent_version_id
  * to preserve the git history order. After importing all commits for a jig, call

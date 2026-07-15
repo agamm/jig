@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
 import { closeDb, openDb, upsertAgentSession } from "../src/db.js"
 import {
+  closeAgentSession,
   listUnderConstructionJigs,
   nextStreamCursor,
   normalizeConversationHistory,
   renderConversationIntent,
 } from "../src/services/agent-service.js"
+import { approvePending, getJigRow, sweepOrphanedDraftJigs, writePending } from "../src/services/jig-store.js"
 import type { AgentEvent } from "../shared/api.js"
 
 describe("agent authoring intent accumulation", () => {
@@ -103,9 +105,9 @@ describe("under construction jigs", () => {
     closeDb()
   })
 
-  function upsertDraftSession(overrides: { jigId?: string | null } = {}) {
+  function upsertDraftSession(overrides: { sessionId?: string; jigId?: string | null } = {}) {
     upsertAgentSession({
-      session_id: "12345678-1234-4234-9234-123456789abc",
+      session_id: overrides.sessionId ?? "12345678-1234-4234-9234-123456789abc",
       jig_id: overrides.jigId ?? null,
       creation_mode: 1,
       authoring_intent: "User: Test",
@@ -138,5 +140,38 @@ describe("under construction jigs", () => {
     expect(draft.id).toBe("draft-12345678")
     expect(draft.name).toBe("Test Jig")
     expect(draft.underConstruction?.jigId).toBe("test_jig")
+  })
+
+  it("closing a creation session removes its never-approved jig row", async () => {
+    const sessionId = "aaaa0001-1234-4234-9234-123456789abc"
+    upsertDraftSession({ sessionId, jigId: "close_draft" })
+    writePending({ jigId: "close_draft", name: "Close Draft", code: "// draft", author: "agent", message: null, prompt: null })
+    expect(getJigRow("close_draft")).not.toBeNull()
+
+    await closeAgentSession(sessionId)
+    expect(getJigRow("close_draft")).toBeNull()
+  })
+
+  it("closing a creation session keeps an approved jig", async () => {
+    const sessionId = "aaaa0002-1234-4234-9234-123456789abc"
+    upsertDraftSession({ sessionId, jigId: "approved_jig" })
+    writePending({ jigId: "approved_jig", name: "Approved Jig", code: "// approved", author: "agent", message: null, prompt: null })
+    approvePending("approved_jig")
+
+    await closeAgentSession(sessionId)
+    expect(getJigRow("approved_jig")).not.toBeNull()
+  })
+
+  it("sweeps orphaned draft rows but keeps session-referenced and approved jigs", () => {
+    writePending({ jigId: "orphan_draft", name: "Orphan", code: "// orphan", author: "agent", message: null, prompt: null })
+    upsertDraftSession({ sessionId: "aaaa0003-1234-4234-9234-123456789abc", jigId: "held_draft" })
+    writePending({ jigId: "held_draft", name: "Held", code: "// held", author: "agent", message: null, prompt: null })
+    writePending({ jigId: "shipped_jig", name: "Shipped", code: "// shipped", author: "agent", message: null, prompt: null })
+    approvePending("shipped_jig")
+
+    expect(sweepOrphanedDraftJigs()).toEqual(["orphan_draft"])
+    expect(getJigRow("orphan_draft")).toBeNull()
+    expect(getJigRow("held_draft")).not.toBeNull()
+    expect(getJigRow("shipped_jig")).not.toBeNull()
   })
 })

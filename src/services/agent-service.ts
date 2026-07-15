@@ -15,6 +15,7 @@ import { buildAgentJigSystemPrompt } from "./jig-writing-prompt.js"
 import { ApiError } from "../server/http.js"
 import {
   approvePending as storeApprovePending,
+  deleteJig as storeDeleteJig,
   getActiveCode as storeGetActiveCode,
   getJigRow as storeGetJigRow,
   getPending as storeGetPending,
@@ -304,6 +305,18 @@ function releaseSession(session: AgentSession): void {
   agentSessions.delete(session.sessionId)
   deleteAgentSession(session.sessionId)
   disposeSessionStream(session.sessionId)
+
+  // A creation draft is only reachable through its session. Once the session
+  // is gone, a never-approved jig row would orphan the claimed id — invisible
+  // in the UI but blocking the name, so the next attempt at the same request
+  // errors "Jig already exists" and the agent invents a duplicate variant.
+  if (session.creationMode && session.jigId) {
+    const row = storeGetJigRow(session.jigId)
+    if (row && row.active_version_id == null && !jigHasActiveSession(session.jigId)) {
+      storeDeleteJig(session.jigId)
+      invalidateJigsCache()
+    }
+  }
 }
 
 /**

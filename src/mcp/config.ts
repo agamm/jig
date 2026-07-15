@@ -171,7 +171,44 @@ export async function loadCustomServerConfigs(): Promise<ServerRegistry> {
 
   const file = Bun.file(CUSTOM_SERVERS_PATH)
   const raw = await file.json().catch(() => ({})) as ServerRegistry
-  return raw && typeof raw === "object" ? raw : {}
+  if (!raw || typeof raw !== "object") return {}
+  return sanitizeCustomConfigs(raw)
+}
+
+/**
+ * The custom-servers file is user-writable. The only supported writer,
+ * createCustomRemoteServer, emits plain `type:"remote"` entries — but a
+ * hand-edited or tampered file could carry a config that reaches a shell:
+ * `type:"stdio"` (spawns command+args), `type:"repo"` (git clone + `sh -c`
+ * build), or an `auth`/`build`/`command` field on any type. Those are RCE
+ * vectors, and a same-named entry would shadow a trusted default via the merge
+ * in loadServerConfigs. Enforce the invariant on load: keep only remote
+ * connections, rebuilt from an allowlist of non-executable fields.
+ */
+const DISALLOWED_CUSTOM_FIELDS = ["auth", "command", "args", "build", "repo", "setup", "authoringDiscovery"]
+
+function sanitizeCustomConfigs(raw: ServerRegistry): ServerRegistry {
+  const safe: ServerRegistry = {}
+  for (const [name, config] of Object.entries(raw)) {
+    if (!config || typeof config !== "object") continue
+    if (config.type !== "remote" || typeof (config as RemoteServerConfig).url !== "string") {
+      console.warn(`[mcp] Ignoring custom server "${name}": only plain remote connections are allowed in custom configs`)
+      continue
+    }
+    const dropped = DISALLOWED_CUSTOM_FIELDS.filter((k) => k in config)
+    if (dropped.length) {
+      console.warn(`[mcp] Custom server "${name}": dropped disallowed field(s) ${dropped.join(", ")} (not permitted in custom configs)`)
+    }
+    const c = config as RemoteServerConfig
+    const clean: RemoteServerConfig = {
+      type: "remote",
+      url: c.url,
+      description: c.description || "Custom MCP server",
+    }
+    if (c.headers && typeof c.headers === "object") clean.headers = c.headers
+    safe[name] = clean
+  }
+  return safe
 }
 
 export async function createCustomRemoteServer(input: {
@@ -218,7 +255,7 @@ export async function createCustomRemoteServer(input: {
     Object.entries({ ...customConfigs, [name]: config }).sort(([a], [b]) => a.localeCompare(b))
   )
 
-  await mkdir(join(PROJECT_ROOT, ".jig"), { recursive: true })
+  await mkdir(join(PROJECT_ROOT, ".jig"), { recursive: true, mode: 0o700 })
   await Bun.write(CUSTOM_SERVERS_PATH, JSON.stringify(nextConfigs, null, 2) + "\n")
 
   return { name, config }

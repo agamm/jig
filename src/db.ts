@@ -390,7 +390,8 @@ export function openDb(path?: string): Database {
     const dir = dirname(dbPath)
     if (!existsSync(dir)) {
       try {
-        mkdirSync(dir, { recursive: true })
+        // Holds jig.db (the credentials table lives here) — keep it owner-only.
+        mkdirSync(dir, { recursive: true, mode: 0o700 })
       } catch (e: any) {
         throw new Error(
           `Can't create data directory ${dir}: ${e?.message ?? e}. ` +

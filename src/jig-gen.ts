@@ -358,7 +358,8 @@ Important:
 - If the user says to do something via/using/through a specific server, prefer that server and do not add another server just because the target website or data source matches its brand
 - Only include an additional server when the workflow truly needs that server's own authenticated API, write actions, or first-party tools beyond what the explicit provider can already do
 - Server descriptions are capabilities, not keyword substitution rules. Do not infer a server solely from a product word when the user explicitly chose another available server.
-- Do not replace an explicitly named server with a different inferred alternative unless the named one is clearly impossible for the task`,
+- Do not replace an explicitly named server with a different inferred alternative unless the named one is clearly impossible for the task
+- Never silently substitute a related-but-wrong server for a capability it does not actually have (respect each server's Hints about what its tools can and cannot see). If the workflow needs a data source or capability that NO listed server provides — e.g. it needs upcoming calendar events and no calendar-capable server is available — name that capability in "unknownServers" so the gap is surfaced to the user instead of quietly covered by the closest available tool`,
     {},
     { schema: { servers: "array", unknownServers: "array", name: "string", needsIntegration: "boolean" } as any, model: getEditorModel() }
   )

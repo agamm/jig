@@ -55,6 +55,9 @@ export async function maybeStartAutoRepair(jigId: string, runId: number, deps: R
       const { sessionId } = await (deps.startAgentSession ?? startAgentSession)({
         instruction: buildRepairInstruction(jigId, latest),
         jigId,
+        // Background repair defers to live sessions (409) — it must never
+        // steal the jig from a user edit. User edits, in turn, preempt repair.
+        origin: "repair",
       })
       console.log(`[repair] ${jigId} failed ${latest.streak}× — started repair session ${sessionId}`)
       logSessionEvent({ source: "repair", event: "session-started", jigId, runId, sessionId, streak: latest.streak })

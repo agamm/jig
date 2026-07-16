@@ -324,6 +324,27 @@ function releaseSession(session: AgentSession): void {
  * v12: lock lives entirely in agent_sessions status; pending in the store is durable
  * across sessions, but only one session can be actively writing at a time.
  */
+/**
+ * Force-close every session holding this jig, regardless of status. Used when
+ * an explicit user edit supersedes whatever is running (hung edit, background
+ * repair). releaseSession marks the session closed, so its agent loop exits
+ * at the next checkpoint instead of writing into the taken-over jig.
+ */
+function forceReleaseJigSessions(jigId: string, reason: string): void {
+  for (const session of [...agentSessions.values()]) {
+    if (session.jigId !== jigId) continue
+    logSessionEvent({
+      source: "authoring.agent",
+      event: "session-superseded",
+      sessionId: session.sessionId,
+      jigId,
+      reason,
+    })
+    releaseSession(session)
+  }
+  activeAgentJigs.delete(jigId)
+}
+
 function releaseStaleJigLock(jigId: string): boolean {
   // Evict expired sessions FIRST. A session stuck in an active status (hung
   // LLM call, abandoned repair/edit) otherwise holds this jig's lock forever:
@@ -1543,10 +1564,19 @@ export async function startAgentSession(body: any): Promise<StartAgentResponse> 
   if (!instruction) throw new ApiError(400, "instruction is required")
 
   const jigId = body?.jigId as string | undefined
+  // "repair" = background auto-repair; anything else is an explicit user edit.
+  const origin = body?.origin === "repair" ? "repair" : "user"
 
   if (jigId && !isValidJigId(jigId)) throw new ApiError(400, "Invalid jig ID")
   if (jigId && !releaseStaleJigLock(jigId)) {
-    throw new ApiError(409, "An agent session is already editing this jig")
+    if (origin === "repair") {
+      // Background repair never steals the jig from a live session.
+      throw new ApiError(409, "An agent session is already editing this jig")
+    }
+    // Single-owner system: an explicit user edit always wins over whatever
+    // holds the lock (a hung edit, a background repair session). Bouncing the
+    // user with a 409 and a Retry button they can't act on is dead-end UX.
+    forceReleaseJigSessions(jigId, "superseded by a new user edit session")
   }
 
   const conversationHistory = normalizeConversationHistory(body?.history, instruction)

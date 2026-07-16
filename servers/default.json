@@ -16,7 +16,12 @@
   "granola": {
     "type": "remote",
     "url": "https://mcp.granola.ai/mcp",
-    "description": "Meeting notes and transcripts"
+    "description": "Meeting notes and transcripts",
+    "meta": {
+      "authoringHints": [
+        "Granola only knows about meetings it has already captured notes/transcripts for — list_meetings and query tools return PAST meetings, never upcoming calendar events. To find upcoming/scheduled meetings, use a calendar tool (e.g. a connected calendar integration) and use granola only to pull context from past meetings (e.g. prior meetings with the same participants)."
+      ]
+    }
   },
   "github": {
     "disabled": true,

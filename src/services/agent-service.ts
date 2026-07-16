@@ -325,6 +325,11 @@ function releaseSession(session: AgentSession): void {
  * across sessions, but only one session can be actively writing at a time.
  */
 function releaseStaleJigLock(jigId: string): boolean {
+  // Evict expired sessions FIRST. A session stuck in an active status (hung
+  // LLM call, abandoned repair/edit) otherwise holds this jig's lock forever:
+  // startAgentSession throws its 409 before its own prune call ever runs, so
+  // the TTL never got a chance to clear the blocker.
+  pruneAgentSessions()
   const ACTIVE = new Set(["thinking", "tool-calling", "waiting"])
   // Drop in-memory locks for terminal/missing sessions on the same jig.
   for (const session of [...agentSessions.values()]) {

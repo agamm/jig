@@ -19,7 +19,8 @@
     "description": "Meeting notes and transcripts",
     "meta": {
       "authoringHints": [
-        "Granola only knows about meetings it has already captured notes/transcripts for — list_meetings and query tools return PAST meetings, never upcoming calendar events. To find upcoming/scheduled meetings, use a calendar tool (e.g. a connected calendar integration) and use granola only to pull context from past meetings (e.g. prior meetings with the same participants)."
+        "list_meetings/get_meetings only return meetings Granola has already captured notes for (all past) — they can NOT find upcoming calendar events, so never use them for 'upcoming meetings'.",
+        "query_granola_meetings IS calendar-aware (verified empirically, even though its own description disclaims scheduling): a natural-language question like 'what meetings start in the next hour? titles and start times' returns upcoming events from the user's calendar as prose. Use it to find upcoming meetings, and parse the prose answer with an LLM step (it is not structured data). Prefer a dedicated calendar tool when one is connected — this behavior is undocumented on granola's side."
       ]
     }
   },

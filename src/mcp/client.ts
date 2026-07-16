@@ -198,8 +198,47 @@ async function connectWithOAuth(
       if (isAuthDeniedError(sseError)) {
         return recoverOAuth(name, config, authProvider, null, sseError, options)
       }
+      // Some providers answer an expired/revoked token with a non-auth status
+      // on connect (e.g. 405/400 instead of 401), which isAuthDeniedError
+      // can't see. When previously-working tokens exist, ask the shared LLM
+      // classifier before surfacing a raw transport error — an auth failure
+      // must fail actionable (reconnect message + notification via
+      // recoverOAuth), not leak "SSE error: Non-200 status code (405)".
+      if (await isLikelyAuthFailure(name, authProvider, error, sseError)) {
+        return recoverOAuth(name, config, authProvider, null, sseError, options)
+      }
       throw sseError
     }
+  }
+}
+
+/**
+ * Connect failed on both transports with an error that isn't auth-shaped
+ * (no 401/403, no OAuth deny code). Decide whether it's still an auth
+ * failure in disguise. Only worth asking when saved tokens exist — a
+ * fresh, never-authorized server failing to connect is not a reauth case.
+ * The context sentence carries what the call site knows deterministically;
+ * the classifier judges the error text. Fails closed (false) so outages
+ * and network errors keep their original message.
+ */
+async function isLikelyAuthFailure(
+  name: string,
+  authProvider: JigOAuthProvider,
+  streamableError: unknown,
+  sseError: unknown,
+): Promise<boolean> {
+  try {
+    if ((await authProvider.tokens()) === undefined) return false
+    const { classifyAuthFailure } = await import("../services/classify-failure.js")
+    return await classifyAuthFailure(
+      `Connecting to the "${name}" MCP server failed on both transports, using saved OAuth tokens ` +
+        `that previously worked for this server. Some providers answer expired or revoked tokens with ` +
+        `a non-401 HTTP status at connect time. ` +
+        `Streamable HTTP error: ${errorMessageForReport(streamableError)}. ` +
+        `SSE fallback error: ${errorMessageForReport(sseError)}.`,
+    )
+  } catch {
+    return false
   }
 }
 

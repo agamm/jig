@@ -44,7 +44,12 @@ export async function classifyAuthFailure(errorText: string): Promise<boolean> {
               "needs the user to (re-)authenticate or reconnect — e.g. expired/revoked/missing credentials, " +
               "OAuth or login required, session expired, 401/403 unauthorized, \"no browser available\". " +
               "It is NOT a reconnect case if the error is a bad request, rate limit, not-found, timeout, " +
-              "network blip, or a logic/validation error. Reply with exactly one word: yes or no.",
+              "network blip, or a logic/validation error. " +
+              "Exception: when the report says saved credentials that previously worked were used and the " +
+              "failure happened while (re)connecting, treat a bare 4xx status with no validation detail " +
+              "(e.g. 400 or 405 with no field errors) as a reconnect case — some providers answer expired " +
+              "or revoked tokens with a non-401 status at connect time. " +
+              "Reply with exactly one word: yes or no.",
           },
           { role: "user", content: `Error:\n${key}` },
         ],

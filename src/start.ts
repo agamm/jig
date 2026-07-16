@@ -182,10 +182,14 @@ export async function startServer(options?: { port?: number }) {
     const indexFile = `${connectionsDir}/index.ts`
     if (existsSync(indexFile)) {
       const { readFileSync, readdirSync } = await import("fs")
-      const files = readdirSync(connectionsDir).filter(f => f.endsWith(".ts") && f !== "index.ts")
+      const { TYPEGEN_VERSION } = await import("./mcp/typegen.js")
+      const files = readdirSync(connectionsDir).filter(f => f.endsWith(".ts") && !f.endsWith(".d.ts") && f !== "index.ts")
       for (const file of files) {
         const content = readFileSync(`${connectionsDir}/${file}`, "utf-8")
-        if (content.includes("sdk/connections") || content.includes("\"../../src/") || content.includes("from \"../../src/")) {
+        // Regenerate when a runtime module predates the current template
+        // version (marker missing/old) or still uses legacy import paths.
+        if (!content.includes(`typegen-v${TYPEGEN_VERSION}`)
+          || content.includes("sdk/connections") || content.includes("\"../../src/") || content.includes("from \"../../src/")) {
           console.log(`Stale connection files detected. Regenerating...`)
           const regen = Bun.spawn(["bun", "run", "src/mcp/typegen.ts"], { cwd: PROJECT_ROOT, stdout: "inherit", stderr: "inherit" })
           await regen.exited

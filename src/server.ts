@@ -443,10 +443,10 @@ function handleOAuthCallback(url: URL): Response {
   // Prefer state-based routing; fall back to single-pending-provider match
   // for OAuth servers that drop state on the return leg (seen with some
   // MCP servers that build authorize URLs without forwarding state).
-  const matched = state
+  const matchedServer = state
     ? completePendingOAuth(state, code)
     : completePendingOAuthStateless(code)
-  if (!matched) {
+  if (!matchedServer) {
     return new Response(
       renderOAuthErrorPage("the service", state
         ? "No pending authorization matched this callback. Try connecting again."
@@ -454,10 +454,9 @@ function handleOAuthCallback(url: URL): Response {
       { status: 404, headers: { "Content-Type": "text/html; charset=utf-8" } },
     )
   }
-  // Server name isn't directly known here; completePendingOAuth returns
-  // boolean. Render a generic success page — the dashboard link is the
-  // same for any server.
-  return new Response(renderOAuthSuccessPage("your service"), {
+  // Real server name so the success page's "Back to connections" deep-link
+  // opens the right pane instead of a literal "your service" connection.
+  return new Response(renderOAuthSuccessPage(matchedServer), {
     status: 200,
     headers: { "Content-Type": "text/html; charset=utf-8" },
   })

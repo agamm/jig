@@ -39,13 +39,17 @@ function dashboardBaseUrl(): string {
  */
 const pendingProvidersByState = new Map<string, JigOAuthProvider>()
 
-/** Called by the /api/oauth/callback route handler. */
-export function completePendingOAuth(state: string, code: string): boolean {
+/**
+ * Called by the /api/oauth/callback route handler.
+ * Returns the matched server's name (for the success page + its dashboard
+ * deep-link), or null when no pending authorization matches.
+ */
+export function completePendingOAuth(state: string, code: string): string | null {
   const provider = pendingProvidersByState.get(state)
-  if (!provider) return false
+  if (!provider) return null
   pendingProvidersByState.delete(state)
   provider.resolveAuthCode(code)
-  return true
+  return provider.server
 }
 
 /**
@@ -54,12 +58,12 @@ export function completePendingOAuth(state: string, code: string): boolean {
  * could be routed to the wrong provider. The caller must pass `null` state
  * — we won't match a provider that registered with an empty-string state.
  */
-export function completePendingOAuthStateless(code: string): boolean {
-  if (pendingProvidersByState.size !== 1) return false
+export function completePendingOAuthStateless(code: string): string | null {
+  if (pendingProvidersByState.size !== 1) return null
   const [state, provider] = pendingProvidersByState.entries().next().value as [string, JigOAuthProvider]
   pendingProvidersByState.delete(state)
   provider.resolveAuthCode(code)
-  return true
+  return provider.server
 }
 
 /**
@@ -321,6 +325,11 @@ export class JigOAuthProvider implements OAuthClientProvider {
    * entry that could hijack the next dashboard connect's callback.
    */
   constructor(private serverName: string, private interactive: boolean = true) {}
+
+  /** The server this provider authorizes — used by the callback handler for the success page. */
+  get server(): string {
+    return this.serverName
+  }
 
   get redirectUrl(): string {
     return oauthRedirectUrl()

@@ -29,9 +29,10 @@ function writeStatus(server: string, state: ConnectionStatusState, detail?: stri
   } satisfies Record<string, unknown>)
 }
 
-function dashboardConnectionsUrl(): string {
+/** Deep link straight to this connection's pane (Reconnect button and all). */
+function dashboardConnectionUrl(server: string): string {
   const base = publicUrl() ?? `http://localhost:${process.env.JIG_DASHBOARD_PORT ?? "3141"}`
-  return `${base}/?view=connections`
+  return `${base}/?view=connections&connection=${encodeURIComponent(server)}`
 }
 
 /**
@@ -45,9 +46,10 @@ export function reportConnectionIssue(
 ): void {
   try {
     writeStatus(server, state, detail)
+    const fixUrl = dashboardConnectionUrl(server)
     const recoveryHint = state === "auth-required"
-      ? `Re-authorize "${server}" from the dashboard Connections page.`
-      : `Check that the "${server}" MCP server is reachable.`
+      ? `Re-authorize "${server}" from the dashboard: ${fixUrl}`
+      : `Check that the "${server}" MCP server is reachable, then reconnect: ${fixUrl}`
     logSessionEvent({ source: "mcp.connection", event: state, server, error: detail, recoveryHint })
     void notifySystem({
       source: "mcp.connection",
@@ -60,7 +62,6 @@ export function reportConnectionIssue(
         ``,
         `Detail: ${detail}`,
         `Fix: ${recoveryHint}`,
-        `Dashboard: ${dashboardConnectionsUrl()}`,
       ].join("\n"),
     })
   } catch {

@@ -88,6 +88,9 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
   }, [conn?.proxyVia, conn?.tools])
   /** Connection state snapshot taken when OAuth started — see completion effect. */
   const oauthBaselineRef = useRef<{ connected: boolean; status?: string; sawInProgress: boolean; startedAt: number } | null>(null)
+  // Credentials rejected on a connected server — the primary action becomes
+  // "Reconnect" (matches the "reconnect below" banner) instead of Refresh Tools.
+  const needsReauth = Boolean(conn?.connected && conn.status?.state === "auth-required")
 
   useEffect(() => {
     credentialValuesRef.current = credentialValues
@@ -417,9 +420,13 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
               <div className={`${connecting ? "" : "ui-card"} px-4 py-3 space-y-3`}>
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <p className="text-[12px] text-[var(--text-primary)]">{conn.connected ? "Connection ready" : "Connect this service"}</p>
+                    <p className="text-[12px] text-[var(--text-primary)]">
+                      {needsReauth ? "Reconnect this service" : conn.connected ? "Connection ready" : "Connect this service"}
+                    </p>
                     <p className="mt-1 text-[11px] text-[var(--text-dim)]">
-                      {conn.connected ? "Refresh tool discovery if the provider added new capabilities." : "Starts the same backend connect flow used by the CLI."}
+                      {needsReauth
+                        ? "Re-authorize to restore the jigs that depend on this connection."
+                        : conn.connected ? "Refresh tool discovery if the provider added new capabilities." : "Starts the same backend connect flow used by the CLI."}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -440,11 +447,11 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
                     )}
                     <Button
                       onClick={handleConnect}
-                      variant={conn.connected ? "subtle" : "success"}
+                      variant={conn.connected && !needsReauth ? "subtle" : "success"}
                       size="sm"
                       disabled={awaitingCredentialKey ? !credentialValues[awaitingCredentialKey]?.trim() : connecting}
                     >
-                      {awaitingCredentialKey ? "Continue" : connecting ? "Connecting…" : conn.connected ? "Refresh Tools" : "Connect"}
+                      {awaitingCredentialKey ? "Continue" : connecting ? "Connecting…" : needsReauth ? "Reconnect" : conn.connected ? "Refresh Tools" : "Connect"}
                     </Button>
                   </div>
                 </div>

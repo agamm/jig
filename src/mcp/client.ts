@@ -10,7 +10,7 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js"
 import type { ServerConfig } from "./config.js"
 import { resolveToken } from "./config.js"
 import { JigOAuthProvider } from "./auth.js"
-import { deleteCredentials } from "../db.js"
+import { deleteCredential } from "../db.js"
 import { SCHEMAS_DIR } from "../config/paths.js"
 import { runContext } from "../sdk/context.js"
 import { USER_CANCELLED_MESSAGE } from "../run-cancel.js"
@@ -285,9 +285,23 @@ async function recoverOAuth(
   }
 
   if (hasSavedTokens) {
-    console.warn(`[jig] ${name}: saved OAuth credentials were rejected. Clearing and re-authorizing.`)
-    deleteCredentials(name)
-    return handleOAuthRedirect(name, config, new JigOAuthProvider(name, true), options)
+    console.warn(`[jig] ${name}: saved OAuth tokens were rejected. Clearing them and re-authorizing.`)
+    // Drop ONLY the stale tokens. The client registration and PKCE verifier
+    // must survive: when the SDK already staged an authorize URL for this
+    // attempt (the dashboard shows it / the browser opened it), its code can
+    // only be exchanged with that same client + verifier. The old behavior
+    // (deleteCredentials + a fresh provider) started a competing second round,
+    // turning the surfaced URL into a dead end — the user authorized round #1
+    // while the server waited forever on round #2.
+    deleteCredential(`oauth:${name}:tokens`)
+    if (authProvider.hasPendingAuthorization) {
+      const finishTransport = transport ?? new StreamableHTTPClientTransport(new URL(config.url), {
+        authProvider,
+        requestInit: buildRequestInit({ signal: options.signal }),
+      })
+      return finishOAuthAuthorization(name, config, authProvider, finishTransport, options)
+    }
+    return handleOAuthRedirect(name, config, authProvider, options)
   }
   // Fresh auth — reuse the existing transport when we have one so the SDK
   // can call finishAuth on the same instance.

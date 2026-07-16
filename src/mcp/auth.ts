@@ -310,6 +310,8 @@ export class JigOAuthProvider implements OAuthClientProvider {
   private _authResolve?: (code: string) => void
   private _callbackServer?: Server
   private _activeState?: string
+  /** Code that arrived via the callback before waitForAuthCode registered. */
+  private _bufferedCode?: string
 
   /**
    * `interactive: false` (tool calls during a run) makes redirectToAuthorization
@@ -424,15 +426,36 @@ export class JigOAuthProvider implements OAuthClientProvider {
     return value
   }
 
+  /**
+   * True while an authorize URL staged by this provider is awaiting its
+   * callback — i.e. a user may be looking at (or already clicked) that URL.
+   * Recovery paths use this to FINISH the staged round instead of starting a
+   * competing one the surfaced URL can't complete.
+   */
+  get hasPendingAuthorization(): boolean {
+    return this._activeState !== undefined && pendingProvidersByState.get(this._activeState) === this
+  }
+
   /** Called by the /api/oauth/callback handler after matching by state. */
   resolveAuthCode(code: string): void {
-    this._authResolve?.(code)
-    this._authResolve = undefined
+    if (this._authResolve) {
+      this._authResolve(code)
+      this._authResolve = undefined
+    } else {
+      // Callback beat waitForAuthCode (recovery paths register the waiter a
+      // beat after the URL is staged). Hold the code instead of dropping it.
+      this._bufferedCode = code
+    }
     this._activeState = undefined
     clearPendingAuthUrl(this.serverName)
   }
 
   waitForAuthCode(signal?: AbortSignal): Promise<string> {
+    if (this._bufferedCode !== undefined) {
+      const code = this._bufferedCode
+      this._bufferedCode = undefined
+      return Promise.resolve(code)
+    }
     return new Promise((resolve, reject) => {
       const cleanup = () => {
         signal?.removeEventListener("abort", onAbort)

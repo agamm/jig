@@ -880,6 +880,11 @@ export function deleteCredentials(server: string): void {
   db.prepare(`DELETE FROM credentials WHERE server = ?`).run(server)
 }
 
+export function deleteCredential(key: string): void {
+  const db = openDb()
+  db.prepare(`DELETE FROM credentials WHERE key = ?`).run(key)
+}
+
 // ---------------------------------------------------------------------------
 // Authorized senders
 // ---------------------------------------------------------------------------

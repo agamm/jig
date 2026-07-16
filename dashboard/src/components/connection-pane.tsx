@@ -495,7 +495,11 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
                   // connect still running (connectInProgress) OR awaiting OAuth.
                   // Without connectInProgress the status reverts to plain text
                   // while discovery is still happening server-side (no spinner).
+                  // The text check backstops flag lag (e.g. connectInProgress
+                  // only arrives with the next 2s poll): an in-progress label
+                  // must never render without its spinner + shimmer.
                   const busy = connecting || !!oauthUrl || !!conn.connectInProgress
+                    || /^(connecting|opening|discovering|authoriz)/i.test(connectStatus.trim())
                   return (
                     <Notice tone={connectStatus.toLowerCase().startsWith("connected") ? "success" : connectStatus.toLowerCase().includes("failed") || connectStatus.toLowerCase().includes("error") ? "danger" : "neutral"}>
                       <div className="flex items-start gap-2">

@@ -332,8 +332,13 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
         }
         badge={conn ? (
           <span className="inline-flex items-center gap-1">
-            <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-medium ${conn.connected ? "bg-emerald-500/10 text-emerald-400" : "bg-[#1a1a1d] text-[#555]"}`}>
-              {conn.connected ? "Connected" : "Not connected"}
+            {/* Health-aware: a connection with rejected credentials is not "Connected" —
+                match the list's yellow Reconnect state instead of contradicting the banner. */}
+            <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-medium ${
+              needsReauth ? "bg-amber-500/10 text-amber-400"
+              : conn.connected ? "bg-emerald-500/10 text-emerald-400"
+              : "bg-[#1a1a1d] text-[#555]"}`}>
+              {needsReauth ? "Reconnect needed" : conn.connected ? "Connected" : "Not connected"}
             </span>
             {conn.custom && (
               <span className="rounded-full border border-blue-500/20 bg-blue-500/[0.08] px-1.5 py-0.5 text-[9px] font-medium text-blue-300">

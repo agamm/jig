@@ -160,10 +160,20 @@ export async function handleInboundEmail(
     const msg = (e as Error)?.message ?? String(e)
     console.error(`[email] failed to start/continue authoring session: ${msg}`)
     // Don't leave the reply unanswered — the whole UX is the email round-trip.
-    // A 409 here means a session is already editing this jig.
-    const hint = /already editing/i.test(msg)
-      ? "A session is already editing this jig — try your reply again in a moment."
-      : "Something went wrong applying that change. Try replying again."
+    // Name the actual blocker when we know it: "Required connections are not
+    // set up" with no specifics sends the user into a retry loop that can
+    // never succeed.
+    const details = (e as { details?: Record<string, unknown> })?.details
+    const missingConnections = [
+      ...(Array.isArray(details?.requiredConnections) ? details.requiredConnections as string[] : []),
+      ...(Array.isArray(details?.unknownConnections) ? details.unknownConnections as string[] : []),
+    ]
+    const hint = missingConnections.length
+      ? `This change needs connections that aren't set up yet: ${missingConnections.join(", ")}. ` +
+        `Connect them on the dashboard Connections page, then send your reply again.`
+      : /already editing/i.test(msg)
+        ? "A session is already editing this jig — try your reply again in a moment."
+        : "Something went wrong applying that change. Try replying again."
     await replyAgentMail({ messageId, text: `⚠️ ${hint}` }).catch(() => {})
     return { status: 200, body: { error: "failed to process reply" } }
   }

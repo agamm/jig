@@ -379,6 +379,7 @@ feeding oversized raw payloads into LLM steps. Bound every runtime path.
 - Prefer deterministic filtering for obvious rules. Use `llm()` once over a compact list for fuzzy classification; do not call `llm()` once per calendar event/email/meeting.
 - If a step gathers many items, `ctx.output()` a preview of the exact capped set that will feed later steps so slow or noisy inputs are visible in the run log.
 - For recurring jigs, avoid reprocessing the entire account history on every run. Use a recent window or compare against the last run when available.
+- **Cron jigs that alert ahead of upcoming events must match each event to exactly ONE tick.** Jigs have no cross-run state, so a lookahead window wider than the cron period re-matches the same event on every tick until it starts (every-15-min cron + "next hour" window = up to 4 duplicate alerts per event). Align the window to one cron bucket instead: with period P and lead time L, select only events starting between `now + L - P` and `now + L` (e.g. 15-min cron, 1h lead → events starting 45-60 min from now). Also exclude events that already started.
 
 Bad:
 ```typescript

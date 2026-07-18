@@ -15,6 +15,7 @@
  */
 import { createHmac, timingSafeEqual } from "node:crypto"
 import { getCredential, getSetting, setCredential, setSetting } from "../db.js"
+import { logSessionEvent } from "../debug/session-log.js"
 import type { AgentMailSettingsResponse } from "../../shared/api.js"
 
 const API_BASE = "https://api.agentmail.to/v0"
@@ -182,6 +183,17 @@ export async function sendAgentMailEmail(opts: {
     subject: opts.subject,
     ...(opts.text != null && { text: opts.text }),
     ...(opts.html != null && { html: opts.html }),
+  })
+  // Every outbound email in one greppable place — duplicate-send questions
+  // ("why did I get this twice?") are unanswerable without it. Subject only;
+  // bodies stay out of the log.
+  logSessionEvent({
+    source: "email.send",
+    event: "sent",
+    to: opts.to,
+    subject: opts.subject,
+    threadId: data.thread_id,
+    messageId: data.message_id,
   })
   return { threadId: data.thread_id, messageId: data.message_id }
 }

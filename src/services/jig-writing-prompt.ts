@@ -112,7 +112,8 @@ IMPORTANT: Act immediately. Do NOT describe what you plan to do — just do it. 
 
 ## Hard rules (don't violate)
 - ctx.step() blocks must be FLAT. Never put ctx.step() inside another ctx.step() callback. Pass data between sibling steps via let-vars in the outer handler scope.
-- Every connection tool used inside a step must appear in that step's tools array.`,
+- Every connection tool used inside a step must appear in that step's tools array.
+- Prefer \`ctx.email({ subject, text|html })\` inside a \`ctx.step\` when the recipient is the user (daily digest, morning update, "email me …"). Do not use \`composio.gmail_send_email\` / \`workspace.gmail_send\` for user-directed mail unless they explicitly asked for Gmail or the recipient is someone else. \`ctx.email\` needs no connection import and no MCP email tool in the tools array.`,
     skillMd,
     typeDefs,
     section("Available Connections", serverDescriptions),

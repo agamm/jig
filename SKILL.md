@@ -340,6 +340,9 @@ ctx.output(`Email sent to ${to}\n\nPreview:\n- Key insights: ${insightCount}\n- 
 
 ### 11b. Email the user a repliable message with `ctx.email()`
 
+**Default:** when the user says "email me", "send me a digest", or wants a
+daily/morning update **to themselves**, use `ctx.email()` — not Gmail/Composio.
+
 When the jig's output is **for the user themselves** and they might want to act
 on it — a daily digest, a morning briefing, a "here's what I found, reply to
 adjust" report — send it with `ctx.email()` instead of an MCP email tool.

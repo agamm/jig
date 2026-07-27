@@ -284,6 +284,7 @@ export function CreateJigPane({
             status={agent.status}
             requiredConnections={agent.requiredConnections}
             suggestedConnections={agent.suggestedConnections}
+            unknownConnections={agent.unknownConnections}
             metrics={agent.metrics}
             onConnectionClick={onConnectionClick}
             onRetry={() => agent.sendMessage("Continue — retry the last step.")}

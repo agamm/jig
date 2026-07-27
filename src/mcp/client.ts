@@ -945,8 +945,9 @@ export async function invokeWithMcpReconnect<T>(
  *      one of the RFC 6749 error codes.
  *
  * The inspection walks `cause`, `response`, `data`, `body` so wrapped
- * errors surface the same signals as unwrapped ones. No regex, no
- * substring search — new providers work without updating a keyword list.
+ * errors surface the same signals as unwrapped ones. One intentional
+ * message match: plain "Invalid refresh token" errors from providers that
+ * don't attach OAuth error codes (seen with Apify).
  */
 export function isAuthDeniedError(error: unknown): boolean {
   if (error instanceof UnauthorizedError) return true
@@ -957,9 +958,15 @@ export function isAuthDeniedError(error: unknown): boolean {
     // (invalid_grant, invalid_token, …) in `.code` or `.error`.
     if (isAuthDeniedStatus(c.code)) return true
     if (isOAuthDenyCode(c.error ?? c.code)) return true
+    // Some providers (notably Apify) surface a plain Error("Invalid refresh
+    // token") with no HTTP status / OAuth error code on the object. Treat
+    // that as auth-denied so recoverOAuth can clear tokens + ask reconnect.
+    if (typeof c.message === "string" && REFRESH_TOKEN_FAILURE.test(c.message)) return true
   }
   return false
 }
+
+const REFRESH_TOKEN_FAILURE = /\binvalid refresh token\b|\brefresh token\b.*\b(?:expired|revoked|invalid)\b|\b(?:expired|revoked|invalid)\b.*\brefresh token\b/i
 
 function isAuthDeniedStatus(v: unknown): boolean {
   return v === 401 || v === 403

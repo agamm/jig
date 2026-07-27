@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { checkPlaceholderJigPatterns, checkStepToolDeclarations, checkToolDeclarations } from "../src/validate.js"
+import { checkPlaceholderJigPatterns, checkPreferCtxEmailForSelfGmail, checkStepToolDeclarations, checkToolDeclarations } from "../src/validate.js"
 
 describe("checkToolDeclarations", () => {
   it("detects undeclared tool usage for @jig connection imports", () => {
@@ -199,5 +199,57 @@ export default jig("emails", {
 `
 
     expect(checkStepToolDeclarations(code)).toEqual([])
+  })
+})
+
+describe("checkPreferCtxEmailForSelfGmail", () => {
+  it("rejects gmail_send_email to 'me'", () => {
+    const code = `
+import { composio } from "@jig/connections/composio.js"
+
+await composio.gmail_send_email({ recipient_email: "me", subject: "hi", body: "x" })
+`
+    const errors = checkPreferCtxEmailForSelfGmail(code)
+    expect(errors).toHaveLength(1)
+    expect(errors[0].field).toBe("email.composio.gmail_send_email")
+    expect(errors[0].message).toContain("ctx.email")
+  })
+
+  it("rejects workspace.gmail_send to 'self'", () => {
+    const code = `
+import { workspace } from "@jig/connections/workspace.js"
+
+await workspace.gmail_send({ to: "self", subject: "hi", body: "x" })
+`
+    expect(checkPreferCtxEmailForSelfGmail(code)[0]?.field).toBe("email.workspace.gmail_send")
+  })
+
+  it("rejects send to AgentMail owner address when provided", () => {
+    const code = `
+import { composio } from "@jig/connections/composio.js"
+
+await composio.gmail_send_email({ recipient_email: "owner@example.com", subject: "hi", body: "x" })
+`
+    const errors = checkPreferCtxEmailForSelfGmail(code, "jig.ts", { ownerEmail: "owner@example.com" })
+    expect(errors).toHaveLength(1)
+    expect(errors[0].message).toContain("owner@example.com")
+  })
+
+  it("allows third-party recipients", () => {
+    const code = `
+import { composio } from "@jig/connections/composio.js"
+
+await composio.gmail_send_email({ recipient_email: "colleague@example.com", subject: "hi", body: "x" })
+`
+    expect(checkPreferCtxEmailForSelfGmail(code, "jig.ts", { ownerEmail: "owner@example.com" })).toEqual([])
+  })
+
+  it("allows bracket access with the same rule", () => {
+    const code = `
+import { composio } from "@jig/connections/composio.js"
+
+await composio["gmail_send_email"]({ recipient_email: "me", subject: "hi", body: "x" })
+`
+    expect(checkPreferCtxEmailForSelfGmail(code)).toHaveLength(1)
   })
 })

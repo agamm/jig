@@ -5,22 +5,40 @@ import { approveAgentDraft, closeAgentSession, sendAgentMessage, startAgentSessi
 type SuggestedConnection = {
   name: string
   connected: boolean
+  authRequired?: boolean
+}
+
+function extractStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is string => typeof item === "string")
 }
 
 function extractSuggestedConnections(error: any): SuggestedConnection[] {
   if (Array.isArray(error?.details?.connectionStatuses)) {
     return error.details.connectionStatuses
       .filter((item: any) => item && typeof item.name === "string")
-      .map((item: any) => ({ name: item.name, connected: item.connected === true }))
+      .map((item: any) => ({
+        name: item.name,
+        connected: item.connected === true,
+        authRequired: item.authRequired === true,
+      }))
   }
 
   if (Array.isArray(error?.details?.suggestedConnections)) {
+    const reconnect = new Set(extractStringList(error?.details?.reconnectConnections))
     return error.details.suggestedConnections
       .filter((name: any) => typeof name === "string")
       .map((name: string) => ({
         name,
         connected: !Array.isArray(error?.details?.requiredConnections) || !error.details.requiredConnections.includes(name),
+        authRequired: reconnect.has(name),
       }))
+  }
+
+  // Auth-only failures may only send reconnectConnections.
+  const reconnectOnly = extractStringList(error?.details?.reconnectConnections)
+  if (reconnectOnly.length > 0) {
+    return reconnectOnly.map((name) => ({ name, connected: true, authRequired: true }))
   }
 
   return []
@@ -44,6 +62,7 @@ export function useAgent(
   const [jigId, setJigId] = useState<string | null>(null)
   const [requiredConnections, setRequiredConnections] = useState<string[]>([])
   const [suggestedConnections, setSuggestedConnections] = useState<SuggestedConnection[]>([])
+  const [unknownConnections, setUnknownConnections] = useState<string[]>([])
   const [metrics, setMetrics] = useState<AgentMetrics | undefined>(undefined)
   const [draftApproval, setDraftApproval] = useState<AgentDraftApproval | undefined>(undefined)
   const [conversation, setConversation] = useState<AgentConversationTurn[]>([])
@@ -123,6 +142,7 @@ export function useAgent(
     setJigId(null)
     setRequiredConnections([])
     setSuggestedConnections([])
+    setUnknownConnections([])
     setMetrics(undefined)
     setDraftApproval(undefined)
 
@@ -139,8 +159,9 @@ export function useAgent(
     } catch (e: any) {
       setStatus("error")
       setEvents([{ type: "text", content: e?.message ?? "Unknown error" }])
-      setRequiredConnections(Array.isArray(e?.details?.requiredConnections) ? e.details.requiredConnections : [])
+      setRequiredConnections(extractStringList(e?.details?.requiredConnections))
       setSuggestedConnections(extractSuggestedConnections(e))
+      setUnknownConnections(extractStringList(e?.details?.unknownConnections))
       setMetrics(undefined)
       setDraftApproval(undefined)
       return false
@@ -162,6 +183,7 @@ export function useAgent(
       setJigId(null)
       setRequiredConnections([])
       setSuggestedConnections([])
+      setUnknownConnections([])
       setMetrics(undefined)
       setDraftApproval(undefined)
     }
@@ -212,6 +234,7 @@ export function useAgent(
     setJigId(null)
     setRequiredConnections([])
     setSuggestedConnections([])
+    setUnknownConnections([])
     setMetrics(undefined)
     setDraftApproval(undefined)
     setConversation([])
@@ -229,6 +252,7 @@ export function useAgent(
     jigId,
     requiredConnections,
     suggestedConnections,
+    unknownConnections,
     metrics,
     draftApproval,
     isActive,

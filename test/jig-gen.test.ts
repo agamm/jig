@@ -7,6 +7,8 @@ import {
   deriveAuthoringServerScope,
   extractReferencedToolNames,
   normalizeSelectedToolNames,
+  missingConnectionsMessage,
+  blockingUnknownConnections,
 } from "../src/jig-gen.js"
 import { Context } from "../src/sdk/context.js"
 import { jig, run } from "../src/sdk/jig.js"
@@ -283,5 +285,74 @@ describe("run()", () => {
     })
     await run(testJig, { name: "Alice" })
     expect(received).toEqual({ name: "Alice" })
+  })
+})
+
+describe("missingConnectionsMessage", () => {
+  it("names unknown-only blockers", () => {
+    expect(missingConnectionsMessage([], ["weather-api", "calendar"])).toBe(
+      "This workflow needs connections jig doesn't have yet: weather-api, calendar"
+    )
+  })
+
+  it("names known missing blockers", () => {
+    expect(missingConnectionsMessage(["github"], [])).toBe(
+      "Required connections are not set up: github"
+    )
+  })
+
+  it("names both known missing and unknown blockers", () => {
+    expect(missingConnectionsMessage(["github"], ["calendar"])).toBe(
+      "Required connections are not set up: github. Also needs connectors jig doesn't have: calendar"
+    )
+  })
+})
+
+describe("blockingUnknownConnections", () => {
+  const configs = {
+    apify: { authoringDiscovery: "src/mcp/discover/apify.ts" },
+    github: {},
+  }
+  const connected = (name: string) => name === "apify"
+
+  it("blocks capability unknowns when no discovery server is selected", () => {
+    expect(
+      blockingUnknownConnections(["weather data source"], ["github"], configs, { isConnected: connected })
+    ).toEqual(["weather data source"])
+  })
+
+  it("defers capability unknowns when a connected discovery server is selected", () => {
+    expect(
+      blockingUnknownConnections(["weather_data_source", "weather data source"], ["apify"], configs, {
+        isConnected: connected,
+      })
+    ).toEqual([])
+  })
+
+  it("defers invented server keys when a connected discovery server is selected", () => {
+    expect(
+      blockingUnknownConnections(["weather_api"], ["apify"], configs, {
+        isConnected: connected,
+        invalidServerKeys: ["weather_data_source", "notion"],
+      })
+    ).toEqual([])
+  })
+
+  it("blocks invented server keys when no discovery server is selected", () => {
+    expect(
+      blockingUnknownConnections([], ["github"], configs, {
+        isConnected: connected,
+        invalidServerKeys: ["weather_data_source"],
+      })
+    ).toEqual(["weather_data_source"])
+  })
+
+  it("keeps capability unknowns when the discovery server is not connected", () => {
+    expect(
+      blockingUnknownConnections(["weather_api"], ["apify"], configs, {
+        isConnected: () => false,
+        invalidServerKeys: ["weather_data_source"],
+      })
+    ).toEqual(["weather_api", "weather_data_source"])
   })
 })

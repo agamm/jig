@@ -153,6 +153,7 @@ export function AgentPanel({
   onRetry,
   requiredConnections = [],
   suggestedConnections = [],
+  unknownConnections = [],
   metrics,
   onConnectionClick,
 }: {
@@ -160,11 +161,37 @@ export function AgentPanel({
   status: AgentStatus
   onRetry?: () => void
   requiredConnections?: string[]
-  suggestedConnections?: Array<{ name: string; connected: boolean }>
+  suggestedConnections?: Array<{ name: string; connected: boolean; authRequired?: boolean }>
+  unknownConnections?: string[]
   metrics?: AgentMetrics
   onConnectionClick?: (name: string) => void
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
+  const missingKnown = suggestedConnections.filter((c) => !c.connected)
+  const needsReconnect = suggestedConnections.filter((c) => c.authRequired)
+  const showConnectionPanel =
+    status === "error" && (suggestedConnections.length > 0 || unknownConnections.length > 0)
+  // Retry helps after reconnecting auth or connecting a missing server.
+  const showRetry =
+    status === "error" &&
+    !!onRetry &&
+    (missingKnown.length > 0 || needsReconnect.length > 0 || !showConnectionPanel)
+
+  const helperText = (() => {
+    if (needsReconnect.length > 0) {
+      return "A required connection's login expired. Reconnect it, then Retry."
+    }
+    if (unknownConnections.length > 0 && requiredConnections.length > 0) {
+      return "Some required connections need setup, and some capabilities have no connector in jig yet. Connect the ones marked setup needed, or rewrite the prompt to use an available connection."
+    }
+    if (unknownConnections.length > 0) {
+      return "This workflow needs capabilities jig doesn't have a connector for yet. Rewrite the prompt to use an available connection, or connect a different server that covers the task."
+    }
+    if (requiredConnections.length > 0) {
+      return "These connections are needed. The ones marked setup needed are blocking — connect them, then Retry."
+    }
+    return "The planner suggested these connections for this jig. Open any one to inspect setup."
+  })()
 
   // Auto-scroll to bottom when new events arrive so the latest
   // question/tool-call is always visible above the fold.
@@ -184,39 +211,50 @@ export function AgentPanel({
     >
       <div className="flex items-center justify-between mb-2">
         <span className="text-[10px] font-medium text-[#555] uppercase tracking-wider">Agent</span>
-        {status === "error" && onRetry && (
+        {showRetry && (
           <Button onClick={onRetry} variant="subtle" size="xs">Retry</Button>
         )}
       </div>
       {metrics && <AgentMetricsStrip metrics={metrics} active={status === "thinking" || status === "tool-calling"} />}
       <AgentActivity events={events} status={status} activeStartedAt={metrics?.activeStartedAt} />
-      {status === "error" && suggestedConnections.length > 0 && (
+      {showConnectionPanel && (
         <div className="mt-3 rounded-lg border border-emerald-500/20 bg-emerald-500/[0.04] px-3 py-2">
           <p className="text-[10px] font-medium uppercase tracking-wider text-emerald-400">Suggested Connections</p>
           <p className="mt-1 text-[11px] leading-relaxed text-emerald-100/75">
-            {requiredConnections.length > 0
-              ? "These connections are needed. The ones marked setup needed are blocking — connect them, then Retry."
-              : "The planner suggested these connections for this jig. Open any one to inspect setup."}
+            {helperText}
           </p>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {suggestedConnections.map(({ name, connected }) => (
-              <ConnectionTag
-                key={name}
-                name={name}
-                detail={connected ? "connected" : "setup needed"}
-                onClick={onConnectionClick}
-              />
-            ))}
-          </div>
-          {suggestedConnections.some((c) => !c.connected) && (
+          {(suggestedConnections.length > 0 || unknownConnections.length > 0) && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {suggestedConnections.map(({ name, connected, authRequired }) => (
+                <ConnectionTag
+                  key={name}
+                  name={name}
+                  detail={authRequired ? "reconnect needed" : connected ? "connected" : "setup needed"}
+                  onClick={onConnectionClick}
+                />
+              ))}
+              {unknownConnections.map((name) => (
+                <ConnectionTag
+                  key={`unknown:${name}`}
+                  name={name}
+                  detail="no connector"
+                  interactive={false}
+                />
+              ))}
+            </div>
+          )}
+          {(missingKnown.length > 0 || needsReconnect.length > 0) && (
             <div className="mt-2.5 flex flex-wrap gap-2">
-              {suggestedConnections
-                .filter((c) => !c.connected)
-                .map(({ name }) => (
-                  <Button key={name} onClick={() => onConnectionClick?.(name)} variant="success" size="xs">
-                    Connect {name}
-                  </Button>
-                ))}
+              {missingKnown.map(({ name }) => (
+                <Button key={name} onClick={() => onConnectionClick?.(name)} variant="success" size="xs">
+                  Connect {name}
+                </Button>
+              ))}
+              {needsReconnect.map(({ name }) => (
+                <Button key={`reconnect:${name}`} onClick={() => onConnectionClick?.(name)} variant="success" size="xs">
+                  Reconnect {name}
+                </Button>
+              ))}
             </div>
           )}
         </div>

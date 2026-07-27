@@ -19,7 +19,7 @@ import { checkJigFile } from "./services/jig-checker.js"
 import { buildCreatorJigPrompt } from "./services/jig-writing-prompt.js"
 import { generateTypeDeclaration, toolNameToIdentifier } from "./mcp/typegen.js"
 import { renderCodeFacingToolCatalogSection } from "./tool-catalog.js"
-import { callTool, connectServer, type McpConnection } from "./mcp/client.js"
+import { callTool, connectServer, isAuthDeniedError, type McpConnection } from "./mcp/client.js"
 import { getConnectorBuildTimeValidator } from "./mcp/validators/index.js"
 import type { ConnectEvent } from "../shared/connect-flow.js"
 import { logSessionEvent } from "./debug/session-log.js"
@@ -158,15 +158,22 @@ export async function buildAuthoringState(
   const importedServers = options.existingCode ? extractImportedServers(options.existingCode) : []
   const { allServers, newServers, buildResolutionServers } = deriveAuthoringServerScope(importedServers, plan.servers)
 
-  ensureResolvedIntegration(plan.needsIntegration, allServers, plan.unknownServers)
-  if (allServers.length > 0 || plan.unknownServers.length > 0) {
+  ensureResolvedIntegration(plan.needsIntegration, allServers, [...plan.unknownServers, ...plan.invalidServers])
+  const blockingUnknowns = blockingUnknownConnections(plan.unknownServers, allServers, serverConfigs, {
+    invalidServerKeys: plan.invalidServers,
+  })
+  if (allServers.length > 0 || blockingUnknowns.length > 0) {
     // Connections the jig ALREADY imports are non-blocking: editing a jig
     // shouldn't be refused because a connection it already references is
     // missing — the user is often editing precisely to remove or replace it
     // (e.g. "use composio instead of workspace"). The write-time guard
     // (findDisconnectedImports in toolWriteJigFile) still rejects code that
     // actually uses an unconnected server, so this only relaxes the preflight.
-    checkConnections(allServers, plan.unknownServers, serverConfigs, undefined, importedServers)
+    //
+    // Capability-gap unknowns are also deferred when a connected
+    // authoringDiscovery server (e.g. apify) is selected — discovery runs next
+    // and will resolve or fail with a clearer error.
+    checkConnections(allServers, blockingUnknowns, serverConfigs, undefined, importedServers)
   }
 
   const buildResolutions = await resolveBuildTimeTargets(description, buildResolutionServers, serverConfigs, options.ask)
@@ -198,7 +205,7 @@ export async function buildAuthoringState(
   return {
     name: plan.name,
     servers: plan.servers,
-    unknownServers: plan.unknownServers,
+    unknownServers: [...plan.unknownServers, ...plan.invalidServers],
     requiresIntegration: plan.needsIntegration,
     allServers,
     newServers,
@@ -264,7 +271,10 @@ export function extractReferencedToolNames(code: string, servers: string[]): str
 
 interface JigPlan {
   servers: string[]
+  /** Capability gaps named by the planner (free-form). */
   unknownServers: string[]
+  /** Fake keys the planner put in `servers` that aren't in the catalog. */
+  invalidServers: string[]
   name: string
   needsIntegration: boolean
 }
@@ -282,6 +292,11 @@ function formatServerForAuthoring(
   const lines = [`- ${name} [${status}]: ${description}`]
   for (const hint of cfg?.meta?.authoringHints ?? []) {
     lines.push(`  Hint: ${hint}`)
+  }
+  if (cfg?.authoringDiscovery) {
+    lines.push(
+      "  Hint: Supports authoring-time discovery — when selected, it searches its catalog for a concrete Actor/tool. Do NOT put discoverable data sources into unknownServers."
+    )
   }
   return lines.join("\n")
 }
@@ -309,6 +324,10 @@ function readConnectedToolkitsFromComposio(): string[] {
 const BUILTIN_CAPABILITIES = ["ctx.email", "llm()", "agent()", "ctx.step", "ctx.output", "ctx.parallel"]
 const normalizeCapability = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "")
 const BUILTIN_CAPABILITY_KEYS = new Set(BUILTIN_CAPABILITIES.map(normalizeCapability))
+
+/** Planner rule: user-directed email is ctx.email, not Gmail/Composio. Exported for prompt tests. */
+export const PLAN_JIG_USER_EMAIL_RULE =
+  'Emailing **the user** (daily digest, morning update, "email me what to wear", "send me a summary") is covered by `ctx.email` — do NOT add `composio`, `workspace`, or any other Gmail-capable server just for that. Only include a Gmail-capable server when the workflow must send mail to **third parties** (teammates, clients), or the user explicitly asks for Gmail/Composio/workspace mail.'
 
 /** The planner echoes capabilities back as free-form text ("ctx email",
  * "reply-to-edit email"), so membership is checked on a normalized key. The
@@ -351,6 +370,7 @@ For this workflow: "${description}"
 
 Important:
 - \`ctx.email\` is a BUILT-IN jig capability (it emails the user a repliable message — reply-to-edit — with NO connection or server). Never treat "ctx email", "ctx.email", or "reply-to-edit email" as a server or an unknownServer. Likewise ${BUILTIN_CAPABILITIES.slice(1).map((c) => `\`${c}\``).join(", ")} are built in and need no server. An instruction like "replace gmail send with ctx email" REMOVES a server dependency — it does not add one.
+- ${PLAN_JIG_USER_EMAIL_RULE}
 - Prefer the smallest sufficient server set
 - Strongly prefer servers tagged [connected]. If a [connected] server can cover the task (including via composio's listed connected toolkits), pick it instead of a [not connected] alternative — do not pick a [not connected] server when a [connected] one suffices
 - Only pick a [not connected] server when no [connected] server can do the task
@@ -359,7 +379,8 @@ Important:
 - Only include an additional server when the workflow truly needs that server's own authenticated API, write actions, or first-party tools beyond what the explicit provider can already do
 - Server descriptions are capabilities, not keyword substitution rules. Do not infer a server solely from a product word when the user explicitly chose another available server.
 - Do not replace an explicitly named server with a different inferred alternative unless the named one is clearly impossible for the task
-- Never silently substitute a related-but-wrong server for a capability it does not actually have (respect each server's Hints about what its tools can and cannot see). If the workflow needs a data source or capability that NO listed server provides — e.g. it needs upcoming calendar events and no calendar-capable server is available — name that capability in "unknownServers" so the gap is surfaced to the user instead of quietly covered by the closest available tool`,
+- Never silently substitute a related-but-wrong server for a capability it does not actually have (respect each server's Hints about what its tools can and cannot see). If the workflow needs a data source or capability that NO listed server provides — e.g. it needs upcoming calendar events and no calendar-capable server is available — name that capability in "unknownServers" so the gap is surfaced to the user instead of quietly covered by the closest available tool
+- Servers whose Hints say they support authoring-time discovery (e.g. apify Store Actors) can cover many public-web/data tasks via discovery. When you select such a server, do NOT also put that data source in "unknownServers" — discovery resolves the concrete Actor next. Only use unknownServers for gaps no selected server can cover even via discovery`,
     {},
     { schema: { servers: "array", unknownServers: "array", name: "string", needsIntegration: "boolean" } as any, model: getEditorModel() }
   )
@@ -371,7 +392,8 @@ Important:
     servers: validServers,
     // Guard: built-in capabilities are not servers — never let the planner
     // block authoring by flagging one as unknown.
-    unknownServers: [...(result.unknownServers || []), ...invalidServers].filter(s => !isBuiltinCapability(s)),
+    unknownServers: (result.unknownServers || []).filter(s => !isBuiltinCapability(s)),
+    invalidServers: invalidServers.filter(s => !isBuiltinCapability(s)),
     name: (result.name || "new-jig")
       .toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "new-jig",
     needsIntegration: result.needsIntegration === true,
@@ -541,13 +563,52 @@ function checkConnections(
   // already-imported missing connections are surfaced above but don't throw.
   const blockingMissing = missing.filter(s => !nonBlocking.includes(s.name))
   if (blockingMissing.length > 0 || unknownServers.length > 0) {
-    throw new CreatorError("missing-connections", "Required connections are not set up", {
+    const requiredNames = blockingMissing.map((server) => server.name)
+    throw new CreatorError("missing-connections", missingConnectionsMessage(requiredNames, unknownServers), {
       suggestedConnections: servers.map((server) => server.name),
-      requiredConnections: blockingMissing.map((server) => server.name),
+      requiredConnections: requiredNames,
       connectionStatuses: servers.map(({ name, connected }) => ({ name, connected })),
       unknownConnections: unknownServers,
     })
   }
+}
+
+/** Build the user-facing message for a missing-connections authoring block. */
+export function missingConnectionsMessage(requiredNames: string[], unknownNames: string[]): string {
+  if (requiredNames.length > 0 && unknownNames.length > 0) {
+    return `Required connections are not set up: ${requiredNames.join(", ")}. Also needs connectors jig doesn't have: ${unknownNames.join(", ")}`
+  }
+  if (requiredNames.length > 0) {
+    return `Required connections are not set up: ${requiredNames.join(", ")}`
+  }
+  return `This workflow needs connections jig doesn't have yet: ${unknownNames.join(", ")}`
+}
+
+/**
+ * Unknowns that should hard-block authoring before discovery runs.
+ *
+ * When a connected authoringDiscovery server (e.g. apify) is selected, defer
+ * both free-form capability gaps AND invented server keys — the planner often
+ * invents labels like `weather_data_source` as if they were catalog keys.
+ * Discovery is the next step and will resolve or fail clearly.
+ */
+export function blockingUnknownConnections(
+  unknownServers: string[],
+  selectedServers: string[],
+  serverConfigs: Record<string, any>,
+  opts?: {
+    isConnected?: (name: string) => boolean
+    invalidServerKeys?: string[]
+  },
+): string[] {
+  const invalidServerKeys = opts?.invalidServerKeys ?? []
+  const isConnected =
+    opts?.isConnected ?? ((name: string) => existsSync(join(SCHEMAS_DIR, `${name}.json`)))
+  const hasConnectedDiscovery = selectedServers.some(
+    (name) => Boolean(serverConfigs[name]?.authoringDiscovery) && isConnected(name)
+  )
+  if (hasConnectedDiscovery) return []
+  return [...new Set([...unknownServers, ...invalidServerKeys])]
 }
 
 export class CreatorError extends Error {
@@ -748,7 +809,12 @@ async function resolveBuildTimeTargets(
     if (!discoverPath) continue
 
     const config = await getServerConfig(serverName)
-    const connection = await connectServer(serverName, config)
+    let connection: McpConnection
+    try {
+      connection = await connectServer(serverName, config)
+    } catch (error) {
+      throw authoringConnectError(serverName, error)
+    }
 
     try {
       const mod = await import(join(PROJECT_ROOT, discoverPath)) as BuildDiscoverModule
@@ -790,7 +856,7 @@ async function resolveBuildTimeTargets(
               args: summarizeForLog(args),
               error,
             })
-            throw error
+            throw authoringConnectError(serverName, error)
           }
         },
         llm: async <T>(prompt: string, data: Record<string, unknown>, options?: any): Promise<T> => {
@@ -869,7 +935,8 @@ async function resolveBuildTimeTargets(
         discoverPath,
         error,
       })
-      throw error
+      if (error instanceof CreatorError) throw error
+      throw authoringConnectError(serverName, error)
     } finally {
       await connection.transport.close().catch(() => {})
       await connection.client.close().catch(() => {})
@@ -887,6 +954,37 @@ async function resolveBuildTimeTargets(
   }
 
   return results
+}
+
+function authoringConnectError(serverName: string, error: unknown): CreatorError {
+  const raw = error instanceof Error ? error.message : String(error)
+  const authish =
+    isAuthDeniedError(error) ||
+    /authorization expired|was revoked|reconnect it from the dashboard|invalid refresh token|refresh token/i.test(raw)
+
+  if (authish) {
+    return new CreatorError(
+      "auth-required",
+      `${serverName}: authorization expired or was revoked — reconnect it, then Retry.`,
+      {
+        requiredConnections: [serverName],
+        reconnectConnections: [serverName],
+        suggestedConnections: [serverName],
+        connectionStatuses: [{ name: serverName, connected: true, authRequired: true }],
+      },
+    )
+  }
+
+  return new CreatorError(
+    "authoring-discovery-failed",
+    `Authoring-time discovery failed for ${serverName}: ${raw}`,
+    { servers: [serverName], error: raw },
+  )
+}
+
+/** Test seam for authoring discovery auth-failure wrapping. */
+export function authoringDiscoveryConnectError(serverName: string, error: unknown): CreatorError {
+  return authoringConnectError(serverName, error)
 }
 
 export function collectBuildTimeToolPolicyIssues(

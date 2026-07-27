@@ -12,6 +12,7 @@ import { toolNameToIdentifier } from "./mcp/typegen.js"
 import { getConnectionImportBindings, getConnectionToolReferences } from "./domain/source-analysis.js"
 import { getJigTsCompilerOptions } from "./domain/jig-ts-options.js"
 import { materializeJigWithRuntimeImports } from "./domain/runtime-imports.js"
+import { getAgentMailSettings } from "./services/agentmail.js"
 
 // ---------------------------------------------------------------------------
 // Validation errors
@@ -467,6 +468,100 @@ export function checkPlaceholderJigPatterns(code: string): ValidationError[] {
   })
 }
 
+const SELF_GMAIL_RECIPIENT_KEYS = new Set(["recipient_email", "to", "recipient"])
+const SELF_GMAIL_RECIPIENT_VALUES = new Set(["me", "self"])
+const GMAIL_SEND_TOOL_RE = /^gmail_send(?:_email)?$/i
+
+function objectLiteralPropValue(obj: ts.ObjectLiteralExpression, key: string): string | null {
+  for (const prop of obj.properties) {
+    if (!ts.isPropertyAssignment(prop)) continue
+    const name = ts.isIdentifier(prop.name)
+      ? prop.name.text
+      : ts.isStringLiteralLike(prop.name)
+        ? prop.name.text
+        : null
+    if (name !== key) continue
+    if (ts.isStringLiteralLike(prop.initializer)) return prop.initializer.text.trim()
+  }
+  return null
+}
+
+function isSelfDirectedGmailRecipient(value: string, ownerEmail: string | null): boolean {
+  const normalized = value.trim().toLowerCase()
+  if (!normalized) return false
+  if (SELF_GMAIL_RECIPIENT_VALUES.has(normalized)) return true
+  if (ownerEmail && normalized === ownerEmail.trim().toLowerCase()) return true
+  return false
+}
+
+/**
+ * Prefer ctx.email() for mail to the jig owner. MCP gmail_send* with recipient
+ * "me"/"self"/AgentMail owner is a common auth-failure mode — catch at check_jig.
+ */
+export function checkPreferCtxEmailForSelfGmail(
+  code: string,
+  fileName = "jig.ts",
+  opts?: { ownerEmail?: string | null },
+): ValidationError[] {
+  const errors: ValidationError[] = []
+  const sf = ts.createSourceFile(fileName, code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const bindings = new Map(
+    getConnectionImportBindings(code, fileName).map((binding) => [binding.localName, binding.serverName])
+  )
+  const ownerEmail = opts?.ownerEmail ?? null
+
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node) && node.arguments.length > 0) {
+      const expr = node.expression
+      let serverName: string | undefined
+      let toolName: string | undefined
+      if (ts.isPropertyAccessExpression(expr) && ts.isIdentifier(expr.expression)) {
+        serverName = bindings.get(expr.expression.text)
+        toolName = expr.name.text
+      } else if (
+        ts.isElementAccessExpression(expr) &&
+        ts.isIdentifier(expr.expression) &&
+        expr.argumentExpression &&
+        ts.isStringLiteralLike(expr.argumentExpression)
+      ) {
+        serverName = bindings.get(expr.expression.text)
+        toolName = expr.argumentExpression.text
+      }
+
+      if (serverName && toolName && GMAIL_SEND_TOOL_RE.test(toolName)) {
+        const arg0 = node.arguments[0]
+        if (ts.isObjectLiteralExpression(arg0)) {
+          for (const key of SELF_GMAIL_RECIPIENT_KEYS) {
+            const value = objectLiteralPropValue(arg0, key)
+            if (value != null && isSelfDirectedGmailRecipient(value, ownerEmail)) {
+              const { line } = sf.getLineAndCharacterOfPosition(node.getStart(sf))
+              errors.push({
+                field: `email.${serverName}.${toolName}`,
+                message:
+                  `Line ${line + 1}: use ctx.email({ subject, text|html }) to email the user instead of ` +
+                  `${serverName}.${toolName}({ ${key}: "${value}" }). MCP Gmail send is for third parties; ` +
+                  `user-directed mail should use AgentMail via ctx.email (no Gmail connection needed).`,
+              })
+              break
+            }
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+
+  visit(sf)
+
+  const seen = new Set<string>()
+  return errors.filter((error) => {
+    const key = `${error.field}:${error.message}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
 // ---------------------------------------------------------------------------
 // File validation (import + check)
 // ---------------------------------------------------------------------------
@@ -500,6 +595,11 @@ export async function validateJigFile(path: string): Promise<ValidationResult> {
       errors.push(...checkStepToolDeclarations(code, path))
       errors.push(...checkTypedToolCallDiagnostics(path))
       errors.push(...checkPlaceholderJigPatterns(code))
+      let ownerEmail: string | null = null
+      try {
+        ownerEmail = getAgentMailSettings().owner
+      } catch {}
+      errors.push(...checkPreferCtxEmailForSelfGmail(code, path, { ownerEmail }))
     } catch {}
 
     return {

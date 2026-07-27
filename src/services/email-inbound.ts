@@ -160,8 +160,8 @@ export async function handleInboundEmail(
     const msg = (e as Error)?.message ?? String(e)
     console.error(`[email] failed to start/continue authoring session: ${msg}`)
     // Don't leave the reply unanswered — the whole UX is the email round-trip.
-    // Name the actual blocker when we know it: "Required connections are not
-    // set up" with no specifics sends the user into a retry loop that can
+    // Name the actual blocker when we know it: a bare missing-connections
+    // message with no specifics sends the user into a retry loop that can
     // never succeed.
     const details = (e as { details?: Record<string, unknown> })?.details
     const missingConnections = [

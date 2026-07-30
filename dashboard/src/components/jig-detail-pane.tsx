@@ -398,6 +398,28 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
     previousAutoRemovalRef.current = removalInstruction;
   }, [removalInstruction]);
 
+  // "Fix" on a failed step: hand the agent everything it needs in one shot.
+  // The authoring agent has no tool to read run history, so the instruction
+  // must carry the step, its tools/connections, and the full error text —
+  // otherwise its first move is to ask the user to paste the error back.
+  const handleFixError = (step: RunStep, errorText: string) => {
+    const toolList = (step.tools ?? []).map((t) => `${t.connection}.${t.name}`);
+    const connections = [...new Set([...(step.connections ?? []), ...(step.tools ?? []).map((t) => t.connection)])];
+    const instruction = [
+      `Step ${step.num} ("${step.name}") of this jig failed${mode.type === "done" && mode.dryRun ? " during a dry run" : ""}. Full error:`,
+      "",
+      errorText,
+      "",
+      toolList.length > 0 ? `That step calls: ${toolList.join(", ")}.` : null,
+      connections.length > 0 ? `Connections involved: ${connections.join(", ")}.` : null,
+      "",
+      "Read the jig, diagnose the root cause, and fix it with the smallest change that resolves the failure while keeping the jig's intent.",
+      "At the fix site, leave a one-line // comment stating what runtime failure it prevents.",
+      "If this is not fixable by editing the jig (provider outage, revoked access, a setting on the provider's side), do not make a speculative change — explain the concrete blocker and what the user has to do.",
+    ].filter((line) => line !== null).join("\n");
+    void (agent.sessionId ? agent.sendMessage(instruction) : agent.startSession(instruction, jigId));
+  };
+
   const handleRun = (dryRun: boolean) => {
     if (disconnectedRequired.length > 0) {
       setMissingConnections(disconnectedRequired);
@@ -574,6 +596,7 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
                 steps={runSteps}
                 mode={mode}
                 onClear={dismiss}
+                onFixError={handleFixError}
                 emptyAction={showDeriveFallback ? (
                   <div className="mt-3 space-y-3 text-left">
                     <Notice

@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="720" viewBox="0 0 1600 720" role="img" aria-labelledby="title description">
+  <title id="title">Jig architecture</title>
+  <desc id="description">Dashboard and CLI feed the Jig engine, which runs workflows through the Jig SDK and scoped typed connections. The engine stores versions, schedules, and runs in SQLite. At runtime, only explicit llm and agent calls reach OpenRouter.</desc>
+
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5f5f66"/>
+    </marker>
+    <linearGradient id="engine-fill" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#14221d"/>
+      <stop offset="1" stop-color="#101514"/>
+    </linearGradient>
+    <linearGradient id="sdk-fill" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#131c27"/>
+      <stop offset="1" stop-color="#101318"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1600" height="720" rx="28" fill="#0a0a0b"/>
+
+  <g font-family="Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+    <text x="72" y="82" fill="#ededed" font-size="34" font-weight="600" letter-spacing="-0.6">Jig architecture</text>
+    <text x="72" y="118" fill="#8b8b91" font-size="18">Code owns the flow. AI enters through explicit hatches.</text>
+
+    <g stroke="#5f5f66" stroke-width="2" fill="none" marker-end="url(#arrow)">
+      <path d="M 294 334 H 344"/>
+      <path d="M 652 334 H 702"/>
+      <path d="M 1012 334 H 1062"/>
+      <path d="M 1332 334 H 1382"/>
+    </g>
+
+    <g>
+      <rect x="72" y="230" width="222" height="208" rx="18" fill="#111113" stroke="#2a2a2e" stroke-width="2"/>
+      <text x="96" y="269" fill="#8b8b91" font-size="13" font-weight="600" letter-spacing="1.8">CONTROL</text>
+      <text x="96" y="316" fill="#ededed" font-size="25" font-weight="600">Dashboard</text>
+      <text x="96" y="351" fill="#ededed" font-size="25" font-weight="600">+ CLI</text>
+      <line x1="96" y1="375" x2="270" y2="375" stroke="#2a2a2e"/>
+      <text x="96" y="407" fill="#8b8b91" font-size="15">describe · review · run</text>
+    </g>
+
+    <g>
+      <rect x="352" y="210" width="300" height="248" rx="20" fill="url(#engine-fill)" stroke="#10b981" stroke-opacity="0.7" stroke-width="2"/>
+      <circle cx="382" cy="246" r="6" fill="#10b981"/>
+      <text x="400" y="251" fill="#b7b7bd" font-size="13" font-weight="600" letter-spacing="1.8">ENGINE</text>
+      <text x="380" y="306" fill="#ededed" font-size="29" font-weight="600">Author + execute</text>
+      <g fill="#b7b7bd" font-size="16">
+        <text x="380" y="351">validate</text>
+        <text x="494" y="351">version</text>
+        <text x="380" y="390">schedule</text>
+        <text x="494" y="390">observe</text>
+      </g>
+      <line x1="475" y1="331" x2="475" y2="401" stroke="#26332f"/>
+      <line x1="380" y1="367" x2="620" y2="367" stroke="#26332f"/>
+      <text x="380" y="432" fill="#6f8f82" font-size="14">one runtime path</text>
+    </g>
+
+    <g>
+      <rect x="710" y="210" width="302" height="248" rx="20" fill="url(#sdk-fill)" stroke="#60a5fa" stroke-opacity="0.7" stroke-width="2"/>
+      <circle cx="740" cy="246" r="6" fill="#60a5fa"/>
+      <text x="758" y="251" fill="#b7b7bd" font-size="13" font-weight="600" letter-spacing="1.8">JIG SDK</text>
+      <text x="738" y="306" fill="#ededed" font-size="29" font-weight="600">Workflow contract</text>
+      <g font-family="'SFMono-Regular', Consolas, 'Liberation Mono', monospace" font-size="15">
+        <rect x="738" y="334" width="105" height="39" rx="10" fill="#1a1a1d"/>
+        <text x="757" y="359" fill="#b7b7bd">jig()</text>
+        <rect x="855" y="334" width="128" height="39" rx="10" fill="#1a1a1d"/>
+        <text x="873" y="359" fill="#b7b7bd">ctx.step()</text>
+        <rect x="738" y="387" width="105" height="39" rx="10" fill="#15253a" stroke="#60a5fa" stroke-opacity="0.35"/>
+        <text x="755" y="412" fill="#a8cdfa">llm()</text>
+        <rect x="855" y="387" width="128" height="39" rx="10" fill="#15253a" stroke="#60a5fa" stroke-opacity="0.35"/>
+        <text x="873" y="412" fill="#a8cdfa">agent()</text>
+      </g>
+    </g>
+
+    <g>
+      <rect x="1070" y="230" width="262" height="208" rx="18" fill="#111113" stroke="#2a2a2e" stroke-width="2"/>
+      <text x="1094" y="269" fill="#8b8b91" font-size="13" font-weight="600" letter-spacing="1.8">CONNECTIONS</text>
+      <text x="1094" y="316" fill="#ededed" font-size="25" font-weight="600">Typed tools</text>
+      <text x="1094" y="351" fill="#ededed" font-size="25" font-weight="600">over MCP</text>
+      <line x1="1094" y1="375" x2="1308" y2="375" stroke="#2a2a2e"/>
+      <text x="1094" y="407" fill="#8b8b91" font-size="15">scoped per step</text>
+    </g>
+
+    <g>
+      <rect x="1390" y="230" width="138" height="208" rx="18" fill="#111113" stroke="#2a2a2e" stroke-width="2"/>
+      <text x="1414" y="269" fill="#8b8b91" font-size="13" font-weight="600" letter-spacing="1.8">SERVICES</text>
+      <g fill="#ededed" font-size="18" font-weight="500">
+        <text x="1414" y="316">Gmail</text>
+        <text x="1414" y="350">Slack</text>
+        <text x="1414" y="384">GitHub</text>
+      </g>
+      <text x="1414" y="416" fill="#8b8b91" font-size="18">+ more</text>
+    </g>
+
+    <g stroke="#3d3d43" stroke-width="2" fill="none">
+      <path d="M 502 458 V 522"/>
+      <path d="M 861 458 V 522"/>
+    </g>
+
+    <g>
+      <rect x="384" y="522" width="236" height="76" rx="16" fill="#0e0e10" stroke="#2a2a2e"/>
+      <text x="408" y="552" fill="#ededed" font-size="17" font-weight="600">SQLite</text>
+      <text x="408" y="579" fill="#8b8b91" font-size="14">versions · schedules · runs</text>
+    </g>
+
+    <g>
+      <rect x="743" y="522" width="236" height="76" rx="16" fill="#0e0e10" stroke="#2a2a2e"/>
+      <text x="767" y="552" fill="#ededed" font-size="17" font-weight="600">OpenRouter</text>
+      <text x="767" y="579" fill="#8b8b91" font-size="14">only llm() + agent()</text>
+    </g>
+
+    <g transform="translate(72 660)">
+      <circle cx="6" cy="-5" r="5" fill="#10b981"/>
+      <text x="22" y="0" fill="#8b8b91" font-size="14">deterministic by default</text>
+      <circle cx="224" cy="-5" r="5" fill="#60a5fa"/>
+      <text x="240" y="0" fill="#8b8b91" font-size="14">AI by explicit choice</text>
+    </g>
+  </g>
+</svg>

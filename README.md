@@ -28,6 +28,16 @@ Jig:          code -> code -> [AI] -> code -> result
               Code runs the workflow. AI is used deliberately.
 ```
 
+## Architecture
+
+![Jig architecture: dashboard and CLI feed the engine, which runs workflows through the SDK and scoped connections](docs/jig-architecture.svg)
+
+## Ideas for Your First Jig
+
+* **Reasons to reach out.** Watch LinkedIn updates, news, and personal reminders for moments worth celebrating, then surface the person and the context.
+* **Post-meeting follow-up.** Turn meeting notes and related email threads into a thoughtful follow-up draft while the conversation is still fresh.
+* **Reconnect radar.** Find people you have not spoken with lately, suggest who is worth reconnecting with, and explain why now.
+
 ## A Jig, Written From One Sentence
 
 From a sentence like:
@@ -147,4 +157,3 @@ bun run jig edit weekly-update
 bun run jig run weekly-update
 bun run jig run weekly-update --dry-run
 ```
-

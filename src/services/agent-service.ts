@@ -26,6 +26,7 @@ import { materializeActiveVersion, materializePendingVersion } from "./jig-runti
 import { requireOpenRouterApiKey } from "../config/openrouter.js"
 import { logSessionEvent } from "../debug/session-log.js"
 import { buildDraftJigResponse } from "./jig-api.js"
+import { getConnectionStatus } from "./connection-status.js"
 import { toolNameToIdentifier } from "../mcp/typegen.js"
 import {
   buildAuthoringState,
@@ -668,7 +669,24 @@ async function toolWriteJigFile(args: { code: string; jigId?: string; message?: 
   session.draftFilePath = undefined
   session.draftApproval = undefined
   persistSession(session)
-  return JSON.stringify({ ok: true, pendingVersionId: versionId, draft: true })
+
+  // A broken connection isn't fixable by editing the jig, so this warns rather
+  // than blocks — but it must never be silent: shipping a jig onto a schedule
+  // against a dead connection is how a failure gets discovered at 8am instead
+  // of now.
+  const unhealthy = findUnhealthyImports(args.code)
+  return JSON.stringify({
+    ok: true,
+    pendingVersionId: versionId,
+    draft: true,
+    ...(unhealthy.length > 0 && {
+      warning:
+        `Saved, but ${unhealthy.map((u) => `"${u.server}" is ${u.state}`).join("; ")}. ` +
+        `This jig will fail at runtime until that is resolved. Tell the user plainly: which connection is broken, ` +
+        `the reason if known, and that they need to reconnect it from the dashboard Connections page before relying on this jig.`,
+      unhealthyConnections: unhealthy,
+    }),
+  })
 }
 
 async function toolCheckJig(args: { jigId?: string }, session: AgentSession): Promise<string> {
@@ -785,6 +803,29 @@ async function toolRenameJig(args: { newJigId: string }, session: AgentSession):
 export function findDisconnectedImports(code: string): string[] {
   const servers = getImportedServers(code)
   return servers.filter((server) => !existsSync(join(SCHEMAS_DIR, `${server}.json`)))
+}
+
+/**
+ * Imported connections that are set up but known to be broken.
+ *
+ * findDisconnectedImports only answers "was this ever connected" (is there a
+ * schema file on disk) — a connection whose credentials were later revoked, or
+ * whose server stopped answering, still passes it. That's how a jig gets
+ * authored against a dead connection and only fails on its first scheduled
+ * run. Runtime records health at the MCP chokepoints (connection-status.ts),
+ * so consult it before the agent commits code.
+ */
+export function findUnhealthyImports(code: string): { server: string; state: string; detail?: string }[] {
+  const unhealthy: { server: string; state: string; detail?: string }[] = []
+  for (const server of getImportedServers(code)) {
+    // Not-set-up servers are already reported by findDisconnectedImports.
+    if (!existsSync(join(SCHEMAS_DIR, `${server}.json`))) continue
+    const status = getConnectionStatus(server)
+    if (status && status.state !== "ok") {
+      unhealthy.push({ server, state: status.state, ...(status.detail ? { detail: status.detail } : {}) })
+    }
+  }
+  return unhealthy
 }
 
 /** True if an authoring session is actively editing this jig. */

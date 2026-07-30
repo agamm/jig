@@ -5,6 +5,7 @@ import useSWR from "swr";
 import type { JigStepTool, OpenRouterModelInfo } from "@shared/api";
 import { classifyFailure, fetchOpenRouterCatalog, updateJigStepModel } from "@/lib/api";
 import { toast } from "@/components/toast";
+import { Button } from "@/components/button";
 import { RotatingFrame } from "@/components/rotating-frame";
 import { ServiceIcon } from "@/components/service-icon";
 import { formatElapsed } from "@/lib/format";
@@ -93,6 +94,7 @@ export function RunSteps({
   steps, mode = { type: "idle" }, onClear, emptyAction,
   completedTools = [], activeTools = [], toolReadOnly = {},
   onConnectionClick,
+  onFixError,
   toolDisplay = "collapsed",
   onRequestRemoveTool,
   reviewedToolKeys,
@@ -112,6 +114,8 @@ export function RunSteps({
   activeTools?: string[];
   toolReadOnly?: Record<string, boolean>;
   onConnectionClick?: (name: string) => void;
+  /** Hands a failed step and its error text to the authoring agent to diagnose. */
+  onFixError?: (step: RunStep, errorText: string) => void;
   toolDisplay?: "collapsed" | "expanded";
   onRequestRemoveTool?: (tool: JigStepTool) => void;
   reviewedToolKeys?: Set<string>;
@@ -442,8 +446,24 @@ export function RunSteps({
                           {(() => {
                             const errText = [step.output, modeError].filter(Boolean).join("\n");
                             const target = stepConnection(step);
-                            if (!target || !onConnectionClick || !errText) return null;
-                            return <ReauthPrompt errorText={errText} connection={target} onConnectionClick={onConnectionClick} />;
+                            return (
+                              <>
+                                {target && onConnectionClick && errText && (
+                                  <ReauthPrompt errorText={errText} connection={target} onConnectionClick={onConnectionClick} />
+                                )}
+                                {onFixError && errText && (
+                                  <div className="flex justify-end">
+                                    <Button
+                                      onClick={(e) => { e.stopPropagation(); onFixError(step, errText); }}
+                                      variant="subtle"
+                                      size="xs"
+                                    >
+                                      Fix
+                                    </Button>
+                                  </div>
+                                )}
+                              </>
+                            );
                           })()}
                         </div>
                       ) : (

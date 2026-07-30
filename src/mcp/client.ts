@@ -685,11 +685,12 @@ export async function callTool(
   }
   const normalized = normalizeToolResult(result)
   if (result.isError) {
-    // MCP-standard error: isError flag is set. Use the normalized content as
-    // the message if it's a plain string or has a canonical `{error: "..."}`
-    // shape; otherwise fall back to a generic error.
-    const msg = errorMessageFromResult(normalized) ??
-      `Tool "${connection.serverName}.${toolName}" returned an error`
+    // MCP-standard error: isError flag is set. Surface whatever the server
+    // actually said — a bare "returned an error" is undebuggable, and the
+    // payload is the only place the cause exists.
+    const msg = errorMessageFromResult(normalized)
+      ? `Tool "${connection.serverName}.${toolName}" failed: ${errorMessageFromResult(normalized)}`
+      : `Tool "${connection.serverName}.${toolName}" returned an error: ${previewPayload(normalized)}`
     logSessionEvent({
       source: "mcp.tool",
       event: "error",
@@ -851,15 +852,64 @@ function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;")
 }
 
-function errorMessageFromResult(result: unknown): string | null {
-  if (typeof result === "string") {
-    const t = result.trim()
-    return t || null
+/** Cap so a huge payload can't flood a run log or an alert email. */
+const MAX_TOOL_ERROR_CHARS = 1500
+
+/**
+ * Walk a failed tool result collecting every error-ish string. MCP servers are
+ * wildly inconsistent — a bare string, `{error}`, `{message}`, text content
+ * blocks, or a provider envelope burying the real cause several levels down
+ * (composio reports `error: "1 out of 1 tools failed"` at the top while the
+ * actionable text sits in `data.results[].error`). Collect all of them so the
+ * surfaced message names the actual cause instead of a useless summary.
+ */
+function collectErrorStrings(value: unknown, out: string[], depth = 0): void {
+  if (depth > 6 || out.length >= 8) return
+  if (typeof value === "string") {
+    const t = value.trim()
+    if (t) out.push(t)
+    return
   }
-  if (isRecord(result) && typeof result.error === "string" && result.error.trim()) {
-    return result.error.trim()
+  if (Array.isArray(value)) {
+    for (const item of value) collectErrorStrings(item, out, depth + 1)
+    return
   }
-  return null
+  if (!isRecord(value)) return
+  // Message-bearing keys first so the most human text leads.
+  for (const key of ["error", "message", "detail", "details", "text"]) {
+    if (key in value) collectErrorStrings(value[key], out, depth + 1)
+  }
+  // Then containers that nest per-item failures.
+  for (const key of ["data", "results", "content", "errors"]) {
+    if (key in value) collectErrorStrings(value[key], out, depth + 1)
+  }
+}
+
+export function errorMessageFromResult(result: unknown): string | null {
+  const found: string[] = []
+  collectErrorStrings(result, found)
+  if (found.length === 0) return null
+  // Drop entries already contained in a longer one — a summary line repeated
+  // inside the detail adds nothing.
+  const parts: string[] = []
+  for (const s of found) {
+    if (parts.some((p) => p.includes(s))) continue
+    parts.push(s)
+  }
+  const msg = parts.join(" — ")
+  return msg.length > MAX_TOOL_ERROR_CHARS ? `${msg.slice(0, MAX_TOOL_ERROR_CHARS)}…` : msg
+}
+
+/** Last-resort payload preview so an unrecognized error shape is never opaque. */
+function previewPayload(value: unknown): string {
+  let text: string
+  try {
+    text = typeof value === "string" ? value : JSON.stringify(value)
+  } catch {
+    text = String(value)
+  }
+  if (!text) return "(empty response)"
+  return text.length > MAX_TOOL_ERROR_CHARS ? `${text.slice(0, MAX_TOOL_ERROR_CHARS)}…` : text
 }
 
 export function shouldReconnectMcpConnection(error: unknown): boolean {

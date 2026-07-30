@@ -123,7 +123,16 @@ function SuggestionCard({
         </div>
         <div className="shrink-0 text-[var(--text-muted)]">→</div>
         <div className="min-w-0">
-          <div className="truncate font-mono text-[11px] text-emerald-200" title={s.suggested.id}>{s.suggested.id}</div>
+          {/* `block` so truncate applies — an inline anchor ignores it. */}
+          <a
+            href={`https://openrouter.ai/${s.suggested.id}`}
+            target="_blank"
+            rel="noreferrer"
+            title={`${s.suggested.id} — view on OpenRouter`}
+            className="block truncate font-mono text-[11px] text-emerald-200 hover:underline"
+          >
+            {s.suggested.id}
+          </a>
           <ModelStats model={s.suggested} priceTone={priceTone} />
         </div>
       </div>

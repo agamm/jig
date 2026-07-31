@@ -10,7 +10,7 @@ import { JigDetailPane } from "@/components/jig-detail-pane";
 import { CreateJigPane } from "@/components/create-jig-pane";
 import { ReviewPane } from "@/components/review-pane";
 import { ConnectionPane } from "@/components/connection-pane";
-import { NotificationsSettings } from "@/components/notifications-settings";
+import { AgentMailSettings } from "@/components/agentmail-settings";
 import { LogsSettings } from "@/components/logs-settings";
 import { ModelsSettings } from "@/components/models-settings";
 import { SystemSettings } from "@/components/system-settings";
@@ -764,7 +764,7 @@ export function DashboardShell({
                     />
 	                  )}
                   {tab === "system" && <SystemSettings />}
-                  {tab === "notifications" && <NotificationsSettings />}
+                  {tab === "notifications" && <AgentMailSettings />}
                   {tab === "danger" && (
                     <DangerSettings
                       onReset={async () => {

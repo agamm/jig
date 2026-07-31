@@ -18,7 +18,7 @@ import {
   dismissUpgrade as dismissModelUpgradeImpl,
 } from "./services/model-upgrade.js"
 import { MODEL_SLOTS, type ModelSlot } from "../shared/api.js"
-import { CONNECTIONS_DIR, DB_PATH, JIGS_DIR, NOTIFICATION_TOOLS_PATH, SCHEMAS_DIR, TYPES_DIR } from "./config/paths.js"
+import { CONNECTIONS_DIR, DB_PATH, JIGS_DIR, SCHEMAS_DIR, TYPES_DIR } from "./config/paths.js"
 import { extractConnections } from "./domain/jig-source.js"
 import { invalidateJigsCache } from "./discover.js"
 import {
@@ -32,7 +32,6 @@ import { createCustomRemoteServer, loadCustomServerConfigs, loadServerConfigs } 
 import { buildJigResponse, discoverAllJigs } from "./services/jig-api.js"
 import { approveAgentDraft, closeAgentSession, getAgentSessionStatus, listUnderConstructionJigs, pushAgentMessage, startAgentSession, streamAgentSession } from "./services/agent-service.js"
 import { cancelActiveRun, getActiveRunSnapshot, getRunDetail, startJigRun } from "./services/run-api.js"
-import { getNotificationHealth, getNotificationSettings, getNotificationTestStatus, saveNotificationSettings, saveNotificationTestStatus, notify, type NotificationSettings } from "./services/notify.js"
 import {
   canSendAgentMail,
   getAgentMailSettings,
@@ -46,7 +45,6 @@ import { getConnectionStatus } from "./services/connection-status.js"
 import { connectConfiguredServer, disconnectConfiguredServer, isConnectInProgress } from "./services/connect-server.js"
 import { getDataStorageHealth } from "./services/data-storage.js"
 import { addExampleJig, listExampleJigs } from "./services/example-jigs.js"
-import { buildNotificationManifest } from "./mcp/discover/notification-manifest.js"
 import { handleWebhook } from "./scheduler/webhooks.js"
 import { getSchedule, listAllSchedules, setScheduleEnabled, listAuthorizedSenders, addAuthorizedSender, removeAuthorizedSender, listToolPermissions, setToolPermission, listCredentials, type ToolPermissionPolicy } from "./db.js"
 import { getSchedulerHealth, startScheduler } from "./scheduler/index.js"
@@ -404,7 +402,6 @@ async function handleResetLocalState(): Promise<Response> {
   }
 
   // Remove generated local MCP artifacts too so onboarding is truly fresh.
-  rmSync(NOTIFICATION_TOOLS_PATH, { force: true })
   rmSync(SCHEMAS_DIR, { recursive: true, force: true })
   rmSync(TYPES_DIR, { recursive: true, force: true })
   rmSync(CONNECTIONS_DIR, { recursive: true, force: true })
@@ -1008,55 +1005,13 @@ export function createApiServer(port: number) {
             if (!removed) throw new ApiError(404, "Sender not found")
             return apiJson("deleteAuthorizedSender", { ok: true })
           }
-          case "notificationSettings": {
-            if (req.method === "GET") {
-              const settings = getNotificationSettings()
-              const availableTools = buildNotificationManifest()
-              return apiJson("notificationSettings", {
-                settings,
-                availableTools,
-                health: getNotificationHealth(settings, availableTools),
-                testStatus: getNotificationTestStatus(),
-              })
-            }
-            if (req.method === "PUT") {
-              const body = await req.json().catch(() => ({})) as Partial<NotificationSettings>
-              if (!body || !Array.isArray(body.channels)) {
-                throw new ApiError(400, "Body must include a 'channels' array")
-              }
-              const next: NotificationSettings = {
-                channels: body.channels,
-                triggerOn: { fail: body.triggerOn?.fail ?? true },
-              }
-              saveNotificationSettings(next)
-              const settings = getNotificationSettings()
-              const availableTools = buildNotificationManifest()
-              return apiJson("notificationSettings", {
-                settings,
-                availableTools,
-                health: getNotificationHealth(settings, availableTools),
-                testStatus: getNotificationTestStatus(),
-              })
-            }
-            return json({ error: "Method not allowed" }, 405)
-          }
-          case "notificationSettingsTest": {
-            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
-            const report = await notify({
-              title: "Jig test notification",
-              body: "If you see this, notifications are working.",
-              kind: "fail",
-              ignoreTriggerGate: true,
-            })
-            saveNotificationTestStatus(report)
-            return apiJson("notificationSettingsTest", report)
-          }
           case "agentMailSettings": {
             if (req.method === "PUT") {
               const body = (await req.json().catch(() => ({}))) as Record<string, unknown>
               saveAgentMailSettings({
                 apiKey: typeof body.apiKey === "string" ? body.apiKey : undefined,
                 owner: typeof body.owner === "string" ? body.owner : undefined,
+                notifyOnFailure: typeof body.notifyOnFailure === "boolean" ? body.notifyOnFailure : undefined,
               })
             } else if (req.method !== "GET") {
               return json({ error: "Method not allowed" }, 405)

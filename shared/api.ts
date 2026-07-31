@@ -522,57 +522,6 @@ export interface ServerLogsResponse {
   entries: ServerLogEntry[]
 }
 
-// ---------------------------------------------------------------------------
-// Notifications
-// ---------------------------------------------------------------------------
-
-export interface NotificationCapableTool {
-  connection: string
-  tool: string
-  label: string
-  description: string
-  textField: string
-  recipientField: string
-  extraRequired: string[]
-}
-
-export interface NotificationChannel {
-  connection: string
-  tool: string
-  recipient: string
-  extraParams?: Record<string, unknown>
-}
-
-export interface NotificationSettings {
-  channels: NotificationChannel[]
-  triggerOn: { fail: boolean }
-}
-
-export interface NotificationHealth {
-  ok: boolean
-  severity: "success" | "danger"
-  reasons: string[]
-}
-
-export interface NotificationTestStatus {
-  at: string
-  ok: boolean
-  sent: number
-  errors: number
-}
-
-export interface NotificationSettingsResponse {
-  settings: NotificationSettings
-  availableTools: NotificationCapableTool[]
-  health: NotificationHealth
-  testStatus: NotificationTestStatus | null
-}
-
-export interface NotifyTestResponse {
-  sent: Array<{ channel: string; ok: true }>
-  errors: Array<{ channel: string; error: string }>
-}
-
 export interface SchedulerHealth {
   running: boolean
   /** ISO timestamp of the last completed scheduler loop, null before first tick. */
@@ -618,11 +567,14 @@ export interface AgentMailSettingsResponse {
   owner: string | null
   /** Whether the inbound webhook has been registered (signing secret stored). */
   webhookReady: boolean
+  /** Email the owner when a jig run fails. Alerting's only on/off switch. */
+  notifyOnFailure: boolean
 }
 
 export interface AgentMailSettingsUpdate {
   apiKey?: string
   owner?: string
+  notifyOnFailure?: boolean
 }
 
 export interface AgentMailSetupResponse {
@@ -703,8 +655,6 @@ export interface ApiContracts {
   authorizedSenders: ApiContract<void, AuthorizedSender[]>
   addAuthorizedSender: ApiContract<{ channel: string; sender_id: string }, OkResponse>
   deleteAuthorizedSender: ApiContract<void, OkResponse>
-  notificationSettings: ApiContract<NotificationSettings | void, NotificationSettingsResponse>
-  notificationSettingsTest: ApiContract<void, NotifyTestResponse>
   agentMailSettings: ApiContract<AgentMailSettingsUpdate | void, AgentMailSettingsResponse>
   agentMailSetup: ApiContract<void, AgentMailSetupResponse>
   agentMailTest: ApiContract<void, AgentMailTestResponse>

@@ -140,8 +140,6 @@ export function matchRoute(pathname: string): { handler: string; params: Record<
   const senderMatch = pathname.match(/^\/api\/authorized-senders\/([^/]+)\/(.+)$/)
   if (senderMatch) return { handler: "deleteAuthorizedSender", params: { channel: decodeURIComponent(senderMatch[1]), senderId: decodeURIComponent(senderMatch[2]) } }
 
-  if (pathname === "/api/settings/notifications") return { handler: "notificationSettings", params: {} }
-  if (pathname === "/api/settings/notifications/test") return { handler: "notificationSettingsTest", params: {} }
   if (pathname === "/api/settings/agentmail") return { handler: "agentMailSettings", params: {} }
   if (pathname === "/api/settings/agentmail/setup") return { handler: "agentMailSetup", params: {} }
   if (pathname === "/api/settings/agentmail/test") return { handler: "agentMailTest", params: {} }

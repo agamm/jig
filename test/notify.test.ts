@@ -1,39 +1,36 @@
 /**
- * Tests for the notify() service — behaviour-only, no MCP network.
- * Uses the toolCaller/settingsOverride/manifestOverride injection points
- * so nothing touches disk or real connections.
+ * Tests for the notify() failure-alert service — behaviour only, no network.
+ * AgentMail state is seeded straight into an in-memory DB (credentials +
+ * settings rows) and the send is injected via opts.sendEmail.
  */
 import { describe, it, expect, beforeEach, afterEach } from "bun:test"
-import { openDb, closeDb } from "../src/db.js"
-import {
-  notify,
-  getNotificationSettings,
-  getNotificationHealth,
-  getNotificationTestStatus,
-  saveNotificationTestStatus,
-  saveNotificationSettings,
-  formatFailureBody,
-  type NotificationSettings,
-} from "../src/services/notify.js"
-import type { NotificationCapableTool } from "../src/mcp/discover/notification-manifest.js"
+import { openDb, closeDb, getEmailThread, setCredential, setSetting } from "../src/db.js"
+import { notify, formatFailureBody } from "../src/services/notify.js"
 
-const telegramManifest: NotificationCapableTool = {
-  connection: "composio",
-  tool: "telegram_send_message",
-  label: "Telegram",
-  description: "Send a text message",
-  textField: "text",
-  recipientField: "chat_id",
-  extraRequired: [],
+type SentEmail = { to: string; subject: string; text?: string; html?: string }
+
+/** Records what would have gone out and returns AgentMail-shaped ids. */
+function recorder(sent: SentEmail[]) {
+  return async (opts: SentEmail) => {
+    sent.push(opts)
+    return { threadId: "thread_1", messageId: "msg_1" }
+  }
 }
-const gmailManifest: NotificationCapableTool = {
-  connection: "workspace",
-  tool: "gmail_send",
-  label: "Gmail",
-  description: "Send an email",
-  textField: "body",
-  recipientField: "to",
-  extraRequired: ["subject"],
+
+/** AgentMail able to send: api key + provisioned inbox + owner. */
+function seedSendable(overrides: Record<string, unknown> = {}) {
+  setCredential("agentmail:api_key", "am_test_key", "agentmail")
+  setSetting("agentmail", {
+    inboxId: "inbox_1",
+    address: "jig-test@agentmail.to",
+    owner: "owner@example.com",
+    ...overrides,
+  })
+}
+
+/** The extra piece reply-to-edit needs: a registered inbound webhook. */
+function seedWebhook() {
+  setCredential("agentmail:webhook_secret", "whsec_test", "agentmail")
 }
 
 beforeEach(() => {
@@ -45,285 +42,149 @@ afterEach(() => {
   closeDb()
 })
 
-function baseSettings(overrides: Partial<NotificationSettings> = {}): NotificationSettings {
-  return {
-    channels: [],
-    triggerOn: { fail: true },
-    ...overrides,
-  }
-}
-
 describe("notify()", () => {
-  it("empty channels → no calls, empty report", async () => {
-    let calls = 0
-    const report = await notify({
-      title: "T", body: "B", kind: "fail",
-      toolCaller: async () => { calls++; return null },
-      settingsOverride: baseSettings(),
-      manifestOverride: [telegramManifest],
+  it("emails the owner when AgentMail can send", async () => {
+    seedSendable()
+    const sent: SentEmail[] = []
+
+    const delivered = await notify({
+      title: 'Jig "morning" failed',
+      body: "Error: timeout",
+      kind: "fail",
+      sendEmail: recorder(sent),
     })
-    expect(calls).toBe(0)
-    expect(report.sent).toEqual([])
-    expect(report.errors).toEqual([])
+
+    expect(delivered).toBe(true)
+    expect(sent).toHaveLength(1)
+    expect(sent[0].to).toBe("owner@example.com")
+    expect(sent[0].subject).toBe('Jig "morning" failed')
+    expect(sent[0].text).toBe("Error: timeout")
   })
 
-  it("triggerOn.fail === false → no calls on fail event", async () => {
-    let calls = 0
-    const report = await notify({
+  it("sends nothing when AgentMail is not set up", async () => {
+    const sent: SentEmail[] = []
+    const delivered = await notify({
       title: "T", body: "B", kind: "fail",
-      toolCaller: async () => { calls++; return null },
-      settingsOverride: baseSettings({
-        channels: [{ connection: "composio", tool: "telegram_send_message", recipient: "42" }],
-        triggerOn: { fail: false },
-      }),
-      manifestOverride: [telegramManifest],
+      sendEmail: recorder(sent),
     })
-    expect(calls).toBe(0)
-    expect(report.sent).toEqual([])
+    expect(delivered).toBe(false)
+    expect(sent).toEqual([])
   })
 
-  it("ignoreTriggerGate sends test notifications even when fail notifications are disabled", async () => {
-    let calls = 0
-    const report = await notify({
+  it("sends nothing when failure alerts are turned off", async () => {
+    seedSendable({ notifyOnFailure: false })
+    const sent: SentEmail[] = []
+    const delivered = await notify({
+      title: "T", body: "B", kind: "fail",
+      sendEmail: recorder(sent),
+    })
+    expect(delivered).toBe(false)
+    expect(sent).toEqual([])
+  })
+
+  it("ignoreTriggerGate sends a test even when failure alerts are off", async () => {
+    seedSendable({ notifyOnFailure: false })
+    const sent: SentEmail[] = []
+    const delivered = await notify({
       title: "T", body: "B", kind: "fail",
       ignoreTriggerGate: true,
-      toolCaller: async () => { calls++; return null },
-      settingsOverride: baseSettings({
-        channels: [{ connection: "composio", tool: "telegram_send_message", recipient: "42" }],
-        triggerOn: { fail: false },
-      }),
-      manifestOverride: [telegramManifest],
+      sendEmail: recorder(sent),
     })
-    expect(calls).toBe(1)
-    expect(report.sent).toEqual([{ channel: "Telegram", ok: true }])
-    expect(report.errors).toEqual([])
+    expect(delivered).toBe(true)
+    expect(sent).toHaveLength(1)
   })
 
-  it("single telegram channel → caller invoked with correct payload", async () => {
-    const seen: any[] = []
-    const report = await notify({
-      title: "Jig \"morning\" failed", body: "Error: timeout", kind: "fail",
-      toolCaller: async (conn, tool, params) => { seen.push({ conn, tool, params }); return null },
-      settingsOverride: baseSettings({
-        channels: [{ connection: "composio", tool: "telegram_send_message", recipient: "8465930881" }],
-      }),
-      manifestOverride: [telegramManifest],
-    })
-    expect(seen).toHaveLength(1)
-    expect(seen[0].conn).toBe("composio")
-    expect(seen[0].tool).toBe("telegram_send_message")
-    expect(seen[0].params.chat_id).toBe("8465930881")
-    expect(seen[0].params.text).toBe("Jig \"morning\" failed\n\nError: timeout")
-    expect(report.sent).toEqual([{ channel: "Telegram", ok: true }])
-    expect(report.errors).toEqual([])
-  })
+  it("honours a paused flag left by the pre-AgentMail notifications row", async () => {
+    seedSendable()
+    setSetting("notifications", { channels: [], triggerOn: { fail: false } })
+    const sent: SentEmail[] = []
 
-  it("gmail channel constructs to/body/subject via extraParams", async () => {
-    const seen: any[] = []
-    await notify({
-      title: "Title", body: "Body", kind: "fail",
-      toolCaller: async (conn, tool, params) => { seen.push(params); return null },
-      settingsOverride: baseSettings({
-        channels: [{
-          connection: "workspace",
-          tool: "gmail_send",
-          recipient: "alerts@example.com",
-          extraParams: { subject: "Jig alert" },
-        }],
-      }),
-      manifestOverride: [gmailManifest],
-    })
-    expect(seen[0].to).toBe("alerts@example.com")
-    expect(seen[0].body).toBe("Title\n\nBody")
-    expect(seen[0].subject).toBe("Jig alert")
-  })
-
-  it("gmail channel defaults subject to the notification title when not configured", async () => {
-    const seen: any[] = []
-    await notify({
-      title: "Jig test notification", body: "Body", kind: "fail",
-      toolCaller: async (_conn, _tool, params) => { seen.push(params); return null },
-      settingsOverride: baseSettings({
-        channels: [{
-          connection: "workspace",
-          tool: "gmail_send",
-          recipient: "alerts@example.com",
-        }],
-      }),
-      manifestOverride: [gmailManifest],
-    })
-    expect(seen[0].subject).toBe("Jig test notification")
-  })
-
-  it("records tool error payloads as notification errors", async () => {
-    const report = await notify({
-      title: "Title", body: "Body", kind: "fail",
-      toolCaller: async () => ({ error: "Missing subject" }),
-      settingsOverride: baseSettings({
-        channels: [{
-          connection: "workspace",
-          tool: "gmail_send",
-          recipient: "alerts@example.com",
-          extraParams: { subject: "Jig alert" },
-        }],
-      }),
-      manifestOverride: [gmailManifest],
-    })
-    expect(report.sent).toEqual([])
-    expect(report.errors).toHaveLength(1)
-    expect(report.errors[0].error).toContain("Missing subject")
-  })
-
-  it("multi-channel uses allSettled — partial success reported", async () => {
-    const report = await notify({
+    const delivered = await notify({
       title: "T", body: "B", kind: "fail",
-      toolCaller: async (conn) => {
-        if (conn === "workspace") throw new Error("smtp 500")
-        return null
-      },
-      settingsOverride: baseSettings({
-        channels: [
-          { connection: "composio", tool: "telegram_send_message", recipient: "42" },
-          { connection: "workspace", tool: "gmail_send", recipient: "x@y.com", extraParams: { subject: "s" } },
-        ],
-      }),
-      manifestOverride: [telegramManifest, gmailManifest],
+      sendEmail: recorder(sent),
     })
-    expect(report.sent).toEqual([{ channel: "Telegram", ok: true }])
-    expect(report.errors).toHaveLength(1)
-    expect(report.errors[0].channel).toBe("Gmail")
-    expect(report.errors[0].error).toContain("smtp 500")
+
+    expect(delivered).toBe(false)
+    expect(sent).toEqual([])
   })
 
-  it("tool missing from manifest → recorded as error, siblings still fire", async () => {
-    const seen: string[] = []
-    const report = await notify({
-      title: "T", body: "B", kind: "fail",
-      toolCaller: async (conn, tool) => { seen.push(`${conn}.${tool}`); return null },
-      settingsOverride: baseSettings({
-        channels: [
-          { connection: "composio", tool: "telegram_send_message", recipient: "42" },
-          { connection: "composio", tool: "nonexistent_sender", recipient: "x" },
-        ],
-      }),
-      manifestOverride: [telegramManifest],
+  it("makes the email repliable and records the thread when the webhook is wired and a jig is known", async () => {
+    seedSendable()
+    seedWebhook()
+    const sent: SentEmail[] = []
+
+    await notify({
+      title: "Jig failed", body: "Error: boom", kind: "fail",
+      jigId: "morning-calendar",
+      sendEmail: recorder(sent),
     })
-    expect(seen).toEqual(["composio.telegram_send_message"])
-    expect(report.sent).toHaveLength(1)
-    expect(report.errors).toHaveLength(1)
-    expect(report.errors[0].error).toContain("not in the notification manifest")
+
+    // Token appears in both the subject and the body footer so it survives
+    // whichever half of the reply the mail client preserves.
+    const token = sent[0].subject.match(/\[#([A-Z0-9]+)\]$/)?.[1]
+    expect(token).toBeTruthy()
+    expect(sent[0].text).toContain(`#${token}`)
+    expect(sent[0].text).toContain("Reply to this email to fix the jig")
+
+    const thread = getEmailThread("thread_1")
+    expect(thread?.jig_id).toBe("morning-calendar")
+    expect(thread?.reply_token).toBe(token!)
   })
 
-  it("never throws even if settings are malformed", async () => {
-    // Write a garbage settings row directly
-    const db = openDb()
-    db.prepare(`INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('notifications', 'not json', datetime('now'))`).run()
+  it("sends a plain alert — no token, no thread — without the inbound webhook", async () => {
+    seedSendable()
+    const sent: SentEmail[] = []
 
-    let report: any
+    await notify({
+      title: "Jig failed", body: "Error: boom", kind: "fail",
+      jigId: "morning-calendar",
+      sendEmail: recorder(sent),
+    })
+
+    expect(sent[0].subject).toBe("Jig failed")
+    expect(sent[0].text).toBe("Error: boom")
+    expect(getEmailThread("thread_1")).toBeNull()
+  })
+
+  it("sends a plain alert when the webhook is wired but no jig is known", async () => {
+    seedSendable()
+    seedWebhook()
+    const sent: SentEmail[] = []
+
+    await notify({ title: "Scheduler died", body: "B", kind: "fail", sendEmail: recorder(sent) })
+
+    expect(sent[0].subject).toBe("Scheduler died")
+    expect(getEmailThread("thread_1")).toBeNull()
+  })
+
+  it("never throws when the send fails", async () => {
+    seedSendable()
+    let delivered: boolean | undefined
+
     await expect((async () => {
-      report = await notify({
+      delivered = await notify({
         title: "T", body: "B", kind: "fail",
-        toolCaller: async () => null,
-        manifestOverride: [],
+        sendEmail: async () => { throw new Error("AgentMail API error 500") },
       })
     })()).resolves.toBeUndefined()
-    expect(report.sent).toEqual([])
-    expect(report.errors).toEqual([])
+
+    expect(delivered).toBe(false)
   })
 
-  it("never throws when tool caller rejects for all channels", async () => {
-    const report = await notify({
-      title: "T", body: "B", kind: "fail",
-      toolCaller: async () => { throw new Error("dead connection") },
-      settingsOverride: baseSettings({
-        channels: [{ connection: "composio", tool: "telegram_send_message", recipient: "42" }],
-      }),
-      manifestOverride: [telegramManifest],
-    })
-    expect(report.sent).toEqual([])
-    expect(report.errors).toHaveLength(1)
-  })
-})
-
-describe("settings persistence", () => {
-  it("defaults when no row exists", () => {
-    const s = getNotificationSettings()
-    expect(s.channels).toEqual([])
-    expect(s.triggerOn).toEqual({ fail: true })
-  })
-
-  it("defaults fail notifications to true when a persisted row omits the trigger flag", () => {
+  it("never throws when the agentmail settings row is malformed", async () => {
     const db = openDb()
     db.prepare(
-      `INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('notifications', ?, datetime('now'))`
-    ).run(JSON.stringify({
-      channels: [{ connection: "composio", tool: "telegram_send_message", recipient: "42" }],
-    }))
+      `INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('agentmail', 'not json', datetime('now'))`
+    ).run()
 
-    const s = getNotificationSettings()
-    expect(s.triggerOn).toEqual({ fail: true })
-  })
+    const sent: SentEmail[] = []
+    let delivered: boolean | undefined
+    await expect((async () => {
+      delivered = await notify({ title: "T", body: "B", kind: "fail", sendEmail: recorder(sent) })
+    })()).resolves.toBeUndefined()
 
-  it("round-trips a saved settings row", () => {
-    saveNotificationSettings({
-      channels: [{ connection: "composio", tool: "telegram_send_message", recipient: "42" }],
-      triggerOn: { fail: false },
-    })
-    const s = getNotificationSettings()
-    expect(s.channels).toHaveLength(1)
-    expect(s.channels[0].recipient).toBe("42")
-    expect(s.triggerOn.fail).toBe(false)
-  })
-})
-
-describe("notification health", () => {
-  it("reports ok when failure alerts have an available configured channel", () => {
-    const health = getNotificationHealth(
-      baseSettings({
-        channels: [{ connection: "composio", tool: "telegram_send_message", recipient: "42" }],
-      }),
-      [telegramManifest],
-      { at: "2026-04-25T12:00:00.000Z", ok: true, sent: 1, errors: 0 },
-    )
-    expect(health.ok).toBe(true)
-    expect(health.reasons).toEqual([])
-  })
-
-  it("requires a successful explicit test before reporting protected", () => {
-    const health = getNotificationHealth(
-      baseSettings({
-        channels: [{ connection: "composio", tool: "telegram_send_message", recipient: "42" }],
-      }),
-      [telegramManifest],
-      null,
-    )
-    expect(health.ok).toBe(false)
-    expect(health.reasons.join(" ")).toContain("not been tested")
-  })
-
-  it("persists the last notification test result", () => {
-    const status = saveNotificationTestStatus({
-      sent: [{ channel: "Telegram", ok: true }],
-      errors: [],
-    })
-    expect(status.ok).toBe(true)
-    expect(getNotificationTestStatus()).toMatchObject({ ok: true, sent: 1, errors: 0 })
-  })
-
-  it("reports danger when alerts are paused or no notification tool is available", () => {
-    const health = getNotificationHealth(
-      baseSettings({
-        channels: [{ connection: "composio", tool: "telegram_send_message", recipient: "42" }],
-        triggerOn: { fail: false },
-      }),
-      [],
-      { at: "2026-04-25T12:00:00.000Z", ok: false, sent: 0, errors: 1 },
-    )
-    expect(health.ok).toBe(false)
-    expect(health.severity).toBe("danger")
-    expect(health.reasons.join(" ")).toContain("paused")
-    expect(health.reasons.join(" ")).toContain("No notification-capable tools")
-    expect(health.reasons.join(" ")).toContain("not available")
+    expect(delivered).toBe(false)
+    expect(sent).toEqual([])
   })
 })
 

@@ -32,6 +32,8 @@ export interface AgentMailSettings {
   inboxId: string | null
   address: string | null
   owner: string | null
+  /** Email the owner when a jig run fails. Alerting's only on/off switch. */
+  notifyOnFailure: boolean
 }
 
 export function getAgentMailSettings(): AgentMailSettings {
@@ -41,7 +43,20 @@ export function getAgentMailSettings(): AgentMailSettings {
     inboxId: str(raw?.inboxId),
     address: str(raw?.address),
     owner: str(raw?.owner),
+    notifyOnFailure: typeof raw?.notifyOnFailure === "boolean" ? raw.notifyOnFailure : legacyNotifyOnFailure(),
   }
+}
+
+/**
+ * Failure alerting used to be gated by `triggerOn.fail` in the `notifications`
+ * settings row, back when alerts could also go out over MCP tools. Honour that
+ * flag when this row hasn't got its own yet, so upgrading doesn't silently
+ * re-enable alerts someone had paused. The next save writes the flag here and
+ * this stops mattering; removable once no live DB predates it.
+ */
+function legacyNotifyOnFailure(): boolean {
+  const legacy = getSetting<{ triggerOn?: { fail?: unknown } }>("notifications")
+  return typeof legacy?.triggerOn?.fail === "boolean" ? legacy.triggerOn.fail : true
 }
 
 function getApiKey(): string | null {
@@ -87,10 +102,11 @@ export function getAgentMailStatus(): AgentMailSettingsResponse {
     address: s.address,
     owner: s.owner,
     webhookReady: getWebhookSecret() != null,
+    notifyOnFailure: s.notifyOnFailure,
   }
 }
 
-export function saveAgentMailSettings(input: { apiKey?: string; owner?: string }): void {
+export function saveAgentMailSettings(input: { apiKey?: string; owner?: string; notifyOnFailure?: boolean }): void {
   if (typeof input.apiKey === "string" && input.apiKey.trim()) {
     setCredential(API_KEY_CREDENTIAL, input.apiKey.trim(), "agentmail")
   }
@@ -98,6 +114,7 @@ export function saveAgentMailSettings(input: { apiKey?: string; owner?: string }
   setSetting(SETTINGS_KEY, {
     ...current,
     owner: typeof input.owner === "string" ? (input.owner.trim() || null) : current.owner,
+    notifyOnFailure: typeof input.notifyOnFailure === "boolean" ? input.notifyOnFailure : current.notifyOnFailure,
   })
 }
 

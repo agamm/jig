@@ -34,7 +34,6 @@ export const SCHEMAS_DIR = join(META_DIR, "schemas")
 export const TYPES_DIR = join(META_DIR, "types")
 export const CONNECTIONS_DIR = join(META_DIR, "connections")
 export const CUSTOM_SERVERS_PATH = join(META_DIR, "custom-servers.json")
-export const NOTIFICATION_TOOLS_PATH = join(META_DIR, "notification-tools.json")
 
 /** Read-only code assets — always resolve from the git checkout. */
 export const EXAMPLES_DIR = join(PROJECT_ROOT, "examples")

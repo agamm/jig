@@ -1,5 +1,15 @@
-import { describe, expect, it } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it } from "bun:test"
+import { closeDb, openDb } from "../src/db.js"
 import { maybeNotifyRunFailure } from "../src/services/run-failure-notify.js"
+
+beforeEach(() => {
+  closeDb()
+  openDb(":memory:")
+})
+
+afterEach(() => {
+  closeDb()
+})
 
 describe("maybeNotifyRunFailure", () => {
   it("sends notifications for failed persisted runs", async () => {
@@ -19,7 +29,7 @@ describe("maybeNotifyRunFailure", () => {
       }),
       notify: async (payload) => {
         notifications.push(payload)
-        return { sent: [{ channel: "Telegram", ok: true }], errors: [] }
+        return true
       },
     })
 
@@ -36,7 +46,7 @@ describe("maybeNotifyRunFailure", () => {
       getRun: () => null,
       notify: async (payload) => {
         notifications.push(payload)
-        return { sent: [], errors: [] }
+        return false
       },
     })
 
@@ -55,7 +65,7 @@ describe("maybeNotifyRunFailure", () => {
       }),
       notify: async (payload) => {
         notifications.push(payload)
-        return { sent: [], errors: [] }
+        return false
       },
     })
 
@@ -82,7 +92,7 @@ describe("maybeNotifyRunFailure", () => {
       }),
       notify: async (payload) => {
         notifications.push(payload)
-        return { sent: [], errors: [] }
+        return false
       },
     })
 

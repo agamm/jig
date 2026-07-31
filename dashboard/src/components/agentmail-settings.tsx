@@ -12,11 +12,13 @@ import {
 } from "@/lib/api";
 
 /**
- * AgentMail makes jig-failure emails repliable: a reply goes straight to the
- * jig's authoring agent, which applies the change and ships it. Provisions an
+ * AgentMail is the only path failure alerts take: a direct HTTPS send that
+ * still works when the connection a jig broke on is the thing that's down. It
+ * also makes those emails repliable — a reply goes straight to the jig's
+ * authoring agent, which applies the change and ships it. Provisions an
  * `@agentmail.to` inbox + inbound webhook with one click — no DNS setup.
  */
-export function AgentMailSettings({ compact = false }: { compact?: boolean }) {
+export function AgentMailSettings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [connecting, setConnecting] = useState(false);
@@ -24,10 +26,10 @@ export function AgentMailSettings({ compact = false }: { compact?: boolean }) {
   const [hasKey, setHasKey] = useState(false);
   const [configured, setConfigured] = useState(false);
   const [canSend, setCanSend] = useState(false);
-  const [webhookReady, setWebhookReady] = useState(false);
   const [address, setAddress] = useState<string | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [owner, setOwner] = useState("");
+  const [notifyOnFailure, setNotifyOnFailure] = useState(true);
   const [status, setStatus] = useState<{ tone: "success" | "danger" | "neutral"; message: string } | null>(null);
 
   useEffect(() => {
@@ -38,9 +40,9 @@ export function AgentMailSettings({ compact = false }: { compact?: boolean }) {
         setHasKey(data.hasKey);
         setConfigured(data.configured);
         setCanSend(data.canSend);
-        setWebhookReady(data.webhookReady);
         setAddress(data.address);
         setOwner(data.owner ?? "");
+        setNotifyOnFailure(data.notifyOnFailure);
       })
       .catch((e) => setStatus({ tone: "danger", message: `Failed to load: ${e?.message ?? String(e)}` }))
       .finally(() => !cancelled && setLoading(false));
@@ -59,9 +61,23 @@ export function AgentMailSettings({ compact = false }: { compact?: boolean }) {
     setHasKey(data.hasKey);
     setConfigured(data.configured);
     setCanSend(data.canSend);
-    setWebhookReady(data.webhookReady);
+    setNotifyOnFailure(data.notifyOnFailure);
     setApiKey("");
     return data;
+  }
+
+  // Saves on click rather than waiting for the Save button: it's one boolean
+  // with nothing to validate, and Save is gated on key + email being filled in.
+  async function onToggleNotify() {
+    const next = !notifyOnFailure;
+    setNotifyOnFailure(next);
+    setStatus(null);
+    try {
+      await saveAgentMailSettings({ notifyOnFailure: next });
+    } catch (e) {
+      setNotifyOnFailure(!next);
+      setStatus({ tone: "danger", message: `Save failed: ${(e as Error)?.message ?? String(e)}` });
+    }
   }
 
   async function onSave() {
@@ -86,7 +102,6 @@ export function AgentMailSettings({ compact = false }: { compact?: boolean }) {
       if (result.ok) {
         setAddress(result.address ?? null);
         setCanSend(true);
-        setWebhookReady(!!result.webhookReady);
         setConfigured(!!result.webhookReady);
         setStatus(
           result.webhookReady
@@ -123,25 +138,55 @@ export function AgentMailSettings({ compact = false }: { compact?: boolean }) {
   const canConnect = canSave;
 
   return (
-    <div className="space-y-3">
-      {!compact && (
+    <section className="space-y-3 rounded-xl border border-[#1f1f23] bg-[#111113] px-4 py-4">
+      <div className="flex items-start justify-between gap-4">
         <div className="space-y-1">
-          <h4 className="text-[13px] font-medium text-[#ededed]">Reply-to-edit (AgentMail)</h4>
+          <h4 className="text-[13px] font-medium text-[#ededed]">Failure alerts (AgentMail)</h4>
           <p className="text-[11px] leading-relaxed text-[#666]">
-            Sends jig-failure emails from a repliable inbox. Reply in plain English — &ldquo;use the #ops channel
-            instead&rdquo; — and the jig&apos;s authoring agent applies the change and ships it. Get a free API key at{" "}
+            Emails you when a jig fails, over a direct HTTPS send that still works when the connection the jig
+            broke on is the thing that&apos;s down. The inbox is repliable: answer in plain English — &ldquo;use the
+            #ops channel instead&rdquo; — and the jig&apos;s authoring agent applies the change and ships it. Get a
+            free API key at{" "}
             <a href="https://agentmail.to" target="_blank" rel="noreferrer" className="text-emerald-400 hover:underline">
               agentmail.to
             </a>
 . Needs a public URL for the inbound webhook — auto-detected on Railway/Render/Fly, otherwise set <code className="text-[#888]">JIG_PUBLIC_URL</code>.
           </p>
         </div>
-      )}
+        <div className="flex shrink-0 items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface-input)] px-2 py-1">
+          <span className="text-[10px] text-[var(--text-dim)]">Notify on failures</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={notifyOnFailure}
+            aria-label="Notify on jig failure"
+            onClick={onToggleNotify}
+            className={`relative inline-flex h-[18px] w-8 rounded-full border transition-colors duration-150 ${
+              notifyOnFailure
+                ? "border-emerald-400/35 bg-emerald-500/80"
+                : "border-[var(--border-strong)] bg-[var(--surface-muted)]"
+            }`}
+          >
+            <span
+              className={`absolute top-[1px] h-[14px] w-[14px] rounded-full bg-white transition-transform duration-150 ${
+                notifyOnFailure ? "translate-x-[15px]" : "translate-x-[1px]"
+              }`}
+            />
+          </button>
+        </div>
+      </div>
 
       {!canSend && (
         <Notice tone="danger" title="No failure alerting set up">
           If a jig fails or an integration breaks while you&apos;re away, nothing will reach you. Add an AgentMail
           API key and your email, then connect an inbox to start getting alerts.
+        </Notice>
+      )}
+
+      {canSend && !notifyOnFailure && (
+        <Notice tone="warning" title="Failure alerts are paused">
+          Jigs can fail without reaching you. The inbox stays connected — jigs can still send email — but nothing
+          goes out when a run fails until you turn this back on.
         </Notice>
       )}
 
@@ -209,6 +254,6 @@ export function AgentMailSettings({ compact = false }: { compact?: boolean }) {
       </div>
 
       {status && <Notice tone={status.tone}>{status.message}</Notice>}
-    </div>
+    </section>
   );
 }

@@ -21,9 +21,6 @@ import type {
   ApplyModelUpgradeResponse,
   DismissModelUpgradeRequest,
   OpenRouterCatalogResponse,
-  NotificationSettings,
-  NotificationSettingsResponse,
-  NotifyTestResponse,
   AgentMailSettingsResponse,
   AgentMailSettingsUpdate,
   AgentMailSetupResponse,
@@ -340,22 +337,6 @@ export function restoreToPending(jigId: string, versionId: number): Promise<Rest
 
 export function fetchVersionsV2(jigId: string): Promise<JigVersionListResponse> {
   return fetchApi("listVersionsV2", `/api/jigs/${encodeURIComponent(jigId)}/versions-v2`)
-}
-
-export function fetchNotificationSettings(): Promise<NotificationSettingsResponse> {
-  return fetchApi("notificationSettings", "/api/settings/notifications")
-}
-
-export function saveNotificationSettings(settings: NotificationSettings): Promise<NotificationSettingsResponse> {
-  return fetchApi("notificationSettings", "/api/settings/notifications", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(settings),
-  })
-}
-
-export function sendTestNotification(): Promise<NotifyTestResponse> {
-  return fetchApi("notificationSettingsTest", "/api/settings/notifications/test", { method: "POST" })
 }
 
 export function fetchAgentMailSettings(): Promise<AgentMailSettingsResponse> {

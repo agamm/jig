@@ -4,7 +4,7 @@ import { join } from "path"
 import OpenAI from "openai"
 import type { ChatCompletionContentPart, ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions"
 import type { AgentConversationTurn, AgentDraftApproval, AgentEvent, AgentMetrics, AgentStatusResponse, JigData, OkResponse, StartAgentResponse } from "../../shared/api.js"
-import { getEditorModel } from "../config/models.js"
+import { getEditorModel, getFastModel } from "../config/models.js"
 import { SCHEMAS_DIR } from "../config/paths.js"
 import { isValidJigId } from "../domain/jig-id.js"
 import { getImportedServers } from "../domain/source-analysis.js"
@@ -23,7 +23,7 @@ import {
   writePending as storeWritePending,
 } from "./jig-store.js"
 import { materializeActiveVersion, materializePendingVersion } from "./jig-runtime.js"
-import { requireOpenRouterApiKey } from "../config/openrouter.js"
+import { getOpenRouterApiKey, requireOpenRouterApiKey } from "../config/openrouter.js"
 import { logSessionEvent } from "../debug/session-log.js"
 import { buildDraftJigResponse } from "./jig-api.js"
 import { getConnectionStatus } from "./connection-status.js"
@@ -897,27 +897,92 @@ async function _toolBrowse(args: { url: string }): Promise<string> {
   } catch (e: any) {
     return JSON.stringify({ error: `Refused to browse ${url}: ${e?.message ?? "blocked address"}. Only public http(s) URLs are allowed.` })
   }
+  // Both commands MUST carry the same isolated session. Previously `open` was
+  // passed "--engine chromium --headless" — neither is valid (headless is the
+  // default; the flag is --headed, and the engine is chrome/lightpanda), so the
+  // navigation always exited non-zero. Its status went unchecked and the
+  // follow-up `snapshot` ran with no flags, picking up the user's config
+  // (engine: chrome, auto-connect) and returning whatever page their REAL
+  // browser had open — wrong content, and a leak of their session into the
+  // agent's context that walked straight past the SSRF guard above.
+  const session = ["--session", "jig-browse"]
   try {
     const proc = Bun.spawn(
-      ["npx", "agent-browser", "--engine", "chromium", "--headless", "open", args.url],
-      { stdout: "pipe", stderr: "pipe", timeout: 30_000 }
+      ["npx", "agent-browser", ...session, "open", args.url],
+      { stdout: "pipe", stderr: "pipe", timeout: 45_000 }
     )
-    await proc.exited
+    const navExit = await proc.exited
+    if (navExit !== 0) {
+      const err = (await new Response(proc.stderr).text()).trim() || (await new Response(proc.stdout).text()).trim()
+      return JSON.stringify({ error: `Could not open ${args.url}: ${err.slice(0, 300) || `exit ${navExit}`}` })
+    }
 
     const snap = Bun.spawn(
-      ["npx", "agent-browser", "snapshot"],
-      { stdout: "pipe", stderr: "pipe", timeout: 15_000 }
+      ["npx", "agent-browser", ...session, "snapshot"],
+      { stdout: "pipe", stderr: "pipe", timeout: 20_000 }
     )
     const text = await new Response(snap.stdout).text()
-    await snap.exited
+    const snapExit = await snap.exited
+    if (snapExit !== 0) {
+      const err = (await new Response(snap.stderr).text()).trim()
+      return JSON.stringify({ error: `Could not read ${args.url}: ${err.slice(0, 300) || `exit ${snapExit}`}` })
+    }
     return text.slice(0, 50_000) || "(empty page)"
   } catch (e: any) {
     return JSON.stringify({ error: `Browse failed: ${e?.message}` })
   }
 }
 
+/**
+ * Web search via OpenRouter's built-in web plugin.
+ *
+ * The previous implementation scraped google.com/search through the headless
+ * browser. That never worked: Google answers datacenter and automation traffic
+ * with a reCAPTCHA "unusual traffic" page, so the agent got a CAPTCHA instead
+ * of results. OpenRouter runs the search server-side (native provider search
+ * where available, else Exa) and returns url_citation annotations, so there is
+ * no browser, no bot-detection, and it works headless in the container.
+ */
 async function toolWebSearch(args: { query: string }): Promise<string> {
-  return toolBrowse({ url: `https://www.google.com/search?q=${encodeURIComponent(args.query)}` })
+  const query = args.query?.trim()
+  if (!query) return JSON.stringify({ error: "query is required" })
+  const apiKey = getOpenRouterApiKey()
+  if (!apiKey) return JSON.stringify({ error: "No OpenRouter API key configured — web search is unavailable." })
+
+  try {
+    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: getFastModel(),
+        plugins: [{ id: "web", max_results: 5 }],
+        messages: [{
+          role: "user",
+          content: `Search the web for: ${query}\n\nSummarize the findings relevant to the query, and cite sources.`,
+        }],
+        max_tokens: 1200,
+      }),
+      signal: AbortSignal.timeout(60_000),
+    })
+    if (!res.ok) {
+      return JSON.stringify({ error: `Web search failed (HTTP ${res.status}): ${(await res.text()).slice(0, 300)}` })
+    }
+    const body = await res.json() as {
+      choices?: { message?: { content?: string; annotations?: { url_citation?: { url?: string; title?: string; content?: string } }[] } }[]
+    }
+    const message = body.choices?.[0]?.message
+    // Hand back the citation list too — the agent's usual next move is to
+    // `browse` the most relevant source for the full page.
+    const sources = (message?.annotations ?? [])
+      .map((a) => a.url_citation)
+      .filter((c): c is { url?: string; title?: string; content?: string } => !!c?.url)
+      .map((c) => ({ url: c.url, title: c.title, excerpt: c.content?.slice(0, 500) }))
+    const summary = message?.content?.trim()
+    if (!summary && sources.length === 0) return JSON.stringify({ error: "Web search returned no results." })
+    return JSON.stringify({ summary, sources })
+  } catch (e: any) {
+    return JSON.stringify({ error: `Web search failed: ${e?.message ?? e}` })
+  }
 }
 
 const ASK_USER_SENTINEL = "__ASK_USER__"

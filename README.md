@@ -30,7 +30,9 @@ Jig:          code -> code -> [AI] -> code -> result
 
 ## Architecture
 
-![Jig architecture: dashboard and CLI feed the engine, which runs workflows through the SDK and scoped connections](docs/jig-architecture.svg)
+Jig separates authoring from execution: the authoring agent writes a versioned TypeScript `JigDefinition`; the runtime imports the approved version; and the SDK enforces step, model, and typed MCP tool boundaries.
+
+![Jig technical architecture: authoring and execution planes connected through a versioned store, runtime engine, SDK, typed MCP connections, and model API](docs/jig-architecture.svg)
 
 ## Ideas for Your First Jig
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test"
 import { buildRemovalInstruction, getReviewableToolKeys, toolKey } from "../dashboard/src/lib/tool-review"
-import { getToolsetSignature } from "../dashboard/src/lib/jig-tool-approval"
+import { getToolsetSignature } from "../dashboard/src/lib/toolset-signature"
 import { trimGitDiffHeaders } from "../dashboard/src/lib/git-diff"
 
 describe("tool review helpers", () => {

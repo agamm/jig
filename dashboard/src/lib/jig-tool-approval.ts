@@ -3,19 +3,7 @@
 import { useMemo, useState } from "react"
 import type { JigTool, ToolPermission } from "@shared/api"
 import { saveToolPermission } from "./api"
-
-function normalizeTools(tools: JigTool[]): JigTool[] {
-  return [...tools]
-    .sort((a, b) =>
-      `${a.connection}:${a.name}:${a.readOnly}`.localeCompare(`${b.connection}:${b.name}:${b.readOnly}`)
-    )
-}
-
-export function getToolsetSignature(tools: JigTool[]): string {
-  return normalizeTools(tools)
-    .map((tool) => `${tool.connection}:${tool.name}:${tool.readOnly ? "ro" : "rw"}`)
-    .join("|")
-}
+import { getToolsetSignature, normalizeTools } from "./toolset-signature"
 
 function allowedToolKeys(permissions: ToolPermission[]): Set<string> {
   return new Set(

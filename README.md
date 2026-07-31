@@ -4,6 +4,8 @@
 
 AI agent that can automate your personal life or business operations while keeping things in check.
 
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template/jig?utm_medium=integration&utm_source=button&utm_campaign=jig)
+
 ## Why Jig
 
 A jig, in a carpenter's workshop, is a fixture you set up once so every cut after it is identical. You trust it. It does not surprise you.
@@ -75,13 +77,14 @@ Written by AI from one sentence. At runtime, only `llm(...)` calls the model bac
 
 ## Usage
 
-```
-bunx jig start
-```
+For an always-on instance, use the Deploy on Railway button above. It creates a
+fresh service with a blank persistent `/data` volume. The template includes no
+maintainer database, credentials, OAuth state, variables, logs, or personal
+configuration.
 
 ```Shell
-# Or
-git clone <repo-url>
+# Or run locally
+git clone https://github.com/agamm/jig.git
 cd jig
 bun install
 bun run jig start
@@ -96,17 +99,18 @@ The intended flow is dashboard-first:
 * review the generated jig as code
 * run it manually or leave it scheduled
 
-On first run, Jig will install the dashboard dependencies automatically. Commit and push to github to backup or share your setup.
+On first run, Jig installs the dashboard dependencies automatically. Runtime
+state belongs in the ignored local database or the Railway `/data` volume; do
+not commit credentials or instance data to Git.
 
 ## Connections
 
 Jig can connect workflows to external tools and data sources. The default registry in this repo includes:
 
-* `workspace`: Gmail, Calendar, Drive, Docs, Sheets, Chat
 * `granola`: meeting notes and transcripts
-* `github`: repositories, pull requests, issues, commits
+* `notion`, `linear`, `figma`, `sentry`, and other direct MCP services
 * `apify`: typed tools for public-web scraping and extraction
-* `composio`: Slack, Telegram, and a long tail of SaaS apps
+* `composio`: Gmail, Calendar, GitHub, Slack, Telegram, and a long tail of SaaS apps
 
 List available services with:
 
@@ -137,7 +141,8 @@ Generated jigs use these import aliases:
 
 ## Project Layout
 
-* `jigs/`: your generated workflows
+* `jig.db*`: ignored local state and the authoritative versioned jig store
+* `jigs/`: legacy workflow import source
 * `.jig/connections/`: generated typed connection clients
 * `.jig/schemas/`: cached tool schemas
 * `examples/`: example jigs
@@ -146,7 +151,9 @@ Generated jigs use these import aliases:
 
 ## Current State
 
-This repo is already usable for local workflow automation, but the install flow is still developer-oriented rather than productized. Expect the local-first path to be the best-supported one for now.
+This repo supports local development and a one-click Railway deployment. External
+services still have provider-specific authentication and availability
+constraints; connect only the tools each workflow needs.
 
 ## Coding Agents
 
@@ -157,7 +164,7 @@ Start with [`llms.txt`](llms.txt). Claude Code and other repository-aware agents
 ```Shell
 bun run jig start
 bun run jig connect
-bun run jig connect workspace
+bun run jig connect composio
 bun run jig new "Every Friday at 4pm, draft a weekly update email from my meetings and emails."
 bun run jig edit weekly-update
 bun run jig run weekly-update

@@ -4,7 +4,11 @@ This runbook is for coding agents and operators. It covers supported local and R
 
 ## Deploy a clean instance
 
-The README's Deploy on Railway button provisions a new service from the public repository plus a blank persistent volume mounted at `/data`.
+The README's Deploy on Railway button provisions a new service from the public
+`ghcr.io/agamm/jig:latest` image plus a blank persistent volume mounted at
+`/data`. GitHub Actions builds that image from an allowlisted subset of the
+public repository; local state and secret paths are excluded from the build
+context.
 
 The template must never contain a maintainer database, environment variables, OAuth state, credentials, connection schemas, logs, or other runtime data. Users add their own password, OpenRouter key, and connections after deployment.
 

@@ -1,0 +1,31 @@
+# Version-control and editor state
+.git
+.github
+.vscode
+.idea
+
+# Dependencies and build output
+node_modules
+dashboard/node_modules
+dashboard/.next
+coverage
+dist
+
+# Jig runtime state — never bake user data or credentials into an image
+.env
+.env.*
+.jig
+jig.db
+jig.db-*
+jig.db-shm
+jig.db-wal
+jig.log
+jigs
+runtime
+check
+tmp
+
+# Local and OS files
+*.local
+*.log
+.DS_Store

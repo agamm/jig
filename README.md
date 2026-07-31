@@ -1,26 +1,16 @@
 # Jig
 
-**AI agents you can actually trust. AI Workflows as Code.**
+**Trusted AI workflows as code.**
 
-AI agent that can automate your personal life or business operations while keeping things in check.
+Describe a workflow in plain English. Jig turns it into versioned TypeScript you can review, run, and schedule.
 
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template/jig?utm_medium=integration&utm_source=button&utm_campaign=jig)
 
 ## Why Jig
 
-A jig, in a carpenter's workshop, is a fixture you set up once so every cut after it is identical. You trust it. It does not surprise you.
+A carpenter's jig is set once for repeatable results. Jig applies that idea to AI workflows: AI writes the workflow, then code runs it predictably.
 
-Most AI automation today is the opposite. It is an agent with broad tool access and a prompt full of rules you hope it keeps following. That works until a vague request turns into an expensive mistake.
-
-For decades, the world has run on code. Planes fly on it. Banks clear trillions on it. Power grids balance on it. You would not send a rocket on LLM vibes.
-
-In 2025 the default answer for every new workflow became: let an agent figure it out fresh each time.
-
-But most work is not novel. The invoice goes out on the 1st. The update goes out Monday. The triage missed emails happens every morning. These workflows do not need an LLM routing them from scratch on every run. They need reliability by repeatability.
-
-What is good at repeatability? Code. What AI is great at? Writing code.
-
-This is the obvious move nobody made. Terraform to SSH is what Jig is for AI agents. Let AI write the workflow. Let code run it. Call the model back only where code cannot: drafting an email in your voice, deciding which meetings mattered, or reading a messy PDF.
+Use plain code for repeatable work, `llm()` for bounded generation, and `agent()` only when runtime judgment is useful.
 
 ```text
 Most agents:  LLM -> LLM -> LLM -> LLM -> result
@@ -38,49 +28,49 @@ Jig separates authoring from execution: the authoring agent writes a versioned T
 
 ## Ideas for Your First Jig
 
-* **Reasons to reach out.** Watch LinkedIn updates, news, and personal reminders for moments worth celebrating, then surface the person and the context.
-* **Post-meeting follow-up.** Turn meeting notes and related email threads into a thoughtful follow-up draft while the conversation is still fresh.
-* **Reconnect radar.** Find people you have not spoken with lately, suggest who is worth reconnecting with, and explain why now.
+* **Reasons to reach out.** Watch LinkedIn, news, and reminders for moments worth celebrating.
+* **Post-meeting follow-up.** Turn notes and email threads into a thoughtful follow-up.
+* **Reconnect radar.** Suggest people worth reconnecting with and explain why now.
 
-## A Jig, Written From One Sentence
+## Example
 
-From a sentence like:
+> Every Monday at 8am, email me a concise update from last week's client meetings.
 
-> Every Monday at 8am, email me a client update from last week's meetings and emails.
+```typescript
+import { jig, llm } from "@jig/sdk"
+import { granola } from "@jig/connections/granola.js"
 
-Jig can generate something like:
+export default jig("weekly-client-update", {
+  trigger: { type: "cron", cron: "0 8 * * 1" },
+  tools: [granola.list_meetings],
+}, async (ctx) => {
+  let meetings: unknown
 
-```TypeScript
-trigger: { type: "cron", cron: "0 8 * * 1" }
+  await ctx.step("Gather meetings", [granola.list_meetings], async () => {
+    meetings = await granola.list_meetings({ time_range: "last_week" })
+    ctx.output(JSON.stringify(meetings, null, 2))
+  })
 
-// ...
-
-const meetings = await workspace.calendar_listEvents({ calendarId: "primary" })
-const emails = await workspace.gmail_search({ query: "from:client newer_than:7d" })
-
-// ...
-
-const body = await llm("Write a short client update", { meetings, emails })
-await workspace.gmail_createDraft({ to: "client@acme.co", subject: "Weekly update", body })
+  await ctx.step("Email update", [], async () => {
+    const text = await llm("Write a concise client update.", { meetings }) as string
+    await ctx.email({ subject: "Weekly client update", text })
+    ctx.output(text)
+  })
+})
 ```
 
-Written by AI from one sentence. At runtime, only `llm(...)` calls the model back. The rest is code.&#x20;
+`ctx.step()` scopes each operation. `ctx.email()` sends a repliable notification to the configured owner; it does not create a Gmail draft.
 
 ## What You Get
 
-* Determinism as a superpower. Every run flows the same. AI powerups only where you need them.
-* AI you can actually trust. Dependable workflows that work 24/7.
-* Scoped tools per step. Know exactly what can run, and when.
-* Connects to everything. MCP, Composio, Apify.
-* Open source. Fork it. Extend it. Write your own connections.
-* Local or cloud. Run it on your laptop or deploy it for always-on workflows.
+* Versioned TypeScript workflows with reviewable changes
+* Step-scoped tools and deliberate `llm()` / `agent()` boundaries
+* MCP, Composio, Apify, and custom connections
+* Local runs or always-on Railway deployment
 
 ## Usage
 
-For an always-on instance, use the Deploy on Railway button above. It creates a
-fresh service with a blank persistent `/data` volume. The template includes no
-maintainer database, credentials, OAuth state, variables, logs, or personal
-configuration.
+The Railway button creates a fresh service with a blank persistent `/data` volume and no maintainer data, credentials, OAuth state, variables, logs, or personal configuration.
 
 ```Shell
 # Or run locally
@@ -92,16 +82,12 @@ bun run jig start
 
 Open the dashboard, connect the services you want, and tell Jig what to build.
 
-The intended flow is dashboard-first:
-
 * connect Gmail, Calendar, GitHub, Apify, or other services
 * describe the workflow in plain English
 * review the generated jig as code
 * run it manually or leave it scheduled
 
-On first run, Jig installs the dashboard dependencies automatically. Runtime
-state belongs in the ignored local database or the Railway `/data` volume; do
-not commit credentials or instance data to Git.
+On first run, Jig installs the dashboard dependencies. Runtime state belongs in the ignored local database or Railway `/data` volume; do not commit credentials or instance data.
 
 ## Connections
 
@@ -148,12 +134,6 @@ Generated jigs use these import aliases:
 * `examples/`: example jigs
 * `dashboard/`: local UI for authoring and runs
 * `src/`: runtime, CLI, scheduler, and code generation internals
-
-## Current State
-
-This repo supports local development and a one-click Railway deployment. External
-services still have provider-specific authentication and availability
-constraints; connect only the tools each workflow needs.
 
 ## Coding Agents
 

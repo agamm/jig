@@ -1,4 +1,8 @@
-FROM oven/bun:1.3.9 AS build
+FROM oven/bun:1.3.9 AS bun-bin
+
+FROM node:22-bookworm-slim AS build
+
+COPY --from=bun-bin /usr/local/bin/bun /usr/local/bin/bun
 
 WORKDIR /app
 
@@ -7,7 +11,7 @@ WORKDIR /app
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 
-RUN bun install --global pnpm
+RUN npm install --global pnpm@10.15.1
 COPY dashboard/package.json dashboard/pnpm-lock.yaml ./dashboard/
 RUN cd dashboard && pnpm install --frozen-lockfile
 
@@ -23,10 +27,13 @@ COPY servers ./servers
 
 RUN cd dashboard && ./node_modules/.bin/next build
 
-FROM oven/bun:1.3.9
+FROM node:22-bookworm-slim
+
+COPY --from=bun-bin /usr/local/bin/bun /usr/local/bin/bun
 
 WORKDIR /app
 ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
 
 COPY --from=build /app /app
 

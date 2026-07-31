@@ -1,24 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { extractPromptFromCommitBody } from "../src/services/jig-import"
 import { buildCreatorJigPrompt } from "../src/services/jig-writing-prompt"
-
-describe("jig version metadata (migration import path)", () => {
-  it("extracts the saved prompt from the git commit body", () => {
-    const body = [
-      "jig: forgotten-emails — update prompt",
-      "",
-      "jig-meta:{\"prompt\":\"Tighten the prompt and keep the current tools.\"}",
-      "",
-    ].join("\n")
-
-    expect(extractPromptFromCommitBody(body)).toBe("Tighten the prompt and keep the current tools.")
-  })
-
-  it("ignores malformed prompt metadata", () => {
-    expect(extractPromptFromCommitBody("jig-meta:{not-json")).toBeNull()
-    expect(extractPromptFromCommitBody("plain commit body")).toBeNull()
-  })
-})
 
 describe("jig writing prompt policy", () => {
   it("passes skillMd content through to the final prompt", () => {
@@ -28,7 +9,6 @@ describe("jig writing prompt policy", () => {
     const prompt = buildCreatorJigPrompt({
       description: "Tighten the wording in the email summary output.",
       probeResults: "",
-      importPrefix: "..",
       existingCode: "export default myJig",
       context: {
         skillMd,

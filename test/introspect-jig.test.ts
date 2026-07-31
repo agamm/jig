@@ -1,6 +1,5 @@
 import { beforeEach, afterEach, describe, expect, it } from "bun:test"
 import { closeDb, openDb, setToolPermission } from "../src/db.js"
-import { invalidateJigsCache } from "../src/discover.js"
 import { introspectJig } from "../src/services/introspect-jig.js"
 import { deleteJig as storeDeleteJig } from "../src/services/jig-store.js"
 import { seedJig } from "./_fixtures.js"
@@ -9,13 +8,11 @@ describe("introspectJig", () => {
   beforeEach(() => {
     closeDb()
     openDb(":memory:")
-    invalidateJigsCache()
   })
 
   afterEach(() => {
     try { storeDeleteJig("introspect-case") } catch {}
     closeDb()
-    invalidateJigsCache()
   })
 
   it("returns tools and backend permissions", async () => {

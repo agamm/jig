@@ -1,67 +1,20 @@
 /**
- * Jig Gen — AI-powered jig generation and editing.
- *
- * Abstract module with no CLI coupling. All I/O goes through JigIO.emit()
- * with structured events — the presentation layer decides how to render.
+ * Jig Gen — assembles the authoring context (plan, tool selection, build-time
+ * discovery) that the authoring agent in services/agent-service.ts writes from.
  */
-import { join, relative } from "path"
-import { existsSync, readFileSync, rmSync } from "fs"
+import { join } from "path"
+import { existsSync, readFileSync } from "fs"
 import ts from "typescript"
-import { llm, agent } from "./sdk/llm.js"
+import { llm } from "./sdk/llm.js"
 import { getEditorModel } from "./config/models.js"
-import { discoverJigs } from "./discover.js"
 import { getServerConfig, loadServerConfigs } from "./mcp/config.js"
-import type { JigTool } from "./sdk/jig.js"
-import { EXAMPLES_DIR, JIGS_DIR, PROJECT_ROOT, SCHEMAS_DIR } from "./config/paths.js"
-import { resolveJigPath } from "./domain/jig-source.js"
+import { EXAMPLES_DIR, PROJECT_ROOT, SCHEMAS_DIR } from "./config/paths.js"
 import { getImportedServers } from "./domain/source-analysis.js"
-import { checkJigFile } from "./services/jig-checker.js"
-import { buildCreatorJigPrompt } from "./services/jig-writing-prompt.js"
 import { generateTypeDeclaration, toolNameToIdentifier } from "./mcp/typegen.js"
 import { renderCodeFacingToolCatalogSection } from "./tool-catalog.js"
 import { callTool, connectServer, isAuthDeniedError, type McpConnection } from "./mcp/client.js"
 import { getConnectorBuildTimeValidator } from "./mcp/validators/index.js"
-import type { ConnectEvent } from "../shared/connect-flow.js"
 import { logSessionEvent } from "./debug/session-log.js"
-const MAX_FIX_ATTEMPTS = 3
-
-// ---------------------------------------------------------------------------
-// Public interfaces — structured events, not strings
-// ---------------------------------------------------------------------------
-
-export type JigEvent =
-  // Creator events
-  | { type: "connections"; servers: { name: string; connected: boolean; description: string }[] }
-  | { type: "connections-missing"; servers: { name: string; command: string }[] }
-  | { type: "connections-unknown"; servers: { name: string }[] }
-  | { type: "plan"; servers: string[]; relevantTools: string[]; name: string }
-  | { type: "probe-start"; tools: string[] }
-  | { type: "probe-done"; summary: string }
-  | { type: "generate-start" }
-  | { type: "write"; file: string }
-  | { type: "validate"; ok: boolean; errors?: string }
-  | { type: "fix"; attempt: number; max: number }
-  | { type: "dry-run-start" }
-  | { type: "dry-run-review"; ok: boolean; issues?: string }
-  | { type: "created"; name: string; file: string }
-  | { type: "updated"; name: string; file: string }
-  | { type: "error"; code: string; message: string; details?: Record<string, any> }
-  // Connect events
-  | ConnectEvent
-  // Run events
-  | { type: "jig-list"; jigs: string[] }
-  | { type: "run-start"; name: string }
-
-export interface JigIO {
-  ask(question: string): Promise<string>
-  emit(event: JigEvent): void
-}
-
-export interface CreateResult {
-  path: string
-  name: string
-  code: string
-}
 
 export function hasExplicitEmptyToolsArray(code: string): boolean {
   const source = ts.createSourceFile("jig.ts", code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
@@ -173,7 +126,7 @@ export async function buildAuthoringState(
     // Capability-gap unknowns are also deferred when a connected
     // authoringDiscovery server (e.g. apify) is selected — discovery runs next
     // and will resolve or fail with a clearer error.
-    checkConnections(allServers, blockingUnknowns, serverConfigs, undefined, importedServers)
+    checkConnections(allServers, blockingUnknowns, serverConfigs, importedServers)
   }
 
   const buildResolutions = await resolveBuildTimeTargets(description, buildResolutionServers, serverConfigs, options.ask)
@@ -404,19 +357,13 @@ function ensureResolvedIntegration(
   needsIntegration: boolean,
   resolvedServers: string[],
   unknownServers: string[],
-  emit?: (event: JigEvent) => void
 ): void {
   if (!needsIntegration || resolvedServers.length > 0) return
-  if (unknownServers.length > 0) {
-    emit?.({ type: "connections-unknown", servers: unknownServers.map((name) => ({ name })) })
-  }
-  emit?.({
-    type: "error",
-    code: "integration-unresolved",
-    message: "Workflow depends on an integration but no known server was resolved",
-    details: { unknownServers },
-  })
-  throw new CreatorError("integration-unresolved", "Workflow depends on an integration but no known server was resolved")
+  throw new CreatorError(
+    "integration-unresolved",
+    "Workflow depends on an integration but no known server was resolved",
+    { unknownServers },
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -535,7 +482,6 @@ function checkConnections(
   knownServers: string[],
   unknownServers: string[],
   serverConfigs: Record<string, any>,
-  emit?: (event: JigEvent) => void,
   /** Servers that may be missing without blocking (already imported by the jig being edited). */
   nonBlocking: string[] = []
 ): void {
@@ -545,22 +491,11 @@ function checkConnections(
     description: (serverConfigs[s] as any)?.description ?? "",
   }))
 
-  emit?.({ type: "connections", servers })
-
   const missing = servers.filter(s => !s.connected)
-  if (missing.length > 0) {
-    emit?.({
-      type: "connections-missing",
-      servers: missing.map(s => ({ name: s.name, command: `jig connect ${s.name}` })),
-    })
-  }
-
-  if (unknownServers.length > 0) {
-    emit?.({ type: "connections-unknown", servers: unknownServers.map(name => ({ name })) })
-  }
 
   // Only a NEW required connection (or an unknown server) blocks authoring;
-  // already-imported missing connections are surfaced above but don't throw.
+  // an already-imported missing connection is reported to the agent separately
+  // via AuthoringState.unavailableImports.
   const blockingMissing = missing.filter(s => !nonBlocking.includes(s.name))
   if (blockingMissing.length > 0 || unknownServers.length > 0) {
     const requiredNames = blockingMissing.map((server) => server.name)
@@ -619,38 +554,6 @@ export class CreatorError extends Error {
   ) {
     super(message)
   }
-}
-
-// ---------------------------------------------------------------------------
-// loadReadOnlyTools
-// ---------------------------------------------------------------------------
-
-const CONNECTIONS_DIR = join(PROJECT_ROOT, ".jig/connections")
-
-async function loadReadOnlyTools(servers: string[], relevantTools?: string[]): Promise<JigTool<any, any>[]> {
-  const tools: JigTool<any, any>[] = []
-  const toolSet = relevantTools?.length ? new Set(relevantTools) : null
-
-  for (const serverName of servers) {
-    // Import the generated connection module — it has the tool functions with metadata
-    const modPath = join(CONNECTIONS_DIR, `${serverName}.ts`)
-    if (!existsSync(modPath)) continue
-    const mod = await import(modPath)
-
-    // Filter to read-only + relevant tools using schema annotations
-    const schemaPath = join(SCHEMAS_DIR, `${serverName}.json`)
-    if (!existsSync(schemaPath)) continue
-    const schemas: any[] = JSON.parse(readFileSync(schemaPath, "utf-8"))
-
-    for (const t of schemas) {
-      if (!t.annotations?.readOnlyHint) continue
-      if (toolSet && !toolSet.has(t.name)) continue
-      const exported = mod[toolNameToIdentifier(t.name)] ?? mod[serverName]?.[t.name]
-      if (exported) tools.push(exported)
-    }
-  }
-
-  return tools
 }
 
 // ---------------------------------------------------------------------------

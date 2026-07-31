@@ -7,7 +7,7 @@ import { Button } from "@/components/button";
 import { DraftBanner } from "@/components/draft-banner";
 import { HighlightedCode } from "@/components/highlighted-code";
 import { StepList } from "@/components/step-list";
-import { TRIGGER_SUGGESTIONS } from "@/mock/mock-data";
+import { TRIGGER_SUGGESTIONS } from "@/lib/trigger-suggestions";
 import { useTriggerSave } from "@/hooks/use-trigger-save";
 import { PaneHeader } from "@/components/pane-header";
 import { PaneSection } from "@/components/pane-section";

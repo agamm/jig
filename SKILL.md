@@ -83,14 +83,14 @@ This is the "bigger hatch" — use it when the task requires judgment about
 *how* to gather or process data. The agent might search, read results, search
 again with a refined query, etc.
 
-### `ctx.log(...args)`
+### `ctx.output(...args)`
 
-Write output. Never use `console.log()` in jig handlers — always `ctx.log()`.
+Write output. Never use `console.log()` in jig handlers — always `ctx.output()`.
 Output is captured by the runtime for dry-run, dashboard display, and testing.
 
 ```typescript
-ctx.log(result.email)
-ctx.log(`Draft: https://mail.google.com/mail/u/0/#drafts/${id}`)
+ctx.output(result.email)
+ctx.output(`Draft: https://mail.google.com/mail/u/0/#drafts/${id}`)
 ```
 
 ### `ctx.parallel(...promises)`

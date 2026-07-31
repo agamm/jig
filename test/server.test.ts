@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test"
-import { existsSync, writeFileSync, mkdirSync, rmSync, readFileSync, mkdtempSync } from "fs"
+import { describe, it, expect } from "bun:test"
+import { writeFileSync, rmSync, readFileSync, readdirSync, mkdtempSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
 import type { RunEvent } from "../src/run-events.js"
@@ -80,13 +80,12 @@ describe("runner", () => {
 })
 
 describe("start preflight", () => {
-  it("detects stale connection files", () => {
-    const connectionsDir = join(PROJECT_ROOT, ".jig/connections")
-    if (!existsSync(connectionsDir)) return // skip if no connections
-
-    const files = Bun.spawnSync(["ls", connectionsDir]).stdout.toString().split("\n").filter(f => f.endsWith(".ts") && f !== "index.ts")
+  it("detects stale connection files", async () => {
+    const { CONNECTIONS_DIR } = await import("../src/config/paths.js")
+    const files = readdirSync(CONNECTIONS_DIR).filter(f => f.endsWith(".ts") && !f.endsWith(".d.ts") && f !== "index.ts")
+    expect(files.length).toBeGreaterThan(0)
     for (const file of files) {
-      const content = readFileSync(join(connectionsDir, file), "utf-8")
+      const content = readFileSync(join(CONNECTIONS_DIR, file), "utf-8")
       expect(content).not.toContain("sdk/connections") // stale import pattern
     }
   })
@@ -132,9 +131,6 @@ export default jig("external-sdk-import", { trigger: { type: "manual" } }, async
   })
 
   it("checks a draft outside the project root that imports generated connections", async () => {
-    const connectionModule = join(PROJECT_ROOT, ".jig/connections/apify.ts")
-    if (!existsSync(connectionModule)) return
-
     const { checkJigFile } = await import("../src/services/jig-checker.js")
     const testJig = join(TEST_TMP_DIR, "external-connection-import.ts")
     writeFileSync(testJig, `

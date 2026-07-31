@@ -1,7 +1,6 @@
 /**
- * Test fixtures for v12: seed the jig store directly so the runner can
- * materialize an active version. Replaces the pre-v12 pattern of writing
- * straight to JIGS_DIR.
+ * Seed the jig store directly so the runner can materialize an active version.
+ * The store is the only source of jig code — nothing reads jig source off disk.
  */
 import { mkdirSync, writeFileSync } from "fs"
 import { tmpdir } from "os"

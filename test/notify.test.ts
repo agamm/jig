@@ -94,20 +94,6 @@ describe("notify()", () => {
     expect(sent).toHaveLength(1)
   })
 
-  it("honours a paused flag left by the pre-AgentMail notifications row", async () => {
-    seedSendable()
-    setSetting("notifications", { channels: [], triggerOn: { fail: false } })
-    const sent: SentEmail[] = []
-
-    const delivered = await notify({
-      title: "T", body: "B", kind: "fail",
-      sendEmail: recorder(sent),
-    })
-
-    expect(delivered).toBe(false)
-    expect(sent).toEqual([])
-  })
-
   it("makes the email repliable and records the thread when the webhook is wired and a jig is known", async () => {
     seedSendable()
     seedWebhook()

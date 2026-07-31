@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useQueryState, parseAsString, parseAsBoolean } from "nuqs";
 import { mutate } from "swr";
-import type { Phase, Jig } from "@/types/jig";
+import type { Jig } from "@/types/jig";
 import { OnboardingView } from "@/components/onboarding-view";
 import { JigList } from "@/components/jig-list";
 import { JigDetailPane } from "@/components/jig-detail-pane";
@@ -69,8 +69,6 @@ export function DashboardShell({
   errorMessage,
   examplesErrorMessage,
   storageHealth,
-  phaseToggle = false,
-  onPhaseChange,
 }: {
   jigs: Jig[];
   examples?: ExampleJig[];
@@ -78,10 +76,7 @@ export function DashboardShell({
   errorMessage?: string;
   examplesErrorMessage?: string;
   storageHealth?: DataStorageHealth;
-  phaseToggle?: boolean;
-  onPhaseChange?: (phase: Phase) => void;
 }) {
-  const [phase, setPhase] = useState<Phase>("week2");
   const [selectedJig, setSelectedJig] = useQueryState("jig", parseAsString);
   const [selectedConnection, setSelectedConnection] = useQueryState("connection", parseAsString);
   const [reviewMode, setReviewMode] = useQueryState("review", parseAsBoolean.withDefault(false));
@@ -145,7 +140,7 @@ export function DashboardShell({
   }
 
   const currentJig = jigs.find((j) => j.id === selectedJig) ?? null;
-  const showOnboarding = !errorMessage && (phaseToggle ? phase === "day1" : jigs.length === 0 && !loading);
+  const showOnboarding = !errorMessage && jigs.length === 0 && !loading;
   const hasDetail = createOpen || draftSessionId || (selectedJig && currentJig) || selectedConnection;
   const collapsed = sidebarMounted ? sidebarSlim : false;
   const {
@@ -229,12 +224,6 @@ export function DashboardShell({
     }
   }
 
-  function handlePhaseChange(p: Phase) {
-    setPhase(p);
-    closeDetail();
-    onPhaseChange?.(p);
-  }
-
   async function handleCreateCustomConnection() {
     if (creatingCustomConnection) return;
     setCreatingCustomConnection(true);
@@ -266,20 +255,6 @@ export function DashboardShell({
         <div className="flex items-center gap-4">
           <span className="text-[13px] font-medium text-[#ededed]">Your Jigs</span>
         </div>
-
-        {phaseToggle && (
-          <div className="flex items-center gap-0.5 rounded-lg border border-[#1f1f23] bg-[#0e0e10] p-0.5">
-            {([["day1", "Day 1"], ["week2", "Week 2"], ["month3", "Month 3"]] as const).map(([key, label]) => (
-              <button
-                key={key}
-                onClick={() => handlePhaseChange(key)}
-                className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors duration-150 ${phase === key ? "bg-[#1a1a1d] text-[#ededed]" : "text-[#555] hover:text-[#888]"}`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        )}
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-4">

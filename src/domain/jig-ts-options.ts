@@ -39,6 +39,13 @@ export function getJigTsCompilerOptions(overrides: ts.CompilerOptions = {}): ts.
         "@jig/connections/*.js": [join(CONNECTIONS_DIR, "*.ts")],
         "@jig/connections/*.ts": [join(CONNECTIONS_DIR, "*.ts")],
         "@jig/connections/*": [join(CONNECTIONS_DIR, "*")],
+        // Generated connection modules import jig internals as file:// URLs so
+        // they resolve from anywhere at runtime (CONNECTIONS_DIR is /data in
+        // service mode while src lives in /app). tsc can't resolve that scheme,
+        // and an unresolved import silently degrades every tool to `any` —
+        // which disables checkTypedToolCallDiagnostics entirely. Map the scheme
+        // back to an absolute path so the tool param types survive.
+        "file:///*": ["/*"],
       },
     }
   }

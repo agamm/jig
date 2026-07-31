@@ -1,13 +1,12 @@
 /**
  * Single source of truth for jig source code.
  *
- * Replaces the old filesystem (`jigs/{id}.ts`) + embedded git repo + `DRAFT_JIGS_DIR`
- * triad with two tables: `jigs` and `jig_versions`. Each jig has a pointer to its
- * `active_version` (what runs) and optionally a `pending_version` (proposed but
- * unapproved). Approve moves active to pending. Discard hard-deletes the pending
- * row. Restore writes a new pending with old code.
+ * Two tables: `jigs` and `jig_versions`. Each jig points at its `active_version`
+ * (what runs) and optionally a `pending_version` (proposed but unapproved).
+ * Approve moves the active pointer to pending. Discard hard-deletes the pending
+ * row. Restore writes a new pending carrying the old code.
  *
- * See plan: code is a stream of versions; everything else is plumbing.
+ * Code is a stream of versions; everything else is plumbing.
  */
 import { Database } from "bun:sqlite"
 import { createTwoFilesPatch, diffLines } from "diff"

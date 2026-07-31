@@ -13,7 +13,7 @@
 import { existsSync } from "fs"
 import { createInterface } from "node:readline/promises"
 import { createApiServer } from "./server.js"
-import { CONNECTIONS_DIR, DASHBOARD_DIR, PROJECT_ROOT } from "./config/paths.js"
+import { DASHBOARD_DIR } from "./config/paths.js"
 import { resetSessionLog } from "./debug/session-log.js"
 import { startScheduler } from "./scheduler/index.js"
 import { isServiceMode } from "./config/runtime.js"
@@ -173,31 +173,6 @@ export async function startServer(options?: { port?: number }) {
   await resetSessionLog()
 
   await ensureDashboardInstalled()
-
-  // Verify connection files are up-to-date. Service-mode connection modules
-  // live under /data, so relative imports like ../../src/... resolve to /src,
-  // not the deployed /app/src. Regenerate old modules on boot.
-  const connectionsDir = CONNECTIONS_DIR
-  if (existsSync(connectionsDir)) {
-    const indexFile = `${connectionsDir}/index.ts`
-    if (existsSync(indexFile)) {
-      const { readFileSync, readdirSync } = await import("fs")
-      const { TYPEGEN_VERSION } = await import("./mcp/typegen.js")
-      const files = readdirSync(connectionsDir).filter(f => f.endsWith(".ts") && !f.endsWith(".d.ts") && f !== "index.ts")
-      for (const file of files) {
-        const content = readFileSync(`${connectionsDir}/${file}`, "utf-8")
-        // Regenerate when a runtime module predates the current template
-        // version (marker missing/old) or still uses legacy import paths.
-        if (!content.includes(`typegen-v${TYPEGEN_VERSION}`)
-          || content.includes("sdk/connections") || content.includes("\"../../src/") || content.includes("from \"../../src/")) {
-          console.log(`Stale connection files detected. Regenerating...`)
-          const regen = Bun.spawn(["bun", "run", "src/mcp/typegen.ts"], { cwd: PROJECT_ROOT, stdout: "inherit", stderr: "inherit" })
-          await regen.exited
-          break
-        }
-      }
-    }
-  }
 
   const service = isServiceMode()
   const envPort = parseInt(process.env.PORT ?? "0")

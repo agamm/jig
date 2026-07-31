@@ -1,4 +1,3 @@
-import { getFastModel } from "../config/models.js"
 
 type TriggerResult = {
   type: string
@@ -80,19 +79,7 @@ export function textToTrigger(text: string): { type: string; cron?: string } | n
   return null
 }
 
-export async function textToTriggerLLM(text: string): Promise<TriggerResult | null> {
-  const { getOpenRouterApiKey } = await import("../config/openrouter.js")
-  const apiKey = getOpenRouterApiKey()
-  if (!apiKey) return null
-  try {
-    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: getFastModel(),
-        max_tokens: 2000,
-        messages: [
-          { role: "system", content: `Convert the user's scheduling description into a JSON trigger object. Return ONLY valid JSON, no explanation.
+const TRIGGER_SYSTEM_PROMPT = `Convert the user's scheduling description into a JSON trigger object. Return ONLY valid JSON, no explanation.
 
 Possible formats:
 - { "type": "cron", "cron": "<5-field cron expression>" }
@@ -105,18 +92,20 @@ Examples:
 "every friday at 9am" → { "type": "cron", "cron": "0 9 * * 5" }
 "twice a day" → { "type": "cron", "cron": "0 9,17 * * *" }
 "every 30 minutes" → { "type": "cron", "cron": "*/30 * * * *" }
-"odd week tuesdays at 9am" → { "type": "cron", "cron": "0 9 * * 2", "approximate": true, "note": "Cron cannot express odd/even weeks — this will run every Tuesday" }` },
-          { role: "user", content: text },
-        ],
-      }),
-    })
-    const data = await res.json() as any
-    const content = data.choices?.[0]?.message?.content?.trim()
-    if (!content) return null
+"odd week tuesdays at 9am" → { "type": "cron", "cron": "0 9 * * 2", "approximate": true, "note": "Cron cannot express odd/even weeks — this will run every Tuesday" }`
+
+export async function textToTriggerLLM(text: string): Promise<TriggerResult | null> {
+  const { fastCompletion } = await import("../config/fast-llm.js")
+  const content = await fastCompletion({
+    system: TRIGGER_SYSTEM_PROMPT,
+    user: text,
+    maxTokens: 2000,
+  })
+  if (!content) return null
+  try {
     const parsed = JSON.parse(content.replace(/^```json?\s*|\s*```$/g, ""))
     return parsed?.type ? parsed : null
-  } catch (e) {
-    console.error("[trigger-llm]", e)
+  } catch {
     return null
   }
 }

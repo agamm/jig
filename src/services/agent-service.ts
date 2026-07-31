@@ -4,12 +4,11 @@ import { join } from "path"
 import OpenAI from "openai"
 import type { ChatCompletionContentPart, ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions"
 import type { AgentConversationTurn, AgentDraftApproval, AgentEvent, AgentMetrics, AgentStatusResponse, JigData, OkResponse, StartAgentResponse } from "../../shared/api.js"
-import { getEditorModel, getFastModel } from "../config/models.js"
+import { getEditorModel } from "../config/models.js"
 import { SCHEMAS_DIR } from "../config/paths.js"
 import { isValidJigId } from "../domain/jig-id.js"
 import { getImportedServers } from "../domain/source-analysis.js"
 import { prettifyId } from "../domain/jig-source.js"
-import { invalidateJigsCache } from "../discover.js"
 import { checkJigFile } from "./jig-checker.js"
 import { buildAgentJigSystemPrompt } from "./jig-writing-prompt.js"
 import { ApiError } from "../server/http.js"
@@ -24,6 +23,7 @@ import {
 } from "./jig-store.js"
 import { materializeActiveVersion, materializePendingVersion } from "./jig-runtime.js"
 import { getOpenRouterApiKey, requireOpenRouterApiKey } from "../config/openrouter.js"
+import { fastCompletionMessage, type UrlCitation } from "../config/fast-llm.js"
 import { logSessionEvent } from "../debug/session-log.js"
 import { buildDraftJigResponse } from "./jig-api.js"
 import { getConnectionStatus } from "./connection-status.js"
@@ -66,7 +66,6 @@ type AgentSession = {
   createdAt: number
   pendingAskToolCallId?: string
   pendingAskQuestion?: string
-  draftFilePath?: string
   draftApproval?: AgentDraftApproval
   /** SSE replay cursor — events with seq <= this have been emitted to a stream client at least once. */
   lastEventSeq: number
@@ -127,7 +126,6 @@ function serializeSession(session: AgentSession): AgentSessionRow {
     updated_at: Date.now(),
     pending_ask_tool_call_id: session.pendingAskToolCallId ?? null,
     pending_ask_question: session.pendingAskQuestion ?? null,
-    draft_file_path: session.draftFilePath ?? null,
     draft_approval: session.draftApproval ? JSON.stringify(session.draftApproval) : null,
     last_event_seq: session.lastEventSeq,
   }
@@ -151,7 +149,6 @@ function hydrateSession(row: AgentSessionRow): AgentSession {
     createdAt: row.created_at,
     pendingAskToolCallId: row.pending_ask_tool_call_id ?? undefined,
     pendingAskQuestion: row.pending_ask_question ?? undefined,
-    draftFilePath: row.draft_file_path ?? undefined,
     draftApproval: parseJson<AgentDraftApproval | undefined>(row.draft_approval, undefined),
     lastEventSeq: row.last_event_seq ?? 0,
   }
@@ -281,7 +278,6 @@ function clearDraft(session: AgentSession): void {
   // for this jig inherits it. Closing/timing-out a session does NOT discard
   // pending; that requires an explicit user action via the discard endpoint.
   // We only clear session-local state here.
-  session.draftFilePath = undefined
   session.draftApproval = undefined
 }
 
@@ -315,16 +311,10 @@ function releaseSession(session: AgentSession): void {
     const row = storeGetJigRow(session.jigId)
     if (row && row.active_version_id == null && !jigHasActiveSession(session.jigId)) {
       storeDeleteJig(session.jigId)
-      invalidateJigsCache()
     }
   }
 }
 
-/**
- * Returns true if no other live session is editing this jig — caller is safe to claim.
- * v12: lock lives entirely in agent_sessions status; pending in the store is durable
- * across sessions, but only one session can be actively writing at a time.
- */
 /**
  * Force-close every session holding this jig, regardless of status. Used when
  * an explicit user edit supersedes whatever is running (hung edit, background
@@ -666,7 +656,6 @@ async function toolWriteJigFile(args: { code: string; jigId?: string; message?: 
 
   // The previous `draftApproval` cache is now derivable from getPending(jigId);
   // clear it here so consumers refetch and don't see stale approval data.
-  session.draftFilePath = undefined
   session.draftApproval = undefined
   persistSession(session)
 
@@ -790,11 +779,9 @@ async function toolRenameJig(args: { newJigId: string }, session: AgentSession):
   // identifier inside every version's code atomically — no follow-up needed.
   storeRenameJig(oldJigId, newJigId)
   renameJigLocalState(oldJigId, newJigId)
-  invalidateJigsCache()
   activeAgentJigs.delete(oldJigId)
   activeAgentJigs.add(newJigId)
   session.jigId = newJigId
-  session.draftFilePath = undefined
   session.draftApproval = undefined
   persistSession(session)
   return JSON.stringify({ ok: true, oldJigId, newJigId, draft: storeGetPending(newJigId) != null })
@@ -831,15 +818,6 @@ export function findUnhealthyImports(code: string): { server: string; state: str
 /** True if an authoring session is actively editing this jig. */
 export function isJigBeingEdited(jigId: string): boolean {
   return activeAgentJigs.has(jigId)
-}
-
-function rewriteJigIdentifier(code: string, newJigId: string): string {
-  let replaced = false
-  return code.replace(/jig\(\s*(["'`])([^"'`]+)\1/, (match, quote: string) => {
-    if (replaced) return match
-    replaced = true
-    return `jig(${quote}${newJigId}${quote}`
-  })
 }
 
 async function toolIntrospectToolOutput(args: {
@@ -946,43 +924,27 @@ async function _toolBrowse(args: { url: string }): Promise<string> {
 async function toolWebSearch(args: { query: string }): Promise<string> {
   const query = args.query?.trim()
   if (!query) return JSON.stringify({ error: "query is required" })
-  const apiKey = getOpenRouterApiKey()
-  if (!apiKey) return JSON.stringify({ error: "No OpenRouter API key configured — web search is unavailable." })
-
-  try {
-    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: getFastModel(),
-        plugins: [{ id: "web", max_results: 5 }],
-        messages: [{
-          role: "user",
-          content: `Search the web for: ${query}\n\nSummarize the findings relevant to the query, and cite sources.`,
-        }],
-        max_tokens: 1200,
-      }),
-      signal: AbortSignal.timeout(60_000),
-    })
-    if (!res.ok) {
-      return JSON.stringify({ error: `Web search failed (HTTP ${res.status}): ${(await res.text()).slice(0, 300)}` })
-    }
-    const body = await res.json() as {
-      choices?: { message?: { content?: string; annotations?: { url_citation?: { url?: string; title?: string; content?: string } }[] } }[]
-    }
-    const message = body.choices?.[0]?.message
-    // Hand back the citation list too — the agent's usual next move is to
-    // `browse` the most relevant source for the full page.
-    const sources = (message?.annotations ?? [])
-      .map((a) => a.url_citation)
-      .filter((c): c is { url?: string; title?: string; content?: string } => !!c?.url)
-      .map((c) => ({ url: c.url, title: c.title, excerpt: c.content?.slice(0, 500) }))
-    const summary = message?.content?.trim()
-    if (!summary && sources.length === 0) return JSON.stringify({ error: "Web search returned no results." })
-    return JSON.stringify({ summary, sources })
-  } catch (e: any) {
-    return JSON.stringify({ error: `Web search failed: ${e?.message ?? e}` })
+  if (!getOpenRouterApiKey()) {
+    return JSON.stringify({ error: "No OpenRouter API key configured — web search is unavailable." })
   }
+
+  const message = await fastCompletionMessage({
+    system: "You search the web and report findings. Summarize what is relevant to the query, and cite sources.",
+    user: `Search the web for: ${query}`,
+    maxTokens: 1200,
+    timeoutMs: 60_000,
+    body: { plugins: [{ id: "web", max_results: 5 }] },
+  })
+
+  // Hand back the citation list too — the agent's usual next move is to
+  // `browse` the most relevant source for the full page.
+  const sources = (message?.annotations ?? [])
+    .map((a) => a.url_citation)
+    .filter((c): c is UrlCitation => !!c?.url)
+    .map((c) => ({ url: c.url, title: c.title, excerpt: c.content?.slice(0, 500) }))
+  const summary = message?.content?.trim()
+  if (!summary && sources.length === 0) return JSON.stringify({ error: "Web search returned no results." })
+  return JSON.stringify({ summary, sources })
 }
 
 const ASK_USER_SENTINEL = "__ASK_USER__"
@@ -1126,7 +1088,6 @@ export async function approvePendingByJig(jigId: string): Promise<boolean> {
     // Tool introspection is best-effort; failing it should not block approval.
   }
 
-  invalidateJigsCache()
   activeAgentJigs.delete(jigId)
   return true
 }
@@ -1135,7 +1096,6 @@ async function approveDraft(session: AgentSession): Promise<void> {
   if (!session.jigId) throw new ApiError(409, "No pending draft approval")
   if (!(await approvePendingByJig(session.jigId))) throw new ApiError(409, "No pending draft approval")
 
-  session.draftFilePath = undefined
   session.draftApproval = undefined
   deleteAgentSession(session.sessionId)
   session.events.push({ type: "text", content: `Approved changes to ${session.jigId}.` })

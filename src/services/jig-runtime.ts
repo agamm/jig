@@ -21,18 +21,19 @@ function pathFor(jigId: string, versionId: number): string {
   return join(RUNTIME_DIR, `${jigId}-${versionId}.ts`)
 }
 
-async function writeIfMissing(path: string, code: string): Promise<void> {
-  if (existsSync(path)) return
-  await Bun.write(path, code)
-}
-
 /**
  * Materializes a specific version. Returns the path Bun can import.
+ *
+ * Always writes rather than skipping when the path exists. `{jigId}-{versionId}`
+ * is only unique while the database lives: version ids restart at 1 after a
+ * reset (or a corruption-recovery rebuild), so a re-created jig of the same name
+ * collides with a stale file and would have executed the OLD code. The write is
+ * a few KB once per run, which is not worth a staleness class of bug.
  */
 export async function materializeVersion(version: JigVersion): Promise<string> {
   ensureRuntimeDir()
   const path = pathFor(version.jigId, version.id)
-  await writeIfMissing(path, version.code)
+  await Bun.write(path, version.code)
   return path
 }
 

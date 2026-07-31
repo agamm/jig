@@ -1,0 +1,26 @@
+[
+  {
+    "name": "get_meetings",
+    "description": "List meetings Granola has captured notes for.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "limit": { "type": "number", "description": "Maximum meetings to return." }
+      },
+      "required": []
+    },
+    "annotations": { "readOnlyHint": true }
+  },
+  {
+    "name": "query_granola_meetings",
+    "description": "Ask a natural-language question about meetings.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": { "type": "string", "description": "The question to ask." }
+      },
+      "required": ["query"]
+    },
+    "annotations": { "readOnlyHint": true }
+  }
+]

@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.9
+
+      - run: bun install --frozen-lockfile
+
+      # The suite is hermetic (see test/setup.ts): it runs against a scratch
+      # data dir and the frozen schemas in test/fixtures, so it needs no
+      # credentials and no connected MCP servers.
+      - run: bun test
+
+      # Covers src/, shared/ and test/. noUnusedLocals/noUnusedParameters are on,
+      # so this is also what keeps dead code from creeping back in.
+      - run: bunx tsc --noEmit
+
+  dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+
+      - run: pnpm install --frozen-lockfile
+        working-directory: dashboard
+
+      # `next build` typechecks the dashboard as part of the build.
+      - run: pnpm run build
+        working-directory: dashboard

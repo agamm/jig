@@ -1,0 +1,3 @@
+[test]
+# Isolates the suite from the developer's live jig.db and .jig/ artifacts.
+preload = ["./test/setup.ts"]

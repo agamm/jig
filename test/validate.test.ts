@@ -137,8 +137,8 @@ describe("validateJigFile", () => {
 
     try {
       writeFileSync(jigPath, `
-import { jig } from "../src/index.js"
-import { workspace } from "../.jig/connections/workspace.js"
+import { jig } from "@jig/sdk"
+import { workspace } from "@jig/connections/workspace.js"
 
 export default jig("missing-subject", {
   trigger: { type: "manual" },
@@ -164,8 +164,8 @@ export default jig("missing-subject", {
 
     try {
       writeFileSync(jigPath, `
-import { jig } from "../src/index.js"
-import { apify } from "../.jig/connections/apify.js"
+import { jig } from "@jig/sdk"
+import { apify } from "@jig/connections/apify.js"
 
 export default jig("missing-apify-input", {
   trigger: { type: "manual" },
@@ -188,8 +188,8 @@ export default jig("missing-apify-input", {
 
     try {
       writeFileSync(jigPath, `
-import { jig } from "../src/index.js"
-import { workspace } from "../.jig/connections/workspace.js"
+import { jig } from "@jig/sdk"
+import { workspace } from "@jig/connections/workspace.js"
 
 const email = { to: "alerts@example.com", subject: "Alert", body: "outer" }
 

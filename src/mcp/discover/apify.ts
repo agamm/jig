@@ -73,7 +73,7 @@ export async function resolveForBuildWithOps(
         explicitActor ? "The user explicitly named this Apify Actor." : "This was the only strong Apify Actor match found."
       ),
       requiredTools: ["call-actor"],
-      includeTools: ["call-actor", "get-actor-run", "get-actor-output"],
+      includeTools: ["call-actor", "get-dataset-items"],
       excludeTools: ["search-actors", "fetch-actor-details"],
       resolvedTarget: chosen.details.actorInfo?.fullName ?? chosen.fullName,
       resolvedInputSchema: chosen.details.inputSchema ?? null,
@@ -93,7 +93,7 @@ export async function resolveForBuildWithOps(
   return {
     context: buildResolutionContext(chosen, selection.reason),
     requiredTools: ["call-actor"],
-    includeTools: ["call-actor", "get-actor-run", "get-actor-output"],
+    includeTools: ["call-actor", "get-dataset-items"],
     excludeTools: ["search-actors", "fetch-actor-details"],
     resolvedTarget: chosen.details.actorInfo?.fullName ?? chosen.fullName,
     resolvedInputSchema: chosen.details.inputSchema ?? null,
@@ -287,7 +287,13 @@ function buildResolutionContext(candidate: ActorCard & { details: ActorDetails }
 
   const parts = [
     `Resolved Apify Actor at build time for this workflow: ${actorName}.`,
-    `Tool contract: call \`apify.call_actor({ actor: "${actorName}", input: { ... } })\`. Use \`actor\`, not \`actorId\`, and pass a real object to \`input\`, not a JSON string. When the response includes \`datasetId\`, call \`apify.get_actor_output({ datasetId })\`. Important: \`apify.get_actor_output\` returns an object like \`{ datasetId, items, itemCount, totalItemCount }\`, not the items array directly. Read \`const output = await apify.get_actor_output(...)\` and then \`const items = output.items ?? []\`. If the second tool depends on the first tool's result, prefer a second \`ctx.step(...)\` for \`apify.get_actor_output\` rather than calling both tools inside one step. Do not call \`apify.get_actor_run\` immediately after a normal sync \`apify.call_actor\` just to recover output. Do not use \`apify.search_actors\` or \`apify.fetch_actor_details\` in the jig runtime unless the user explicitly wants dynamic rediscovery.`,
+    `Tool contract — this is TWO steps, and skipping the second is the most common failure:
+1. \`const run = await apify.call_actor({ actor: "${actorName}", input: { ... } })\`. Use \`actor\`, not \`actorId\`, and pass a real object to \`input\`, not a JSON string. This returns a RUN DESCRIPTOR (status, stats, storages) — it does NOT contain the scraped rows.
+2. \`const items = await apify.get_dataset_items({ datasetId: run.storages?.datasets?.default?.id })\`. THIS is what returns the actual rows. Read them into a variable and use those real values downstream.
+
+Never derive a result from the run descriptor alone. Passing only \`datasetId\`/\`itemCount\` into \`llm()\` or \`agent()\` makes it invent the answer — that is a bug, not a shortcut. Do the two calls in two separate \`ctx.step(...)\` blocks, since the second depends on the first.
+
+\`apify.get_actor_run\` returns run METADATA only and is NOT a substitute for \`apify.get_dataset_items\`. Do not use \`apify.search_actors\` or \`apify.fetch_actor_details\` at runtime unless the user explicitly wants dynamic rediscovery.`,
     `Selection note: ${reason}`,
     summary ? `Actor summary: ${title} — ${summary}` : `Actor summary: ${title}`,
     `Relevant actor input fields:\n${summarizeInputSchema(inputSchema)}`,

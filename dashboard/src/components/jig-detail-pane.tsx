@@ -16,7 +16,7 @@ import { TextArea } from "@/components/input";
 import { JigToolList } from "@/components/jig-tool-list";
 import { JigVersions } from "@/components/jig-versions";
 import { toast } from "@/components/toast";
-import { TRIGGER_SUGGESTIONS } from "@/mock/mock-data";
+import { TRIGGER_SUGGESTIONS } from "@/lib/trigger-suggestions";
 import { useTriggerSave } from "@/hooks/use-trigger-save";
 import { MarkdownOutput } from "@/components/markdown-output";
 import { useElapsed } from "@/hooks/use-elapsed";

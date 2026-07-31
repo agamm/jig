@@ -2,18 +2,15 @@
 /**
  * Jig CLI — thin glue that wires terminal I/O to reusable modules.
  *
- * Business logic emits structured JigEvents. This file renders them as text.
- * A dashboard would render the same events as UI components.
+ * The connect flow emits structured ConnectEvents; this file renders them as
+ * text. The dashboard renders the same events as UI components.
  */
 process.env.JIG_LOG_SOURCE = process.env.JIG_LOG_SOURCE ?? "cli"
 import "./server/log-buffer.js" // side-effect: captures console.* into the shared SQLite logs table
-import { discoverJigs } from "./discover.js"
-import { existsSync } from "fs"
-import { join, relative } from "path"
+import { join } from "path"
 import { createInterface } from "node:readline/promises"
-import type { JigIO, JigEvent } from "./jig-gen.js"
-import { CONNECTIONS_DIR, PROJECT_ROOT } from "./config/paths.js"
-import { runConnectFlow } from "../shared/connect-flow.js"
+import { PROJECT_ROOT } from "./config/paths.js"
+import { runConnectFlow, type ConnectEvent, type ConnectIO } from "../shared/connect-flow.js"
 import type { ConnectConnectionResponse, Connection } from "../shared/api.js"
 
 const API_PORT = parseInt(process.env.PORT ?? "3141")
@@ -33,128 +30,15 @@ if (dryRun) {
 // CLI renderer — turns structured events into terminal output
 // ---------------------------------------------------------------------------
 
-// Loading timer — shows elapsed seconds on the current line via \r overwrite
-let loadingTimer: Timer | null = null
-let loadingStart = 0
-let loadingLabel = ""
-
-function startLoading(label: string) {
-  stopLoading()
-  loadingStart = Date.now()
-  loadingLabel = label
-  if (process.stderr.isTTY) {
-    const tick = () => {
-      const secs = ((Date.now() - loadingStart) / 1000).toFixed(0)
-      process.stderr.write(`\r\x1b[2K${label} ${secs}s`)
-    }
-    tick()
-    loadingTimer = setInterval(tick, 1000)
-  } else {
-    console.log(label)
-  }
-}
-
-function stopLoading() {
-  if (loadingTimer) {
-    clearInterval(loadingTimer)
-    loadingTimer = null
-    process.stderr.write(`\r\x1b[2K`)
-  }
-}
-
-function finishLoading(result: string) {
-  const secs = ((Date.now() - loadingStart) / 1000).toFixed(1)
-  stopLoading()
-  console.log(`${result} (${secs}s)`)
-}
-
-function renderEvent(event: JigEvent): void {
+function renderEvent(event: ConnectEvent): void {
   switch (event.type) {
-    // Creator events
-    case "connections":
-      stopLoading()
-      console.log("\nChecking connections...")
-      for (const s of event.servers) {
-        console.log(`  ${s.name} ${s.connected ? "\u2713" : "\u2717"}  ${s.description}`)
-      }
-      break
-    case "connections-missing":
-      stopLoading()
-      console.error("\nThis jig needs services that aren't connected yet. Run:\n")
-      for (const s of event.servers) console.error(`  ${s.command}`)
-      break
-    case "connections-unknown":
-      stopLoading()
-      for (const s of event.servers) {
-        console.error(`\n"${s.name}" isn't a predefined service. To add it:\n`)
-        console.error(`1. Add to servers/default.json:`)
-        console.error(`   "${s.name}": { "type": "remote", "url": "<MCP server URL>", "description": "..." }\n`)
-        console.error(`2. Then run: jig connect ${s.name}`)
-      }
-      break
-    case "plan":
-      finishLoading("Planning...")
-      console.log(`\nPlan: ${event.name}`)
-      console.log(`  Servers: ${event.servers.join(", ")}`)
-      console.log(`  Tool scope: ${event.relevantTools.join(", ")}`)
-      break
-    case "probe-start":
-      // No loading timer — agent() has its own spinner
-      loadingStart = Date.now()
-      console.log(`\nProbing ${event.tools.length} tools...`)
-      for (const t of event.tools) console.log(`  ${t}`)
-      break
-    case "probe-done": {
-      const secs = ((Date.now() - loadingStart) / 1000).toFixed(1)
-      const lines = event.summary.split("\n")
-      const preview = lines.length > 12 ? [...lines.slice(0, 10), `  ... (${lines.length - 10} more lines)`] : lines
-      console.log(`\nProbe results (${secs}s):`)
-      for (const l of preview) console.log(`  ${l}`)
-      break
-    }
-    case "generate-start":
-      console.log(""); startLoading("Generating jig...")
-      break
-    case "write":
-      finishLoading("Generating jig...")
-      console.log(`Writing ${event.file}...`)
-      break
-    case "validate":
-      stopLoading()
-      console.log(event.ok ? "Validating... ok" : `Validating... errors found\n${event.errors}`)
-      break
-    case "fix":
-      startLoading(`Fixing... attempt ${event.attempt}/${event.max}`)
-      break
-    case "dry-run-start":
-      // No loading timer — the jig's agent() has its own spinner
-      loadingStart = Date.now()
-      console.log("\nDry-running...")
-      break
-    case "dry-run-review": {
-      const secs = ((Date.now() - loadingStart) / 1000).toFixed(1)
-      console.log(event.ok ? `Dry-run review... ok (${secs}s)` : `Dry-run review found issues (${secs}s):\n${event.issues}`)
-      break
-    }
-    case "created":
-      stopLoading()
-      console.log(`\nCreated: ${event.file}`)
-      console.log(`Run with: jig run ${event.name}`)
-      break
-    case "updated":
-      stopLoading()
-      console.log(`\nUpdated: ${event.file}`)
-      break
     case "error":
-      stopLoading()
       console.error(event.message)
       if (event.details?.suggestion) console.error(`Try: ${event.details.suggestion}`)
       if (event.details?.commands) {
         for (const cmd of event.details.commands) console.error(`  ${cmd}`)
       }
       break
-
-    // Connect events
     case "server-list":
       console.log("Servers:\n")
       for (const s of event.servers) {
@@ -190,27 +74,10 @@ function renderEvent(event: JigEvent): void {
           : `\nOpen this URL in any browser to authorize ${event.server}:\n  ${event.authorizationUrl}\n`,
       )
       break
-
-    // Run events
-    case "jig-list":
-      console.log("Available jigs:\n")
-      for (const name of event.jigs) {
-        console.log(`  ${name}`)
-      }
-      console.log(`\nRun "jig run <name>"`)
-      break
-    case "run-start":
-      console.log(`\n--- ${event.name} ---`)
-      break
-
-    default: {
-      const _exhaustive: never = event
-      break
-    }
   }
 }
 
-function makeIO(): JigIO {
+function makeIO(): ConnectIO {
   return {
     ask: async (question: string) => {
       const rl = createInterface({ input: process.stdin, output: process.stdout })
@@ -325,7 +192,7 @@ try {
       break
 
     case "run":
-      await handleRun(rest[0], io)
+      await handleRun(rest[0])
       break
 
     case "new": {
@@ -575,7 +442,7 @@ async function update() {
 // connect — uses structured events
 // ---------------------------------------------------------------------------
 
-async function connect(serverName: string | undefined, io: JigIO) {
+async function connect(serverName: string | undefined, io: ConnectIO) {
   await ensureServer()
 
   const fetchApiJson = async <T>(path: string, init?: RequestInit): Promise<T> => {
@@ -601,17 +468,10 @@ async function connect(serverName: string | undefined, io: JigIO) {
 }
 
 // ---------------------------------------------------------------------------
-// run — uses structured events
+// run
 // ---------------------------------------------------------------------------
 
-function checkConnections(io: JigIO) {
-  if (!existsSync(CONNECTIONS_DIR) || !existsSync(join(CONNECTIONS_DIR, "index.ts"))) {
-    io.emit({ type: "error", code: "no-connections", message: `No connections found. Run "jig connect <server>" first.` })
-    process.exit(1)
-  }
-}
-
-async function runJigFile(path: string, io: JigIO, jigId: string) {
+async function runJigFile(path: string, jigId: string) {
   const { runJig, persist } = await import("./runner.js")
   const { openDb, insertRun } = await import("./db.js")
 
@@ -635,19 +495,45 @@ async function runJigFile(path: string, io: JigIO, jigId: string) {
   if (result.error) process.exit(1)
 }
 
-async function handleRun(name: string | undefined, io: JigIO) {
-  const jigsDir = join(PROJECT_ROOT, "jigs")
-  const jigs = discoverJigs(jigsDir)
+/**
+ * Runs the jig's APPROVED ACTIVE VERSION from the store — the same source the
+ * dashboard and the scheduler execute. Reading `jigs/<name>.ts` off disk instead
+ * (as this did pre-v12) meant `jig run` could silently execute code that had
+ * been superseded, rolled back, or never approved.
+ */
+async function handleRun(name: string | undefined) {
+  const { listJigs } = await import("./services/jig-store.js")
 
   if (!name) {
-    io.emit({ type: "jig-list", jigs: [...jigs.keys()] })
+    const jigs = listJigs().filter((jig) => jig.activeVersionId != null)
+    if (jigs.length === 0) {
+      console.log(`No jigs yet. Create one with "jig new <description>".`)
+      return
+    }
+    console.log("Available jigs:\n")
+    for (const jig of jigs) console.log(`  ${jig.id}`)
+    console.log(`\nRun "jig run <name>"`)
     return
   }
 
-  if (!jigs.has(name)) {
-    io.emit({ type: "error", code: "jig-not-found", message: `Jig not found: ${name}` })
+  const { materializeActiveVersion } = await import("./services/jig-runtime.js")
+  const materialized = await materializeActiveVersion(name)
+  if (!materialized) {
+    console.error(`Jig not found (or has no approved version): ${name}`)
     process.exit(1)
   }
-  checkConnections(io)
-  await runJigFile(join(jigsDir, `${name}.ts`), io, name)
+
+  // Same per-jig preflight the server runs, instead of the old blanket
+  // "is anything connected at all" check.
+  const { missingConnectionsForJig } = await import("./services/connection-preflight.js")
+  const missing = missingConnectionsForJig(materialized.path)
+  if (missing.length > 0) {
+    console.error(
+      `${missing.length === 1 ? "Connection" : "Connections"} required: ${missing.join(", ")}.`
+      + ` Run "jig connect <server>" first.`
+    )
+    process.exit(1)
+  }
+
+  await runJigFile(materialized.path, name)
 }

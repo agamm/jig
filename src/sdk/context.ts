@@ -101,13 +101,18 @@ export class Context {
     return this._currentStepToolNames.includes(toolName)
   }
 
+  private readonly _signal?: AbortSignal
+  private readonly _toolTimeoutMs?: number | null
+  private readonly _jigId?: string
+
   constructor(
-    public readonly params: Record<string, unknown>,
-    private allowedTools: string[],
-    private readonly _signal?: AbortSignal,
-    private readonly _toolTimeoutMs?: number | null,
-    private readonly _jigId?: string
-  ) {}
+    public readonly params: Record<string, unknown> = {},
+    options: { signal?: AbortSignal; toolTimeoutMs?: number | null; jigId?: string } = {},
+  ) {
+    this._signal = options.signal
+    this._toolTimeoutMs = options.toolTimeoutMs
+    this._jigId = options.jigId
+  }
 
   get signal(): AbortSignal | undefined { return this._signal }
 
@@ -201,9 +206,6 @@ export class Context {
     this._sink(...args)
     this._recorder?.onOutput?.(line)
   }
-
-  /** @deprecated Use ctx.output() instead. */
-  log(...args: any[]) { this.output(...args) }
 
   /**
    * Email the user (the configured AgentMail owner) a repliable message —

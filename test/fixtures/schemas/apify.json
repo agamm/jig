@@ -1,0 +1,89 @@
+[
+  {
+    "name": "search-actors",
+    "description": "Search the Apify Store for Actors.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "search": {
+          "type": "string",
+          "description": "Search terms."
+        },
+        "limit": {
+          "type": "number",
+          "description": "Maximum Actors to return."
+        }
+      },
+      "required": []
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "fetch-actor-details",
+    "description": "Fetch details and input schema for one Actor.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "actor": {
+          "type": "string",
+          "description": "Actor id, e.g. apify/hello-world."
+        }
+      },
+      "required": [
+        "actor"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "call-actor",
+    "description": "Run an Actor and wait for it to finish.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "actor": {
+          "type": "string",
+          "description": "Actor id, e.g. apify/hello-world."
+        },
+        "input": {
+          "type": "object",
+          "description": "Actor input matching its schema."
+        }
+      },
+      "required": [
+        "actor",
+        "input"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "get-dataset-items",
+    "description": "Get items (rows) from a dataset \u2014 the output produced by an Actor run.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "datasetId": {
+          "type": "string",
+          "description": "Dataset ID from a run."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Maximum number of items to return."
+        }
+      },
+      "required": [
+        "datasetId"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  }
+]

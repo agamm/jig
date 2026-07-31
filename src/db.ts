@@ -2,8 +2,8 @@
  * SQLite database module — run history and step results.
  *
  * Uses bun:sqlite. Opens/creates jig.db at project root.
- * Discovery (discoverJigs) is the source of truth for jig metadata.
- * This module only stores execution history.
+ * The jigs/jig_versions tables are the source of truth for jig source and
+ * metadata (see services/jig-store.ts); this module owns the raw SQL surface.
  */
 import { Database } from "bun:sqlite"
 import { existsSync, mkdirSync } from "node:fs"
@@ -44,6 +44,18 @@ export interface StepRow {
 // Schema
 // ---------------------------------------------------------------------------
 
+/**
+ * The CURRENT schema, applied verbatim to a brand-new database.
+ *
+ * This is a squashed baseline: the twenty incremental migrations that built it
+ * during alpha were collapsed once every instance had run them, together with
+ * the schema-introspection logic that existed only to let those historical
+ * migrations replay harmlessly over a fresh database.
+ *
+ * A schema change means TWO edits: update this block (so new databases get it)
+ * AND append a migration (so existing databases get it). `db.test.ts`
+ * ("fresh and migrated databases converge") fails if you do only one.
+ */
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,6 +68,8 @@ CREATE TABLE IF NOT EXISTS runs (
   output TEXT,
   params TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_runs_jig_id ON runs(jig_id);
+CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
 
 CREATE TABLE IF NOT EXISTS run_steps (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -70,9 +84,6 @@ CREATE TABLE IF NOT EXISTS run_steps (
   error TEXT,
   connections TEXT
 );
-
-CREATE INDEX IF NOT EXISTS idx_runs_jig_id ON runs(jig_id);
-CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
 CREATE INDEX IF NOT EXISTS idx_run_steps_run_id ON run_steps(run_id);
 
 CREATE TABLE IF NOT EXISTS step_cache (
@@ -82,6 +93,67 @@ CREATE TABLE IF NOT EXISTS step_cache (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_step_cache_jig ON step_cache(jig_id);
 
+-- Jig source of truth. The jigs table points at the approved (active) version
+-- and optionally a pending one awaiting approval; jig_versions is append-only.
+CREATE TABLE IF NOT EXISTS jigs (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  active_version_id INTEGER REFERENCES jig_versions(id),
+  pending_version_id INTEGER REFERENCES jig_versions(id),
+  created_at INTEGER NOT NULL,
+  archived_at INTEGER,
+  model_override TEXT,
+  step_model_overrides TEXT,
+  run_timeout_ms INTEGER,
+  tool_timeout_ms INTEGER
+);
+CREATE TABLE IF NOT EXISTS jig_versions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  jig_id TEXT NOT NULL,
+  code TEXT NOT NULL,
+  message TEXT,
+  prompt TEXT,
+  author TEXT NOT NULL,
+  parent_version_id INTEGER REFERENCES jig_versions(id),
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_jig_versions_jig ON jig_versions(jig_id, id DESC);
+
+CREATE TABLE IF NOT EXISTS schedules (
+  jig_id TEXT PRIMARY KEY,
+  trigger_type TEXT NOT NULL,
+  cron_expr TEXT,
+  timezone TEXT,
+  missed_strategy TEXT NOT NULL DEFAULT 'catch-up',
+  next_run_at INTEGER,
+  last_run_at INTEGER,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  error TEXT
+);
+
+CREATE TABLE IF NOT EXISTS authorized_senders (
+  channel TEXT NOT NULL,
+  sender_id TEXT NOT NULL,
+  authorized_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (channel, sender_id)
+);
+
+-- encrypted: 0 = plaintext (pre-password), 1 = ciphertext. get/setCredential
+-- wrap and unwrap transparently via src/crypto/password.ts.
+CREATE TABLE IF NOT EXISTS credentials (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  server TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  encrypted INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS tool_permissions (
   connection TEXT NOT NULL,
   tool TEXT NOT NULL,
@@ -89,6 +161,18 @@ CREATE TABLE IF NOT EXISTS tool_permissions (
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (connection, tool)
 );
+
+-- Any process touching jig.db appends here (CLI, API server, scheduler), so
+-- the dashboard's Logs page shows everything, not just what one process saw.
+CREATE TABLE IF NOT EXISTS logs (
+  seq    INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts     INTEGER NOT NULL,
+  level  TEXT NOT NULL CHECK (level IN ('info','warn','error')),
+  source TEXT NOT NULL,
+  msg    TEXT NOT NULL,
+  payload TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_logs_ts ON logs(ts DESC);
 
 CREATE TABLE IF NOT EXISTS agent_sessions (
   session_id TEXT PRIMARY KEY,
@@ -105,267 +189,79 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   updated_at INTEGER NOT NULL,
   pending_ask_tool_call_id TEXT,
   pending_ask_question TEXT,
-  draft_file_path TEXT,
-  draft_approval TEXT
+  draft_approval TEXT,
+  last_event_seq INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_jig_id ON agent_sessions(jig_id);
+
+-- Maps an inbound mail thread to the jig its failure email was about, so a
+-- reply routes to that jig's authoring agent. approval 'auto' ships edits on
+-- reply; 'propose' ships only on an explicit apply. reply_token is the shared
+-- secret a genuine reply echoes (a spoofed From alone cannot drive edits).
+CREATE TABLE IF NOT EXISTS email_threads (
+  thread_id TEXT PRIMARY KEY,
+  jig_id TEXT NOT NULL,
+  agent_session_id TEXT,
+  approval TEXT,
+  reply_token TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `
 
-// Versioned migrations — each runs once, tracked by PRAGMA user_version.
+/** Schema generation SCHEMA represents. MIGRATIONS[i] upgrades BASELINE + i to BASELINE + i + 1. */
+const BASELINE_VERSION = 20
+
+/**
+ * Schema changes made after the baseline. APPEND ONLY — `PRAGMA user_version`
+ * is an index into this list, so inserting or reordering makes existing
+ * databases skip migrations they never ran.
+ */
 const MIGRATIONS: string[] = [
-  // v1: drop old LLM-derived step tables, add connections column
-  `DROP TABLE IF EXISTS jig_steps;
-   DROP TABLE IF EXISTS jig_meta;
-   ALTER TABLE run_steps ADD COLUMN connections TEXT;`,
-  // v2: durable scheduler — schedules table (error column included)
-  `CREATE TABLE IF NOT EXISTS schedules (
-     jig_id TEXT PRIMARY KEY,
-     trigger_type TEXT NOT NULL,
-     cron_expr TEXT,
-     missed_strategy TEXT NOT NULL DEFAULT 'catch-up',
-     next_run_at INTEGER,
-     last_run_at INTEGER,
-     enabled INTEGER NOT NULL DEFAULT 1,
-     error TEXT
-   );`,
-  // v3: authorized senders for channel triggers (Telegram chat IDs, phone numbers, emails)
-  // + credentials for MCP server connections (API keys, server IDs, etc.)
-  `CREATE TABLE IF NOT EXISTS authorized_senders (
-     channel TEXT NOT NULL,
-     sender_id TEXT NOT NULL,
-     authorized_at TEXT NOT NULL DEFAULT (datetime('now')),
-     PRIMARY KEY (channel, sender_id)
-   );
-   CREATE TABLE IF NOT EXISTS credentials (
-     key TEXT PRIMARY KEY,
-     value TEXT NOT NULL,
-     server TEXT NOT NULL,
-     created_at TEXT NOT NULL DEFAULT (datetime('now'))
-   );`,
-  // v4: ensure credentials table exists (fixes DBs that migrated before credentials was added)
-  `CREATE TABLE IF NOT EXISTS credentials (
-     key TEXT PRIMARY KEY,
-     value TEXT NOT NULL,
-     server TEXT NOT NULL,
-     created_at TEXT NOT NULL DEFAULT (datetime('now'))
-   );`,
-  // v5: generic settings table (key/value JSON) — used by notifications settings
-  `CREATE TABLE IF NOT EXISTS settings (
-     key TEXT PRIMARY KEY,
-     value TEXT NOT NULL,
-     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-   );`,
-  // v6: remove abandoned entity support, add backend-owned tool permissions
-  `CREATE TABLE IF NOT EXISTS tool_permissions (
-     connection TEXT NOT NULL,
-     tool TEXT NOT NULL,
-     policy TEXT NOT NULL CHECK(policy IN ('always', 'ask', 'never')),
-     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-     PRIMARY KEY (connection, tool)
-   );
-   DROP INDEX IF EXISTS idx_step_cache_jig;
-   ALTER TABLE runs DROP COLUMN entity;
-   ALTER TABLE step_cache DROP COLUMN entity;
-   CREATE UNIQUE INDEX IF NOT EXISTS idx_step_cache_jig ON step_cache(jig_id);`,
-  // v7: persist run-level output for historical run previews/fallbacks
-  `ALTER TABLE runs ADD COLUMN output TEXT;`,
-  // v8: per-row encryption flag on credentials. 0 = plaintext (legacy), 1 = ciphertext.
-  // Row values are encrypted in service mode once a system password is set;
-  // getCredential/setCredential wrap/unwrap transparently via src/crypto/password.ts.
-  `ALTER TABLE credentials ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0;`,
-  // v9: persistent log buffer. Any process touching jig.db can append (CLI,
-  // API server, scheduler). The /api/logs endpoint reads from here so the
-  // Logs page shows everything, not just whatever the API-server process
-  // saw in its local ring buffer.
-  `CREATE TABLE IF NOT EXISTS logs (
-     seq    INTEGER PRIMARY KEY AUTOINCREMENT,
-     ts     INTEGER NOT NULL,
-     level  TEXT NOT NULL CHECK (level IN ('info','warn','error')),
-     source TEXT NOT NULL,
-     msg    TEXT NOT NULL
-   );
-   CREATE INDEX IF NOT EXISTS idx_logs_ts ON logs(ts DESC);`,
-  // v10: cron timezone. Railway runs in UTC by default; schedules should keep
-  // the timezone used to compute next_run_at so local-time cron definitions do
-  // not silently drift.
-  `ALTER TABLE schedules ADD COLUMN timezone TEXT;`,
-  // v11: persist authoring agent sessions/drafts so under-construction jigs
-  // survive dashboard reloads and API server restarts.
-  `CREATE TABLE IF NOT EXISTS agent_sessions (
-     session_id TEXT PRIMARY KEY,
-     jig_id TEXT,
-     creation_mode INTEGER NOT NULL,
-     authoring_intent TEXT NOT NULL,
-     conversation_history TEXT NOT NULL,
-     authoring_policy TEXT NOT NULL,
-     messages TEXT NOT NULL,
-     events TEXT NOT NULL,
-     status TEXT NOT NULL,
-     metrics TEXT NOT NULL,
-     created_at INTEGER NOT NULL,
-     updated_at INTEGER NOT NULL,
-     pending_ask_tool_call_id TEXT,
-     pending_ask_question TEXT,
-     draft_file_path TEXT,
-     draft_approval TEXT
-   );
-   CREATE INDEX IF NOT EXISTS idx_agent_sessions_jig_id ON agent_sessions(jig_id);`,
-  // v12: code-as-versions rehaul. Jig source moves out of filesystem files
-  // into jig_versions. Each jig has a pointer to the active version and
-  // optionally a pointer to a pending (unapproved) version. Approve moves
-  // active to pending. Drafts during one session overwrite; only approved
-  // versions become durable history. SSE resume cursor added to sessions.
-  `CREATE TABLE IF NOT EXISTS jigs (
-     id TEXT PRIMARY KEY,
-     name TEXT NOT NULL,
-     active_version_id INTEGER REFERENCES jig_versions(id),
-     pending_version_id INTEGER REFERENCES jig_versions(id),
-     created_at INTEGER NOT NULL,
-     archived_at INTEGER
-   );
-   CREATE TABLE IF NOT EXISTS jig_versions (
-     id INTEGER PRIMARY KEY AUTOINCREMENT,
-     jig_id TEXT NOT NULL,
-     code TEXT NOT NULL,
-     message TEXT,
-     prompt TEXT,
-     author TEXT NOT NULL,
-     parent_version_id INTEGER REFERENCES jig_versions(id),
-     created_at INTEGER NOT NULL
-   );
-   CREATE INDEX IF NOT EXISTS idx_jig_versions_jig ON jig_versions(jig_id, id DESC);
-   ALTER TABLE agent_sessions ADD COLUMN last_event_seq INTEGER NOT NULL DEFAULT 0;`,
-  // v13: structured payloads on log entries. Session-log events (runner, sdk.llm,
-  // sdk.agent, authoring.*) now mirror into the logs table with a redacted JSON
-  // payload so the dashboard's Logs page can show LLM/tool details from a remote
-  // Railway deploy — not just whatever made it to console.log.
-  `ALTER TABLE logs ADD COLUMN payload TEXT;`,
-  // v14: per-jig model override. NULL = use jig code's declared model (or the
-  // global default). When set, the dashboard's override wins over jig code but
-  // still below per-step / per-call options. See SDK precedence in jig.ts.
-  `ALTER TABLE jigs ADD COLUMN model_override TEXT;`,
-  // v15: per-step model overrides. JSON object keyed by step seq (1-indexed):
-  // {"3": "openai/gpt-5"}. Dashboard sets one entry when the user clicks the
-  // llm chip in a specific step and picks a model. Reads at run start, pushed
-  // into ctx.step's model resolution. Higher precedence than per-jig override.
-  `ALTER TABLE jigs ADD COLUMN step_model_overrides TEXT;`,
-  // v16: per-jig timeout overrides (ms). NULL = use the global env default
-  // (JIG_RUN_TIMEOUT_MS / JIG_MCP_TOOL_TIMEOUT_MS). Lets a jig with a
-  // legitimately long-running tool call (big Apify actor, large email fetch)
-  // raise its ceiling from the dashboard without touching env config.
-  `ALTER TABLE jigs ADD COLUMN run_timeout_ms INTEGER;
-   ALTER TABLE jigs ADD COLUMN tool_timeout_ms INTEGER;`,
-  // v17: map an inbound mail thread to the jig its failure email was about, so a
-  // reply to that email (delivered via the AgentMail webhook) can be routed to
-  // the right jig's authoring agent. agent_session_id remembers the live editing
-  // session so a back-and-forth thread continues the same session.
-  `CREATE TABLE IF NOT EXISTS email_threads (
-     thread_id TEXT PRIMARY KEY,
-     jig_id TEXT NOT NULL,
-     agent_session_id TEXT,
-     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-   );`,
-  // v18: Resend was removed as a notification channel (AgentMail is now the
-  // only email channel). Drop its orphaned credential + settings rows so a dead
-  // API key isn't left sitting in the DB.
-  `DELETE FROM credentials WHERE server = 'resend';
-   DELETE FROM settings WHERE key = 'resend';`,
-  // v19: remember whether a thread's edits are owner-solicited ('auto', the
-  // default — replies ship immediately) or an unsolicited auto-repair proposal
-  // ('propose' — the fix ships only on an explicit "apply"). Persisting it on
-  // the thread keeps the proposal gate intact across revisions and questions,
-  // not just the first reply.
-  `ALTER TABLE email_threads ADD COLUMN approval TEXT;`,
-  // v20: per-thread reply token. Reply-to-edit was authorized only by the (SMTP-
-  // spoofable) From header. The token is a shared secret we place in the outbound
-  // email's subject + body footer; a genuine reply echoes it, so a spoofed From
-  // alone can no longer drive edits. NULL for pre-v20 threads (grandfathered —
-  // they fall back to the From-only check).
-  `ALTER TABLE email_threads ADD COLUMN reply_token TEXT;`,
+  // v21: drop the draft-file pointer the pre-store authoring flow used. Draft
+  // code lives in jig_versions now, so this column was written and hydrated but
+  // never read. (draft_approval stays — it is the live approval payload the
+  // dashboard reads back after a restart.)
+  `ALTER TABLE agent_sessions DROP COLUMN draft_file_path;`,
 ]
 
 // ---------------------------------------------------------------------------
 // Database singleton
 // ---------------------------------------------------------------------------
 
-function runMigrations(db: Database) {
+export function runMigrations(db: Database) {
   const current = (db.prepare("PRAGMA user_version").get() as any)?.user_version ?? 0
-  for (let i = current; i < MIGRATIONS.length; i++) {
+  const latest = BASELINE_VERSION + MIGRATIONS.length
+
+  // A brand-new database just received SCHEMA, which is always the CURRENT
+  // schema — not the baseline generation. So it is already at `latest` and must
+  // not replay migrations that would try to re-apply changes it already has.
+  if (current === 0) {
+    db.exec(`PRAGMA user_version = ${latest}`)
+    return
+  }
+  if (current < BASELINE_VERSION) {
+    throw new Error(
+      `Database schema v${current} predates the v${BASELINE_VERSION} baseline and can no longer be upgraded. ` +
+        `Move ${DB_PATH} aside and let jig create a fresh one.`,
+    )
+  }
+
+  for (let i = current - BASELINE_VERSION; i < MIGRATIONS.length; i++) {
     // Each migration runs atomically: either the schema change AND the version
-    // bump land together, or the DB is rolled back to its pre-migration state.
-    // A failed migration therefore crashes boot cleanly — Railway marks the
-    // deploy failed and `jig update` auto-rolls back. No partial state.
+    // bump land together, or the DB rolls back. A failed migration therefore
+    // crashes boot cleanly — Railway marks the deploy failed and `jig update`
+    // auto-rolls back. No partial state.
     db.exec("BEGIN")
     try {
       db.exec(MIGRATIONS[i])
-      db.exec(`PRAGMA user_version = ${i + 1}`)
+      db.exec(`PRAGMA user_version = ${BASELINE_VERSION + i + 1}`)
       db.exec("COMMIT")
     } catch (e: any) {
       db.exec("ROLLBACK")
-      // Fresh DBs get the full current SCHEMA before historical migrations run,
-      // so early ALTER/CREATE migrations can fail on already-present schema.
-      // Skip forward only when the schema structurally shows the migration's
-      // work is already done — never by matching the engine's error prose,
-      // where a phrasing change or coincidental wording would silently mask a
-      // real migration failure.
-      if (migrationAlreadyApplied(db, MIGRATIONS[i])) {
-        db.exec(`PRAGMA user_version = ${i + 1}`)
-        continue
-      }
-      throw new Error(`Migration ${i + 1} failed: ${e?.message ?? e}`)
+      throw new Error(`Migration v${BASELINE_VERSION + i + 1} failed: ${e?.message ?? e}`)
     }
   }
-}
-
-/**
- * The migration's intended END STATE is already present in the schema, checked
- * against sqlite_master / PRAGMA table_info. DDL statements fold into one
- * expected state per schema object with last-statement-wins, so a
- * drop-then-recreate (e.g. v6's idx_step_cache_jig) resolves to "present"
- * rather than contradicting itself statement-by-statement. Parses only our own
- * migration SQL (a closed set this file authors). DML (INSERT/UPDATE/DELETE)
- * has no "already applied" state to verify, so it neither confirms nor denies;
- * a migration with no verifiable DDL is never skipped.
- */
-function migrationAlreadyApplied(db: Database, sql: string): boolean {
-  const expected = new Map<string, { present: boolean; exists: () => boolean }>()
-  for (const raw of sql.split(";")) {
-    const statement = raw.trim()
-    if (!statement) continue
-    let m: RegExpMatchArray | null
-    if ((m = statement.match(/^ALTER\s+TABLE\s+(\w+)\s+(ADD|DROP)\s+COLUMN\s+(\w+)/i))) {
-      const [, table, verb, column] = m
-      expected.set(`column:${table}.${column}`, {
-        present: verb.toUpperCase() === "ADD",
-        exists: () => tableHasColumn(db, table, column),
-      })
-    } else if ((m = statement.match(/^(CREATE|DROP)\s+(?:UNIQUE\s+)?(TABLE|INDEX)\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?(\w+)/i))) {
-      const [, verb, kind, name] = m
-      expected.set(`${kind.toLowerCase()}:${name}`, {
-        present: verb.toUpperCase() === "CREATE",
-        exists: () => schemaObjectExists(db, kind.toLowerCase(), name),
-      })
-    }
-  }
-  if (expected.size === 0) return false
-  for (const { present, exists } of expected.values()) {
-    if (exists() !== present) return false
-  }
-  return true
-}
-
-function tableHasColumn(db: Database, table: string, column: string): boolean {
-  try {
-    const cols = db.prepare(`PRAGMA table_info("${table}")`).all() as { name: string }[]
-    return cols.some((c) => c.name === column)
-  } catch {
-    return false
-  }
-}
-
-function schemaObjectExists(db: Database, type: string, name: string): boolean {
-  return db.prepare(`SELECT 1 FROM sqlite_master WHERE type = ? AND name = ?`).get(type, name) != null
 }
 
 let _db: Database | null = null
@@ -600,6 +496,9 @@ export function deleteJigLocalState(jigId: string): void {
   db.prepare(`DELETE FROM step_cache WHERE jig_id = ?`).run(jigId)
   db.prepare(`DELETE FROM schedules WHERE jig_id = ?`).run(jigId)
   db.prepare(`DELETE FROM agent_sessions WHERE jig_id = ?`).run(jigId)
+  // Otherwise a reply to an old failure email would route to a jig that no
+  // longer exists.
+  db.prepare(`DELETE FROM email_threads WHERE jig_id = ?`).run(jigId)
 }
 
 export function renameJigLocalState(oldJigId: string, newJigId: string): void {
@@ -612,6 +511,7 @@ export function renameJigLocalState(oldJigId: string, newJigId: string): void {
   db.prepare(`UPDATE step_cache SET jig_id = ? WHERE jig_id = ?`).run(newJigId, oldJigId)
   db.prepare(`UPDATE schedules SET jig_id = ? WHERE jig_id = ?`).run(newJigId, oldJigId)
   db.prepare(`UPDATE agent_sessions SET jig_id = ?, updated_at = ? WHERE jig_id = ?`).run(newJigId, Date.now(), oldJigId)
+  db.prepare(`UPDATE email_threads SET jig_id = ?, updated_at = datetime('now') WHERE jig_id = ?`).run(newJigId, oldJigId)
 }
 
 // ---------------------------------------------------------------------------
@@ -633,9 +533,7 @@ export interface AgentSessionRow {
   updated_at: number
   pending_ask_tool_call_id: string | null
   pending_ask_question: string | null
-  /** @deprecated v12: drafts live in jig_versions now. Column kept for back-compat. */
-  draft_file_path: string | null
-  /** @deprecated v12: drafts live in jig_versions now. Column kept for back-compat. */
+  /** Approval payload the dashboard reads back after a restart. */
   draft_approval: string | null
   /** SSE replay cursor — events with seq <= this have been flushed to the client at least once. */
   last_event_seq: number
@@ -648,8 +546,8 @@ export function upsertAgentSession(row: AgentSessionRow): void {
        session_id, jig_id, creation_mode, authoring_intent,
        conversation_history, authoring_policy, messages, events,
        status, metrics, created_at, updated_at,
-       pending_ask_tool_call_id, pending_ask_question, draft_file_path, draft_approval, last_event_seq
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       pending_ask_tool_call_id, pending_ask_question, draft_approval, last_event_seq
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(session_id) DO UPDATE SET
        jig_id = excluded.jig_id,
        creation_mode = excluded.creation_mode,
@@ -664,7 +562,6 @@ export function upsertAgentSession(row: AgentSessionRow): void {
        updated_at = excluded.updated_at,
        pending_ask_tool_call_id = excluded.pending_ask_tool_call_id,
        pending_ask_question = excluded.pending_ask_question,
-       draft_file_path = excluded.draft_file_path,
        draft_approval = excluded.draft_approval,
        last_event_seq = excluded.last_event_seq`
   ).run(
@@ -682,7 +579,6 @@ export function upsertAgentSession(row: AgentSessionRow): void {
     row.updated_at,
     row.pending_ask_tool_call_id,
     row.pending_ask_question,
-    row.draft_file_path,
     row.draft_approval,
     row.last_event_seq,
   )

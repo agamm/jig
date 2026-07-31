@@ -1,12 +1,10 @@
-import { existsSync, readFileSync } from "fs"
+import { existsSync, readFileSync, readdirSync } from "fs"
 import type { ExampleJig } from "../../shared/api.js"
 import { EXAMPLES_DIR } from "../config/paths.js"
 import { prettifyId, extractConnections, extractTrigger } from "../domain/jig-source.js"
-import { discoverJigs } from "../discover.js"
 import { parseStepsFromSource } from "../derive-steps.js"
 import { isValidJigId } from "../domain/jig-id.js"
 import { approvePending, getJigRow, writePending } from "./jig-store.js"
-import { invalidateJigsCache } from "../discover.js"
 
 function extractDescription(code: string, fallback: string): string {
   const summaryMatch = code.match(/^\s*\/\/\s*(.+)$/m)
@@ -27,7 +25,9 @@ function extractDescription(code: string, fallback: string): string {
 export function listExampleJigs(): ExampleJig[] {
   if (!existsSync(EXAMPLES_DIR)) return []
 
-  return [...discoverJigs(EXAMPLES_DIR).keys()]
+  return readdirSync(EXAMPLES_DIR)
+    .filter((name) => name.endsWith(".ts") && !name.startsWith("_"))
+    .map((name) => name.replace(/\.ts$/, ""))
     .sort()
     .map((id) => {
       const filePath = `${EXAMPLES_DIR}/${id}.ts`
@@ -58,6 +58,5 @@ export async function addExampleJig(id: string): Promise<string> {
   // explicitly chose to add a curated example, no review gate needed.
   writePending({ jigId: id, code, author: "cli", message: "imported from examples" })
   approvePending(id)
-  invalidateJigsCache()
   return id
 }

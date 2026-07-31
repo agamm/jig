@@ -113,7 +113,7 @@ describe("apify authoring discovery", () => {
 
     expect(result).not.toBeNull()
     expect(result?.requiredTools).toEqual(["call-actor"])
-    expect(result?.includeTools).toEqual(["call-actor", "get-actor-run", "get-actor-output"])
+    expect(result?.includeTools).toEqual(["call-actor", "get-dataset-items"])
     expect(result?.excludeTools).toEqual(["search-actors", "fetch-actor-details"])
     expect(result?.resolvedInputSchema).toEqual({
       type: "object",
@@ -123,10 +123,11 @@ describe("apify authoring discovery", () => {
       },
     })
     expect(result?.context).toContain('Resolved Apify Actor at build time for this workflow: community/github-trending-scraper.')
-    expect(result?.context).toContain('Tool contract: call `apify.call_actor({ actor: "community/github-trending-scraper", input: { ... } })`.')
-    expect(result?.context).toContain("call `apify.get_actor_output({ datasetId })`")
-    expect(result?.context).toContain("`apify.get_actor_output` returns an object like `{ datasetId, items, itemCount, totalItemCount }`, not the items array directly")
-    expect(result?.context).toContain("If the second tool depends on the first tool's result, prefer a second `ctx.step(...)`")
+    expect(result?.context).toContain('`const run = await apify.call_actor({ actor: "community/github-trending-scraper", input: { ... } })`')
+    expect(result?.context).toContain("apify.get_dataset_items")
+    expect(result?.context).toContain("does NOT contain the scraped rows")
+    expect(result?.context).toContain("Never derive a result from the run descriptor alone")
+    expect(result?.context).toContain("two separate `ctx.step(...)` blocks")
     expect(result?.context).toContain("- since: string")
     expect(llmCalls.some((call) => call.prompt.includes("Choose one short Apify Store search query"))).toBe(true)
     expect(llmCalls.some((call) => call.prompt.includes("Extract structured Apify Actor search results from markdown"))).toBe(true)
@@ -214,7 +215,8 @@ describe("apify authoring discovery", () => {
     expect(askCount).toBe(1)
     expect(result).not.toBeNull()
     expect(result?.context).toContain("Resolved Apify Actor at build time for this workflow: best/trending-github.")
-    expect(result?.context).toContain('Tool contract: call `apify.call_actor({ actor: "best/trending-github", input: { ... } })`.')
+    expect(result?.context).toContain('`const run = await apify.call_actor({ actor: "best/trending-github", input: { ... } })`')
+    expect(result?.context).toContain("apify.get_dataset_items")
   })
 
   it("uses the LLM fallback instead of substring matching for fuzzy user choices", async () => {
@@ -370,7 +372,8 @@ describe("apify authoring discovery", () => {
 
     expect(result).not.toBeNull()
     expect(result?.resolvedTarget).toBe("automation-lab/github-trending-scraper")
-    expect(result?.context).toContain('Tool contract: call `apify.call_actor({ actor: "automation-lab/github-trending-scraper", input: { ... } })`.')
+    expect(result?.context).toContain('`const run = await apify.call_actor({ actor: "automation-lab/github-trending-scraper", input: { ... } })`')
+    expect(result?.context).toContain("apify.get_dataset_items")
   })
 
   it("accepts actor cards returned with actorId/name aliases and still resolves details", async () => {
@@ -452,6 +455,7 @@ describe("apify authoring discovery", () => {
 
     expect(result).not.toBeNull()
     expect(result?.resolvedTarget).toBe("automation-lab/github-trending-scraper")
-    expect(result?.context).toContain('Tool contract: call `apify.call_actor({ actor: "automation-lab/github-trending-scraper", input: { ... } })`.')
+    expect(result?.context).toContain('`const run = await apify.call_actor({ actor: "automation-lab/github-trending-scraper", input: { ... } })`')
+    expect(result?.context).toContain("apify.get_dataset_items")
   })
 })

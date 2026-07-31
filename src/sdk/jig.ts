@@ -63,8 +63,11 @@ export async function run(
     jigId?: string
   }
 ): Promise<Context> {
-  const toolNames = (definition.options.tools ?? []).map((t) => t._toolName)
-  const ctx = new Context(params, toolNames, options?.signal, options?.toolTimeoutMs, options?.jigId)
+  const ctx = new Context(params, {
+    signal: options?.signal,
+    toolTimeoutMs: options?.toolTimeoutMs,
+    jigId: options?.jigId,
+  })
   if (options?.silent) ctx.setSink(() => {})
   if (options?.recorder) ctx.setRecorder(options.recorder)
   // Precedence (low → high inside ctx, with per-call/step overrides above):

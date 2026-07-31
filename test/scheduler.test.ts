@@ -1,6 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "fs"
-import { join } from "path"
 import {
   closeDb,
   getRun,
@@ -12,8 +10,6 @@ import {
   setScheduleEnabled,
   upsertSchedule,
 } from "../src/db.js"
-import { invalidateJigsCache } from "../src/discover.js"
-import { PROJECT_ROOT } from "../src/config/paths.js"
 import { schedulerTimeZone } from "../src/config/timezone.js"
 import { recoverMissedRuns } from "../src/scheduler/recover.js"
 import { millisecondsUntilNextSchedulerTick } from "../src/scheduler/index.js"
@@ -23,15 +19,12 @@ import { startBackgroundRun } from "../src/services/background-run.js"
 import { approvePending, deleteJig as storeDeleteJig, writePending } from "../src/services/jig-store.js"
 import { seedJig } from "./_fixtures.js"
 
-const CONNECTIONS_DIR = join(PROJECT_ROOT, ".jig/connections")
-const CONNECTIONS_INDEX = join(CONNECTIONS_DIR, "index.ts")
 const TEST_JIG_IDS = [
   "scheduler-sync-case",
   "scheduler-bad-trigger-case",
   "scheduler-tick-case",
   "scheduler-missing-connection-case",
 ]
-let createdConnectionsIndex = false
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -40,22 +33,13 @@ function sleep(ms: number) {
 beforeEach(() => {
   closeDb()
   openDb(":memory:")
-  invalidateJigsCache()
-  mkdirSync(CONNECTIONS_DIR, { recursive: true })
-  createdConnectionsIndex = false
-  if (!existsSync(CONNECTIONS_INDEX)) {
-    writeFileSync(CONNECTIONS_INDEX, "export {}\n")
-    createdConnectionsIndex = true
-  }
 })
 
 afterEach(() => {
   closeDb()
-  invalidateJigsCache()
   for (const id of TEST_JIG_IDS) {
     try { storeDeleteJig(id) } catch {}
   }
-  if (createdConnectionsIndex) rmSync(CONNECTIONS_INDEX, { force: true })
 })
 
 describe("scheduler sync", () => {
@@ -116,15 +100,12 @@ export default jig("scheduler-bad-trigger-case", {
 })
 `)
 
-    try {
-      await syncSchedules()
-      // Either the schedule has a visible error or no schedule was created — both
-      // are acceptable as long as the unsupported trigger doesn't silently succeed.
-      const schedule = getSchedule("scheduler-bad-trigger-case")
-      if (schedule) {
-        expect(schedule.error).toBeTruthy()
-      }
-    } finally {
+    await syncSchedules()
+    // Either the schedule has a visible error or no schedule was created — both
+    // are acceptable as long as the unsupported trigger doesn't silently succeed.
+    const schedule = getSchedule("scheduler-bad-trigger-case")
+    if (schedule) {
+      expect(schedule.error).toBeTruthy()
     }
   })
 })

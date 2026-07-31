@@ -14,7 +14,7 @@
  *  10. On failure: `git checkout <previous commit>` + `railway up` +
  *      restore stash.
  */
-import { resolveActiveRemote, type RemoteManifest } from "./manifest.js"
+import { resolveActiveRemote } from "./manifest.js"
 import { railwayInteractive } from "../cli-deploy/railway-cli.js"
 
 interface HealthResponse {

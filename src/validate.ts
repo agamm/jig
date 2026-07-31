@@ -6,7 +6,7 @@
  */
 import { existsSync } from "fs"
 import ts from "typescript"
-import type { JigDefinition, JigTrigger } from "./sdk/jig.js"
+import type { JigDefinition } from "./sdk/jig.js"
 import { PROJECT_ROOT } from "./config/paths.js"
 import { toolNameToIdentifier } from "./mcp/typegen.js"
 import { getConnectionImportBindings, getConnectionToolReferences } from "./domain/source-analysis.js"
@@ -410,7 +410,7 @@ function checkTypedToolCallDiagnostics(path: string): ValidationError[] {
 export function checkPlaceholderJigPatterns(code: string): ValidationError[] {
   const errors: ValidationError[] = []
 
-  const importRe = /import\s*\{[^}]*\b(\w+)\b[^}]*\}\s*from\s*["'](?:@jig|jig|(?:\.\.\/)+\.jig)\/connections\/([A-Za-z0-9_-]+)(?:\.(?:js|ts))?["']/g
+  const importRe = /import\s*\{[^}]*\b(\w+)\b[^}]*\}\s*from\s*["'](?:@jig|jig)\/connections\/([A-Za-z0-9_-]+)(?:\.(?:js|ts))?["']/g
   const connectionVars = [...code.matchAll(importRe)].map((match) => match[1])
   const codeWithoutConnectionImports = code.replace(importRe, "")
   const hasConnectionImport = connectionVars.length > 0

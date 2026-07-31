@@ -121,7 +121,6 @@ describe("under construction jigs", () => {
       updated_at: 200,
       pending_ask_tool_call_id: null,
       pending_ask_question: null,
-      draft_file_path: null,
       draft_approval: null,
       last_event_seq: 0,
     })

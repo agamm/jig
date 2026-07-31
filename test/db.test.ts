@@ -1,12 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test"
+import { Database } from "bun:sqlite"
 import { mkdtempSync, rmSync, writeFileSync } from "fs"
 import { join } from "path"
 import { tmpdir } from "os"
 import {
-  openDb, closeDb,
+  openDb, closeDb, runMigrations,
   insertRun, completeRun, listRuns, getRun, getJigRuns, getLastRun,
   insertStep, completeStep,
-  clearStepCache, deleteJigLocalState, getSchedule, getStepCache, setStepCache, upsertSchedule,
+  deleteJigLocalState, getSchedule, getStepCache, setStepCache, upsertSchedule,
   getSetting, setSetting,
   getToolPermission, listToolPermissions, setToolPermission,
   deleteAgentSession, getAgentSession, jigHasActiveSession, listAgentSessions, upsertAgentSession,
@@ -205,7 +206,6 @@ describe("agent sessions", () => {
       updated_at: 456,
       pending_ask_tool_call_id: null,
       pending_ask_question: null,
-      draft_file_path: "/tmp/draft-jig.ts",
       draft_approval: null,
       last_event_seq: 0,
     })
@@ -236,7 +236,6 @@ describe("jigHasActiveSession", () => {
     updated_at: 1,
     pending_ask_tool_call_id: null,
     pending_ask_question: null,
-    draft_file_path: null,
     draft_approval: null,
     last_event_seq: 0,
     ...overrides,
@@ -309,5 +308,66 @@ describe("step connections", () => {
 
     const run = getRun(runId)
     expect(run!.steps[0].connections).toBe('["granola","workspace","github"]')
+  })
+})
+
+describe("schema/migration convergence", () => {
+  /**
+   * The schema as of BASELINE_VERSION (v20) — i.e. SCHEMA plus whatever later
+   * migrations have since removed. Only the delta needs to be expressed here:
+   * the test applies MIGRATIONS to a v20 database and checks it lands on the
+   * same shape a brand-new database gets from SCHEMA.
+   *
+   * When you add a migration, add its inverse here.
+   */
+  const BASELINE_DELTA = `
+    ALTER TABLE agent_sessions ADD COLUMN draft_file_path TEXT;
+  `
+  const BASELINE_VERSION = 20
+
+  /** table -> sorted column names, plus the set of index names. Ignores column
+   *  ORDER and DDL text, which legitimately differ between the two paths. */
+  function logicalSchema(db: Database): Record<string, string[]> {
+    const out: Record<string, string[]> = {}
+    const objects = db.prepare(
+      `SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name`,
+    ).all() as { type: string; name: string }[]
+    const indexes: string[] = []
+    for (const obj of objects) {
+      if (obj.type === "index") { indexes.push(obj.name); continue }
+      if (obj.type !== "table") continue
+      const cols = db.prepare(`PRAGMA table_info("${obj.name}")`).all() as { name: string }[]
+      out[obj.name] = cols.map((c) => c.name).sort()
+    }
+    out["<indexes>"] = indexes.sort()
+    return out
+  }
+
+  it("fresh and migrated databases converge on the same schema", () => {
+    // "Fresh" goes through the real bootstrap path.
+    closeDb()
+    const fresh = openDb(":memory:")
+    const freshSchema = logicalSchema(fresh)
+    const freshVersion = (fresh.prepare("PRAGMA user_version").get() as any).user_version
+    closeDb()
+
+    // "Upgraded" starts at the baseline generation and replays the migrations.
+    closeDb()
+    const upgraded = openDb(":memory:")
+    upgraded.exec(BASELINE_DELTA)
+    upgraded.exec(`PRAGMA user_version = ${BASELINE_VERSION}`)
+    runMigrations(upgraded)
+
+    expect(logicalSchema(upgraded)).toEqual(freshSchema)
+    expect((upgraded.prepare("PRAGMA user_version").get() as any).user_version).toBe(freshVersion)
+    closeDb()
+  })
+
+  it("refuses a database older than the squashed baseline", () => {
+    closeDb()
+    const ancient = openDb(":memory:")
+    ancient.exec(`PRAGMA user_version = 7`)
+    expect(() => runMigrations(ancient)).toThrow(/predates the v20 baseline/)
+    closeDb()
   })
 })

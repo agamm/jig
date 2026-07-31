@@ -1,158 +1,136 @@
 import { isValidJigId } from "../domain/jig-id.js"
 
-export function matchRoute(pathname: string): { handler: string; params: Record<string, string> } | null {
-  if (pathname === "/api/health") return { handler: "health", params: {} }
-  if (pathname === "/api/unlock") return { handler: "unlock", params: {} }
-  if (pathname === "/api/setup-password") return { handler: "setupPassword", params: {} }
-  if (pathname === "/api/change-password") return { handler: "changePassword", params: {} }
-  if (pathname === "/api/onboarding/complete") return { handler: "completeOnboarding", params: {} }
-  if (pathname === "/api/oauth/callback") return { handler: "oauthCallback", params: {} }
-  if (pathname === "/api/events") return { handler: "liveUpdates", params: {} }
-  if (pathname === "/api/models") return { handler: "models", params: {} }
-  if (pathname === "/api/models/catalog") return { handler: "modelsCatalog", params: {} }
-  if (pathname === "/api/models/credits") return { handler: "openrouterCredits", params: {} }
-  if (pathname === "/api/classify-failure") return { handler: "classifyFailure", params: {} }
-  if (pathname === "/api/models/upgrades") return { handler: "modelUpgrades", params: {} }
-  if (pathname === "/api/models/upgrades/apply") return { handler: "applyModelUpgrade", params: {} }
-  if (pathname === "/api/models/upgrades/dismiss") return { handler: "dismissModelUpgrade", params: {} }
-  if (pathname === "/api/jigs") return { handler: "listJigs", params: {} }
-  if (pathname === "/api/examples") return { handler: "listExamples", params: {} }
+export interface MatchedRoute {
+  handler: string
+  params: Record<string, string>
+}
 
-  const addExampleMatch = pathname.match(/^\/api\/examples\/([^/]+)\/add$/)
-  if (addExampleMatch) return { handler: "addExample", params: { id: decodeURIComponent(addExampleMatch[1]) } }
+/**
+ * Path -> handler table.
+ *
+ * Segment markers:
+ *   `:name`  capture one segment, URI-decoded
+ *   `#name`  same, but the value must be a valid jig id or the route does not
+ *            match (a bad id 404s at the router instead of reaching a handler)
+ *   `+name`  same, but the value must be an integer
+ *   `*name`  capture the rest of the path, URI-decoded
+ *
+ * Order matters: the first match wins, so literal paths must precede the
+ * patterns that would otherwise swallow them (e.g. /api/connections/custom
+ * before /api/connections/:name).
+ */
+const ROUTES: [pattern: string, handler: string][] = [
+  ["/api/health", "health"],
+  ["/api/unlock", "unlock"],
+  ["/api/setup-password", "setupPassword"],
+  ["/api/change-password", "changePassword"],
+  ["/api/onboarding/complete", "completeOnboarding"],
+  ["/api/oauth/callback", "oauthCallback"],
+  ["/api/events", "liveUpdates"],
 
-  if (pathname === "/api/connections") return { handler: "connections", params: {} }
-  if (pathname === "/api/connections/custom") return { handler: "createCustomConnection", params: {} }
+  ["/api/models", "models"],
+  ["/api/models/catalog", "modelsCatalog"],
+  ["/api/models/credits", "openrouterCredits"],
+  ["/api/models/upgrades", "modelUpgrades"],
+  ["/api/models/upgrades/apply", "applyModelUpgrade"],
+  ["/api/models/upgrades/dismiss", "dismissModelUpgrade"],
+  ["/api/classify-failure", "classifyFailure"],
 
-  const connectMatch = pathname.match(/^\/api\/connections\/([^/]+)\/connect$/)
-  if (connectMatch) return { handler: "connectConnection", params: { name: decodeURIComponent(connectMatch[1]) } }
+  ["/api/jigs", "listJigs"],
+  ["/api/examples", "listExamples"],
+  ["/api/examples/:id/add", "addExample"],
 
-  const disconnectMatch = pathname.match(/^\/api\/connections\/([^/]+)\/disconnect$/)
-  if (disconnectMatch) return { handler: "disconnectConnection", params: { name: decodeURIComponent(disconnectMatch[1]) } }
+  ["/api/connections", "connections"],
+  ["/api/connections/custom", "createCustomConnection"],
+  ["/api/connections/:name/connect", "connectConnection"],
+  ["/api/connections/:name/disconnect", "disconnectConnection"],
+  ["/api/connections/:name", "getConnection"],
 
-  const connMatch = pathname.match(/^\/api\/connections\/([^/]+)$/)
-  if (connMatch) return { handler: "getConnection", params: { name: decodeURIComponent(connMatch[1]) } }
+  ["/api/jigs/#id", "getJig"],
+  ["/api/jigs/#id/run", "runJig"],
+  ["/api/jigs/#id/code", "writeJigCode"],
+  ["/api/jigs/#id/model", "updateJigModel"],
+  ["/api/jigs/#id/timeouts", "updateJigTimeouts"],
+  ["/api/jigs/#id/step-model", "updateJigStepModel"],
+  ["/api/jigs/#id/steps", "getSteps"],
+  ["/api/jigs/#id/trigger", "updateTrigger"],
+  ["/api/jigs/#id/pending", "pending"],
+  ["/api/jigs/#id/pending/approve", "approvePending"],
+  ["/api/jigs/#id/restore", "restoreToPending"],
+  ["/api/jigs/#id/versions-v2", "listVersionsV2"],
 
-  const jigMatch = pathname.match(/^\/api\/jigs\/([^/]+)$/)
-  if (jigMatch) {
-    if (!isValidJigId(decodeURIComponent(jigMatch[1]))) return null
-    return { handler: "getJig", params: { id: decodeURIComponent(jigMatch[1]) } }
-  }
+  ["/api/agent", "startAgent"],
+  ["/api/agent/:sessionId", "agentStatus"],
+  ["/api/agent/:sessionId/stream", "agentStream"],
+  ["/api/agent/:sessionId/message", "agentMessage"],
+  ["/api/agent/:sessionId/approve", "agentApprove"],
+  ["/api/agent/:sessionId/close", "agentClose"],
 
-  const runMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/run$/)
-  if (runMatch) {
-    if (!isValidJigId(decodeURIComponent(runMatch[1]))) return null
-    return { handler: "runJig", params: { id: decodeURIComponent(runMatch[1]) } }
-  }
+  ["/api/runs/active", "activeRun"],
+  ["/api/runs/cancel", "cancelRun"],
+  ["/api/runs/+id", "getRun"],
 
-  const writeCodeMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/code$/)
-  if (writeCodeMatch) {
-    if (!isValidJigId(decodeURIComponent(writeCodeMatch[1]))) return null
-    return { handler: "writeJigCode", params: { id: decodeURIComponent(writeCodeMatch[1]) } }
-  }
+  ["/api/schedules", "listSchedules"],
+  ["/api/schedules/#jigId", "updateSchedule"],
 
-  const modelMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/model$/)
-  if (modelMatch) {
-    if (!isValidJigId(decodeURIComponent(modelMatch[1]))) return null
-    return { handler: "updateJigModel", params: { id: decodeURIComponent(modelMatch[1]) } }
-  }
+  ["/api/authorized-senders", "authorizedSenders"],
+  ["/api/authorized-senders/:channel/*senderId", "deleteAuthorizedSender"],
 
-  const timeoutsMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/timeouts$/)
-  if (timeoutsMatch) {
-    if (!isValidJigId(decodeURIComponent(timeoutsMatch[1]))) return null
-    return { handler: "updateJigTimeouts", params: { id: decodeURIComponent(timeoutsMatch[1]) } }
-  }
+  ["/api/settings/agentmail", "agentMailSettings"],
+  ["/api/settings/agentmail/setup", "agentMailSetup"],
+  ["/api/settings/agentmail/test", "agentMailTest"],
+  ["/api/settings/system", "systemSettings"],
+  ["/api/settings/reset-local", "resetLocalState"],
+  ["/api/email/inbound", "emailInbound"],
+  ["/api/permissions", "toolPermissions"],
+  ["/api/logs", "serverLogs"],
 
-  const stepModelMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/step-model$/)
-  if (stepModelMatch) {
-    if (!isValidJigId(decodeURIComponent(stepModelMatch[1]))) return null
-    return { handler: "updateJigStepModel", params: { id: decodeURIComponent(stepModelMatch[1]) } }
-  }
+  ["/api/webhooks/#jigId", "webhook"],
+]
 
-  const runDetailMatch = pathname.match(/^\/api\/runs\/(-?\d+)$/)
-  if (runDetailMatch) return { handler: "getRun", params: { id: runDetailMatch[1] } }
+const COMPILED = ROUTES.map(([pattern, handler]) => ({
+  handler,
+  segments: pattern.split("/"),
+  // A rest param consumes every remaining segment, so those patterns match any
+  // length at or beyond their own; everything else must match exactly.
+  hasRest: pattern.includes("/*"),
+}))
 
-  const stepsMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/steps$/)
-  if (stepsMatch) {
-    if (!isValidJigId(decodeURIComponent(stepsMatch[1]))) return null
-    return { handler: "getSteps", params: { id: decodeURIComponent(stepsMatch[1]) } }
-  }
+export function matchRoute(pathname: string): MatchedRoute | null {
+  const actual = pathname.split("/")
 
-  const triggerMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/trigger$/)
-  if (triggerMatch) {
-    if (!isValidJigId(decodeURIComponent(triggerMatch[1]))) return null
-    return { handler: "updateTrigger", params: { id: decodeURIComponent(triggerMatch[1]) } }
-  }
+  for (const route of COMPILED) {
+    if (route.hasRest ? actual.length < route.segments.length : actual.length !== route.segments.length) {
+      continue
+    }
 
-  if (pathname === "/api/agent") return { handler: "startAgent", params: {} }
+    const params: Record<string, string> = {}
+    let matched = true
 
-  const agentStreamMatch = pathname.match(/^\/api\/agent\/([^/]+)\/stream$/)
-  if (agentStreamMatch) return { handler: "agentStream", params: { sessionId: agentStreamMatch[1] } }
+    for (let i = 0; i < route.segments.length; i++) {
+      const expected = route.segments[i]
+      const marker = expected[0]
 
-  const agentStatusMatch = pathname.match(/^\/api\/agent\/([^/]+)$/)
-  if (agentStatusMatch) return { handler: "agentStatus", params: { sessionId: agentStatusMatch[1] } }
+      if (marker === "*") {
+        const rest = actual.slice(i).join("/")
+        if (!rest) { matched = false; break }
+        params[expected.slice(1)] = decodeURIComponent(rest)
+        break
+      }
+      if (marker === ":" || marker === "#" || marker === "+") {
+        // An empty segment (`/api/agent//stream`) is not a match — it would
+        // otherwise hand handlers a blank id.
+        if (!actual[i]) { matched = false; break }
+        const value = decodeURIComponent(actual[i])
+        if (marker === "#" && !isValidJigId(value)) { matched = false; break }
+        if (marker === "+" && !/^-?\d+$/.test(value)) { matched = false; break }
+        params[expected.slice(1)] = value
+        continue
+      }
+      if (expected !== actual[i]) { matched = false; break }
+    }
 
-  const agentMsgMatch = pathname.match(/^\/api\/agent\/([^/]+)\/message$/)
-  if (agentMsgMatch) return { handler: "agentMessage", params: { sessionId: agentMsgMatch[1] } }
-
-  const agentApproveMatch = pathname.match(/^\/api\/agent\/([^/]+)\/approve$/)
-  if (agentApproveMatch) return { handler: "agentApprove", params: { sessionId: agentApproveMatch[1] } }
-
-  const agentCloseMatch = pathname.match(/^\/api\/agent\/([^/]+)\/close$/)
-  if (agentCloseMatch) return { handler: "agentClose", params: { sessionId: agentCloseMatch[1] } }
-
-  // v12: code-as-versions endpoints
-  const pendingMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/pending$/)
-  if (pendingMatch) {
-    if (!isValidJigId(decodeURIComponent(pendingMatch[1]))) return null
-    return { handler: "pending", params: { id: decodeURIComponent(pendingMatch[1]) } }
-  }
-  const approvePendingMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/pending\/approve$/)
-  if (approvePendingMatch) {
-    if (!isValidJigId(decodeURIComponent(approvePendingMatch[1]))) return null
-    return { handler: "approvePending", params: { id: decodeURIComponent(approvePendingMatch[1]) } }
-  }
-  const restoreToPendingMatch = pathname.match(/^\/api\/jigs\/([^/]+)\/restore$/)
-  if (restoreToPendingMatch) {
-    if (!isValidJigId(decodeURIComponent(restoreToPendingMatch[1]))) return null
-    return { handler: "restoreToPending", params: { id: decodeURIComponent(restoreToPendingMatch[1]) } }
-  }
-  const listVersionsV2Match = pathname.match(/^\/api\/jigs\/([^/]+)\/versions-v2$/)
-  if (listVersionsV2Match) {
-    if (!isValidJigId(decodeURIComponent(listVersionsV2Match[1]))) return null
-    return { handler: "listVersionsV2", params: { id: decodeURIComponent(listVersionsV2Match[1]) } }
-  }
-
-  if (pathname === "/api/runs/active") return { handler: "activeRun", params: {} }
-  if (pathname === "/api/runs/cancel") return { handler: "cancelRun", params: {} }
-
-  // Scheduler routes
-  if (pathname === "/api/schedules") return { handler: "listSchedules", params: {} }
-
-  const scheduleMatch = pathname.match(/^\/api\/schedules\/([^/]+)$/)
-  if (scheduleMatch) {
-    if (!isValidJigId(decodeURIComponent(scheduleMatch[1]))) return null
-    return { handler: "updateSchedule", params: { jigId: decodeURIComponent(scheduleMatch[1]) } }
-  }
-
-  if (pathname === "/api/authorized-senders") return { handler: "authorizedSenders", params: {} }
-
-  const senderMatch = pathname.match(/^\/api\/authorized-senders\/([^/]+)\/(.+)$/)
-  if (senderMatch) return { handler: "deleteAuthorizedSender", params: { channel: decodeURIComponent(senderMatch[1]), senderId: decodeURIComponent(senderMatch[2]) } }
-
-  if (pathname === "/api/settings/agentmail") return { handler: "agentMailSettings", params: {} }
-  if (pathname === "/api/settings/agentmail/setup") return { handler: "agentMailSetup", params: {} }
-  if (pathname === "/api/settings/agentmail/test") return { handler: "agentMailTest", params: {} }
-  if (pathname === "/api/email/inbound") return { handler: "emailInbound", params: {} }
-  if (pathname === "/api/settings/system") return { handler: "systemSettings", params: {} }
-  if (pathname === "/api/settings/reset-local") return { handler: "resetLocalState", params: {} }
-  if (pathname === "/api/permissions") return { handler: "toolPermissions", params: {} }
-  if (pathname === "/api/logs") return { handler: "serverLogs", params: {} }
-
-  const webhookMatch = pathname.match(/^\/api\/webhooks\/([^/]+)$/)
-  if (webhookMatch) {
-    if (!isValidJigId(decodeURIComponent(webhookMatch[1]))) return null
-    return { handler: "webhook", params: { jigId: decodeURIComponent(webhookMatch[1]) } }
+    if (matched) return { handler: route.handler, params }
   }
 
   return null

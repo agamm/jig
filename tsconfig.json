@@ -4,6 +4,8 @@
     "module": "esnext",
     "moduleResolution": "bundler",
     "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
@@ -16,9 +18,17 @@
     "types": ["bun-types"],
     "paths": {
       "@jig/sdk": ["./src/index.ts"],
-      "@jig/connections/*": ["./.jig/connections/*"]
+      "@jig/connections/*": ["./.jig/connections/*"],
+      // The dashboard's alias for shared/. Mirrored here so tests that exercise
+      // dashboard-side pure helpers typecheck under this config too.
+      "@shared/*": ["./shared/*"]
     }
   },
-  "include": ["src/**/*.ts", "shared/**/*.ts", "jigs/**/*.ts", ".jig/types/**/*.ts", ".jig/connections/**/*.ts"],
-  "exclude": ["node_modules", "dist"]
+  // Jig's own source only. Authored jigs and generated connection artifacts are
+  // deliberately excluded: they are gitignored per-machine runtime state, so
+  // including them made `tsc --noEmit` report errors for files a clean clone
+  // does not have. Jig files are typechecked at authoring time by
+  // src/services/jig-checker.ts, which builds its own program.
+  "include": ["src/**/*.ts", "shared/**/*.ts", "test/**/*.ts"],
+  "exclude": ["node_modules", "dist", "test/.tmp"]
 }

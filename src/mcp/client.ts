@@ -319,16 +319,8 @@ async function finishOAuthAuthorization(
   throwIfAborted(options.signal)
   console.log(`[jig] ${name} requires authorization — opening browser...`)
 
-  const dots = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-  let dotIdx = 0
-  const spinner = setInterval(() => {
-    process.stdout.write(`\r${dots[dotIdx++ % dots.length]} Waiting for browser authorization...`)
-  }, 100)
-
   try {
     const authCode = await authProvider.waitForAuthCode(options.signal)
-    clearInterval(spinner)
-    process.stdout.write("\r\x1b[K")
     throwIfAborted(options.signal)
     await transport.finishAuth(authCode)
 
@@ -344,8 +336,6 @@ async function finishOAuthAuthorization(
     authProvider.stopCallbackServer()
     return { client: freshClient, transport: freshTransport, serverName: name, config }
   } catch (error) {
-    clearInterval(spinner)
-    process.stdout.write("\r\x1b[K")
     authProvider.stopCallbackServer()
     throw error
   }
@@ -359,12 +349,6 @@ async function handleOAuthRedirect(
 ): Promise<McpConnection> {
   throwIfAborted(options.signal)
   console.log(`[jig] ${name} requires authorization — opening browser...`)
-
-  const dots = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-  let dotIdx = 0
-  const spinner = setInterval(() => {
-    process.stdout.write(`\r${dots[dotIdx++ % dots.length]} Waiting for browser authorization...`)
-  }, 100)
 
   const client = new Client({ name: "jig", version: "0.1.0" })
   const transport = new StreamableHTTPClientTransport(new URL(config.url), {
@@ -398,9 +382,6 @@ async function handleOAuthRedirect(
     }
     authProvider.stopCallbackServer()
     throw error
-  } finally {
-    clearInterval(spinner)
-    process.stdout.write("\r\x1b[K")
   }
 }
 

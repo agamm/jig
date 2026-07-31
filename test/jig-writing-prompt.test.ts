@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest"
+import { describe, it, expect } from "bun:test"
 import { buildAgentJigSystemPrompt } from "../src/services/jig-writing-prompt.js"
 import { PLAN_JIG_USER_EMAIL_RULE } from "../src/jig-gen.js"
 import { readFileSync } from "fs"

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest"
+import { describe, it, expect } from "bun:test"
 import {
   stripCodeFences,
   extractImportedServers,
@@ -39,40 +39,34 @@ describe("stripCodeFences", () => {
 describe("extractImportedServers", () => {
   it("extracts single server", () => {
     expect(extractImportedServers(
-      `import { workspace } from "../.jig/connections/workspace.js"`
+      `import { workspace } from "@jig/connections/workspace.js"`
     )).toEqual(["workspace"])
   })
 
   it("extracts multiple servers", () => {
     const code = `
-import { workspace } from "../.jig/connections/workspace.js"
-import { granola } from "../.jig/connections/granola.js"
-import { github } from "../.jig/connections/github.js"`
+import { workspace } from "@jig/connections/workspace.js"
+import { granola } from "@jig/connections/granola.js"
+import { github } from "@jig/connections/github.js"`
     expect(extractImportedServers(code)).toEqual(["workspace", "granola", "github"])
-  })
-
-  it("handles nested relative import depth", () => {
-    expect(extractImportedServers(
-      `import { workspace } from "../../.jig/connections/workspace.js"`
-    )).toEqual(["workspace"])
   })
 
   it("returns empty for no connections", () => {
     expect(extractImportedServers(
-      `import { jig, run } from "../src/index.js"`
+      `import { jig, run } from "@jig/sdk"`
     )).toEqual([])
-  })
-
-  it("extracts alias-based connection imports", () => {
-    expect(extractImportedServers(
-      `import { apify } from "@jig/connections/apify.js"`
-    )).toEqual(["apify"])
   })
 
   it("extracts extensionless connection imports", () => {
     expect(extractImportedServers(
       `import { workspace } from "@jig/connections/workspace"`
     )).toEqual(["workspace"])
+  })
+
+  it("ignores relative connection paths — the runner rejects those jigs outright", () => {
+    expect(extractImportedServers(
+      `import { workspace } from "../.jig/connections/workspace.js"`
+    )).toEqual([])
   })
 })
 
@@ -219,7 +213,7 @@ await workspace.not_a_real_tool({})
 
 describe("normalizeSelectedToolNames", () => {
   it("maps code-facing identifiers back to runtime tool names", () => {
-    expect(normalizeSelectedToolNames(["get_actor_output"], ["get-actor-output"])).toEqual(["get-actor-output"])
+    expect(normalizeSelectedToolNames(["get_dataset_items"], ["get-dataset-items"])).toEqual(["get-dataset-items"])
   })
 
   it("filters hallucinated names when at least one selected tool is valid", () => {
@@ -236,7 +230,7 @@ describe("normalizeSelectedToolNames", () => {
 
 describe("Context.output", () => {
   it("captures output", () => {
-    const ctx = new Context({}, [])
+    const ctx = new Context({})
     ctx.setSink(() => {}) // silence console
     ctx.output("hello")
     ctx.output("world", 42)
@@ -245,7 +239,7 @@ describe("Context.output", () => {
 
   it("defaults to console.log", () => {
     const logged: string[] = []
-    const ctx = new Context({}, [])
+    const ctx = new Context({})
     ctx.setSink((...args: any[]) => logged.push(args.join(" ")))
     ctx.output("test")
     expect(logged).toEqual(["test"])
@@ -255,7 +249,7 @@ describe("Context.output", () => {
 
 describe("run()", () => {
   it("returns context with captured output", async () => {
-    const testJig = jig("test", {}, async (ctx) => {
+    const testJig = jig("test", { trigger: { type: "manual" } }, async (ctx) => {
       ctx.output("line 1")
       ctx.output("line 2")
     })
@@ -268,7 +262,7 @@ describe("run()", () => {
     const origLog = console.log
     console.log = (...args: any[]) => sinkCalls.push(args.join(" "))
 
-    const testJig = jig("test", {}, async (ctx) => {
+    const testJig = jig("test", { trigger: { type: "manual" } }, async (ctx) => {
       ctx.output("hidden")
     })
     const ctx = await run(testJig, {}, { silent: true })
@@ -279,7 +273,7 @@ describe("run()", () => {
   })
 
   it("passes params to handler", async () => {
-    let received: Record<string, string> = {}
+    let received: Record<string, unknown> = {}
     const testJig = jig("test", { trigger: { type: "manual" } }, async (ctx) => {
       received = ctx.params
     })

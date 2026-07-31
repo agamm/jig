@@ -3,12 +3,13 @@
  * and validation guards. No LLM calls: uses jigs that don't call ctx.llm().
  */
 import { describe, it, expect, beforeEach, afterEach } from "bun:test"
-import { writeFileSync, rmSync } from "fs"
+import { mkdtempSync, writeFileSync, rmSync } from "fs"
+import { tmpdir } from "os"
 import { join } from "path"
 import type { RunEvent } from "../src/run-events.js"
 
-const PROJECT_ROOT = join(import.meta.dir, "..")
-const JIGS_DIR = join(PROJECT_ROOT, "jigs")
+// Ephemeral jig files go in an OS temp dir, never the project tree.
+const TEST_TMP_DIR = mkdtempSync(join(tmpdir(), "jig-run-test-"))
 
 // Initialize in-memory DB once
 let dbInit = false
@@ -20,7 +21,7 @@ async function ensureDb() {
 }
 
 describe("run lifecycle events", () => {
-  const testJigPath = join(JIGS_DIR, "_test_run_events.ts")
+  const testJigPath = join(TEST_TMP_DIR, "_test_run_events.ts")
 
   beforeEach(async () => { await ensureDb() })
   afterEach(() => { rmSync(testJigPath, { force: true }) })
@@ -82,7 +83,7 @@ export default jig("test-multi-step", {
   it("emits error event when handler throws", async () => {
     const { runJig } = await import("../src/runner.js")
     // Use unique filename to avoid Bun import cache collisions across test files
-    const throwJigPath = join(JIGS_DIR, "_test_run_throw.ts")
+    const throwJigPath = join(TEST_TMP_DIR, "_test_run_throw.ts")
     writeFileSync(throwJigPath, `
 import { jig } from "@jig/sdk"
 
@@ -112,7 +113,7 @@ export default jig("test-throw", {
 })
 
 describe("run validation guards", () => {
-  const testJigPath = join(JIGS_DIR, "_test_run_guard.ts")
+  const testJigPath = join(TEST_TMP_DIR, "_test_run_guard.ts")
 
   beforeEach(async () => { await ensureDb() })
   afterEach(() => { rmSync(testJigPath, { force: true }) })
@@ -159,7 +160,7 @@ export default jig("test-params-ok", {
 })
 
 describe("dry-run tool skipping", () => {
-  const testJigPath = join(JIGS_DIR, "_test_dry_run_skip.ts")
+  const testJigPath = join(TEST_TMP_DIR, "_test_dry_run_skip.ts")
 
   beforeEach(async () => { await ensureDb() })
   afterEach(() => { rmSync(testJigPath, { force: true }) })
@@ -172,7 +173,7 @@ import { apify } from "@jig/connections/apify.js"
 
 export default jig("test-dry-run-skip", {
   trigger: { type: "manual" },
-  tools: [apify.call_actor, apify.get_actor_output],
+  tools: [apify.call_actor, apify.get_dataset_items],
 }, async (ctx) => {
   let datasetId: string | undefined
 
@@ -185,8 +186,8 @@ export default jig("test-dry-run-skip", {
     ctx.output("after skipped write")
   })
 
-  await ctx.step("Dependent read", [apify.get_actor_output], async () => {
-    await apify.get_actor_output({ datasetId, limit: 1 })
+  await ctx.step("Dependent read", [apify.get_dataset_items], async () => {
+    await apify.get_dataset_items({ datasetId, limit: 1 })
     ctx.output("after skipped read")
   })
 })
@@ -198,7 +199,7 @@ export default jig("test-dry-run-skip", {
     expect(result.error).toBeUndefined()
     expect(result.output).toContain("[dry-run] Would call apify.call-actor")
     expect(result.output).toContain("after skipped write")
-    expect(result.output).toContain("[dry-run] Skipping apify.get-actor-output because its params depend on a skipped tool result")
+    expect(result.output).toContain("[dry-run] Skipping apify.get-dataset-items because its params depend on a skipped tool result")
     expect(result.output).toContain("after skipped read")
   })
 })

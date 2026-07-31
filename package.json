@@ -1,17 +1,17 @@
 {
   "name": "jig",
-  "version": "0.1.79",
+  "version": "0.1.80",
   "description": "AI workflow automation — deterministic execution with LLM hatches",
   "module": "src/index.ts",
   "type": "module",
   "private": true,
   "keywords": ["ai-agent", "autonomous-agent", "mcp", "workflow-automation", "llm", "deterministic-execution"],
   "scripts": {
-    "dev": "bun run jigs/weekly-update.ts",
     "jig": "bun run src/cli.ts",
     "start": "bun run src/cli.ts start",
     "typegen": "bun run src/mcp/typegen.ts",
-    "test": "bun test"
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
   },
   "engines": {
     "node": ">=22"
@@ -21,8 +21,7 @@
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "@types/diff": "^8.0.0",
-    "vitest": "^4.1.1"
+    "@types/diff": "^8.0.0"
   },
   "peerDependencies": {
     "typescript": "^5"

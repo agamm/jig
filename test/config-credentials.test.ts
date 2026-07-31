@@ -174,6 +174,10 @@ describe("custom server configs", () => {
       url: "https://merge.example/mcp",
       description: "Merged custom MCP",
     })
-    expect(configs.github).toBeDefined()
+    // Built-in servers survive the merge...
+    expect(configs.granola).toBeDefined()
+    // ...except disabled ones, which stay in default.json for their `_note`
+    // but are never offered or loadable.
+    expect(configs.github).toBeUndefined()
   })
 })

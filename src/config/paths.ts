@@ -10,22 +10,20 @@ export const PROJECT_ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..
  *   ensuring the volume is mounted there.
  * - Local mode: PROJECT_ROOT (preserves existing developer layout).
  */
-export const DATA_DIR = isServiceMode() ? "/data" : PROJECT_ROOT
+export const DATA_DIR = process.env.JIG_DATA_DIR || (isServiceMode() ? "/data" : PROJECT_ROOT)
 
 /**
  * MCP-generated metadata (schemas, typegen, custom server list). Local keeps
  * the `.jig/` dotdir to avoid regressing existing dev checkouts; service mode
  * gets a flat layout under the volume.
+ *
+ * `JIG_META_DIR` redirects it. The test suite uses this to run against frozen
+ * fixture schemas instead of whichever MCP servers the developer's machine
+ * happens to have connected.
  */
-const META_DIR = isServiceMode() ? DATA_DIR : join(PROJECT_ROOT, ".jig")
+const META_DIR = process.env.JIG_META_DIR || (isServiceMode() ? DATA_DIR : join(PROJECT_ROOT, ".jig"))
 
 export const DB_PATH = join(DATA_DIR, "jig.db")
-/**
- * Legacy filesystem source for jigs. The v12 migration ingests any files at
- * this path into jig_versions on boot; after that, the directory is no
- * longer authoritative — it's a one-time migration source only.
- */
-export const JIGS_DIR = join(DATA_DIR, "jigs")
 /** Materialized active-version code, written on demand for Bun.import. Path includes versionId so module cache stays correct. */
 export const RUNTIME_DIR = join(DATA_DIR, "runtime")
 /** Transient typecheck files for pending code. Wiped between checks. */

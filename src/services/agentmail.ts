@@ -43,20 +43,8 @@ export function getAgentMailSettings(): AgentMailSettings {
     inboxId: str(raw?.inboxId),
     address: str(raw?.address),
     owner: str(raw?.owner),
-    notifyOnFailure: typeof raw?.notifyOnFailure === "boolean" ? raw.notifyOnFailure : legacyNotifyOnFailure(),
+    notifyOnFailure: typeof raw?.notifyOnFailure === "boolean" ? raw.notifyOnFailure : true,
   }
-}
-
-/**
- * Failure alerting used to be gated by `triggerOn.fail` in the `notifications`
- * settings row, back when alerts could also go out over MCP tools. Honour that
- * flag when this row hasn't got its own yet, so upgrading doesn't silently
- * re-enable alerts someone had paused. The next save writes the flag here and
- * this stops mattering; removable once no live DB predates it.
- */
-function legacyNotifyOnFailure(): boolean {
-  const legacy = getSetting<{ triggerOn?: { fail?: unknown } }>("notifications")
-  return typeof legacy?.triggerOn?.fail === "boolean" ? legacy.triggerOn.fail : true
 }
 
 function getApiKey(): string | null {

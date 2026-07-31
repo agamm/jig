@@ -101,17 +101,16 @@ export async function handleInboundEmail(
   // From-header match, which SMTP lets an attacker spoof; the token was placed
   // in the outbound subject + body and delivered ONLY to the owner's inbox, so a
   // spoofed reply that never saw the email can't produce it. Check the raw body
-  // (quoted history) and subject. Pre-v20 threads have no token — grandfathered.
-  if (thread.reply_token) {
-    const subject: string | undefined = typeof message.subject === "string" ? message.subject : undefined
-    if (!replyCarriesToken(thread.reply_token, { subject, text: message.text })) {
-      console.warn(`[email] ignoring reply missing the thread token for jig ${thread.jig_id}`)
-      await replyAgentMail({
-        messageId,
-        text: "⚠️ I couldn't verify that reply — the security reference was missing. Reply again keeping the quoted message and its \"reply ref\" line, or edit this jig on the dashboard.",
-      }).catch(() => {})
-      return { status: 200, body: { ignored: "reply token missing or mismatched" } }
-    }
+  // (quoted history) and subject. A thread with no token is not trusted either —
+  // every thread jig creates now carries one.
+  const subject: string | undefined = typeof message.subject === "string" ? message.subject : undefined
+  if (!thread.reply_token || !replyCarriesToken(thread.reply_token, { subject, text: message.text })) {
+    console.warn(`[email] ignoring reply missing the thread token for jig ${thread.jig_id}`)
+    await replyAgentMail({
+      messageId,
+      text: "⚠️ I couldn't verify that reply — the security reference was missing. Reply again keeping the quoted message and its \"reply ref\" line, or edit this jig on the dashboard.",
+    }).catch(() => {})
+    return { status: 200, body: { ignored: "reply token missing or mismatched" } }
   }
 
   const instruction = stripQuotedReply(message.text ?? "")

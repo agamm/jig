@@ -62,9 +62,9 @@
 - **No runtime state in source or templates** — never commit or template `.env`, `.jig/`, `jig.db*`, `jig.log`, `runtime/`, `tmp/`, credentials, OAuth state, generated schemas, or connection data. Railway templates must come from a clean seed project with a blank `/data` volume, never a live personal instance.
 
 ## Database
-- **Migrations: append only** — never insert or reorder entries in the `MIGRATIONS` array in `src/db.ts`. New migrations always go at the end. The `PRAGMA user_version` is an index — inserting before existing migrations causes them to be skipped on existing DBs.
+- **A schema change is TWO edits** — update `SCHEMA` in `src/db.ts` (so new databases get it) AND append a migration (so existing databases get it). `db.test.ts` ("fresh and migrated databases converge") fails if you do only one.
+- **Migrations: append only** — never insert or reorder entries in the `MIGRATIONS` array. `PRAGMA user_version` is `BASELINE_VERSION + index`, so inserting shifts every later migration and existing databases skip the one they never ran.
 - **Credentials in SQLite, config in .env** — API keys and tokens entered by users during `jig connect` go in the `credentials` table. Static config (ports, feature flags) goes in `.env`.
-- **Test migrations against existing DBs** — after adding a migration, verify it runs on a DB that already has prior migrations applied, not just a fresh DB.
 
 ## Architecture
 - **Next.js is a thin proxy** — the dashboard (`dashboard/`) is a Next.js frontend that rewrites `/api/*` to the Bun API server (`src/server.ts`) via `next.config.ts`. All backend logic (LLM calls, file I/O, DB) goes in `src/server.ts`, never in Next.js API routes or middleware. The Bun server auto-loads `.env`; Next.js does not.

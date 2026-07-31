@@ -33,7 +33,7 @@ bun run jig run <jig-id>
 
 Every jig exports `jig(name, options, handler)` from `@jig/sdk`. Every logical unit of work belongs in a flat `ctx.step()` block. Direct code is preferred over `llm()`, and `llm()` is preferred over `agent()`. Connection tools must appear in the jig-level and current-step allowlists. Use `ctx.output()` for observable results.
 
-For an installed instance, the approved jig version in SQLite is authoritative. Do not assume editing `jigs/<id>.ts` changes the active workflow.
+The approved jig version in SQLite is authoritative — there is no jig source on disk. `jig run` and the dashboard both execute that version.
 
 ### Deploy
 

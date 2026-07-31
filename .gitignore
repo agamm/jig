@@ -19,9 +19,12 @@ jig_debug.log
 .next
 src/config/deploy-defaults.generated.json
 
-jigs/.git
+# Authored jigs are per-instance runtime state; the store (SQLite) is
+# authoritative and jigs/ is only a legacy import source.
+jigs/
 runtime/
 check/
 jig.log
 .claude/
 tmp/
+test/.tmp/

@@ -1,88 +1,43 @@
 import type { CancelRunResponse, RunDetail, StartRunResponse } from "../../shared/api.js"
-import { getRun, insertRun, openDb } from "../db.js"
-import { runJig, persist } from "../runner.js"
+import { getRun, insertRun } from "../db.js"
 import { formatDuration } from "../utils.js"
 import { ApiError } from "../server/http.js"
-import { abortRunForJig, applyRunEvent, discardTrackedRun, finishTrackedRun, getActiveRunStatusForJig, getSignalForRun, getRunStatus, hasActiveRunForJig, startTrackedRun } from "./run-store.js"
-import { maybeNotifyRunFailure } from "./run-failure-notify.js"
-import { missingConnectionsForJig } from "./connection-preflight.js"
-import { materializeActiveVersion } from "./jig-runtime.js"
-import { getJigRow, getStepModelOverrides } from "./jig-store.js"
-
-/** Materialize the active version of a jig for the runner to import. */
-async function resolveRunnablePath(jigId: string): Promise<string | null> {
-  const materialized = await materializeActiveVersion(jigId)
-  return materialized?.path ?? null
-}
-
-function assertConnectionsReady(jigPath: string): void {
-  const missing = missingConnectionsForJig(jigPath)
-  if (missing.length === 0) return
-
-  throw new ApiError(
-    400,
-    missing.length === 1
-      ? `Connection required: ${missing[0]}`
-      : `Connections required: ${missing.join(", ")}`,
-    {
-      code: "missing_connections",
-      requiredConnections: missing,
-      connectionStatuses: missing.map((name) => ({ name, connected: false })),
-    },
-  )
-}
+import { abortRunForJig, getActiveRunStatusForJig, getRunStatus, hasActiveRunForJig, startTrackedRun } from "./run-store.js"
+import { executeRun, prepareRun } from "./run-core.js"
+import { getStepModelOverrides } from "./jig-store.js"
 
 export async function startJigRun(id: string, body: any): Promise<StartRunResponse> {
-  const jigRow = getJigRow(id)
-  if (!jigRow) throw new ApiError(404, `Jig not found: ${id}`)
-
-  const dryRun = body?.dryRun === true
-  const jigPath = await resolveRunnablePath(id)
-
-  if (!jigPath) throw new ApiError(404, "Jig has no active version")
-  assertConnectionsReady(jigPath)
+  const prepared = await prepareRun(id)
+  if (!prepared.ok) {
+    if (prepared.reason === "not-found") throw new ApiError(404, `Jig not found: ${id}`)
+    if (prepared.reason === "no-active-version") throw new ApiError(404, "Jig has no active version")
+    throw new ApiError(400, prepared.message, {
+      code: "missing_connections",
+      requiredConnections: prepared.missing,
+      connectionStatuses: prepared.missing.map((name) => ({ name, connected: false })),
+    })
+  }
   if (hasActiveRunForJig(id)) throw new ApiError(409, `A run is already in progress for ${id}`)
 
+  const { jigPath, jigRow } = prepared
+  const dryRun = body?.dryRun === true
   const runId = dryRun ? -Date.now() : insertRun(id)
   startTrackedRun(runId, id, dryRun, jigRow.run_timeout_ms ?? undefined)
 
-  const startTime = Date.now()
-  const persistHandler = !dryRun ? persist(runId, startTime) : null
   const modelOverride = jigRow.model_override ?? null
-  const stepModelOverrides = getStepModelOverrides(id)
-  const toolTimeoutMs = jigRow.tool_timeout_ms ?? null
+  console.log(`[run] ${id} started (runId=${runId}${dryRun ? ", dryRun" : ""}${modelOverride ? `, model=${modelOverride}` : ""})`)
 
-  ;(async () => {
-    let skipped = false
-    try {
-      console.log(`[run] ${id} started (runId=${runId}${dryRun ? ", dryRun" : ""}${modelOverride ? `, model=${modelOverride}` : ""})`)
-      const result = await runJig(jigPath, {}, (event) => {
-        if (event.type !== "skipped") applyRunEvent(runId, event)
-        if (event.type !== "skipped") persistHandler?.(event)
-        // Mirror step failures + fatal errors to console.error so the Logs
-        // page surfaces *why* a run failed (otherwise silent:true hides it).
-        if (event.type === "step-done" && event.status === "fail") {
-          console.error(`[run] ${id} step ${event.seq} failed: ${event.error ?? "(no error message)"}`)
-        } else if (event.type === "error") {
-          console.error(`[run] ${id} error: ${event.message}`)
-        } else if (event.type === "done") {
-          console.log(`[run] ${id} done in ${event.durationMs}ms`)
-        }
-      }, { dryRun, silent: true, signal: getSignalForRun(runId), modelOverride, stepModelOverrides, toolTimeoutMs, jigId: id })
-      if (result.skipped && !dryRun) {
-        skipped = true
-        const db = openDb()
-        db.prepare(`DELETE FROM run_steps WHERE run_id = ?`).run(runId)
-        db.prepare(`DELETE FROM runs WHERE id = ?`).run(runId)
-      }
-    } finally {
-      if (skipped) discardTrackedRun(runId)
-      else {
-        finishTrackedRun(runId)
-        void maybeNotifyRunFailure(id, runId, dryRun).catch(() => {})
-      }
-    }
-  })()
+  // Fire and forget — the dashboard follows progress over the run-status API.
+  void executeRun({
+    jigId: id,
+    runId,
+    jigPath,
+    dryRun,
+    logPrefix: "run",
+    modelOverride,
+    stepModelOverrides: getStepModelOverrides(id),
+    toolTimeoutMs: jigRow.tool_timeout_ms ?? null,
+  }).catch(() => {})
 
   return { runId, jigId: id, dryRun }
 }

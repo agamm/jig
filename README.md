@@ -128,7 +128,6 @@ Generated jigs use these import aliases:
 ## Project Layout
 
 * `jig.db*`: ignored local state and the authoritative versioned jig store
-* `jigs/`: legacy workflow import source
 * `.jig/connections/`: generated typed connection clients
 * `.jig/schemas/`: cached tool schemas
 * `examples/`: example jigs

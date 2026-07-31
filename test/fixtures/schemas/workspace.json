@@ -1,0 +1,87 @@
+[
+  {
+    "name": "gmail_search",
+    "description": "Search Gmail messages with a query.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": { "type": "string", "description": "Gmail search query." },
+        "maxResults": { "type": "number", "description": "Maximum messages to return." }
+      },
+      "required": []
+    },
+    "annotations": { "readOnlyHint": true }
+  },
+  {
+    "name": "gmail_get",
+    "description": "Fetch a single Gmail message by id.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "messageId": { "type": "string", "description": "The message id." }
+      },
+      "required": ["messageId"]
+    },
+    "annotations": { "readOnlyHint": true }
+  },
+  {
+    "name": "gmail_send",
+    "description": "Send an email.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "to": { "type": "string", "description": "Recipient email address(es)." },
+        "subject": { "type": "string", "description": "Subject line." },
+        "body": { "type": "string", "description": "Message body." }
+      },
+      "required": ["to", "subject", "body"]
+    },
+    "annotations": { "readOnlyHint": false }
+  },
+  {
+    "name": "gmail_createDraft",
+    "description": "Create a Gmail draft.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "to": { "type": "string", "description": "Recipient email address(es)." },
+        "subject": { "type": "string", "description": "Subject line." },
+        "body": { "type": "string", "description": "Message body." }
+      },
+      "required": ["to", "subject", "body"]
+    },
+    "annotations": { "readOnlyHint": false }
+  },
+  {
+    "name": "calendar_listEvents",
+    "description": "List events on a calendar.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "calendarId": { "type": "string", "description": "Calendar id." },
+        "timeMin": { "type": "string", "description": "Lower bound (RFC3339)." },
+        "timeMax": { "type": "string", "description": "Upper bound (RFC3339)." }
+      },
+      "required": ["calendarId"]
+    },
+    "annotations": { "readOnlyHint": true }
+  },
+  {
+    "name": "drive_search",
+    "description": "Search Drive files.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": { "type": "string", "description": "Drive search query." }
+      },
+      "required": []
+    },
+    "annotations": { "readOnlyHint": true }
+  },
+  {
+    "name": "people_getMe",
+    "description": "Get the authenticated user's profile.",
+    "inputSchema": { "type": "object", "properties": {}, "required": [] },
+    "annotations": { "readOnlyHint": true }
+  }
+]

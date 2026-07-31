@@ -23,6 +23,32 @@ export function validateApifyBuildTimeResolution(
     })
   }
 
+  // call-actor returns a run descriptor, not the scraped rows. A jig that calls
+  // it and never reads the dataset has no real data — and when that result feeds
+  // llm()/agent(), the model invents an answer that looks entirely plausible
+  // while the run still reports success. Fabrication is the failure mode here,
+  // so this is an error rather than a warning.
+  if (codeUsesConnectionTool(code, "apify", "call-actor") && !codeUsesConnectionTool(code, "apify", "get-dataset-items")) {
+    issues.push({
+      message:
+        "apify.call_actor returns a run descriptor (status/stats/storages), not the Actor's output rows. "
+        + "This code never calls apify.get_dataset_items, so it has no scraped data. "
+        + "Add a step that reads the rows: `const items = await apify.get_dataset_items({ datasetId: run.storages?.datasets?.default?.id })`, "
+        + "and derive the result from those items. Do not pass only a datasetId or itemCount into llm()/agent().",
+    })
+  }
+
+  // get-actor-run is metadata; it is not a way to recover output rows.
+  if (
+    codeUsesConnectionTool(code, "apify", "get-actor-run")
+    && !codeUsesConnectionTool(code, "apify", "get-dataset-items")
+  ) {
+    issues.push({
+      message:
+        "apify.get_actor_run returns run metadata only. To read an Actor's results use apify.get_dataset_items({ datasetId }).",
+    })
+  }
+
   if (apifyCallArguments.length === 0) return issues
 
   if (apifyCallArguments.some((call) => hasObjectProperty(call, "actorId"))) {

@@ -142,19 +142,19 @@ import { apify } from "@jig/connections/apify.js"
 
 export default jig("github-trends", {
   trigger: { type: "manual" },
-  tools: [apify.call_actor, apify.get_actor_output],
+  tools: [apify.call_actor, apify.get_dataset_items],
 }, async (ctx) => {
   await ctx.step("Scrape", [apify.call_actor], async () => {
     const result = await apify.call_actor({ actor: "x/y", input: {} })
     const datasetId = (result as any).datasetId
-    await apify.get_actor_output({ datasetId })
+    await apify.get_dataset_items({ datasetId })
   })
 })
 `
 
     expect(checkStepToolDeclarations(code)).toContainEqual({
-      field: "steps.Scrape.apify.get_actor_output",
-      message: 'Tool "apify.get_actor_output" is used inside step "Scrape" but is not declared in that step\'s tools array. Add it to that ctx.step() call or move it into a separate step.',
+      field: "steps.Scrape.apify.get_dataset_items",
+      message: 'Tool "apify.get_dataset_items" is used inside step "Scrape" but is not declared in that step\'s tools array. Add it to that ctx.step() call or move it into a separate step.',
     })
   })
 
@@ -165,15 +165,15 @@ import { apify } from "@jig/connections/apify.js"
 
 export default jig("github-trends", {
   trigger: { type: "manual" },
-  tools: [apify.call_actor, apify.get_actor_output],
+  tools: [apify.call_actor, apify.get_dataset_items],
 }, async (ctx) => {
   let datasetId = ""
   await ctx.step("Scrape", [apify.call_actor], async () => {
     const result = await apify.call_actor({ actor: "x/y", input: {} })
     datasetId = (result as any).datasetId
   })
-  await ctx.step("Fetch", [apify.get_actor_output], async () => {
-    await apify.get_actor_output({ datasetId })
+  await ctx.step("Fetch", [apify.get_dataset_items], async () => {
+    await apify.get_dataset_items({ datasetId })
   })
 })
 `

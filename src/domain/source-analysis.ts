@@ -11,7 +11,10 @@ export interface ConnectionToolReference {
   toolName: string
 }
 
-const CONNECTION_IMPORT_RE = /^(?:@jig|jig|(?:\.\.\/)+\.jig)\/connections\/([A-Za-z0-9_-]+)(?:\.(?:js|ts))?$/
+// Only the alias form. The runner rejects any jig that reaches for a `../`
+// relative import (see its source validator), so a relative `.jig/connections/`
+// specifier can never run — recognizing it here would only mask that error.
+const CONNECTION_IMPORT_RE = /^(?:@jig|jig)\/connections\/([A-Za-z0-9_-]+)(?:\.(?:js|ts))?$/
 
 function parseSource(code: string, fileName = "jig.ts") {
   return ts.createSourceFile(fileName, code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)

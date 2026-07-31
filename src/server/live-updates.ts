@@ -1,7 +1,3 @@
-import { existsSync, mkdirSync, watch, type FSWatcher } from "node:fs"
-import { JIGS_DIR } from "../config/paths.js"
-import { invalidateJigsCache } from "../discover.js"
-
 type LiveUpdateEvent = "jigs" | "ready" | "ping"
 
 type Subscriber = {
@@ -15,8 +11,6 @@ const subscribers = new Set<Subscriber>()
 const HEARTBEAT_MS = 15_000
 const JIG_EVENT_DEBOUNCE_MS = 120
 
-let jigWatch: FSWatcher | null = null
-let watchersStarted = false
 let pendingJigBroadcast: ReturnType<typeof setTimeout> | null = null
 
 function encodeEvent(event: LiveUpdateEvent, payload?: Record<string, unknown>): Uint8Array {
@@ -89,23 +83,3 @@ export function createLiveUpdatesResponse(): Response {
   })
 }
 
-export function startLiveUpdateWatchers(): void {
-  if (watchersStarted) return
-  watchersStarted = true
-
-  if (!existsSync(JIGS_DIR)) {
-    mkdirSync(JIGS_DIR, { recursive: true })
-  }
-
-  try {
-    jigWatch = watch(JIGS_DIR, { persistent: false }, (_eventType, filename) => {
-      if (typeof filename === "string" && (filename === "drafts" || filename.startsWith("drafts/"))) {
-        return
-      }
-      invalidateJigsCache()
-      broadcastJigsUpdated("filesystem")
-    })
-  } catch (error) {
-    console.warn("[live-updates] failed to watch jigs directory:", (error as Error)?.message ?? String(error))
-  }
-}

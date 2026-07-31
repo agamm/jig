@@ -34,7 +34,7 @@ describe("truncLabel", () => {
 
 describe("ctx.step", () => {
   it("enforces tool allowlist within a step", async () => {
-    const ctx = new Context({}, [])
+    const ctx = new Context({})
     const steps: string[] = []
     ctx.setRecorder({
       onStepStart(_seq, label) { steps.push(label) },
@@ -49,12 +49,12 @@ describe("ctx.step", () => {
   })
 
   it("isToolAllowedInCurrentStep returns false outside a step", () => {
-    const ctx = new Context({}, [])
+    const ctx = new Context({})
     expect(ctx.isToolAllowedInCurrentStep("gmail_search")).toBe(false)
   })
 
   it("isToolAllowedInCurrentStep returns false for undeclared tools inside a step", async () => {
-    const ctx = new Context({}, [])
+    const ctx = new Context({})
     let checkedInside = false
     await ctx.step("Step", [], async () => {
       checkedInside = true
@@ -64,7 +64,7 @@ describe("ctx.step", () => {
   })
 
   it("currentStepLabel is null between steps", async () => {
-    const ctx = new Context({}, [])
+    const ctx = new Context({})
     expect(ctx.currentStepLabel).toBeNull()
     await ctx.step("My step", [], async () => {
       expect(ctx.currentStepLabel).toBe("My step")

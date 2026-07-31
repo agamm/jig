@@ -1,8 +1,4 @@
-import { existsSync } from "fs"
-import { join } from "path"
-import { JIGS_DIR } from "../config/paths.js"
 import { cronToText } from "./triggers.js"
-import { isValidJigId } from "./jig-id.js"
 import { getImportedServers } from "./source-analysis.js"
 
 export interface TriggerConfig {
@@ -102,19 +98,4 @@ export function extractTrigger(code: string): string {
   if (type === "manual") return "Manual"
   if (type === "webhook") return "Webhook"
   return ""
-}
-
-export function getJigRelativePath(jigId: string): string | null {
-  if (!isValidJigId(jigId)) return null
-  return `${jigId}.ts`
-}
-
-export function resolveJigPath(jigId: string): string {
-  return join(JIGS_DIR, `${jigId}.ts`)
-}
-
-export function getJigFilePath(id: string): string | null {
-  if (!isValidJigId(id)) return null
-  const p = join(JIGS_DIR, `${id}.ts`)
-  return existsSync(p) ? p : null
 }

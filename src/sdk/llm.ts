@@ -146,7 +146,6 @@ export async function agent<T = string>(
 
   ctx?.enterAgent()
 
-  const model = options?.model ?? runContext.getStore()?.currentModel ?? getMainModel()
   spinner.show("agent")
 
   try {

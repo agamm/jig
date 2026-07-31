@@ -1,17 +1,13 @@
 import { beforeEach, describe, expect, it } from "bun:test"
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "fs"
+import { rmSync } from "fs"
 import { join } from "path"
-import { getJigFilePath } from "../src/domain/jig-source.js"
 import { applyRunEvent, clearTrackedRunsForJig, finishTrackedRun, getActiveRunStatusForJig, resetRunStoreForTests, startTrackedRun } from "../src/services/run-store.js"
 import { cancelActiveRun, getActiveRunSnapshot, getRunDetail, startJigRun } from "../src/services/run-api.js"
 import { closeDb, openDb } from "../src/db.js"
-import { invalidateJigsCache } from "../src/discover.js"
-import { JIGS_DIR, PROJECT_ROOT, RUNTIME_DIR } from "../src/config/paths.js"
+import { PROJECT_ROOT } from "../src/config/paths.js"
 import { seedJig, writeRuntimeSibling } from "./_fixtures.js"
 import { deleteJig as storeDeleteJig } from "../src/services/jig-store.js"
 
-const CONNECTIONS_DIR = join(PROJECT_ROOT, ".jig/connections")
-const CONNECTIONS_INDEX = join(CONNECTIONS_DIR, "index.ts")
 const CANCELLED_MESSAGE = "This operation was aborted"
 
 async function waitFor(check: () => boolean, timeoutMs = 500): Promise<void> {
@@ -26,16 +22,6 @@ beforeEach(() => {
   // Tests in this file share the module-level run-store state — reset so
   // stale runs from earlier tests don't leak into subsequent tests.
   resetRunStoreForTests()
-})
-
-describe("getJigFilePath", () => {
-  it("rejects path traversal IDs", () => {
-    expect(getJigFilePath("../bar")).toBeNull()
-  })
-
-  it("rejects invalid IDs", () => {
-    expect(getJigFilePath("foo/../bar")).toBeNull()
-  })
 })
 
 describe("getRunDetail", () => {
@@ -123,12 +109,8 @@ describe("active run snapshots", () => {
 
 describe("run API invariants", () => {
   it("rejects starting a second run of the same jig while it is active", async () => {
-    const createdConnectionsIndex = !existsSync(CONNECTIONS_INDEX)
     closeDb()
     openDb(":memory:")
-    invalidateJigsCache()
-    mkdirSync(CONNECTIONS_DIR, { recursive: true })
-    if (createdConnectionsIndex) writeFileSync(CONNECTIONS_INDEX, "export {}\n")
     seedJig("per-jig-lock-case", `
 import { jig } from "@jig/sdk"
 
@@ -146,19 +128,13 @@ export default jig("per-jig-lock-case", {
     } finally {
       finishTrackedRun(2001)
       storeDeleteJig("per-jig-lock-case")
-      if (createdConnectionsIndex) rmSync(CONNECTIONS_INDEX, { force: true })
       closeDb()
-      invalidateJigsCache()
     }
   })
 
   it("allows starting a different jig while another is active (per-jig concurrency)", async () => {
-    const createdConnectionsIndex = !existsSync(CONNECTIONS_INDEX)
     closeDb()
     openDb(":memory:")
-    invalidateJigsCache()
-    mkdirSync(CONNECTIONS_DIR, { recursive: true })
-    if (createdConnectionsIndex) writeFileSync(CONNECTIONS_INDEX, "export {}\n")
     seedJig("other-jig-case", `
 import { jig } from "@jig/sdk"
 
@@ -178,19 +154,13 @@ export default jig("other-jig-case", {
     } finally {
       finishTrackedRun(3001)
       storeDeleteJig("other-jig-case")
-      if (createdConnectionsIndex) rmSync(CONNECTIONS_INDEX, { force: true })
       closeDb()
-      invalidateJigsCache()
     }
   })
 
   it("keeps skipped runs out of run detail and active status", async () => {
-    const createdConnectionsIndex = !existsSync(CONNECTIONS_INDEX)
     closeDb()
     openDb(":memory:")
-    invalidateJigsCache()
-    mkdirSync(CONNECTIONS_DIR, { recursive: true })
-    if (createdConnectionsIndex) writeFileSync(CONNECTIONS_INDEX, "export {}\n")
     seedJig("skip-disappears-case", `
 import { jig } from "@jig/sdk"
 
@@ -207,19 +177,13 @@ export default jig("skip-disappears-case", {
       expect(() => getRunDetail(started.runId)).toThrow("Run not found")
     } finally {
       storeDeleteJig("skip-disappears-case")
-      if (createdConnectionsIndex) rmSync(CONNECTIONS_INDEX, { force: true })
       closeDb()
-      invalidateJigsCache()
     }
   })
 
   it("cancels a running tool call by propagating the run abort signal into MCP requests", async () => {
-    const createdConnectionsIndex = !existsSync(CONNECTIONS_INDEX)
     closeDb()
     openDb(":memory:")
-    invalidateJigsCache()
-    mkdirSync(CONNECTIONS_DIR, { recursive: true })
-    if (createdConnectionsIndex) writeFileSync(CONNECTIONS_INDEX, "export {}\n")
 
     // Helper lives alongside the materialized active version in the runtime
     // tmpdir so the jig's relative import ./_cancel_tool_helper resolves.
@@ -290,9 +254,7 @@ export default jig("cancel-tool-case", {
     } finally {
       rmSync(helperPath, { force: true })
       storeDeleteJig("cancel-tool-case")
-      if (createdConnectionsIndex) rmSync(CONNECTIONS_INDEX, { force: true })
       closeDb()
-      invalidateJigsCache()
     }
   })
 })

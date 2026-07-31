@@ -1,207 +1,135 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="960" viewBox="0 0 1800 960" role="img" aria-labelledby="title description">
-  <title id="title">Jig technical architecture</title>
-  <desc id="description">Jig has an authoring plane where the dashboard or CLI drives a model-backed agent that writes versioned TypeScript into SQLite, and an execution plane where manual, cron, or webhook triggers feed the runtime engine. The engine runs the active jig through the Jig SDK. SDK AI hatches call OpenRouter, while scoped typed connections call external apps and data through MCP.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="780" viewBox="0 0 1600 780" role="img" aria-labelledby="title description">
+  <title id="title">Jig architecture</title>
+  <desc id="description">A dashboard or CLI asks an authoring agent to create a versioned TypeScript jig. Triggers and the active jig enter the runtime engine, which executes through the Jig SDK. The SDK makes model calls and step-scoped MCP tool calls explicit.</desc>
 
   <defs>
-    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
-      <circle cx="1" cy="1" r="1" fill="#20242a"/>
-    </pattern>
-    <linearGradient id="authoring-fill" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#111a25"/>
-      <stop offset="1" stop-color="#101318"/>
-    </linearGradient>
-    <linearGradient id="runtime-fill" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#102019"/>
-      <stop offset="1" stop-color="#101512"/>
-    </linearGradient>
-    <linearGradient id="sdk-fill" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#121b25"/>
-      <stop offset="1" stop-color="#101419"/>
-    </linearGradient>
-    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6b717a"/>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0 0 10 5 0 10Z" fill="#7b828c"/>
     </marker>
-    <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#34d399"/>
+    <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0 0 10 5 0 10Z" fill="#43d39e"/>
     </marker>
-    <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#60a5fa"/>
+    <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0 0 10 5 0 10Z" fill="#6da8ff"/>
     </marker>
   </defs>
 
-  <rect width="1800" height="960" rx="28" fill="#090a0c"/>
-  <rect width="1800" height="960" rx="28" fill="url(#grid)" opacity="0.32"/>
+  <rect width="1600" height="780" rx="24" fill="#0b0d10"/>
 
   <g font-family="Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
-    <text x="68" y="68" fill="#f2f3f5" font-size="34" font-weight="600" letter-spacing="-0.7">Jig technical architecture</text>
-    <text x="68" y="105" fill="#8f959e" font-size="18">AI authors versioned TypeScript. One engine executes it. The SDK makes every AI and tool boundary explicit.</text>
+    <text x="56" y="62" fill="#f5f7fa" font-size="34" font-weight="650" letter-spacing="-0.6">Jig architecture</text>
+    <text x="56" y="96" fill="#9299a3" font-size="18">AI writes the workflow. The engine runs the code. The SDK makes every boundary explicit.</text>
+
+    <text x="56" y="145" fill="#717883" font-size="13" font-weight="700" letter-spacing="2.2">AUTHORING</text>
 
     <g>
-      <text x="68" y="158" fill="#717780" font-size="12" font-weight="600" letter-spacing="2.3">AUTHORING PLANE</text>
-      <line x1="226" y1="153" x2="1732" y2="153" stroke="#252930"/>
+      <rect x="56" y="170" width="260" height="150" rx="16" fill="#111419" stroke="#292e36" stroke-width="2"/>
+      <text x="82" y="214" fill="#f2f4f7" font-size="25" font-weight="600">Dashboard / CLI</text>
+      <text x="82" y="249" fill="#9ca3ad" font-size="17">Describe and review</text>
+      <text x="82" y="282" fill="#6f7781" font-size="15" font-family="'SFMono-Regular', Consolas, monospace">plain-English intent</text>
     </g>
 
     <g>
-      <rect x="68" y="192" width="244" height="202" rx="18" fill="#101216" stroke="#2a2e35" stroke-width="2"/>
-      <text x="94" y="229" fill="#777d86" font-size="12" font-weight="600" letter-spacing="1.8">SURFACES</text>
-      <text x="94" y="272" fill="#f2f3f5" font-size="25" font-weight="600">Dashboard + CLI</text>
-      <g fill="#afb4bc" font-size="15">
-        <text x="94" y="309">Describe a workflow</text>
-        <text x="94" y="338">Review the diff</text>
-        <text x="94" y="367">Approve + run</text>
+      <rect x="376" y="160" width="300" height="170" rx="18" fill="#101824" stroke="#6da8ff" stroke-opacity="0.72" stroke-width="2"/>
+      <text x="404" y="203" fill="#87b8ff" font-size="13" font-weight="700" letter-spacing="1.8">AUTHORING AGENT</text>
+      <text x="404" y="246" fill="#f2f4f7" font-size="27" font-weight="600">Prompt → code</text>
+      <text x="404" y="281" fill="#aeb5bf" font-size="17">discover · generate · validate</text>
+      <text x="404" y="309" fill="#7188a7" font-size="14" font-family="'SFMono-Regular', Consolas, monospace">TypeScript</text>
+    </g>
+
+    <g>
+      <rect x="736" y="160" width="330" height="170" rx="18" fill="#111719" stroke="#43d39e" stroke-opacity="0.72" stroke-width="2"/>
+      <text x="764" y="203" fill="#67dcb1" font-size="13" font-weight="700" letter-spacing="1.8">VERSIONED STORE</text>
+      <text x="764" y="246" fill="#f2f4f7" font-size="27" font-weight="600">Approved jig</text>
+      <text x="764" y="281" fill="#aeb5bf" font-size="17">active · pending · history</text>
+      <text x="764" y="309" fill="#6f987f" font-size="14" font-family="'SFMono-Regular', Consolas, monospace">SQLite</text>
+    </g>
+
+    <g fill="none" stroke="#7b828c" stroke-width="2.5" marker-end="url(#arrow)">
+      <path d="M316 245H366"/>
+      <path d="M676 245H726"/>
+    </g>
+    <g fill="#7d858f" font-size="13" font-family="'SFMono-Regular', Consolas, monospace">
+      <text x="323" y="231">prompt</text>
+      <text x="683" y="231">writes</text>
+    </g>
+
+    <text x="56" y="414" fill="#717883" font-size="13" font-weight="700" letter-spacing="2.2">EXECUTION</text>
+
+    <g>
+      <rect x="56" y="454" width="210" height="200" rx="16" fill="#111419" stroke="#292e36" stroke-width="2"/>
+      <text x="82" y="497" fill="#7f8791" font-size="13" font-weight="700" letter-spacing="1.8">TRIGGERS</text>
+      <text x="82" y="543" fill="#f2f4f7" font-size="24" font-weight="600">Start a run</text>
+      <text x="82" y="583" fill="#aeb5bf" font-size="17">manual</text>
+      <text x="82" y="613" fill="#aeb5bf" font-size="17">cron · webhook</text>
+    </g>
+
+    <g>
+      <rect x="326" y="444" width="270" height="220" rx="18" fill="#101a16" stroke="#43d39e" stroke-opacity="0.8" stroke-width="2"/>
+      <text x="354" y="487" fill="#67dcb1" font-size="13" font-weight="700" letter-spacing="1.8">RUNTIME ENGINE</text>
+      <text x="354" y="532" fill="#f2f4f7" font-size="27" font-weight="600">Run the jig</text>
+      <text x="354" y="568" fill="#aeb5bf" font-size="17">load · validate</text>
+      <text x="354" y="598" fill="#aeb5bf" font-size="17">execute · record</text>
+      <text x="354" y="636" fill="#6f987f" font-size="14" font-family="'SFMono-Regular', Consolas, monospace">src/runner.ts</text>
+    </g>
+
+    <g>
+      <rect x="656" y="429" width="330" height="250" rx="20" fill="#101824" stroke="#6da8ff" stroke-opacity="0.82" stroke-width="2"/>
+      <text x="686" y="473" fill="#87b8ff" font-size="13" font-weight="700" letter-spacing="1.8">JIG SDK</text>
+      <text x="686" y="516" fill="#f2f4f7" font-size="28" font-weight="600">@jig/sdk</text>
+      <text x="686" y="548" fill="#aeb5bf" font-size="17">JigDefinition + Context</text>
+
+      <g font-family="'SFMono-Regular', Consolas, monospace" font-size="15">
+        <rect x="686" y="574" width="116" height="38" rx="9" fill="#15231d"/>
+        <text x="701" y="599" fill="#9fe2c7">ctx.step()</text>
+        <rect x="814" y="574" width="142" height="38" rx="9" fill="#15231d"/>
+        <text x="829" y="599" fill="#9fe2c7">ctx.email()</text>
+        <rect x="686" y="624" width="92" height="38" rx="9" fill="#15243a"/>
+        <text x="705" y="649" fill="#a9ccff">llm()</text>
+        <rect x="790" y="624" width="166" height="38" rx="9" fill="#15243a"/>
+        <text x="806" y="649" fill="#a9ccff">agent(tools)</text>
       </g>
     </g>
 
     <g>
-      <rect x="382" y="178" width="366" height="230" rx="20" fill="url(#authoring-fill)" stroke="#60a5fa" stroke-opacity="0.72" stroke-width="2"/>
-      <circle cx="412" cy="217" r="6" fill="#60a5fa"/>
-      <text x="430" y="222" fill="#b9bec6" font-size="12" font-weight="600" letter-spacing="1.8">AUTHORING AGENT</text>
-      <text x="410" y="266" fill="#f2f3f5" font-size="27" font-weight="600">Prompt → TypeScript</text>
-      <g fill="#b1b6be" font-size="15">
-        <text x="410" y="307">01  discover schemas + tools</text>
-        <text x="410" y="337">02  generate or patch the jig</text>
-        <text x="410" y="367">03  typecheck + validate</text>
-      </g>
-      <text x="410" y="395" fill="#6f91ba" font-size="12" font-family="'SFMono-Regular', Consolas, 'Liberation Mono', monospace">src/services/agent-service.ts</text>
+      <rect x="1046" y="444" width="280" height="220" rx="18" fill="#111719" stroke="#43d39e" stroke-opacity="0.58" stroke-width="2"/>
+      <text x="1074" y="487" fill="#67dcb1" font-size="13" font-weight="700" letter-spacing="1.8">CONNECTIONS</text>
+      <text x="1074" y="532" fill="#f2f4f7" font-size="26" font-weight="600">Typed tools</text>
+      <text x="1074" y="568" fill="#aeb5bf" font-size="17">step-scoped MCP</text>
+      <text x="1074" y="600" fill="#aeb5bf" font-size="17">timeouts · dry-run</text>
+      <text x="1074" y="636" fill="#6f987f" font-size="14" font-family="'SFMono-Regular', Consolas, monospace">@jig/connections/*</text>
     </g>
 
     <g>
-      <rect x="818" y="178" width="350" height="230" rx="20" fill="#101216" stroke="#2a2e35" stroke-width="2"/>
-      <circle cx="848" cy="217" r="6" fill="#34d399"/>
-      <text x="866" y="222" fill="#b9bec6" font-size="12" font-weight="600" letter-spacing="1.8">VERSIONED STORE</text>
-      <text x="846" y="266" fill="#f2f3f5" font-size="27" font-weight="600">SQLite</text>
-      <g font-family="'SFMono-Regular', Consolas, 'Liberation Mono', monospace" font-size="14">
-        <rect x="846" y="291" width="84" height="34" rx="9" fill="#16221d"/>
-        <text x="861" y="313" fill="#a7d9c4">active</text>
-        <rect x="940" y="291" width="92" height="34" rx="9" fill="#1a1c21"/>
-        <text x="953" y="313" fill="#b1b6be">pending</text>
-        <rect x="1042" y="291" width="98" height="34" rx="9" fill="#1a1c21"/>
-        <text x="1055" y="313" fill="#b1b6be">history</text>
-      </g>
-      <text x="846" y="355" fill="#9298a1" font-size="14">jigs · schedules · runs · steps</text>
-      <text x="846" y="395" fill="#6f757e" font-size="12" font-family="'SFMono-Regular', Consolas, 'Liberation Mono', monospace">jig-store.ts · db.ts</text>
+      <rect x="1386" y="454" width="158" height="200" rx="16" fill="#111419" stroke="#292e36" stroke-width="2"/>
+      <text x="1410" y="497" fill="#7f8791" font-size="13" font-weight="700" letter-spacing="1.4">APPS + DATA</text>
+      <text x="1410" y="542" fill="#f2f4f7" font-size="19" font-weight="600">Gmail</text>
+      <text x="1410" y="574" fill="#f2f4f7" font-size="19" font-weight="600">Slack</text>
+      <text x="1410" y="606" fill="#f2f4f7" font-size="19" font-weight="600">GitHub · …</text>
     </g>
 
-    <g stroke="#6b717a" stroke-width="2" fill="none" marker-end="url(#arrow)">
-      <path d="M 312 293 H 374"/>
-      <path d="M 748 293 H 810"/>
-    </g>
-    <g fill="#777d86" font-size="12" font-family="'SFMono-Regular', Consolas, 'Liberation Mono', monospace">
-      <text x="319" y="278">instruction</text>
-      <text x="754" y="278">pending version</text>
+    <g fill="none" stroke-width="2.5">
+      <path d="M266 554H316" stroke="#7b828c" marker-end="url(#arrow)"/>
+      <path d="M596 554H646" stroke="#43d39e" marker-end="url(#arrow-green)"/>
+      <path d="M986 554H1036" stroke="#43d39e" marker-end="url(#arrow-green)"/>
+      <path d="M1326 554H1376" stroke="#7b828c" marker-end="url(#arrow)"/>
+      <path d="M901 330V374H461V434" stroke="#43d39e" marker-end="url(#arrow-green)"/>
+      <path d="M821 679V710" stroke="#6da8ff" marker-end="url(#arrow-blue)"/>
     </g>
 
-    <g>
-      <text x="68" y="480" fill="#717780" font-size="12" font-weight="600" letter-spacing="2.3">EXECUTION PLANE</text>
-      <line x1="230" y1="475" x2="1732" y2="475" stroke="#252930"/>
+    <g fill="#7d858f" font-size="13" font-family="'SFMono-Regular', Consolas, monospace">
+      <text x="273" y="540">run</text>
+      <text x="603" y="540" fill="#72b99d">context</text>
+      <text x="993" y="540" fill="#72b99d">scoped call</text>
+      <text x="1334" y="540">MCP</text>
+      <text x="571" y="368" fill="#72b99d">loads active version</text>
+      <text x="838" y="704" fill="#7fa9df">model call</text>
     </g>
 
     <g>
-      <rect x="68" y="534" width="216" height="250" rx="18" fill="#101216" stroke="#2a2e35" stroke-width="2"/>
-      <text x="94" y="571" fill="#777d86" font-size="12" font-weight="600" letter-spacing="1.8">TRIGGERS</text>
-      <g font-family="'SFMono-Regular', Consolas, 'Liberation Mono', monospace" font-size="14">
-        <rect x="94" y="601" width="160" height="38" rx="10" fill="#191b20"/>
-        <circle cx="113" cy="620" r="4" fill="#a1a6ae"/>
-        <text x="128" y="625" fill="#c7cbd1">manual</text>
-        <rect x="94" y="649" width="160" height="38" rx="10" fill="#191b20"/>
-        <circle cx="113" cy="668" r="4" fill="#a1a6ae"/>
-        <text x="128" y="673" fill="#c7cbd1">cron</text>
-        <rect x="94" y="697" width="160" height="38" rx="10" fill="#191b20"/>
-        <circle cx="113" cy="716" r="4" fill="#a1a6ae"/>
-        <text x="128" y="721" fill="#c7cbd1">webhook</text>
-      </g>
-      <text x="94" y="765" fill="#656b74" font-size="12">same execution path</text>
-    </g>
-
-    <g>
-      <rect x="350" y="520" width="310" height="278" rx="20" fill="url(#runtime-fill)" stroke="#34d399" stroke-opacity="0.76" stroke-width="2"/>
-      <circle cx="380" cy="559" r="6" fill="#34d399"/>
-      <text x="398" y="564" fill="#b9bec6" font-size="12" font-weight="600" letter-spacing="1.8">RUNTIME ENGINE</text>
-      <text x="378" y="610" fill="#f2f3f5" font-size="27" font-weight="600">Load → run → record</text>
-      <g fill="#b1b6be" font-size="15">
-        <text x="378" y="651">01  materialize active version</text>
-        <text x="378" y="681">02  validate + import module</text>
-        <text x="378" y="711">03  execute + stream events</text>
-        <text x="378" y="741">04  persist run + step state</text>
-      </g>
-      <text x="378" y="780" fill="#6e987f" font-size="12" font-family="'SFMono-Regular', Consolas, 'Liberation Mono', monospace">src/runner.ts</text>
-    </g>
-
-    <g>
-      <rect x="730" y="500" width="402" height="318" rx="22" fill="url(#sdk-fill)" stroke="#60a5fa" stroke-opacity="0.78" stroke-width="2"/>
-      <circle cx="762" cy="541" r="6" fill="#60a5fa"/>
-      <text x="780" y="546" fill="#b9bec6" font-size="12" font-weight="600" letter-spacing="1.8">JIG SDK</text>
-      <text x="760" y="592" fill="#f2f3f5" font-size="28" font-weight="600">JigDefinition + Context</text>
-
-      <text x="760" y="626" fill="#6f987f" font-size="11" font-weight="600" letter-spacing="1.4">DETERMINISTIC CORE</text>
-      <g font-family="'SFMono-Regular', Consolas, 'Liberation Mono', monospace" font-size="14">
-        <rect x="760" y="642" width="80" height="38" rx="10" fill="#15221c"/>
-        <text x="774" y="666" fill="#a8dbc5">jig()</text>
-        <rect x="850" y="642" width="115" height="38" rx="10" fill="#15221c"/>
-        <text x="864" y="666" fill="#a8dbc5">ctx.step()</text>
-        <rect x="975" y="642" width="127" height="38" rx="10" fill="#15221c"/>
-        <text x="988" y="666" fill="#a8dbc5">ctx.output()</text>
-      </g>
-
-      <text x="760" y="713" fill="#729bc8" font-size="11" font-weight="600" letter-spacing="1.4">EXPLICIT AI HATCHES</text>
-      <g font-family="'SFMono-Regular', Consolas, 'Liberation Mono', monospace" font-size="14">
-        <rect x="760" y="729" width="128" height="42" rx="10" fill="#15253a" stroke="#60a5fa" stroke-opacity="0.38"/>
-        <text x="781" y="755" fill="#a8cdfa">llm()</text>
-        <rect x="900" y="729" width="202" height="42" rx="10" fill="#15253a" stroke="#60a5fa" stroke-opacity="0.38"/>
-        <text x="920" y="755" fill="#a8cdfa">agent(tools)</text>
-      </g>
-      <text x="760" y="801" fill="#6f91ba" font-size="12" font-family="'SFMono-Regular', Consolas, 'Liberation Mono', monospace">@jig/sdk</text>
-    </g>
-
-    <g>
-      <rect x="1202" y="520" width="326" height="278" rx="20" fill="#101216" stroke="#2e3740" stroke-width="2"/>
-      <circle cx="1232" cy="559" r="6" fill="#34d399"/>
-      <text x="1250" y="564" fill="#b9bec6" font-size="12" font-weight="600" letter-spacing="1.8">CONNECTION RUNTIME</text>
-      <text x="1230" y="610" fill="#f2f3f5" font-size="26" font-weight="600">Typed MCP clients</text>
-      <g fill="#b1b6be" font-size="15">
-        <text x="1230" y="651">generated TypeScript tools</text>
-        <text x="1230" y="681">jig + step allowlists</text>
-        <text x="1230" y="711">timeouts + cancellation</text>
-        <text x="1230" y="741">dry-run interception</text>
-      </g>
-      <text x="1230" y="780" fill="#6e987f" font-size="12" font-family="'SFMono-Regular', Consolas, 'Liberation Mono', monospace">@jig/connections/*</text>
-    </g>
-
-    <g>
-      <rect x="1592" y="534" width="140" height="250" rx="18" fill="#101216" stroke="#2a2e35" stroke-width="2"/>
-      <text x="1616" y="571" fill="#777d86" font-size="12" font-weight="600" letter-spacing="1.7">APPS + DATA</text>
-      <g fill="#d6d9de" font-size="17" font-weight="500">
-        <text x="1616" y="617">Gmail</text>
-        <text x="1616" y="651">Calendar</text>
-        <text x="1616" y="685">Slack</text>
-        <text x="1616" y="719">GitHub</text>
-      </g>
-      <text x="1616" y="753" fill="#858b94" font-size="16">+ more</text>
-    </g>
-
-    <g stroke-width="2" fill="none">
-      <path d="M 284 659 H 342" stroke="#6b717a" marker-end="url(#arrow)"/>
-      <path d="M 660 659 H 722" stroke="#34d399" marker-end="url(#arrow-green)"/>
-      <path d="M 1132 659 H 1194" stroke="#34d399" marker-end="url(#arrow-green)"/>
-      <path d="M 1528 659 H 1584" stroke="#6b717a" marker-end="url(#arrow)"/>
-      <path d="M 993 408 V 449 H 505 V 512" stroke="#34d399" marker-end="url(#arrow-green)"/>
-      <path d="M 931 818 V 856" stroke="#60a5fa" marker-end="url(#arrow-blue)"/>
-    </g>
-
-    <g fill="#777d86" font-size="12" font-family="'SFMono-Regular', Consolas, 'Liberation Mono', monospace">
-      <text x="288" y="644">run request</text>
-      <text x="667" y="644">definition + context</text>
-      <text x="1139" y="644">scoped tool call</text>
-      <text x="1539" y="644">MCP</text>
-      <text x="673" y="438" fill="#75a98f">active TypeScript version</text>
-      <text x="948" y="847" fill="#729bc8">model call</text>
-    </g>
-
-    <g>
-      <rect x="797" y="862" width="268" height="68" rx="15" fill="#0f1319" stroke="#2d4d72"/>
-      <circle cx="825" cy="896" r="5" fill="#60a5fa"/>
-      <text x="842" y="893" fill="#dbeaff" font-size="16" font-weight="600">OpenRouter</text>
-      <text x="842" y="915" fill="#7f9dbf" font-size="12">runtime model API</text>
+      <rect x="656" y="720" width="330" height="44" rx="12" fill="#111722" stroke="#365b88" stroke-width="2"/>
+      <text x="686" y="748" fill="#c9ddfa" font-size="17" font-weight="600">Model API</text>
+      <text x="790" y="748" fill="#7898bf" font-size="14" font-family="'SFMono-Regular', Consolas, monospace">OpenRouter</text>
     </g>
   </g>
 </svg>

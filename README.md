@@ -148,6 +148,10 @@ Generated jigs use these import aliases:
 
 This repo is already usable for local workflow automation, but the install flow is still developer-oriented rather than productized. Expect the local-first path to be the best-supported one for now.
 
+## Coding Agents
+
+Start with [`llms.txt`](llms.txt). Claude Code and other repository-aware agents should also read [`AGENTS.md`](AGENTS.md); jig authors should follow [`SKILL.md`](SKILL.md), and deployment or recovery work should follow [`docs/operations.md`](docs/operations.md).
+
 ## CLI Commands
 
 ```Shell

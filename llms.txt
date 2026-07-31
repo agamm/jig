@@ -1,0 +1,93 @@
+# Jig
+
+> Jig turns plain-English automation requests into versioned TypeScript workflows. A single runtime engine executes deterministic code, with explicit `llm()` and `agent()` hatches and step-scoped typed MCP tools.
+
+## Agent routing
+
+- To write or edit a jig, read `SKILL.md` completely.
+- To change the Jig runtime, API, scheduler, dashboard, database, or connection system, read `CLAUDE.md`.
+- To deploy, diagnose, recover, or self-heal an instance, read `docs/operations.md`.
+- For the product overview and architecture diagram, read `README.md`.
+- For contribution and validation expectations, read `CONTRIBUTING.md`.
+
+## Fast paths
+
+### Run locally
+
+```sh
+bun install
+bun run jig start
+```
+
+The dashboard opens on a loopback URL. Add an OpenRouter key in Settings, connect the required services, then author and run jigs from the dashboard.
+
+### Author a jig
+
+```sh
+bun run jig connect
+bun run jig new "Every weekday at 8am, email me a concise briefing."
+bun run jig edit <jig-id>
+bun run jig run <jig-id> --dry-run
+bun run jig run <jig-id>
+```
+
+Every jig exports `jig(name, options, handler)` from `@jig/sdk`. Every logical unit of work belongs in a flat `ctx.step()` block. Direct code is preferred over `llm()`, and `llm()` is preferred over `agent()`. Connection tools must appear in the jig-level and current-step allowlists. Use `ctx.output()` for observable results.
+
+For an installed instance, the approved jig version in SQLite is authoritative. Do not assume editing `jigs/<id>.ts` changes the active workflow.
+
+### Deploy
+
+Use the Deploy on Railway button in `README.md` for a clean one-click installation, or run:
+
+```sh
+bun run jig deploy
+```
+
+The deployment must have a persistent volume mounted at `/data`; it holds the encrypted credentials, versioned jigs, schedules, and run history. No maintainer data or credentials belong in the template.
+
+Update an existing linked deployment with:
+
+```sh
+bun run jig deploy --update
+```
+
+### Diagnose and heal
+
+```sh
+bun run jig doctor [handle]
+read -s JIG_PASSWORD && export JIG_PASSWORD
+bun run jig debug login [handle]
+unset JIG_PASSWORD
+bun run jig debug run <jig-id> [handle] --dry-run
+bun run jig debug tail [handle]
+```
+
+For workflow rollback and approval:
+
+```sh
+bun run jig versions <jig-id>
+bun run jig restore <jig-id> <version>
+bun run jig pending <jig-id>
+bun run jig pending <jig-id> approve
+bun run jig pending <jig-id> discard
+```
+
+After two consecutive real-run failures, Jig can start a repair authoring session. The proposed patch remains pending and never ships without approval. If AgentMail is configured, the owner receives a reply-to-approve thread; otherwise the proposal remains visible in the dashboard.
+
+## Safety invariants
+
+- Never commit `.env`, `.jig/`, `jig.db*`, `jig.log`, `runtime/`, `tmp/`, credentials, tokens, OAuth state, personal information, or client data.
+- Never print secrets while debugging. Use redacted structured logs and the dashboard.
+- Never edit SQLite directly to change a jig. Use authoring, pending approval, restore, or the store APIs.
+- Never deploy without `/data` persistence. A redeploy without the volume loses credentials, jigs, schedules, and history.
+- Never auto-approve an AI-generated repair.
+- Before publishing, run relevant tests, `git diff --check`, and a tracked-file privacy/secret scan.
+
+## Validation
+
+```sh
+bun test
+git diff --check
+```
+
+For a narrow change, run the closest test file first, then the full suite when runtime, scheduler, database, connection, authoring, or deployment behavior changed.

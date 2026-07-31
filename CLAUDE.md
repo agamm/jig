@@ -1,5 +1,11 @@
 # Jig
 
+## Start Here
+- Read `llms.txt` for task routing and supported commands.
+- Read `SKILL.md` completely before writing or editing jig workflow code.
+- Read `docs/operations.md` before deploying, diagnosing, recovering, or operating a hosted instance.
+- `AGENTS.md` is the cross-agent compatibility entry point; keep these guides consistent when workflows change.
+
 ## 1. Plan Mode Default
 - Enter plan mode for ANY non-trivial task (3+ steps or architectural decisions)
 - If something goes sideways, STOP and re-plan immediately - don't keep pushing
@@ -53,6 +59,7 @@
 ## Privacy
 - **No personal or client info in code** — never commit real company names, contact details, repo names, or email addresses. Use generic placeholders ("CompanyName", "repo-name", "Your Name").
 - Examples in comments/docs should use fictional names only.
+- **No runtime state in source or templates** — never commit or template `.env`, `.jig/`, `jig.db*`, `jig.log`, `runtime/`, `tmp/`, credentials, OAuth state, generated schemas, or connection data. Railway templates must come from a clean seed project with a blank `/data` volume, never a live personal instance.
 
 ## Database
 - **Migrations: append only** — never insert or reorder entries in the `MIGRATIONS` array in `src/db.ts`. New migrations always go at the end. The `PRAGMA user_version` is an index — inserting before existing migrations causes them to be skipped on existing DBs.

@@ -229,7 +229,14 @@ const MIGRATIONS: string[] = [
 // Database singleton
 // ---------------------------------------------------------------------------
 
-export function runMigrations(db: Database) {
+/**
+ * The file opened fine — its SCHEMA is what we could not bring up to date.
+ * openDb's corruption recovery must let this through: the database is intact
+ * and renaming it aside would boot the instance on an empty one instead.
+ */
+export class SchemaError extends Error {}
+
+export function runMigrations(db: Database, dbPath = DB_PATH) {
   const current = (db.prepare("PRAGMA user_version").get() as any)?.user_version ?? 0
   const latest = BASELINE_VERSION + MIGRATIONS.length
 
@@ -241,9 +248,9 @@ export function runMigrations(db: Database) {
     return
   }
   if (current < BASELINE_VERSION) {
-    throw new Error(
+    throw new SchemaError(
       `Database schema v${current} predates the v${BASELINE_VERSION} baseline and can no longer be upgraded. ` +
-        `Move ${DB_PATH} aside and let jig create a fresh one.`,
+        `Move ${dbPath} aside and let jig create a fresh one.`,
     )
   }
 
@@ -259,7 +266,7 @@ export function runMigrations(db: Database) {
       db.exec("COMMIT")
     } catch (e: any) {
       db.exec("ROLLBACK")
-      throw new Error(`Migration v${BASELINE_VERSION + i + 1} failed: ${e?.message ?? e}`)
+      throw new SchemaError(`Migration v${BASELINE_VERSION + i + 1} failed: ${e?.message ?? e}`)
     }
   }
 }
@@ -301,9 +308,18 @@ export function openDb(path?: string): Database {
     _db = new Database(dbPath)
     configurePragmas(_db)
     _db.exec(SCHEMA)
-    runMigrations(_db)
+    runMigrations(_db, dbPath)
   } catch (e: any) {
     const msg = e?.message ?? String(e)
+    // The file is readable; only the schema is behind or a migration failed.
+    // Recovery here would rename a perfectly healthy database aside and boot
+    // on an empty one — turning a deploy that must fail loudly into a green
+    // deploy with no jigs, schedules, or credentials.
+    if (e instanceof SchemaError) {
+      try { _db?.close() } catch {}
+      _db = null
+      throw e
+    }
     // A genuine file-not-openable error on first boot is NOT corruption —
     // don't wipe-and-retry or we'll loop. Surface the error so the process
     // exits cleanly and Railway reports deploy failed with a useful log.
@@ -328,7 +344,7 @@ export function openDb(path?: string): Database {
       _db = new Database(dbPath)
       configurePragmas(_db)
       _db.exec(SCHEMA)
-      runMigrations(_db)
+      runMigrations(_db, dbPath)
     } else {
       throw e
     }

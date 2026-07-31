@@ -11,11 +11,21 @@ export function validateApifyBuildTimeResolution(
   const issues: ConnectorBuildTimePolicyIssue[] = []
   const source = ts.createSourceFile("jig.ts", code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
   const variableInitializers = collectVariableInitializers(source)
-  const apifyCallArguments = collectConnectionToolCallArguments(source, "apify", "call_actor", variableInitializers)
+  const apifyCallArguments = collectConnectionToolCallArguments(source, "apify", "call-actor", variableInitializers)
+
+  // Every guard below asks "does this code CALL the tool", never "does the tool
+  // appear in the source". A jig lists its tools in the `tools:` array as bare
+  // member references (`tools: [apify.call_actor, apify.get_dataset_items]`),
+  // and build-time discovery force-adds get-dataset-items to that array (see
+  // includeTools in discover/apify.ts), so a text match is satisfied by the
+  // allowlist alone — exactly the jigs these guards exist to reject.
+  const callsCallActor = codeCallsConnectionTool(source, "apify", "call-actor")
+  const callsGetDatasetItems = codeCallsConnectionTool(source, "apify", "get-dataset-items")
+  const callsGetActorRun = codeCallsConnectionTool(source, "apify", "get-actor-run")
 
   if (
     resolution.resolvedTarget
-    && codeUsesConnectionTool(code, "apify", "call-actor")
+    && callsCallActor
     && !codeUsesResolvedApifyActor(code, resolution.resolvedTarget)
   ) {
     issues.push({
@@ -28,7 +38,7 @@ export function validateApifyBuildTimeResolution(
   // llm()/agent(), the model invents an answer that looks entirely plausible
   // while the run still reports success. Fabrication is the failure mode here,
   // so this is an error rather than a warning.
-  if (codeUsesConnectionTool(code, "apify", "call-actor") && !codeUsesConnectionTool(code, "apify", "get-dataset-items")) {
+  if (callsCallActor && !callsGetDatasetItems) {
     issues.push({
       message:
         "apify.call_actor returns a run descriptor (status/stats/storages), not the Actor's output rows. "
@@ -39,10 +49,7 @@ export function validateApifyBuildTimeResolution(
   }
 
   // get-actor-run is metadata; it is not a way to recover output rows.
-  if (
-    codeUsesConnectionTool(code, "apify", "get-actor-run")
-    && !codeUsesConnectionTool(code, "apify", "get-dataset-items")
-  ) {
+  if (callsGetActorRun && !callsGetDatasetItems) {
     issues.push({
       message:
         "apify.get_actor_run returns run metadata only. To read an Actor's results use apify.get_dataset_items({ datasetId }).",
@@ -84,15 +91,47 @@ export function validateApifyBuildTimeResolution(
   return issues
 }
 
-function codeUsesConnectionTool(code: string, serverName: string, toolName: string): boolean {
-  const identifier = toolNameToIdentifier(toolName)
-  const escapedServer = escapeRegExp(serverName)
-  const escapedIdentifier = escapeRegExp(identifier)
-  const escapedToolName = escapeRegExp(toolName)
-  return (
-    new RegExp(`\\b${escapedServer}\\.${escapedIdentifier}\\b`).test(code)
-    || new RegExp(`\\b${escapedServer}\\[(["'])${escapedToolName}\\1\\]`).test(code)
-  )
+/** The code actually invokes the tool — `apify.get_dataset_items(...)`. */
+function codeCallsConnectionTool(source: ts.SourceFile, serverName: string, toolName: string): boolean {
+  const names = toolAccessNames(toolName)
+  let found = false
+
+  const visit = (node: ts.Node) => {
+    if (found) return
+    if (ts.isCallExpression(node) && isConnectionToolAccess(node.expression, serverName, names)) {
+      found = true
+      return
+    }
+    ts.forEachChild(node, visit)
+  }
+
+  visit(source)
+  return found
+}
+
+/**
+ * Both spellings the generated wrapper exports for one tool — typegen emits
+ * `{ get_dataset_items, "get-dataset-items": get_dataset_items }`, so either is
+ * a real call. Only the identifier form can appear as a property access.
+ */
+function toolAccessNames(toolName: string): Set<string> {
+  return new Set([toolNameToIdentifier(toolName), toolName])
+}
+
+/** `server.tool` or `server["tool"]` — the member reference itself, call or not. */
+function isConnectionToolAccess(expression: ts.Expression, serverName: string, names: Set<string>): boolean {
+  if (ts.isPropertyAccessExpression(expression)) {
+    return ts.isIdentifier(expression.expression)
+      && expression.expression.text === serverName
+      && names.has(expression.name.text)
+  }
+  if (ts.isElementAccessExpression(expression)) {
+    return ts.isIdentifier(expression.expression)
+      && expression.expression.text === serverName
+      && ts.isStringLiteralLike(expression.argumentExpression)
+      && names.has(expression.argumentExpression.text)
+  }
+  return false
 }
 
 function toolNameToIdentifier(name: string): string {
@@ -131,19 +170,14 @@ function collectVariableInitializers(source: ts.SourceFile): Map<string, ts.Expr
 function collectConnectionToolCallArguments(
   source: ts.SourceFile,
   serverName: string,
-  toolIdentifier: string,
+  toolName: string,
   variableInitializers: Map<string, ts.Expression>
 ): ts.ObjectLiteralExpression[] {
   const calls: ts.ObjectLiteralExpression[] = []
+  const names = toolAccessNames(toolName)
 
   const visit = (node: ts.Node) => {
-    if (
-      ts.isCallExpression(node)
-      && ts.isPropertyAccessExpression(node.expression)
-      && ts.isIdentifier(node.expression.expression)
-      && node.expression.expression.text === serverName
-      && node.expression.name.text === toolIdentifier
-    ) {
+    if (ts.isCallExpression(node) && isConnectionToolAccess(node.expression, serverName, names)) {
       const resolved = resolveObjectExpression(node.arguments[0], variableInitializers)
       if (resolved) calls.push(resolved)
     }

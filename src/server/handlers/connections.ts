@@ -124,4 +124,3 @@ export async function handleCreateCustomConnection(body: any): Promise<Response>
     throw new ApiError(400, message)
   }
 }
-

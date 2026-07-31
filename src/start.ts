@@ -12,7 +12,8 @@
  */
 import { existsSync } from "fs"
 import { createInterface } from "node:readline/promises"
-import { createApiServer } from "./server.js"
+import { createApiServer, regenerateConnectionArtifacts } from "./server.js"
+import { openDb } from "./db.js"
 import { DASHBOARD_DIR } from "./config/paths.js"
 import { resetSessionLog } from "./debug/session-log.js"
 import { startScheduler } from "./scheduler/index.js"
@@ -189,7 +190,11 @@ export async function startServer(options?: { port?: number }) {
   }
   process.env.JIG_DASHBOARD_PORT = String(userPort)
 
-  // 2. Start Bun API server on an internal port
+  // 2. Start Bun API server on an internal port. Connection bindings are
+  // re-emitted first so neither an API request nor the scheduler's missed-run
+  // recovery can import a wrapper while it is being rewritten.
+  openDb()
+  await regenerateConnectionArtifacts()
   const apiServer = tryServe(4173)
   const apiPort = apiServer.port
   const scheduler = await startScheduler().catch((e: unknown) => {

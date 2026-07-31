@@ -89,4 +89,3 @@ export function handleListVersionsV2(jigId: string): Response {
     history: history.map(jigVersionToRecord),
   })
 }
-

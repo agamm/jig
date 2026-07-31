@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test"
 import { Database } from "bun:sqlite"
-import { mkdtempSync, rmSync, writeFileSync } from "fs"
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "fs"
 import { join } from "path"
 import { tmpdir } from "os"
 import {
@@ -281,6 +281,32 @@ describe("db recovery", () => {
     expect(tableNames).toContain("tool_permissions")
 
     closeDb()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it("refuses to open an un-upgradable database instead of recovering over it", () => {
+    const dir = mkdtempSync(join(tmpdir(), "jig-db-ancient-"))
+    const dbPath = join(dir, "ancient.db")
+
+    // A healthy database that simply predates the squashed baseline. Recovery
+    // must not touch it: renaming it aside would boot the instance on an empty
+    // DB with no jigs, schedules, or credentials — and would do the same to a
+    // failed migration, which has to fail the deploy loudly.
+    closeDb()
+    const seeded = openDb(dbPath)
+    seeded.exec(`INSERT INTO credentials (key, value, server) VALUES ('apify_token', 'secret', 'apify')`)
+    seeded.exec(`PRAGMA user_version = 19`) // one below the squashed baseline
+    closeDb()
+
+    expect(() => openDb(dbPath)).toThrow(/predates the v20 baseline/)
+
+    // Untouched: data intact, no .corrupt-* copy left behind.
+    closeDb()
+    const survivor = new Database(dbPath)
+    expect((survivor.prepare(`SELECT count(*) c FROM credentials`).get() as any).c).toBe(1)
+    survivor.close()
+    expect(readdirSync(dir).filter((f) => f.includes(".corrupt-"))).toEqual([])
+
     rmSync(dir, { recursive: true, force: true })
   })
 })

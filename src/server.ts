@@ -88,6 +88,29 @@ import packageJson from "../package.json"
 const PACKAGE_VERSION: string = packageJson.version
 const SERVER_STARTED_AT = Date.now()
 
+/**
+ * Re-emit the connection bindings under CONNECTIONS_DIR. The .ts wrappers are
+ * templated from code (e.g. composio's proxyCallCode); when that template
+ * changes between releases, deployed instances need to re-emit or jigs keep
+ * running against the old wrapper.
+ *
+ * Await this BEFORE serving and before the scheduler recovers missed runs.
+ * Every boot rewrites the files in place, and Bun caches an imported module by
+ * path — so a run that imports a wrapper mid-rewrite either dies on a truncated
+ * file or pins the stale binding for the rest of the process's life, which is
+ * the exact failure this call exists to prevent.
+ *
+ * Best-effort — schemas may not exist yet on a fresh box.
+ */
+export async function regenerateConnectionArtifacts(): Promise<void> {
+  try {
+    const { generateConnectionArtifacts } = await import("./mcp/typegen.js")
+    await generateConnectionArtifacts()
+  } catch (err: any) {
+    console.warn(`[typegen] boot-time regeneration failed: ${err?.message ?? err}`)
+  }
+}
+
 export function createApiServer(port: number) {
   openDb()
   seedSystemSettingsDefaults()
@@ -97,17 +120,6 @@ export function createApiServer(port: number) {
   // Clear step cache on startup — ensures stale derivations from old SDK versions don't persist
   const { clearAllStepCache } = require("./db.js")
   clearAllStepCache()
-
-  // Regenerate connection bindings on boot. The .ts wrappers under
-  // CONNECTIONS_DIR are templated from code (e.g. composio's proxyCallCode);
-  // when that template changes between releases, deployed instances need to
-  // re-emit their bindings or jigs keep running against the old wrapper.
-  // Best-effort — schemas may not exist yet on a fresh box.
-  void import("./mcp/typegen.js").then(async ({ generateConnectionArtifacts }) => {
-    try { await generateConnectionArtifacts() } catch (err: any) {
-      console.warn(`[typegen] boot-time regeneration failed: ${err?.message ?? err}`)
-    }
-  })
 
   const apiServer = Bun.serve({
     port,
@@ -602,6 +614,11 @@ process.on("uncaughtException", (error) => {
 if (import.meta.main) {
   const port = parseInt(process.env.PORT ?? "3141")
   await resetSessionLog()
+  // Ahead of regeneration, which reads credentials for proxy configs — so a
+  // schema/migration failure crashes boot instead of surfacing as a misleading
+  // "[typegen] regeneration failed" warning.
+  openDb()
+  await regenerateConnectionArtifacts()
   const server = createApiServer(port)
   const scheduler = await startScheduler().catch((e) => {
     console.error("[scheduler] failed to start:", e)

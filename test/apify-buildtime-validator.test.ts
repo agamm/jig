@@ -63,6 +63,92 @@ export default jig("x", { tools: [apify.call_actor] }, async (ctx) => {
     })
   })
 
+  it("rejects it even when get_dataset_items is declared in the tools array but never called", () => {
+    // The realistic shape: build-time discovery force-adds get-dataset-items to
+    // includeTools, so the identifier is in `tools:` on nearly every Apify jig.
+    // Matching on source text alone would treat the allowlist as proof of a call.
+    const code = `
+import { jig, llm } from "@jig/sdk"
+import { apify } from "@jig/connections/apify.js"
+
+export default jig("x", { tools: [apify.call_actor, apify.get_dataset_items] }, async (ctx) => {
+  await ctx.step("Run", [apify.call_actor], async () => {
+    const run = await apify.call_actor({ actor: "community/github-trending-scraper", input: { since: "weekly" } })
+    await llm("Summarize the results", { run })
+  })
+})
+`
+
+    expect(validateApifyBuildTimeResolution({ code, resolution: apifyResolution })).toContainEqual({
+      message:
+        "apify.call_actor returns a run descriptor (status/stats/storages), not the Actor's output rows. "
+        + "This code never calls apify.get_dataset_items, so it has no scraped data. "
+        + "Add a step that reads the rows: `const items = await apify.get_dataset_items({ datasetId: run.storages?.datasets?.default?.id })`, "
+        + "and derive the result from those items. Do not pass only a datasetId or itemCount into llm()/agent().",
+    })
+  })
+
+  it("accepts the bracket spelling typegen also exports for each tool", () => {
+    const code = `
+import { jig } from "@jig/sdk"
+import { apify } from "@jig/connections/apify.js"
+
+export default jig("x", { tools: [apify.call_actor, apify.get_dataset_items] }, async (ctx) => {
+  let datasetId = ""
+  await ctx.step("Run", [apify.call_actor], async () => {
+    const run = await apify["call-actor"]({ actor: "community/github-trending-scraper", input: { since: "weekly" } })
+    datasetId = run.storages?.datasets?.default?.id
+  })
+  await ctx.step("Read rows", [apify.get_dataset_items], async () => {
+    const items = await apify["get-dataset-items"]({ datasetId })
+    ctx.output(String(items.length))
+  })
+})
+`
+
+    expect(validateApifyBuildTimeResolution({ code, resolution: apifyResolution })).toEqual([])
+  })
+
+  it("still catches a missing dataset read when the Actor ran via the bracket spelling", () => {
+    // Pins the other half: without this, the accepting test above would pass
+    // even if bracket calls were not recognized at all.
+    const code = `
+import { jig, llm } from "@jig/sdk"
+import { apify } from "@jig/connections/apify.js"
+
+export default jig("x", { tools: [apify.call_actor, apify.get_dataset_items] }, async (ctx) => {
+  await ctx.step("Run", [apify.call_actor], async () => {
+    const run = await apify["call-actor"]({ actor: "community/github-trending-scraper", input: { since: "weekly" } })
+    await llm("Summarize the results", { run })
+  })
+})
+`
+
+    expect(validateApifyBuildTimeResolution({ code, resolution: apifyResolution })).toContainEqual({
+      message:
+        "apify.call_actor returns a run descriptor (status/stats/storages), not the Actor's output rows. "
+        + "This code never calls apify.get_dataset_items, so it has no scraped data. "
+        + "Add a step that reads the rows: `const items = await apify.get_dataset_items({ datasetId: run.storages?.datasets?.default?.id })`, "
+        + "and derive the result from those items. Do not pass only a datasetId or itemCount into llm()/agent().",
+    })
+  })
+
+  it("ignores an Apify jig that declares the tools but calls neither", () => {
+    // Nothing has been executed, so there is no missing dataset read to report.
+    const code = `
+import { jig } from "@jig/sdk"
+import { apify } from "@jig/connections/apify.js"
+
+export default jig("x", { tools: [apify.call_actor, apify.get_dataset_items] }, async (ctx) => {
+  await ctx.step("Nothing", [], async () => {
+    ctx.output("nothing to do")
+  })
+})
+`
+
+    expect(validateApifyBuildTimeResolution({ code, resolution: apifyResolution })).toEqual([])
+  })
+
   it("rejects get_actor_run used as a substitute for reading the dataset", () => {
     const code = `
 import { jig } from "@jig/sdk"

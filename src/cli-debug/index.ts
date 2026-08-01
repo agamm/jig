@@ -16,12 +16,15 @@
  * the remote box.
  */
 import { listRemotes, resolveActiveRemote, setSessionCookie, type RemoteManifest } from "../cli-remote/manifest.js"
+import { readLocalLogHead, readLocalLogs } from "./local.js"
+import { DB_PATH } from "../config/paths.js"
 import type { ServerLogEntry, ServerLogsResponse, StartRunResponse, RunDetail } from "../../shared/api.js"
 
 const COOKIE_NAME = "jig-admin"
 const POLL_MS = 750
 const RUN_TIMEOUT_MS = 10 * 60 * 1000
 const PAYLOAD_MAX_LINES = 40
+const DEFAULT_LOCAL_LIMIT = 100
 
 // ---------------------------------------------------------------------------
 // Subcommand entry point
@@ -43,6 +46,13 @@ export async function runDebug(args: string[]): Promise<void> {
   console.log("Auth:")
   console.log("  --password=<pw>        Provide password inline")
   console.log("  JIG_PASSWORD=<pw>      Or via env var")
+  console.log("")
+  console.log("Reading a locked instance (run inside the container, no password needed):")
+  console.log("  railway ssh \"bun run src/cli.ts debug tail --local\"")
+  console.log("  --local                Read the logs table off the volume, bypassing the API")
+  console.log("  --limit=<n>            Rows to dump (default 100)")
+  console.log("  --since=<seq>          Dump everything after this seq instead")
+  console.log("  --follow               Keep polling after the dump")
   process.exit(sub ? 1 : 0)
 }
 
@@ -148,6 +158,8 @@ async function runCmd(args: string[]): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function tailCmd(args: string[]): Promise<void> {
+  if (args.includes("--local")) return tailLocalCmd(args)
+
   const handle = positional(args)
   const remote = resolveRemoteOrExit(handle)
   const cookie = remote.session_cookie
@@ -167,6 +179,41 @@ async function tailCmd(args: string[]): Promise<void> {
     if (next && next.entries.length > 0) {
       cursor = next.entries[next.entries.length - 1].seq
       for (const entry of next.entries) printEntry(entry)
+    }
+    await sleep(POLL_MS)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// tail --local
+// ---------------------------------------------------------------------------
+
+/**
+ * Read logs off the volume instead of the API. Meant to be run inside the
+ * container (`railway ssh`), where it works even while the instance is locked
+ * and the HTTP gate is returning 423.
+ */
+async function tailLocalCmd(args: string[]): Promise<void> {
+  const sinceArg = numericFlag(args, "--since")
+  const limit = numericFlag(args, "--limit") ?? DEFAULT_LOCAL_LIMIT
+  const follow = args.includes("--follow")
+
+  // Filter before slicing so --limit means "interesting lines shown", not
+  // "rows scanned" — most rows are routing chatter the whitelist drops. The
+  // table is capped at a few thousand rows, so reading it whole is cheap.
+  const backlog = readLocalLogs(sinceArg ?? 0).filter(isInterestingForDebug)
+  for (const entry of sinceArg !== undefined ? backlog : backlog.slice(-limit)) {
+    printEntry(entry, rawEmit)
+  }
+
+  if (!follow) return
+  let cursor = readLocalLogHead()
+  rawEmit(`— following ${DB_PATH} from seq ${cursor}. Ctrl-C to stop.`)
+  for (;;) {
+    const next = readLocalLogs(cursor)
+    if (next.length > 0) {
+      cursor = next[next.length - 1].seq
+      for (const entry of next) printEntry(entry, rawEmit)
     }
     await sleep(POLL_MS)
   }
@@ -233,15 +280,26 @@ async function postJson<T>(url: string, cookie: string, body: unknown): Promise<
 // Rendering
 // ---------------------------------------------------------------------------
 
-function printEntry(entry: ServerLogEntry): void {
+type Emit = (line: string) => void
+
+/**
+ * `--local` runs inside the container, where installLogCapture() has already
+ * wrapped console.log to insert a row per call. Printing the dump through it
+ * would write the logs back into the table it just read and evict the oldest
+ * real entries against the retention cap. Write to the fd directly instead.
+ */
+const rawEmit: Emit = (line) => { process.stdout.write(`${line}\n`) }
+const consoleEmit: Emit = (line) => { console.log(line) }
+
+function printEntry(entry: ServerLogEntry, emit: Emit = consoleEmit): void {
   if (!isInterestingForDebug(entry)) return
   const ts = new Date(entry.ts).toISOString().slice(11, 23)
   const level = entry.level === "error" ? "ERR " : entry.level === "warn" ? "WARN" : "INFO"
   const tag = `[${ts}] ${level}`
-  console.log(`${tag}  ${entry.msg}`)
+  emit(`${tag}  ${entry.msg}`)
   if (entry.payload) {
     const pretty = formatPayload(entry.payload)
-    for (const line of pretty) console.log(`    │  ${line}`)
+    for (const line of pretty) emit(`    │  ${line}`)
   }
 }
 
@@ -285,6 +343,13 @@ function isInterestingForDebug(entry: ServerLogEntry): boolean {
 
 function positional(args: string[]): string | undefined {
   return args.find((a) => !a.startsWith("--"))
+}
+
+function numericFlag(args: string[], name: string): number | undefined {
+  const flag = args.find((a) => a.startsWith(`${name}=`))
+  if (!flag) return undefined
+  const value = parseInt(flag.slice(name.length + 1), 10)
+  return Number.isFinite(value) ? Math.max(0, value) : undefined
 }
 
 function readPassword(args: string[]): string | undefined {

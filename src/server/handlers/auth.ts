@@ -22,7 +22,7 @@ import {
 import { completePendingOAuth, completePendingOAuthStateless, renderOAuthErrorPage, renderOAuthSuccessPage } from "../../mcp/auth.js"
 import { getDataStorageHealth } from "../../services/data-storage.js"
 import { getSchedulerHealth } from "../../scheduler/index.js"
-import { canSendAgentMail } from "../../services/agentmail.js"
+import { canSendAgentMail, refreshAlertKeyCache } from "../../services/agentmail.js"
 
 function isOnboardingComplete(): boolean {
   const db = openDb()
@@ -181,6 +181,9 @@ export async function handleUnlock(req: Request): Promise<Response> {
     return json({ error: "Wrong password" }, 401)
   }
   if (enforceLimit) recordUnlockSuccess(ip)
+  // Now that credentials are readable, refresh the on-volume copy of the
+  // AgentMail key so the next lock can still send its alert.
+  refreshAlertKeyCache()
   const token = issueToken()
   return apiJsonWithHeaders("unlock", { ok: true }, { "Set-Cookie": setCookieHeader(token) })
 }

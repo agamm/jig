@@ -6,7 +6,7 @@ afterEach(() => { globalThis.fetch = realFetch })
 
 function stubFetch(handler: (url: string, init?: RequestInit) => Response): void {
   globalThis.fetch = ((input: any, init?: RequestInit) =>
-    Promise.resolve(handler(String(input), init))) as typeof fetch
+    Promise.resolve(handler(String(input), init))) as unknown as typeof fetch
 }
 
 describe("promptHiddenPassword", () => {
@@ -27,7 +27,7 @@ describe("fetchLockState", () => {
   })
 
   it("reports unreachable rather than throwing", async () => {
-    globalThis.fetch = (() => Promise.reject(new Error("ECONNREFUSED"))) as typeof fetch
+    globalThis.fetch = (() => Promise.reject(new Error("ECONNREFUSED"))) as unknown as typeof fetch
     expect(await fetchLockState("https://x.test")).toEqual({ locked: false, reachable: false })
   })
 

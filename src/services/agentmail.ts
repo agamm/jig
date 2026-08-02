@@ -14,7 +14,10 @@
  * safe to re-run.
  */
 import { createHmac, timingSafeEqual } from "node:crypto"
+import { chmodSync, readFileSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 import { getCredential, getSetting, setCredential, setSetting } from "../db.js"
+import { DATA_DIR } from "../config/paths.js"
 import { logSessionEvent } from "../debug/session-log.js"
 import type { AgentMailSettingsResponse } from "../../shared/api.js"
 
@@ -47,13 +50,53 @@ export function getAgentMailSettings(): AgentMailSettings {
   }
 }
 
-function getApiKey(): string | null {
-  // getCredential throws LockedError in service mode before unlock — treat that
-  // as "not available right now" rather than crashing the caller.
+/**
+ * A copy of the API key on the volume, readable while the instance is locked.
+ *
+ * Everything else a send needs (inbox, owner) already lives in the plaintext
+ * settings table — the key was the only encrypted piece, which meant a locked
+ * jig could not send the one email worth sending: "I am locked, nothing is
+ * running." The alerting channel can't live inside the vault it reports on.
+ *
+ * Scope is deliberately one credential. Someone who reads the volume can send
+ * mail from the jig inbox and nothing else; the OpenRouter key and every MCP
+ * token stay encrypted. Lives on /data, so it survives deploys (which rebuild
+ * /app but never touch the volume).
+ */
+const ALERT_KEY_PATH = join(DATA_DIR, ".alert-key")
+
+function cacheAlertKey(key: string): void {
   try {
-    return getCredential(API_KEY_CREDENTIAL)
+    if (readCachedAlertKey() === key) return
+    writeFileSync(ALERT_KEY_PATH, key, { mode: 0o600 })
+    chmodSync(ALERT_KEY_PATH, 0o600) // umask can weaken the create mode
+  } catch (error) {
+    logSessionEvent({ source: "agentmail", event: "alert-key-cache-failed", error })
+  }
+}
+
+function readCachedAlertKey(): string | null {
+  try {
+    return readFileSync(ALERT_KEY_PATH, "utf-8").trim() || null
   } catch {
     return null
+  }
+}
+
+/** Refresh the on-volume copy. Call once after unlock so it self-heals. */
+export function refreshAlertKeyCache(): void {
+  getApiKey()
+}
+
+function getApiKey(): string | null {
+  // getCredential throws LockedError in service mode before unlock — fall back
+  // to the cached copy so lock alerts can still go out.
+  try {
+    const key = getCredential(API_KEY_CREDENTIAL)
+    if (key) cacheAlertKey(key)
+    return key
+  } catch {
+    return readCachedAlertKey()
   }
 }
 

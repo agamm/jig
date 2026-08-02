@@ -688,6 +688,14 @@ export function deleteSchedule(jigId: string): void {
   db.prepare(`DELETE FROM schedules WHERE jig_id = ?`).run(jigId)
 }
 
+/** Enabled cron schedules regardless of due time — used to name what a lock paused. */
+export function listEnabledCronSchedules(): ScheduleRow[] {
+  const db = openDb()
+  return db.prepare(
+    `SELECT * FROM schedules WHERE trigger_type = 'cron' AND enabled = 1 ORDER BY jig_id`
+  ).all() as ScheduleRow[]
+}
+
 export function listDueSchedules(nowUnix: number): ScheduleRow[] {
   const db = openDb()
   return db.prepare(

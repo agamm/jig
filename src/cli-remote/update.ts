@@ -164,6 +164,11 @@ export async function runUpdate(handle?: string): Promise<void> {
     if (!seen) throw new Error(`Health didn't report ${latest.tag} in time`)
 
     console.log(`\n  ✓ Updated to ${latest.tag}.`)
+
+    // A restart re-locks the instance and the scheduler stays paused until
+    // someone unlocks — ask now, while the operator is still watching.
+    const { ensureUnlocked } = await import("./unlock.js")
+    await ensureUnlocked(remote)
   } catch (e: any) {
     console.error(`  Deploy failed: ${e?.message ?? e}`)
     console.error(`  Rolling back to ${rollbackCommit.slice(0, 7)}...`)

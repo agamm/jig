@@ -214,6 +214,10 @@ async function runUpdateInPlace(): Promise<void> {
       } catch {}
       await new Promise((r) => setTimeout(r, 2000))
     }
+    // The restart re-locked the instance; scheduled jigs stay paused until
+    // it's unlocked. Ask here rather than leaving it to be noticed later.
+    const { ensureUnlocked } = await import("../cli-remote/unlock.js")
+    await ensureUnlocked(manifest)
   }
   console.log("\n  ✓ Redeploy complete.")
 }

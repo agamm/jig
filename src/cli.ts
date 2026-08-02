@@ -287,6 +287,22 @@ try {
       break
     }
 
+    case "unlock": {
+      const { resolveActiveRemote, listRemotes } = await import("./cli-remote/manifest.js")
+      const { ensureUnlocked } = await import("./cli-remote/unlock.js")
+      const handle = rest.find((a) => !a.startsWith("--"))
+      const passwordFlag = rest.find((a) => a.startsWith("--password="))?.slice("--password=".length)
+      if (listRemotes().length === 0) {
+        console.error("No deployed instances. Run `jig deploy` first.")
+        process.exitCode = 1
+        break
+      }
+      const remote = resolveActiveRemote(handle)
+      const ok = await ensureUnlocked(remote, { password: passwordFlag })
+      if (!ok) process.exitCode = 1
+      break
+    }
+
     case "doctor": {
       const { runDoctor } = await import("./cli-doctor/index.js")
       const jsonFlag = rest.includes("--json")
@@ -330,6 +346,7 @@ try {
       console.log(`  jig deploy --update    Redeploy current code to the linked Railway project`)
       console.log(`  jig update [handle]    Update a deployed jig to the latest tag (rolls back on failure)`)
       console.log(`  jig doctor [handle]    Health-check deployed instances`)
+      console.log(`  jig unlock [handle]    Unlock a deployed instance after a restart (hidden prompt)`)
       console.log(`  jig debug <sub>        Trigger remote runs and stream logs — see "jig debug"`)
       break
   }

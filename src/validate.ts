@@ -26,6 +26,12 @@ export interface ValidationError {
 export interface ValidationResult {
   ok: boolean
   errors: ValidationError[]
+  /**
+   * Advisory findings. Kept out of `errors` on purpose: `ok` is
+   * `errors.length === 0`, and callers gate jig approval on it, so anything
+   * added there would block a jig rather than warn about it.
+   */
+  warnings: ValidationError[]
   definition?: JigDefinition
 }
 
@@ -468,6 +474,65 @@ export function checkPlaceholderJigPatterns(code: string): ValidationError[] {
   })
 }
 
+/**
+ * ctx.email({ text }) with no html. The SDK converts markdown to HTML at send
+ * time so this still renders, but the converter only knows headings, bullets,
+ * bold and italic — anything richer degrades to a paragraph. Flag it so an
+ * author who cares about layout passes html explicitly.
+ */
+export function checkCtxEmailPrefersHtml(code: string, fileName = "jig.ts"): ValidationError[] {
+  const errors: ValidationError[] = []
+  const sf = ts.createSourceFile(fileName, code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+
+  const visit = (node: ts.Node) => {
+    if (isCtxEmailCall(node) && node.arguments.length > 0) {
+      const arg0 = node.arguments[0]
+      if (ts.isObjectLiteralExpression(arg0)) {
+        const keys = objectLiteralKeys(arg0)
+        if (keys.has("text") && !keys.has("html")) {
+          const { line } = sf.getLineAndCharacterOfPosition(node.getStart(sf))
+          errors.push({
+            field: "email.ctx.email",
+            message:
+              `Line ${line + 1}: ctx.email({ text }) with no html. The text is auto-converted from ` +
+              `markdown (headings, bullets, bold, italic) so it will render, but pass html explicitly ` +
+              `if the layout matters — tables, links and nested lists are not converted.`,
+          })
+        }
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+
+  visit(sf)
+
+  const seen = new Set<string>()
+  return errors.filter((error) => {
+    if (seen.has(error.message)) return false
+    seen.add(error.message)
+    return true
+  })
+}
+
+function isCtxEmailCall(node: ts.Node): node is ts.CallExpression {
+  if (!ts.isCallExpression(node)) return false
+  const expr = node.expression
+  return ts.isPropertyAccessExpression(expr)
+    && ts.isIdentifier(expr.expression)
+    && expr.expression.text === "ctx"
+    && expr.name.text === "email"
+}
+
+function objectLiteralKeys(obj: ts.ObjectLiteralExpression): Set<string> {
+  const keys = new Set<string>()
+  for (const prop of obj.properties) {
+    const name = prop.name
+    if (!name) continue
+    if (ts.isIdentifier(name) || ts.isStringLiteralLike(name)) keys.add(name.text)
+  }
+  return keys
+}
+
 const SELF_GMAIL_RECIPIENT_KEYS = new Set(["recipient_email", "to", "recipient"])
 const SELF_GMAIL_RECIPIENT_VALUES = new Set(["me", "self"])
 const GMAIL_SEND_TOOL_RE = /^gmail_send(?:_email)?$/i
@@ -572,7 +637,7 @@ export function checkPreferCtxEmailForSelfGmail(
  */
 export async function validateJigFile(path: string): Promise<ValidationResult> {
   if (!existsSync(path)) {
-    return { ok: false, errors: [{ field: "file", message: `File not found: ${path}` }] }
+    return { ok: false, errors: [{ field: "file", message: `File not found: ${path}` }], warnings: [] }
   }
 
   try {
@@ -580,10 +645,11 @@ export async function validateJigFile(path: string): Promise<ValidationResult> {
     const importPath = await materializeJigWithRuntimeImports(path, source)
     const mod = await import(`${importPath}?_t=${Date.now()}_${Math.random().toString(36).slice(2)}`)
     if (!mod.default) {
-      return { ok: false, errors: [{ field: "default", message: "Jig file must have a default export" }] }
+      return { ok: false, errors: [{ field: "default", message: "Jig file must have a default export" }], warnings: [] }
     }
 
     const errors = validateDefinition(mod.default)
+    const warnings: ValidationError[] = []
 
     try {
       const code = source
@@ -600,17 +666,20 @@ export async function validateJigFile(path: string): Promise<ValidationResult> {
         ownerEmail = getAgentMailSettings().owner
       } catch {}
       errors.push(...checkPreferCtxEmailForSelfGmail(code, path, { ownerEmail }))
+      warnings.push(...checkCtxEmailPrefersHtml(code, path))
     } catch {}
 
     return {
       ok: errors.length === 0,
       errors,
+      warnings,
       definition: errors.length === 0 ? mod.default : undefined,
     }
   } catch (e: any) {
     return {
       ok: false,
       errors: [{ field: "import", message: `Failed to import jig: ${e?.message ?? String(e)}` }],
+      warnings: [],
     }
   }
 }
@@ -624,6 +693,7 @@ export function validateDefinitionObject(def: unknown): ValidationResult {
   return {
     ok: errors.length === 0,
     errors,
+    warnings: [],
     definition: errors.length === 0 ? def as JigDefinition : undefined,
   }
 }

@@ -236,11 +236,19 @@ export class Context {
     const { mintReplyToken, subjectWithReplyToken, replyTokenFooter, replyTokenHtmlFooter } =
       await import("../services/reply-token.js")
     const token = this._jigId ? mintReplyToken() : null
+    // Send HTML by default. Jig bodies are usually LLM output, which is markdown,
+    // and a text/plain part renders "**bold**" literally in the client. Derive
+    // the HTML part from the text when the caller didn't supply its own, keeping
+    // the original text as the plain-text alternative.
+    const { looksHtml, markdownishToHtml } = await import("../text.js")
+    const html =
+      opts.html ??
+      (opts.text != null && !looksHtml(opts.text) ? markdownishToHtml(opts.text) : undefined)
     const res = await sendAgentMailEmail({
       to: owner,
       subject: token ? subjectWithReplyToken(opts.subject, token) : opts.subject,
       text: token && opts.text != null ? `${opts.text}${replyTokenFooter(token)}` : opts.text,
-      html: token && opts.html != null ? `${opts.html}${replyTokenHtmlFooter(token)}` : opts.html,
+      html: token && html != null ? `${html}${replyTokenHtmlFooter(token)}` : html,
     })
     // Map the thread to this jig so the user's reply routes to its authoring agent.
     if (this._jigId) {

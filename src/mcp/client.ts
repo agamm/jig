@@ -16,6 +16,7 @@ import { runContext } from "../sdk/context.js"
 import { USER_CANCELLED_MESSAGE } from "../run-cancel.js"
 import { logSessionEvent } from "../debug/session-log.js"
 import { reportConnectionIssue, reportConnectionOk } from "../services/connection-status.js"
+import { cleanupMarkdownInHtml, looksHtml, looksMarkdownish, markdownishToHtml } from "../text.js"
 
 export type McpConnection = {
   client: Client
@@ -691,11 +692,9 @@ function normalizeGmailSendArgs(args: Record<string, unknown>, preferHtml: boole
 
   const rawBody = String(args[bodyKey])
   const explicitHtml = args.is_html === true || args.isHtml === true || bodyKey === "html"
-  const looksHtml = /<[a-z][\s\S]*>/i.test(rawBody)
-  const markdowny = /\*\*[^*\n]{1,120}\*\*|^\s{0,3}#{1,6}\s+/m.test(rawBody)
-  if (!explicitHtml && !preferHtml && !markdowny) return args
+  if (!explicitHtml && !preferHtml && !looksMarkdownish(rawBody)) return args
 
-  const body = looksHtml
+  const body = looksHtml(rawBody)
     ? cleanupMarkdownInHtml(rawBody)
     : markdownishToHtml(rawBody)
 
@@ -703,68 +702,6 @@ function normalizeGmailSendArgs(args: Record<string, unknown>, preferHtml: boole
   if ("is_html" in args || preferHtml) next.is_html = true
   if ("isHtml" in args) next.isHtml = true
   return next
-}
-
-function cleanupMarkdownInHtml(html: string): string {
-  return html
-    .replace(/(^|[\n>])\s{0,3}#{1,6}\s+/g, "$1")
-    .replace(/\*\*([^*<>]{1,120})\*\*/g, "<strong>$1</strong>")
-    .replace(/(^|[\n>])\s{0,3}>\s+/g, "$1")
-}
-
-function markdownishToHtml(markdown: string): string {
-  const lines = markdown.replace(/\r\n/g, "\n").split("\n")
-  const chunks: string[] = []
-  let listOpen = false
-
-  const closeList = () => {
-    if (!listOpen) return
-    chunks.push("</ul>")
-    listOpen = false
-  }
-
-  for (const rawLine of lines) {
-    const line = rawLine.trim()
-    if (!line) {
-      closeList()
-      continue
-    }
-    const heading = line.match(/^#{1,6}\s+(.+)$/)
-    if (heading) {
-      closeList()
-      chunks.push(`<h2>${inlineMarkdownToHtml(heading[1])}</h2>`)
-      continue
-    }
-    const bullet = line.match(/^[-*]\s+(.+)$/)
-    if (bullet) {
-      if (!listOpen) {
-        chunks.push("<ul>")
-        listOpen = true
-      }
-      chunks.push(`<li>${inlineMarkdownToHtml(bullet[1])}</li>`)
-      continue
-    }
-    closeList()
-    chunks.push(`<p>${inlineMarkdownToHtml(line)}</p>`)
-  }
-  closeList()
-
-  return chunks.join("\n")
-}
-
-function inlineMarkdownToHtml(value: string): string {
-  return escapeHtml(value)
-    .replace(/\*\*([^*]{1,120})\*\*/g, "<strong>$1</strong>")
-    .replace(/\*([^*]{1,120})\*/g, "<em>$1</em>")
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;")
 }
 
 /** Cap so a huge payload can't flood a run log or an alert email. */

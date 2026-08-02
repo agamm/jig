@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { checkPlaceholderJigPatterns, checkPreferCtxEmailForSelfGmail, checkStepToolDeclarations, checkToolDeclarations } from "../src/validate.js"
+import { checkCtxEmailPrefersHtml, checkPlaceholderJigPatterns, checkPreferCtxEmailForSelfGmail, checkStepToolDeclarations, checkToolDeclarations } from "../src/validate.js"
 
 describe("checkToolDeclarations", () => {
   it("detects undeclared tool usage for @jig connection imports", () => {
@@ -251,5 +251,38 @@ import { composio } from "@jig/connections/composio.js"
 await composio["gmail_send_email"]({ recipient_email: "me", subject: "hi", body: "x" })
 `
     expect(checkPreferCtxEmailForSelfGmail(code)).toHaveLength(1)
+  })
+})
+
+describe("checkCtxEmailPrefersHtml", () => {
+  it("warns on ctx.email with text and no html", () => {
+    const code = `
+await ctx.email({ subject: "What to Wear Today", text: emailBody })
+`
+    const warnings = checkCtxEmailPrefersHtml(code)
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0].field).toBe("email.ctx.email")
+    expect(warnings[0].message).toContain("html")
+  })
+
+  it("stays quiet when html is supplied", () => {
+    const code = `
+await ctx.email({ subject: "Digest", text: plain, html: "<p>hi</p>" })
+`
+    expect(checkCtxEmailPrefersHtml(code)).toEqual([])
+  })
+
+  it("stays quiet on html-only calls", () => {
+    const code = `
+await ctx.email({ subject: "Digest", html: body })
+`
+    expect(checkCtxEmailPrefersHtml(code)).toEqual([])
+  })
+
+  it("does not fire on unrelated .email calls", () => {
+    const code = `
+await mailer.email({ subject: "x", text: "y" })
+`
+    expect(checkCtxEmailPrefersHtml(code)).toEqual([])
   })
 })

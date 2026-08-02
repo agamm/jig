@@ -90,6 +90,11 @@ export async function checkJigFile(filePath: string): Promise<string> {
         errors.push(`Validator ${error.field}: ${error.message}`)
       }
     }
+    // Advisory only — never joins `errors`, because callers gate jig approval
+    // on this function returning exactly "ok".
+    for (const warning of result.warnings) {
+      console.warn(`[validate] ${warning.field}: ${warning.message}`)
+    }
   } catch (error: any) {
     errors.push(`Validator error: ${error?.message}`)
   }

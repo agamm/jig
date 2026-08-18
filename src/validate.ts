@@ -41,7 +41,10 @@ export interface ValidationResult {
 
 const CRON_REGEX = /^(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)$/
 
-function validateTrigger(trigger: unknown): ValidationError[] {
+/** A day of lead time; past that it is nearly always minutes/hours confusion. */
+const MAX_CALENDAR_LEAD_MINUTES = 1440
+
+export function validateTrigger(trigger: unknown): ValidationError[] {
   const errors: ValidationError[] = []
   if (trigger === undefined) {
     return [{ field: "trigger", message: 'Trigger is required. Use { type: "manual" } for manually-triggered jigs.' }]
@@ -61,11 +64,25 @@ function validateTrigger(trigger: unknown): ValidationError[] {
         errors.push({ field: "trigger.cron", message: `Invalid cron expression: "${t.cron}". Expected 5 fields: minute hour day month weekday` })
       }
       break
+    case "calendar": {
+      // Lead time is required rather than defaulted: "how long before" is the
+      // whole point of the trigger, and a silent default produces briefings
+      // that arrive at a time nobody chose.
+      const lead = t.minutesBefore
+      if (typeof lead !== "number" || !Number.isInteger(lead) || lead < 0 || lead > MAX_CALENDAR_LEAD_MINUTES) {
+        errors.push({
+          field: "trigger.minutesBefore",
+          message: `Calendar trigger requires 'minutesBefore' as a whole number of minutes from 0 to ${MAX_CALENDAR_LEAD_MINUTES}. `
+            + `Got: ${JSON.stringify(lead)}.`,
+        })
+      }
+      break
+    }
     case "manual":
     case "webhook":
       break // no additional fields required
     default:
-      errors.push({ field: "trigger.type", message: `Unknown trigger type: "${t.type}". Expected: cron, manual, webhook` })
+      errors.push({ field: "trigger.type", message: `Unknown trigger type: "${t.type}". Expected: cron, calendar, manual, webhook` })
   }
   return errors
 }

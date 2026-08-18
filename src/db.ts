@@ -662,7 +662,7 @@ export function getSchedule(jigId: string): ScheduleRow | null {
 
 export function upsertSchedule(
   jigId: string,
-  triggerType: "cron" | "webhook",
+  triggerType: "cron" | "webhook" | "calendar",
   cronExpr: string | null,
   missedStrategy: "catch-up" | "skip",
   nextRunAt: number | null,

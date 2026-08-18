@@ -56,6 +56,15 @@ export async function syncSchedules(): Promise<void> {
       continue
     }
 
+    if (trigger.type === "calendar") {
+      // Parsed, validated, and surfaced as requiring composio, but the tick
+      // cannot fire these until the calendar source lands. Record the schedule
+      // with the reason so the dashboard says why nothing is happening rather
+      // than showing a jig that looks scheduled and silently never runs.
+      upsertSchedule(jigId, "calendar", null, "skip", null, "Calendar triggers are not firing yet: the scheduler's calendar source is not wired up.")
+      continue
+    }
+
     if (trigger.type === "webhook") {
       upsertSchedule(jigId, "webhook", null, "skip", null, null)
       continue

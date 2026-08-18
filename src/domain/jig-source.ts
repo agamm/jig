@@ -2,10 +2,21 @@ import { cronToText } from "./triggers.js"
 import { getImportedServers } from "./source-analysis.js"
 
 export interface TriggerConfig {
-  type: "cron" | "manual" | "webhook"
+  type: "cron" | "manual" | "webhook" | "calendar"
   cron?: string
+  /** Calendar triggers only: lead time in minutes before the event starts. */
+  minutesBefore?: number
   missedStrategy?: "catch-up" | "skip"
 }
+
+/**
+ * A calendar trigger is served by the scheduler reading the user's calendar
+ * over composio, so the connection is a hard requirement of the trigger itself
+ * rather than of anything the jig imports. Declaring it here means every
+ * surface that already reports connections picks it up: the run preflight, the
+ * dashboard's connection list, and a connection's used-by list.
+ */
+export const CALENDAR_TRIGGER_CONNECTION = "composio"
 
 export interface TriggerParseResult {
   trigger: TriggerConfig | null
@@ -77,7 +88,15 @@ export function extractTriggerConfig(code: string): TriggerParseResult {
     return { trigger: { type: "cron", cron: cronMatch[1], missedStrategy } }
   }
 
-  return { trigger: null, error: `Unsupported trigger type: ${type}. Expected: cron, manual, webhook` }
+  if (type === "calendar") {
+    const leadMatch = objectText.match(/minutesBefore\s*:\s*(\d+)/)
+    if (!leadMatch) {
+      return { trigger: null, error: "Calendar trigger must use a literal minutesBefore number" }
+    }
+    return { trigger: { type: "calendar", minutesBefore: Number(leadMatch[1]), missedStrategy } }
+  }
+
+  return { trigger: null, error: `Unsupported trigger type: ${type}. Expected: cron, calendar, manual, webhook` }
 }
 
 export function prettifyId(id: string): string {
@@ -85,7 +104,11 @@ export function prettifyId(id: string): string {
 }
 
 export function extractConnections(code: string): string[] {
-  return getImportedServers(code)
+  const imported = getImportedServers(code)
+  if (extractTriggerConfig(code).trigger?.type !== "calendar") return imported
+  return imported.includes(CALENDAR_TRIGGER_CONNECTION)
+    ? imported
+    : [...imported, CALENDAR_TRIGGER_CONNECTION]
 }
 
 export function extractTrigger(code: string): string {
@@ -94,6 +117,11 @@ export function extractTrigger(code: string): string {
   const type = trigger.type
   if (type === "cron") {
     return trigger.cron ? cronToText(trigger.cron) : "Scheduled"
+  }
+  if (type === "calendar") {
+    return trigger.minutesBefore === 0
+      ? "At each meeting start"
+      : `${trigger.minutesBefore}m before each meeting`
   }
   if (type === "manual") return "Manual"
   if (type === "webhook") return "Webhook"

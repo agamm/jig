@@ -50,7 +50,7 @@ export interface ToolPermission {
 }
 
 export interface ScheduleInfo {
-  triggerType: "cron" | "webhook"
+  triggerType: "cron" | "webhook" | "calendar"
   cronExpr: string | null
   timezone?: string | null
   missedStrategy: "catch-up" | "skip"

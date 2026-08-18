@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { checkCtxEmailPrefersHtml, checkPlaceholderJigPatterns, checkPreferCtxEmailForSelfGmail, checkStepToolDeclarations, checkToolDeclarations } from "../src/validate.js"
+import { checkComposioResponseSize, checkCtxEmailPrefersHtml, checkPlaceholderJigPatterns, checkPreferCtxEmailForSelfGmail, checkStepToolDeclarations, checkToolDeclarations } from "../src/validate.js"
 
 describe("checkToolDeclarations", () => {
   it("detects undeclared tool usage for @jig connection imports", () => {
@@ -284,5 +284,53 @@ await ctx.email({ subject: "Digest", html: body })
 await mailer.email({ subject: "x", text: "y" })
 `
     expect(checkCtxEmailPrefersHtml(code)).toEqual([])
+  })
+})
+
+describe("checkComposioResponseSize", () => {
+  // Catches the executive-coach-daily failure: max_results:12 + verbose +
+  // include_payload produced a 55k-token response that spilled to an
+  // unreachable sandbox file and threw 53s into the run.
+  const imports = `import { composio } from "@jig/connections/composio.js"\n`
+
+  it("flags verbose, include_payload, and an oversized window", () => {
+    const code = imports + `
+const emails = await composio.gmail_fetch_emails({
+  query: "newer_than:7d",
+  max_results: 12,
+  verbose: true,
+  include_payload: true,
+})
+`
+    const errors = checkComposioResponseSize(code)
+    expect(errors).toHaveLength(3)
+    expect(errors.every((e) => e.field === "composio.responseSize")).toBe(true)
+    expect(errors.map((e) => e.message).join(" ")).toContain("max_results: 12")
+  })
+
+  it("passes the repaired shape", () => {
+    const code = imports + `
+const emails = await composio.gmail_fetch_emails({
+  query: "newer_than:7d",
+  max_results: 5,
+  verbose: false,
+  include_payload: false,
+})
+`
+    expect(checkComposioResponseSize(code)).toEqual([])
+  })
+
+  it("ignores the same args on a non-composio connection", () => {
+    const code = `import { apify } from "@jig/connections/apify.js"
+const r = await apify.call_actor({ max_results: 50, verbose: true })
+`
+    expect(checkComposioResponseSize(code)).toEqual([])
+  })
+
+  it("does not guess at a non-literal window", () => {
+    const code = imports + `
+const emails = await composio.gmail_fetch_emails({ max_results: LIMIT })
+`
+    expect(checkComposioResponseSize(code)).toEqual([])
   })
 })

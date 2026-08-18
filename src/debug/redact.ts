@@ -15,6 +15,15 @@
  */
 const SENSITIVE_KEY_RE = /password|secret|token|api[_-]?key|authorization|cookie|credential|bearer/i
 
+/**
+ * Token *counts* are telemetry, not credentials. Without this exemption the
+ * `token` substring in SENSITIVE_KEY_RE redacts every usage field, so a log
+ * shows what a call cost in dollars but not what drove it — which is exactly
+ * what you need to diagnose an oversized-context failure.
+ */
+const TOKEN_COUNT_KEY_RE =
+  /^(?:(?:prompt|completion|total|reasoning|cached|input|output|audio|image|accepted_prediction|rejected_prediction)_)?tokens(?:_details)?$/i
+
 const TOKEN_VALUE_RE =
   /(Bearer\s+[A-Za-z0-9._\-+/=]{8,})|(sk-[A-Za-z0-9_\-]{20,})|([sr]k_(?:live|test)_[A-Za-z0-9]{20,})|(gh[opusr]_[A-Za-z0-9]{20,})|(AKIA[A-Z0-9]{16})|(xox[baprs]-[A-Za-z0-9-]{10,})|(xapp-[A-Za-z0-9-]{10,})|(ya29\.[A-Za-z0-9_\-]{20,})|(AIza[A-Za-z0-9_\-]{35,})|(\d{8,10}:AA[A-Za-z0-9_\-]{33,})|(eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,})/g
 
@@ -47,7 +56,8 @@ function redactInner(value: unknown, seen: WeakSet<object>): unknown {
   }
   const out: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-    out[k] = SENSITIVE_KEY_RE.test(k) ? REDACTED : redactInner(v, seen)
+    const sensitive = SENSITIVE_KEY_RE.test(k) && !TOKEN_COUNT_KEY_RE.test(k)
+    out[k] = sensitive ? REDACTED : redactInner(v, seen)
   }
   return out
 }

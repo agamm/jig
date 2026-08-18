@@ -62,6 +62,14 @@ bun run jig debug run <jig-id> [handle] --dry-run
 bun run jig debug tail [handle]
 ```
 
+To edit a deployed jig outside the dashboard (pushes land pending unless `--approve`):
+
+```sh
+bun run jig debug ls [handle]
+bun run jig debug pull <jig-id> --out=/tmp/<jig-id>.ts
+bun run jig debug push <jig-id> /tmp/<jig-id>.ts --message="what changed"
+```
+
 For workflow rollback and approval:
 
 ```sh

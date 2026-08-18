@@ -81,6 +81,29 @@ bun run jig debug tail [handle]
 
 The debug stream includes redacted `runner`, `sdk.llm`, `sdk.agent`, `mcp.tool`, `authoring.agent`, `authoring.discovery`, `repair`, `scheduler`, connection, webhook, and Composio events.
 
+## Edit a deployed jig from your own editor
+
+`pull` and `push` exist so a deployed jig can be edited in whatever editor or
+agent harness you use, rather than only through the dashboard's authoring agent.
+
+```sh
+bun run jig debug ls [handle]
+bun run jig debug pull <jig-id> --out=/tmp/<jig-id>.ts
+# edit the file
+bun run jig debug push <jig-id> /tmp/<jig-id>.ts --message="what changed"
+bun run jig debug run <jig-id> --dry-run
+```
+
+`push` leaves the change **pending** unless you pass `--approve`, so the default
+keeps the same human approval gate the dashboard and auto-repair use. Approve or
+discard from the dashboard. The server applies the same guards as the authoring
+agent's own write path: it rejects code importing disconnected servers, and
+refuses while the jig is running or while an authoring session holds it.
+
+A hand-written push is a repair, not a design change. When the jig is wrong
+because the authoring agent generated it wrong, fix `SKILL.md` too, or the next
+generated jig repeats the defect.
+
 ## Repair a failing jig
 
 1. Reproduce with `debug run ... --dry-run` when the failure can be observed without writes.

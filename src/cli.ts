@@ -347,7 +347,7 @@ try {
       console.log(`  jig update [handle]    Update a deployed jig to the latest tag (rolls back on failure)`)
       console.log(`  jig doctor [handle]    Health-check deployed instances`)
       console.log(`  jig unlock [handle]    Unlock a deployed instance after a restart (hidden prompt)`)
-      console.log(`  jig debug <sub>        Trigger remote runs and stream logs — see "jig debug"`)
+      console.log(`  jig debug <sub>        Remote runs, logs, and jig pull/push (see "jig debug")`)
       break
   }
 } catch (e: any) {

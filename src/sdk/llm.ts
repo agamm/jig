@@ -9,6 +9,50 @@ import { requireOpenRouterApiKey } from "../config/openrouter.js"
 
 const MAX_TOOL_ROUNDS = 30
 
+/**
+ * Shape of a `schema` option. A leaf is a JSON Schema primitive name, an object
+ * literal nests, and a one-element array declares the item shape:
+ *
+ *   { total: "number", items: [{ name: "string", done: "boolean" }] }
+ */
+export type JigSchema = { [key: string]: JigSchemaValue }
+export type JigSchemaValue = string | JigSchema | [JigSchema | string]
+
+// JSON Schema's own type names. Providers run response_format in strict mode,
+// so anything outside this set is rejected at the API with a 400 rather than
+// degrading — "any" in particular, which reads as valid but is not a type.
+const JSON_SCHEMA_TYPES = new Set(["string", "number", "integer", "boolean", "object", "array", "null"])
+
+/**
+ * Translate the schema mini-language into strict JSON Schema.
+ *
+ * Previously this was `properties[key] = { type }`, which passed any string
+ * straight through. A jig declaring `improvements: "any"` therefore shipped
+ * `{"type":"any"}` and the provider rejected the whole request with
+ * `'any' is not valid under any of the given schemas` — after the model had
+ * already produced the answer, so the work was done and then thrown away.
+ */
+export function buildJsonSchema(value: JigSchemaValue, path = "schema"): Record<string, any> {
+  if (Array.isArray(value)) {
+    if (value.length !== 1) {
+      throw new Error(`${path}: array shorthand takes exactly one element describing the item shape, e.g. [{ name: "string" }]`)
+    }
+    return { type: "array", items: buildJsonSchema(value[0], `${path}[]`) }
+  }
+  if (typeof value === "object" && value !== null) {
+    const properties: Record<string, any> = {}
+    for (const [key, child] of Object.entries(value)) {
+      properties[key] = buildJsonSchema(child, `${path}.${key}`)
+    }
+    return { type: "object", properties, required: Object.keys(value), additionalProperties: false }
+  }
+  if (typeof value === "string" && JSON_SCHEMA_TYPES.has(value)) return { type: value }
+  const hint = value === "any"
+    ? ` Strict mode has no "any" — describe the real shape, e.g. [{ field: "string" }] for a list of objects.`
+    : ""
+  throw new Error(`${path}: "${String(value)}" is not a JSON Schema type (${[...JSON_SCHEMA_TYPES].join(", ")}).${hint}`)
+}
+
 // Don't cache the OpenAI client across calls: the API key can change at
 // runtime (user updates it in the dashboard), and the credentials table read
 // is cheap. Fresh client per call also avoids holding a stale key across an
@@ -36,7 +80,7 @@ export function getClient(): OpenAI {
 export async function llm<T = string>(
   prompt: string,
   data: Record<string, any>,
-  options?: { schema?: Record<string, string>; model?: string; maxTokens?: number; signal?: AbortSignal }
+  options?: { schema?: JigSchema; model?: string; maxTokens?: number; signal?: AbortSignal }
 ): Promise<T> {
   const ctx = runContext.getStore()
   const model = options?.model ?? runContext.getStore()?.currentModel ?? getMainModel()
@@ -58,10 +102,7 @@ export async function llm<T = string>(
   })
 
   if (options?.schema) {
-    const properties: Record<string, any> = {}
-    for (const [key, type] of Object.entries(options.schema)) {
-      properties[key] = { type }
-    }
+    const schemaBody = buildJsonSchema(options.schema)
 
     const response = await getClient().chat.completions.create({
       model,
@@ -72,12 +113,7 @@ export async function llm<T = string>(
         json_schema: {
           name: "response",
           strict: true,
-          schema: {
-            type: "object",
-            properties,
-            required: Object.keys(options.schema),
-            additionalProperties: false,
-          },
+          schema: schemaBody,
         },
       },
     }, signal ? { signal } : undefined)
@@ -134,7 +170,7 @@ export async function llm<T = string>(
 export async function agent<T = string>(
   prompt: string,
   tools: JigTool<any, any>[],
-  options?: { schema?: Record<string, string>; model?: string; maxTokens?: number }
+  options?: { schema?: JigSchema; model?: string; maxTokens?: number }
 ): Promise<T> {
   const ctx = runContext.getStore()
   // Record all connections this agent can use
@@ -159,7 +195,7 @@ export async function agent<T = string>(
 async function runAgent<T>(
   prompt: string,
   tools: JigTool<any, any>[],
-  options?: { schema?: Record<string, string>; model?: string; maxTokens?: number }
+  options?: { schema?: JigSchema; model?: string; maxTokens?: number }
 ): Promise<T> {
   const model = options?.model ?? runContext.getStore()?.currentModel ?? getMainModel()
   const maxTokens = options?.maxTokens ?? 4096
@@ -319,14 +355,11 @@ async function runAgent<T>(
  */
 async function structureResponse<T>(
   messages: OpenAI.ChatCompletionMessageParam[],
-  schema: Record<string, string>,
+  schema: JigSchema,
   model: string,
   maxTokens: number = 4096
 ): Promise<T> {
-  const properties: Record<string, any> = {}
-  for (const [key, type] of Object.entries(schema)) {
-    properties[key] = { type }
-  }
+  const schemaBody = buildJsonSchema(schema)
 
   const response = await getClient().chat.completions.create({
     model,
@@ -343,12 +376,7 @@ async function structureResponse<T>(
       json_schema: {
         name: "response",
         strict: true,
-        schema: {
-          type: "object",
-          properties,
-          required: Object.keys(schema),
-          additionalProperties: false,
-        },
+        schema: schemaBody,
       },
     },
   }, { signal: spinner.signal })

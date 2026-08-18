@@ -65,7 +65,21 @@ const result = await llm("Classify this", { text }, {
   schema: { priority: "string", urgent: "boolean" }
 })
 // → { priority: "high", urgent: true }
+
+// Lists of objects: one-element array declares the item shape
+const review = await llm("Review this", { text }, {
+  schema: {
+    score: "number",
+    notes: [{ title: "string", detail: "string" }],
+  }
+})
 ```
+
+Schema values are JSON Schema type names (`string`, `number`, `integer`,
+`boolean`, `object`, `array`, `null`), a nested object, or a one-element array.
+There is no `"any"`: providers run these in strict mode and reject it with a 400
+*after* the model has generated the answer, so the work is done and discarded.
+Describe the real shape instead.
 
 ### `agent(prompt, tools)`
 
@@ -278,7 +292,7 @@ MCP tools return different shapes: arrays, `{items: [...]}`, `{messages: [...]}`
 
 **If you're the authoring agent: once you've decided which tool to call, run `introspect_tool_output({server, tool, args})` to get a real shape descriptor before writing unwrap code.** It invokes the tool live and returns a depth-limited descriptor (keys, types, array lengths, value samples) plus a redacted 1KB preview — never the full data. Refuses non-read-only tools unless `allowWrite: true`. Use realistic args (e.g. `{query: "is:unread", max_results: 3}`), then base the unwrap on what you got back. One probe call is much cheaper than shipping a jig that returns 0 results when the API returned 3.
 
-**Composio tools cap inline responses at ~10k tokens.** Over that, the response spills to a sandbox file the MCP session can't reach and the wrapper throws `ComposioSpillError` at runtime. The bulkiest payloads come from Gmail (`messageText` is the full body, ~1-3k tokens each), Slack message history, GitHub file contents, and any tool with `verbose: true` / `include_payload: true`. **Default to small windows** — e.g. `max_results: 3-5` for any list/fetch on Composio — and paginate via `nextPageToken` if you need more. If `introspect_tool_output` returns `reason: "response_truncated"` or `warnings` mentioning sentinel strings, shrink your args before writing code; do not proceed against the truncated shape.
+**Composio tools cap inline responses at ~10k tokens.** Over that, the response spills to a sandbox file the MCP session can't reach and the wrapper throws `ComposioSpillError` at runtime. The bulkiest payloads come from Gmail (`messageText` is the full body, ~1-3k tokens each), Slack message history, GitHub file contents, and any tool with `verbose: true` / `include_payload: true`. **Default to small windows** — e.g. `max_results: 3-5` for any list/fetch on Composio — and paginate via `nextPageToken` if you need more. If `introspect_tool_output` returns `reason: "response_truncated"` or `warnings` mentioning sentinel strings, shrink your args before writing code; do not proceed against the truncated shape. This one is enforced, not advisory: the validator rejects a Composio call with `verbose: true`, `include_payload: true`, or `max_results` above 5.
 
 At each tool boundary:
 
@@ -298,6 +312,8 @@ if (meetings.length === 0) {
   return
 }
 ```
+
+That `return` is right only when zero can genuinely mean zero. When the response clearly had content and your unwrap still yielded nothing, the parse is broken, not the week: `throw` with the raw head in the message so it gets repaired (rule 15).
 
 ### 11. Format outbound messages nicely
 
@@ -441,6 +457,26 @@ if (emails.length === 0) {
   ctx.output(`No matching emails in the past ${DAYS_BACK} days. Nothing to send.`)
   return
 }
+```
+
+### 15. Signal failure by throwing, never by outputting an error string
+
+A handler that returns normally is recorded as a **successful** run no matter what the output says. `ctx.output("Error: ...")` followed by `return` shows a green check: no failure email, no auto-repair, and it clears any existing failure streak. Only a thrown error marks the run failed.
+
+- **Can't do the job** (required webhook payload field missing, credential gone, a precondition that makes the work impossible): `throw`. The message becomes the run error and is what auto-repair diagnoses.
+- **Nothing to do** (no new items, doesn't apply this run): `ctx.output()` + `return`, per rule 14. That is a genuine success.
+
+Bad:
+```typescript
+if (!meetingId) {
+  ctx.output("Error: meeting_id parameter required")
+  return
+}
+```
+
+Good:
+```typescript
+if (!meetingId) throw new Error("meeting_id parameter required: this jig runs from a webhook payload")
 ```
 
 ---

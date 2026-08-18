@@ -514,6 +514,91 @@ export function checkCtxEmailPrefersHtml(code: string, fileName = "jig.ts"): Val
   })
 }
 
+/**
+ * Composio caps an inline tool response at ~10k tokens. Past that the payload
+ * spills to a sandbox file the MCP session cannot reach and the call throws at
+ * runtime, after the tool has already done its work and burned the latency.
+ *
+ * SKILL.md rule 10 says this in prose and names the three drivers explicitly.
+ * A shipped jig still asked for `max_results: 12, verbose: true,
+ * include_payload: true` in one call and died on a 55k-token response 53s in.
+ * Prose the authoring agent can skip becomes an error it cannot.
+ *
+ * Only the authored shape is checked (`composio.some_tool({...})`). The
+ * MULTI_EXECUTE envelope is built by the proxy at runtime, not written by hand.
+ */
+const COMPOSIO_MAX_RESULTS = 5
+const COMPOSIO_BULK_FLAGS = ["verbose", "include_payload"]
+
+export function checkComposioResponseSize(code: string, fileName = "jig.ts"): ValidationError[] {
+  const errors: ValidationError[] = []
+  const sf = ts.createSourceFile(fileName, code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const bindings = new Map(
+    getConnectionImportBindings(code, fileName).map((b) => [b.localName, b.serverName])
+  )
+  if (![...bindings.values()].includes("composio")) return errors
+
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node)
+      && ts.isPropertyAccessExpression(node.expression)
+      && ts.isIdentifier(node.expression.expression)
+      && bindings.get(node.expression.expression.text) === "composio"
+      && node.arguments.length > 0
+      && ts.isObjectLiteralExpression(node.arguments[0])
+    ) {
+      const tool = node.expression.name.text
+      const args = node.arguments[0] as ts.ObjectLiteralExpression
+      const { line } = sf.getLineAndCharacterOfPosition(node.getStart(sf))
+      const at = `Line ${line + 1}: composio.${tool}(...)`
+
+      for (const flag of COMPOSIO_BULK_FLAGS) {
+        if (objectLiteralHasTrue(args, flag)) {
+          errors.push({
+            field: "composio.responseSize",
+            message: `${at} passes ${flag}: true. That is one of the biggest drivers of an oversized `
+              + `response, which spills to an unreachable sandbox file and throws at runtime. Pass `
+              + `${flag}: false and pull detail per item only when you need it.`,
+          })
+        }
+      }
+
+      const maxResults = objectLiteralNumber(args, "max_results")
+      if (maxResults !== null && maxResults > COMPOSIO_MAX_RESULTS) {
+        errors.push({
+          field: "composio.responseSize",
+          message: `${at} asks for max_results: ${maxResults}. Composio truncates past ~10k tokens, `
+            + `so keep list/fetch windows at ${COMPOSIO_MAX_RESULTS} or fewer and paginate with `
+            + `nextPageToken if you need more.`,
+        })
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+
+  visit(sf)
+  return errors
+}
+
+function objectLiteralHasTrue(obj: ts.ObjectLiteralExpression, key: string): boolean {
+  for (const prop of obj.properties) {
+    if (!ts.isPropertyAssignment(prop) || !prop.name) continue
+    if (!ts.isIdentifier(prop.name) && !ts.isStringLiteralLike(prop.name)) continue
+    if (prop.name.text === key) return prop.initializer.kind === ts.SyntaxKind.TrueKeyword
+  }
+  return false
+}
+
+function objectLiteralNumber(obj: ts.ObjectLiteralExpression, key: string): number | null {
+  for (const prop of obj.properties) {
+    if (!ts.isPropertyAssignment(prop) || !prop.name) continue
+    if (!ts.isIdentifier(prop.name) && !ts.isStringLiteralLike(prop.name)) continue
+    if (prop.name.text !== key) continue
+    // Only a literal is checkable; a variable or expression is left to runtime.
+    return ts.isNumericLiteral(prop.initializer) ? Number(prop.initializer.text) : null
+  }
+  return null
+}
+
 function isCtxEmailCall(node: ts.Node): node is ts.CallExpression {
   if (!ts.isCallExpression(node)) return false
   const expr = node.expression
@@ -666,6 +751,7 @@ export async function validateJigFile(path: string): Promise<ValidationResult> {
         ownerEmail = getAgentMailSettings().owner
       } catch {}
       errors.push(...checkPreferCtxEmailForSelfGmail(code, path, { ownerEmail }))
+      errors.push(...checkComposioResponseSize(code, path))
       warnings.push(...checkCtxEmailPrefersHtml(code, path))
     } catch {}
 

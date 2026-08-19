@@ -263,6 +263,24 @@ Interpret explicit trigger language as decisive:
 - If a request contains both a clear trigger and other timing words used only as content context, the clear trigger wins. Example: "manual run, find weekly trending GitHub repos" is still manual.
 - Strong precedence: explicit trigger wording also wins over timing words that only describe the data window or content, such as "last week", "daily summary", or "weekly trending".
 
+**Cron times are the user's wall clock, not UTC.** A cron expression is evaluated
+in the instance's configured timezone (one instance-wide setting, read by
+`schedulerTimeZone()`), so write exactly the time the user said: "8am" is
+`0 8 * * *`. Never hand-convert to UTC. The scheduler applies the offset itself,
+so a converted expression is wrong twice over, and a hardcoded offset breaks
+twice a year at the DST boundary. There is no per-jig timezone field; do not
+invent one, and do not ask the user for a timezone to put in the trigger.
+
+**But dates computed inside the handler are NOT in that timezone.** The jig
+process inherits the container's zone, which is UTC on a deployed instance.
+`new Date().toLocaleDateString()` in an email subject reads as tomorrow's date
+all evening. Whenever a jig formats or reasons about "today", pass the zone
+explicitly and hardcode the user's zone (rule 4):
+
+```typescript
+const today = new Date().toLocaleDateString("en-US", { timeZone: "America/Chicago" })
+```
+
 **Calendar trigger.** `trigger: { type: "calendar", minutesBefore: 45 }` runs the
 jig once per upcoming meeting, that many minutes before it starts. The scheduler
 watches the calendar, so the jig does not poll: the event arrives in `ctx.params`

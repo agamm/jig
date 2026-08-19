@@ -263,6 +263,14 @@ Interpret explicit trigger language as decisive:
 - If a request contains both a clear trigger and other timing words used only as content context, the clear trigger wins. Example: "manual run, find weekly trending GitHub repos" is still manual.
 - Strong precedence: explicit trigger wording also wins over timing words that only describe the data window or content, such as "last week", "daily summary", or "weekly trending".
 
+**Calendar trigger.** `trigger: { type: "calendar", minutesBefore: 45 }` runs the
+jig once per upcoming meeting, that many minutes before it starts. The scheduler
+watches the calendar, so the jig does not poll: the event arrives in `ctx.params`
+as `event_id`, `title`, `starts_at`, `attendees`, `minutes_until_start`. Dedup is
+per event, so a meeting fires exactly once. It requires the `composio`
+connection, which is enforced whether or not the jig imports it. Prefer this over
+a frequent cron that asks "is anything coming up?" and throws away 97% of its runs.
+
 Good clarifying questions:
 - "Should this run on a schedule (e.g. every morning at 8am) or only when you click Run?"
 - "Is this triggered by an incoming Telegram message, or on a fixed schedule?"

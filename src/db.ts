@@ -131,6 +131,17 @@ CREATE TABLE IF NOT EXISTS schedules (
   error TEXT
 );
 
+-- One row per (jig, calendar event) a calendar trigger has already fired for.
+-- Dedup lives here rather than on a time window: a window wide enough to
+-- survive a late tick is also wide enough to fire twice.
+CREATE TABLE IF NOT EXISTS calendar_fires (
+  jig_id TEXT NOT NULL,
+  event_id TEXT NOT NULL,
+  fired_at INTEGER NOT NULL,
+  PRIMARY KEY (jig_id, event_id)
+);
+CREATE INDEX IF NOT EXISTS idx_calendar_fires_fired_at ON calendar_fires(fired_at);
+
 CREATE TABLE IF NOT EXISTS authorized_senders (
   channel TEXT NOT NULL,
   sender_id TEXT NOT NULL,
@@ -223,6 +234,15 @@ const MIGRATIONS: string[] = [
   // never read. (draft_approval stays — it is the live approval payload the
   // dashboard reads back after a restart.)
   `ALTER TABLE agent_sessions DROP COLUMN draft_file_path;`,
+  // v22: calendar-trigger dedup. Keyed on (jig, event) so a late or repeated
+  // tick cannot send the same briefing twice.
+  `CREATE TABLE IF NOT EXISTS calendar_fires (
+    jig_id TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    fired_at INTEGER NOT NULL,
+    PRIMARY KEY (jig_id, event_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_calendar_fires_fired_at ON calendar_fires(fired_at);`,
 ]
 
 // ---------------------------------------------------------------------------
@@ -645,7 +665,7 @@ export function jigHasActiveSession(jigId: string, excludeSessionId?: string): b
 
 export interface ScheduleRow {
   jig_id: string
-  trigger_type: "cron" | "webhook"
+  trigger_type: "cron" | "webhook" | "calendar"
   cron_expr: string | null
   timezone: string | null
   missed_strategy: "catch-up" | "skip"
@@ -658,6 +678,35 @@ export interface ScheduleRow {
 export function getSchedule(jigId: string): ScheduleRow | null {
   const db = openDb()
   return db.prepare(`SELECT * FROM schedules WHERE jig_id = ?`).get(jigId) as ScheduleRow | null
+}
+
+
+// ---------------------------------------------------------------------------
+// Calendar-trigger fire dedup
+// ---------------------------------------------------------------------------
+
+/** Event ids this jig has already fired for since `sinceMs`. */
+export function listCalendarFires(jigId: string, sinceMs: number): Set<string> {
+  const db = openDb()
+  const rows = db.prepare(
+    `SELECT event_id FROM calendar_fires WHERE jig_id = ? AND fired_at >= ?`
+  ).all(jigId, sinceMs) as { event_id: string }[]
+  return new Set(rows.map((r) => r.event_id))
+}
+
+/** Idempotent: a tick that fired and died before recording retries safely. */
+export function recordCalendarFire(jigId: string, eventId: string, firedAt: number): void {
+  const db = openDb()
+  db.prepare(
+    `INSERT INTO calendar_fires (jig_id, event_id, fired_at) VALUES (?, ?, ?)
+     ON CONFLICT(jig_id, event_id) DO NOTHING`
+  ).run(jigId, eventId, firedAt)
+}
+
+/** Drop fires older than `beforeMs`; the table is a dedup ledger, not history. */
+export function pruneCalendarFires(beforeMs: number): void {
+  const db = openDb()
+  db.prepare(`DELETE FROM calendar_fires WHERE fired_at < ?`).run(beforeMs)
 }
 
 export function upsertSchedule(

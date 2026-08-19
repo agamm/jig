@@ -57,11 +57,9 @@ export async function syncSchedules(): Promise<void> {
     }
 
     if (trigger.type === "calendar") {
-      // Parsed, validated, and surfaced as requiring composio, but the tick
-      // cannot fire these until the calendar source lands. Record the schedule
-      // with the reason so the dashboard says why nothing is happening rather
-      // than showing a jig that looks scheduled and silently never runs.
-      upsertSchedule(jigId, "calendar", null, "skip", null, "Calendar triggers are not firing yet: the scheduler's calendar source is not wired up.")
+      // No next_run_at: the next fire time comes from the calendar, not from an
+      // expression, so the tick recomputes it every minute from live events.
+      upsertSchedule(jigId, "calendar", null, "skip", null, null)
       continue
     }
 

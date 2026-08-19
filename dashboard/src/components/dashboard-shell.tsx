@@ -564,6 +564,13 @@ export function DashboardShell({
       <ModelUpgradeModal
         suggestions={modelUpgrades}
         onClose={() => setModelUpgrades([])}
+        onBrowseModels={() => {
+          setModelUpgrades([])
+          setView("settings")
+          setSettingsTab("models")
+          setSettingsFocus("main")
+          closeDetail()
+        }}
       />
     )}
 

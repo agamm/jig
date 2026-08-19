@@ -176,9 +176,13 @@ function SuggestionCard({
 export function ModelUpgradeModal({
   suggestions,
   onClose,
+  onBrowseModels,
 }: {
   suggestions: ModelUpgradeSuggestion[]
   onClose: () => void
+  /** Open the models settings so the reader can pick one themselves. The
+   * suggestions are a shortlist under a price cap, not the whole catalogue. */
+  onBrowseModels?: () => void
 }) {
   const [pending, setPending] = useState<ModelUpgradeSuggestion[]>(suggestions)
   const [closing, setClosing] = useState(false)
@@ -220,6 +224,16 @@ export function ModelUpgradeModal({
             <p className="mt-1 text-[12px] leading-relaxed text-[#666]">
               Higher-ranked models at a similar or lower price — any provider. Check the stats before upgrading.
             </p>
+            {onBrowseModels && (
+              <button
+                type="button"
+                onClick={onBrowseModels}
+                disabled={closing}
+                className="mt-2 text-[12px] text-[#60a5fa] transition-colors hover:text-[#93c5fd] hover:underline disabled:opacity-50"
+              >
+                Browse all models →
+              </button>
+            )}
           </div>
           <button
             onClick={handleClose}

@@ -12,14 +12,13 @@ import { createInterface } from "node:readline/promises"
 import { PROJECT_ROOT } from "./config/paths.js"
 import { runConnectFlow, type ConnectEvent, type ConnectIO } from "../shared/connect-flow.js"
 import type { ConnectConnectionResponse, Connection } from "../shared/api.js"
+import { splitCliArgs } from "./domain/cli-args.js"
 
 const API_PORT = parseInt(process.env.PORT ?? "3141")
 const API_BASE = `http://localhost:${API_PORT}`
 
 const rawArgs = process.argv.slice(2)
-const dryRun = rawArgs.includes("--dry-run")
-const args = rawArgs.filter((a) => a !== "--dry-run")
-const [command, ...rest] = args
+const { dryRun, command, rest } = splitCliArgs(rawArgs)
 
 if (dryRun) {
   const { setDryRun } = await import("./sdk/dryrun.js")

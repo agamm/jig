@@ -46,7 +46,18 @@ export function buildJsonSchema(value: JigSchemaValue, path = "schema"): Record<
     }
     return { type: "object", properties, required: Object.keys(value), additionalProperties: false }
   }
-  if (typeof value === "string" && JSON_SCHEMA_TYPES.has(value)) return { type: value }
+  if (typeof value === "string" && JSON_SCHEMA_TYPES.has(value)) {
+    // Strict mode needs the contents, not just the container. A bare "array" or
+    // "object" is a legal type name that the provider still rejects, which is
+    // the same failure as "any" one layer deeper in.
+    if (value === "array") {
+      throw new Error(`${path}: "array" needs an item shape. Write [{ field: "string" }], or ["string"] for a list of strings.`)
+    }
+    if (value === "object") {
+      throw new Error(`${path}: "object" needs properties. Write { field: "string" } with the keys you expect.`)
+    }
+    return { type: value }
+  }
   const hint = value === "any"
     ? ` Strict mode has no "any" — describe the real shape, e.g. [{ field: "string" }] for a list of objects.`
     : ""

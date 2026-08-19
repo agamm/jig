@@ -334,3 +334,16 @@ const emails = await composio.gmail_fetch_emails({ max_results: LIMIT })
     expect(checkComposioResponseSize(code)).toEqual([])
   })
 })
+
+describe("checkComposioResponseSize casing", () => {
+  // The authoring agent wrote `maxResults: 100` on a composio call and the
+  // check missed it, because it only looked for the snake_case spelling.
+  it("catches the camelCase window too", () => {
+    const code = `import { composio } from "@jig/connections/composio.js"
+const r = await composio.googlecalendar_events_list({ maxResults: 100 })
+`
+    const errors = checkComposioResponseSize(code)
+    expect(errors).toHaveLength(1)
+    expect(errors[0].message).toContain("100")
+  })
+})

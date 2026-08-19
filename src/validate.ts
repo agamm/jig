@@ -579,7 +579,9 @@ export function checkComposioResponseSize(code: string, fileName = "jig.ts"): Va
         }
       }
 
-      const maxResults = objectLiteralNumber(args, "max_results")
+      // Both spellings: composio normalizes them, so a jig can use either and
+      // only checking one lets the other through.
+      const maxResults = objectLiteralNumber(args, "max_results") ?? objectLiteralNumber(args, "maxResults")
       if (maxResults !== null && maxResults > COMPOSIO_MAX_RESULTS) {
         errors.push({
           field: "composio.responseSize",

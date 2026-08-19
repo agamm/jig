@@ -52,3 +52,21 @@ describe("buildJsonSchema", () => {
     expect(() => buildJsonSchema({ xs: [{ a: "string" }, { b: "string" }] as any })).toThrow(/exactly one element/)
   })
 })
+
+describe("buildJsonSchema strict-mode completeness", () => {
+  // A bare "array" is a valid JSON Schema type name, so it passed the type
+  // check, but strict mode requires `items` and the provider 400s on it — the
+  // same class of failure as "any", just one layer further in. The authoring
+  // agent reached for exactly this on its first try.
+  it("rejects a bare array with no item shape", () => {
+    expect(() => buildJsonSchema({ meetings: "array" })).toThrow(/item shape/)
+  })
+
+  it("rejects a bare object with no properties", () => {
+    expect(() => buildJsonSchema({ meta: "object" })).toThrow(/properties/)
+  })
+
+  it("still accepts an array declared with its item shape", () => {
+    expect(() => buildJsonSchema({ meetings: [{ title: "string" }] })).not.toThrow()
+  })
+})

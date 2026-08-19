@@ -49,6 +49,29 @@ export interface ToolPermission {
   policy: ToolPermissionPolicy
 }
 
+/** Invoke one tool on a connected server to see what it really returns. */
+export interface ToolEvalRequest {
+  tool: string
+  args?: Record<string, unknown>
+  /** Required to invoke a tool whose annotations do not mark it read-only. */
+  allowWrite?: boolean
+}
+
+export type ToolEvalResponse =
+  | {
+      ok: true
+      server: string
+      tool: string
+      /** Depth-limited descriptor of the response: keys, types, array lengths. */
+      shape: unknown
+      /** Redacted, truncated sample of the real payload. */
+      preview: string
+      durationMs: number
+      readOnly: boolean
+      warnings?: string[]
+    }
+  | { ok: false; error: string; reason?: string; hint?: string }
+
 export interface ScheduleInfo {
   triggerType: "cron" | "webhook" | "calendar"
   cronExpr: string | null
@@ -619,6 +642,7 @@ export interface ApiContracts {
   applyModelUpgrade: ApiContract<ApplyModelUpgradeRequest, ApplyModelUpgradeResponse>
   dismissModelUpgrade: ApiContract<DismissModelUpgradeRequest, OkResponse>
   listJigs: ApiContract<void, JigData[]>
+  evalTool: ApiContract<ToolEvalRequest, ToolEvalResponse>
   listExamples: ApiContract<void, ExampleJig[]>
   addExample: ApiContract<void, AddExampleJigResponse>
   getJig: ApiContract<void, JigData>

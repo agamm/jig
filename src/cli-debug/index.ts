@@ -8,6 +8,7 @@
  *   - ls [handle]               List the jigs on the remote.
  *   - pull <jigId> [handle]     Print a jig's live code (or --out it to a file).
  *   - push <jigId> <file>       Upload code as a pending version.
+ *   - eval <server> <tool>      Call one tool, print its real response shape.
  *
  * pull/push exist so you can edit a deployed jig in whatever editor or agent
  * harness you actually use, instead of only through the dashboard's authoring
@@ -26,8 +27,9 @@
  */
 import { listRemotes, resolveActiveRemote, setSessionCookie, type RemoteManifest } from "../cli-remote/manifest.js"
 import { readLocalLogHead, readLocalLogs } from "./local.js"
+import { parseToolArgs } from "./eval-args.js"
 import { DB_PATH } from "../config/paths.js"
-import type { ApiResponse, JigData, ServerLogEntry, ServerLogsResponse, StartRunResponse, RunDetail } from "../../shared/api.js"
+import type { ApiResponse, JigData, ServerLogEntry, ServerLogsResponse, StartRunResponse, RunDetail, ToolEvalResponse } from "../../shared/api.js"
 
 const COOKIE_NAME = "jig-admin"
 const POLL_MS = 750
@@ -49,6 +51,7 @@ export async function runDebug(args: string[]): Promise<void> {
   if (sub === "ls") return lsCmd(rest)
   if (sub === "pull") return pullCmd(rest)
   if (sub === "push") return pushCmd(rest)
+  if (sub === "eval") return evalCmd(rest)
 
   console.log("Usage:")
   console.log("  jig debug login [handle]          Cache admin session cookie")
@@ -57,11 +60,16 @@ export async function runDebug(args: string[]): Promise<void> {
   console.log("  jig debug ls [handle]             List jigs on the remote")
   console.log("  jig debug pull <jigId> [handle]   Print a jig's live code")
   console.log("  jig debug push <jigId> <file>     Upload code as a pending version")
+  console.log("  jig debug eval <server> <tool>    Call one tool and print its real response shape")
   console.log("")
   console.log("Editing a deployed jig:")
   console.log("  --out=<path>           pull: write the code to a file instead of stdout")
   console.log("  --message=<msg>        push: version note shown in the jig's history")
   console.log("  --approve              push: make it active immediately (default: leave pending)")
+  console.log("")
+  console.log("Testing a connection:")
+  console.log("  --args=<json>          eval: tool arguments, e.g. --args='{\"max_results\":3}'")
+  console.log("  --allow-write          eval: required for tools not annotated read-only")
   console.log("")
   console.log("Auth:")
   console.log("  --password=<pw>        Provide password inline")
@@ -262,6 +270,57 @@ async function pullCmd(args: string[]): Promise<void> {
   if (!out) return void process.stdout.write(jig.code)
   await Bun.write(out, jig.code)
   console.log(`Wrote ${jig.code.split("\n").length} lines of ${jigId} to ${out}`)
+}
+
+/**
+ * Call one tool on a connected server and print what it really returns.
+ *
+ * The alternative was shipping a jig, running it, and reading the logs to find
+ * out a response was `{data:{items:[...]}}` and not `{results:[...]}`. Delegates
+ * to the same introspect path the authoring agent uses, so a tool whose
+ * annotations do not mark it read-only is refused unless --allow-write.
+ */
+async function evalCmd(args: string[]): Promise<void> {
+  const positionals = args.filter((a) => !a.startsWith("--"))
+  const [server, tool] = positionals
+  if (!server || !tool) {
+    console.error("Usage: jig debug eval <server> <tool> [handle] [--args='{...}'] [--allow-write]")
+    process.exit(1)
+  }
+  const parsed = parseToolArgs(stringFlag(args, "--args"))
+  if (!parsed.ok) {
+    console.error(parsed.error)
+    process.exit(1)
+  }
+  const { remote, cookie } = resolveAuthedRemoteOrExit(positionals[2])
+
+  let res: ToolEvalResponse
+  try {
+    res = await sendJson<ToolEvalResponse>(
+      "POST",
+      `${remote.public_url}/api/connections/${encodeURIComponent(server)}/eval`,
+      cookie,
+      { tool, args: parsed.value, allowWrite: args.includes("--allow-write") },
+    )
+  } catch (e: any) {
+    console.error(`Eval failed: ${e.message}`)
+    process.exit(1)
+  }
+
+  if (!res.ok) {
+    console.error(`${res.error}`)
+    if (res.hint) console.error(res.hint)
+    process.exit(1)
+  }
+
+  console.log(`${res.server}.${res.tool}  ${res.durationMs}ms  ${res.readOnly ? "read-only" : "WRITE"}`)
+  if (res.warnings?.length) for (const w of res.warnings) console.log(`  ! ${w}`)
+  console.log("")
+  console.log("shape:")
+  console.log(JSON.stringify(res.shape, null, 2))
+  console.log("")
+  console.log("preview (redacted, truncated):")
+  console.log(res.preview)
 }
 
 async function pushCmd(args: string[]): Promise<void> {

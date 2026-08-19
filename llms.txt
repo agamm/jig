@@ -70,6 +70,12 @@ bun run jig debug pull <jig-id> --out=/tmp/<jig-id>.ts
 bun run jig debug push <jig-id> /tmp/<jig-id>.ts --message="what changed"
 ```
 
+To see what a connection's tool really returns before writing unwrap code:
+
+```sh
+bun run jig debug eval <server> <tool> --args='{"max_results":3}'
+```
+
 For workflow rollback and approval:
 
 ```sh

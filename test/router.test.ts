@@ -17,6 +17,19 @@ describe("router", () => {
     expect(r?.params.name).toBe("workspace")
   })
 
+  // /api/connections/:name is declared after the sub-routes; if that order ever
+  // flips, this resolves to getConnection with name="composio" and every eval
+  // silently returns connection metadata instead of calling the tool.
+  it("matches the tool eval route rather than the connection route", () => {
+    const r = matchRoute("/api/connections/composio/eval")
+    expect(r?.handler).toBe("evalTool")
+    expect(r?.params.name).toBe("composio")
+  })
+
+  it("still matches the bare connection route", () => {
+    expect(matchRoute("/api/connections/composio")?.handler).toBe("getConnection")
+  })
+
   it("matches the examples route", () => {
     const r = matchRoute("/api/examples")
     expect(r?.handler).toBe("listExamples")

@@ -100,6 +100,23 @@ discard from the dashboard. The server applies the same guards as the authoring
 agent's own write path: it rejects code importing disconnected servers, and
 refuses while the jig is running or while an authoring session holds it.
 
+### Test a connection before writing code against it
+
+```sh
+bun run jig debug eval composio googlecalendar_events_list --args='{"max_results":3}'
+```
+
+Calls one tool on the live connection and prints a depth-limited shape
+descriptor plus a redacted, truncated preview of the real payload. Use it to
+learn the actual response shape before writing unwrap code, rather than shipping
+a jig and reading the logs to discover the key was `data.items` and not
+`results`.
+
+Tools whose annotations do not mark them read-only are refused unless
+`--allow-write` is passed, and the same Composio spill detection applies: args
+that would overflow the inline response are reported as a refusal with the
+reason, not returned as a truncated shape.
+
 A hand-written push is a repair, not a design change. When the jig is wrong
 because the authoring agent generated it wrong, fix `SKILL.md` too, or the next
 generated jig repeats the defect.

@@ -302,6 +302,32 @@ export function createApiServer(port: number) {
               toolTimeoutMs: updated?.tool_timeout_ms ?? null,
             })
           }
+          case "evalTool": {
+            // Invoke one tool against the live connection and report what it
+            // actually returns. Delegates to the same introspectToolOutput the
+            // authoring agent uses, so the read-only gate, the composio proxy
+            // wrap/unwrap, spill detection and redaction are shared rather than
+            // reimplemented here. It answers the question you otherwise can
+            // only answer by shipping a jig and reading the logs.
+            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+            const body = (await req.json().catch(() => ({}))) as {
+              tool?: unknown; args?: unknown; allowWrite?: unknown
+            }
+            if (typeof body.tool !== "string" || body.tool.trim().length === 0) {
+              throw new ApiError(400, "tool is required")
+            }
+            const toolArgs = body.args && typeof body.args === "object" && !Array.isArray(body.args)
+              ? body.args as Record<string, unknown>
+              : {}
+            const { introspectToolOutput } = await import("./services/introspect.js")
+            const result = await introspectToolOutput({
+              server: route.params.name,
+              tool: body.tool.trim(),
+              args: toolArgs,
+              allowWrite: body.allowWrite === true,
+            })
+            return apiJson("evalTool", result)
+          }
           case "writeJigCode": {
             // Direct code write for an existing jig — creates (or replaces) the
             // pending version. With approve:true, immediately promotes pending

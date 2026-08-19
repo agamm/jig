@@ -56,11 +56,24 @@ function readDismissed(): DismissedMap {
   return getSetting<DismissedMap>(DISMISSED_KEY) ?? {}
 }
 
+/**
+ * OpenRouter variant suffixes that change how a call is delivered, not just how
+ * well it performs. `:batch` is an async queue with turnaround measured in
+ * hours, so it is cheaper and often better ranked and therefore looks like a
+ * pure win to the ranker — but a jig awaiting one would hang past its run
+ * timeout. Never offer these as a drop-in upgrade for a synchronous slot.
+ */
+const NON_INTERACTIVE_VARIANTS = [":batch"]
+
+function isNonInteractiveVariant(m: OpenRouterModelInfo): boolean {
+  return NON_INTERACTIVE_VARIANTS.some((suffix) => m.id.endsWith(suffix))
+}
+
 function isFree(m: OpenRouterModelInfo): boolean {
   return m.blendedPriceUsdPerM === 0 || m.id.endsWith(":free")
 }
 
-function pickBest(
+export function pickBest(
   slot: ModelSlot,
   current: OpenRouterModelInfo,
   all: OpenRouterModelInfo[],
@@ -69,6 +82,7 @@ function pickBest(
   const candidates = all.filter((m) => {
     if (m.id === current.id) return false
     if (dismissed.includes(m.id)) return false
+    if (isNonInteractiveVariant(m)) return false
     // Agentic slots run tool-calling loops — a non-tool model would break them.
     if ((slot === "main" || slot === "editor") && !m.supportsTools) return false
     // Never silently move a free model to a paid one (keeps the fast/free slot free).

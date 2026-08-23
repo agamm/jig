@@ -68,17 +68,42 @@ export default jig("weekly-client-update", {
 * MCP, Composio, Apify, and custom connections
 * Local runs or always-on Railway deployment
 
-## Usage
+## Install
+
+### Railway
 
 The Railway button creates a fresh service with a blank persistent `/data` volume and no maintainer data, credentials, OAuth state, variables, logs, or personal configuration.
 
+### Claude Code
+
+Let a coding agent do the install. Paste this into Claude Code, in the directory Jig should live in:
+
+```text
+Install Jig from https://github.com/agamm/jig.git: clone it, run `bun install`, then run
+`bun run jig setup` to configure it. You have no TTY, so setup cannot prompt you: ask me for
+each secret first and pass them as flags, `--openrouter-key=`, `--agentmail-key=` and
+`--owner=<my email>`. Then start it with `bun run jig start` and give me the dashboard URL.
+```
+
+### Local
+
 ```Shell
-# Or run locally
 git clone https://github.com/agamm/jig.git
 cd jig
 bun install
+bun run jig setup
 bun run jig start
 ```
+
+## Setup
+
+`bun run jig setup` walks the three things a new instance needs and verifies each one rather than assuming it:
+
+* **OpenRouter** for model calls, checked for credit balance and not just for a key the API accepts
+* **AgentMail** for failure alerts and reply-to-edit, verified by sending a real message to your address
+* **Composio** app integrations, optional
+
+Run it again whenever you want; steps that are already satisfied report as done and are skipped. At a terminal it prompts for each secret and opens the browser for you. Under a coding agent, or anywhere else without a TTY, pass the secrets up front as flags (`--openrouter-key=`, `--agentmail-key=`, `--owner=`) or as environment variables (`JIG_OPENROUTER_KEY`, `JIG_AGENTMAIL_KEY`, `JIG_OWNER_EMAIL`); a missing one fails with the flag to pass instead of waiting for input that will never arrive. Pass a deployed instance's handle (`bun run jig setup <handle>`) to set that one up instead of the local one.
 
 Open the dashboard, connect the services you want, and tell Jig what to build.
 
@@ -141,6 +166,7 @@ Start with [`llms.txt`](llms.txt). Claude Code and other repository-aware agents
 ## CLI Commands
 
 ```Shell
+bun run jig setup
 bun run jig start
 bun run jig connect
 bun run jig connect composio

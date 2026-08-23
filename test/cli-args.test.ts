@@ -34,4 +34,20 @@ describe("splitCliArgs", () => {
   it("handles an empty command line", () => {
     expect(splitCliArgs([])).toEqual({ dryRun: false, command: undefined, rest: [] })
   })
+
+  // Same failure mode as `jig debug run`: the flag was stripped before the
+  // subcommand saw it, so `jig backup restore x.zip --dry-run` overwrote the
+  // instance it was supposed to be previewing.
+  it("forwards --dry-run to backup restore, which previews rather than applies", () => {
+    const out = splitCliArgs(["backup", "restore", "b.zip", "--dry-run"])
+
+    expect(out.command).toBe("backup")
+    expect(out.rest).toEqual(["restore", "b.zip", "--dry-run"])
+  })
+
+  it("leaves a plain backup untouched", () => {
+    expect(splitCliArgs(["backup", "--out", "b.zip"])).toEqual({
+      dryRun: false, command: "backup", rest: ["--out", "b.zip"],
+    })
+  })
 })

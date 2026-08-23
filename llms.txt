@@ -86,6 +86,26 @@ bun run jig pending <jig-id> approve
 bun run jig pending <jig-id> discard
 ```
 
+For backup and disaster recovery:
+
+The dashboard has the same thing under Settings > Backup: download a .zip, or
+pick one to restore (choosing a file previews it; nothing changes until you
+confirm). From the CLI:
+
+```sh
+bun run jig backup                              # writes jig-backup-<date>.zip
+bun run jig backup --no-credentials             # shareable copy, secrets omitted
+bun run jig backup restore <file.zip> --dry-run # print the plan, change nothing
+bun run jig backup restore <file.zip>
+```
+
+The archive carries jigs and their active code, schedules, connections (custom
+servers, tool permissions, MCP schemas), settings and jig memory. Credentials
+travel as ciphertext with the salt they need, so restoring them requires the
+same password the backup was made under; onto an instance with a different
+password they are skipped unless `--force` is passed. Run history, logs and
+step caches are deliberately not included.
+
 After two consecutive real-run failures, Jig can start a repair authoring session. The proposed patch remains pending and never ships without approval. If AgentMail is configured, the owner receives a reply-to-approve thread; otherwise the proposal remains visible in the dashboard.
 
 ## Safety invariants

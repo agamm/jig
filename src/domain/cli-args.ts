@@ -14,8 +14,16 @@ export interface SplitCliArgs {
   rest: string[]
 }
 
-/** Subcommands that execute remotely, where dry-run must travel with the request. */
-const FORWARDS_DRY_RUN = new Set(["debug"])
+/**
+ * Commands that interpret `--dry-run` themselves, so the flag has to survive
+ * into the subcommand instead of only flipping this process into dry-run mode.
+ *
+ * `debug` runs the jig on a remote server and sends the flag in the request
+ * body. `backup restore` uses it to mean "print the plan and change nothing",
+ * which is a decision the restore code makes, not the SDK. Leaving either out
+ * makes the flag silently do the real thing.
+ */
+const FORWARDS_DRY_RUN = new Set(["debug", "backup"])
 
 export function splitCliArgs(rawArgs: string[]): SplitCliArgs {
   const dryRun = rawArgs.includes("--dry-run")

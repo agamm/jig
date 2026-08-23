@@ -11,7 +11,9 @@ jig.db*
 credentials/
 secrets/
 .railway/
-.agents/
+# .agents/skills is the cross-agent skills directory (Claude Code, Codex,
+# Cursor, OpenCode all read it), so it is source and must be committed.
+# .codex/ and .claude/ are per-tool local state and stay ignored.
 .codex/
 .a5c/
 .worktrees/

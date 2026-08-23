@@ -26,6 +26,7 @@ import type {
   AgentMailSetupResponse,
   AgentMailTestResponse,
   ResetLocalStateResponse,
+  BackupRestoreResponse,
   RunDetail,
   RunStatus,
   ServerLogEntry as SharedServerLogEntry,
@@ -108,6 +109,29 @@ export function fetchJig(jigId: string): Promise<JigData> {
 
 export function deleteJig(jigId: string): Promise<ApiResponse<"deleteJig">> {
   return fetchApi("deleteJig", `/api/jigs/${encodeURIComponent(jigId)}`, { method: "DELETE" })
+}
+
+/** Remove one ctx.memory entry the jig stored. */
+export function deleteJigMemoryKey(jigId: string, key: string): Promise<ApiResponse<"jigMemory">> {
+  return fetchApi(
+    "jigMemory",
+    `/api/jigs/${encodeURIComponent(jigId)}/memory?key=${encodeURIComponent(key)}`,
+    { method: "DELETE" },
+  )
+}
+
+/** Wipe everything the jig remembers. */
+export function clearJigMemory(jigId: string): Promise<ApiResponse<"jigMemory">> {
+  return fetchApi("jigMemory", `/api/jigs/${encodeURIComponent(jigId)}/memory`, { method: "DELETE" })
+}
+
+/** Cancel a pending ctx.remind wake-up by its key. */
+export function cancelJigReminder(jigId: string, key: string): Promise<ApiResponse<"jigReminders">> {
+  return fetchApi(
+    "jigReminders",
+    `/api/jigs/${encodeURIComponent(jigId)}/reminders?key=${encodeURIComponent(key)}`,
+    { method: "DELETE" },
+  )
 }
 
 export function fetchModels(): Promise<ModelCatalog> {
@@ -373,6 +397,46 @@ export function saveSystemSettings(settings: SystemSettings): Promise<SystemSett
 
 export function resetLocalState(): Promise<ResetLocalStateResponse> {
   return fetchApi("resetLocalState", "/api/settings/reset-local", { method: "POST" })
+}
+
+/**
+ * Download a backup as a file.
+ *
+ * Deliberately not fetchApi: the response is a zip, not the JSON envelope
+ * every other endpoint returns. The filename comes from the server's
+ * Content-Disposition so the CLI and the dashboard name backups identically.
+ */
+export async function downloadBackup(includeCredentials: boolean): Promise<void> {
+  const res = await fetch(`/api/backup${includeCredentials ? "" : "?credentials=0"}`);
+  if (!res.ok) {
+    throw new Error((await res.text().catch(() => "")) || `Backup failed (${res.status})`);
+  }
+  const disposition = res.headers.get("Content-Disposition") ?? "";
+  const named = /filename="([^"]+)"/.exec(disposition)?.[1];
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = named ?? "jig-backup.zip";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+export async function restoreBackup(
+  file: File,
+  opts: { dryRun?: boolean; force?: boolean } = {},
+): Promise<BackupRestoreResponse> {
+  const params = new URLSearchParams();
+  if (opts.dryRun) params.set("dryRun", "1");
+  if (opts.force) params.set("force", "1");
+  const query = params.toString();
+  return fetchApi("backupRestore", `/api/backup/restore${query ? `?${query}` : ""}`, {
+    method: "POST",
+    body: await file.arrayBuffer(),
+    headers: { "Content-Type": "application/zip" },
+  });
 }
 
 export function changePassword(newPassword: string): Promise<ApiResponse<"changePassword">> {

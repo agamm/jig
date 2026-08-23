@@ -280,6 +280,23 @@ try {
       break
     }
 
+    case "setup": {
+      const { runSetup } = await import("./cli-setup/index.js")
+      await runSetup(rest, async () => {
+        await ensureServer()
+        return API_BASE
+      })
+      process.exit(0)
+      break
+    }
+
+    case "backup": {
+      const { runBackupArgs } = await import("./cli-backup/index.js")
+      await runBackupArgs(rest)
+      process.exit(0)
+      break
+    }
+
     case "deploy": {
       const { runDeployArgs } = await import("./cli-deploy/index.js")
       await runDeployArgs(rest)
@@ -334,13 +351,16 @@ try {
       console.log(`jig — AI workflow automation\n`)
       console.log(`Commands:`)
       console.log(`  jig start              Start dashboard + API server`)
-      console.log(`  jig connect [server]   List servers or connect one`)
+      console.log(`  jig setup [handle]     Guided setup: models, alerts, connections`)
+  console.log(`  jig connect [server]   List servers or connect one`)
       console.log(`  jig run <name> [args]  Run a jig`)
       console.log(`  jig new [description]  AI generates a new jig`)
       console.log(`  jig edit <name> [ent]  AI modifies an existing jig`)
       console.log(`  jig versions <name>    List versions for a jig`)
       console.log(`  jig restore <name> <v> Restore version <v> as a pending change`)
       console.log(`  jig pending <name>     Show pending diff; append 'approve' or 'discard'`)
+      console.log(`  jig backup             Write a .zip of jigs, connections and settings`)
+      console.log(`  jig backup restore <f> Restore from a backup .zip (--dry-run to preview)`)
       console.log(`  jig deploy             Provision a new Railway-hosted instance (interactive)`)
       console.log(`  jig deploy --update    Redeploy current code to the linked Railway project`)
       console.log(`  jig update [handle]    Update a deployed jig to the latest tag (rolls back on failure)`)
@@ -498,10 +518,13 @@ async function runJigFile(path: string, jigId: string) {
   const start = Date.now()
   const persistHandler = !isDry ? persist(runId, start) : null
 
+  // jigId matters beyond logging: ctx.memory and ctx.remind are scoped by it,
+  // and ctx.email needs it to mint a reply token. Omitting it made a CLI run
+  // behave differently from the same jig run by the scheduler or dashboard.
   const result = await runJig(path, {}, (event) => {
     if (event.type === "error") console.error(event.message)
     persistHandler?.(event)
-  })
+  }, { jigId })
 
   if (result.skipped && !isDry) {
     db.prepare(`DELETE FROM run_steps WHERE run_id = ?`).run(runId)

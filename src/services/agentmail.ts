@@ -19,6 +19,7 @@ import { join } from "node:path"
 import { getCredential, getSetting, setCredential, setSetting } from "../db.js"
 import { DATA_DIR } from "../config/paths.js"
 import { logSessionEvent } from "../debug/session-log.js"
+import { collapseHtmlTagWhitespace } from "../text.js"
 import type { AgentMailSettingsResponse } from "../../shared/api.js"
 
 const API_BASE = "https://api.agentmail.to/v0"
@@ -178,6 +179,66 @@ async function createInbox(): Promise<{ inboxId: string; address: string }> {
   return { inboxId: data.inbox_id, address: data.email }
 }
 
+/**
+ * The inbox an email-triggered jig receives on.
+ *
+ * A jig gets its own address rather than a share of the main one because that
+ * address is the routing key: inbound mail is matched on `message.inbox_id`, so
+ * "mail for the to-do jig" and "a reply about a broken jig" stay separable
+ * without asking the user to format a subject line. (AgentMail documents no
+ * plus-addressing, so a single inbox could not carry the distinction.)
+ *
+ * The existing webhook is registered org-wide, no `inbox_ids` filter, so a new
+ * inbox needs no webhook change. That is also why we do NOT scope webhooks per
+ * inbox: `inbox_ids` caps at 10 per webhook, which would break at 11 email jigs.
+ *
+ * `client_id` makes this idempotent, so a re-sync returns the existing inbox
+ * rather than provisioning a second one.
+ */
+export async function createJigInbox(jigId: string): Promise<{ inboxId: string; address: string }> {
+  const clientId = `${CLIENT_ID}:${jigId}`
+  // agentmail.to is shared across every AgentMail customer, so a plain "todo"
+  // is long gone. Suffix with a hash of the jig id: stable for a given jig
+  // (a retry lands on the same name) without colliding across instances.
+  const suffix = inboxSuffix(jigId)
+  // Truncate the BASE, never the combined string. Slicing after joining can cut
+  // the suffix off entirely (so two long jig ids sharing a prefix would request
+  // the same username) or land on the separator, leaving a trailing "-" that
+  // AgentMail rejects with a validation error the fallback below cannot match.
+  const base = sanitizeUsername(jigId).slice(0, 40).replace(/-+$/, "") || "jig"
+  const preferred = `${base}-${suffix}`
+
+  for (const body of [
+    { client_id: clientId, username: preferred, display_name: `Jig: ${jigId}` },
+    // Username taken by another org: let AgentMail generate one. A less pretty
+    // address still routes correctly, and failing setup over cosmetics would
+    // leave the jig with no way to receive mail at all.
+    { client_id: clientId, display_name: `Jig: ${jigId}` },
+  ]) {
+    try {
+      const data = await apiFetch("/inboxes", body)
+      return { inboxId: data.inbox_id, address: data.email }
+    } catch (error) {
+      const message = (error as Error)?.message ?? ""
+      if (!/resource_taken|already in use/i.test(message)) throw error
+      console.warn(`[agentmail] inbox username "${preferred}" is taken; falling back to a generated one`)
+    }
+  }
+  throw new Error(`Could not provision an inbox for ${jigId}`)
+}
+
+/** Lowercase alphanumerics and dashes only, the subset every mail host accepts. */
+function sanitizeUsername(jigId: string): string {
+  const cleaned = jigId.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")
+  return cleaned || "jig"
+}
+
+function inboxSuffix(jigId: string): string {
+  const hasher = new Bun.CryptoHasher("sha256")
+  hasher.update(`inbox:${jigId}`)
+  return hasher.digest("hex").slice(0, 6)
+}
+
 /** Register (or fetch existing) the inbound webhook. Returns the signing secret. */
 async function registerWebhook(url: string): Promise<string> {
   const data = await apiFetch("/webhooks", {
@@ -217,20 +278,30 @@ export async function setupAgentMail(
   return { address, webhookReady }
 }
 
-/** Send an email from the Jig inbox (plain text and/or HTML). Returns thread + message ids. */
+/**
+ * Send an email from the Jig inbox (plain text and/or HTML). Returns thread +
+ * message ids.
+ *
+ * `fromInboxId` overrides the sending inbox. An email-triggered jig sends from
+ * its OWN inbox so that a reply lands back there and is routed to the jig as
+ * data, replies to the main inbox mean "edit this jig" instead.
+ */
 export async function sendAgentMailEmail(opts: {
   to: string
   subject: string
   text?: string
   html?: string
+  fromInboxId?: string
 }): Promise<{ threadId: string; messageId: string }> {
-  const { inboxId } = getAgentMailSettings()
+  const inboxId = opts.fromInboxId ?? getAgentMailSettings().inboxId
   if (!inboxId) throw new Error("AgentMail inbox is not provisioned")
   const data = await apiFetch(`/inboxes/${encodeURIComponent(inboxId)}/messages/send`, {
     to: [opts.to],
     subject: opts.subject,
     ...(opts.text != null && { text: opts.text }),
-    ...(opts.html != null && { html: opts.html }),
+    // Newlines between tags arrive as stray <br>s, so flatten them here rather
+    // than asking every jig to emit its html on one line. See src/text.ts.
+    ...(opts.html != null && { html: collapseHtmlTagWhitespace(opts.html) }),
   })
   // Every outbound email in one greppable place — duplicate-send questions
   // ("why did I get this twice?") are unanswerable without it. Subject only;
@@ -246,9 +317,11 @@ export async function sendAgentMailEmail(opts: {
   return { threadId: data.thread_id, messageId: data.message_id }
 }
 
-/** Reply to an inbound message — AgentMail keeps it in the same thread. */
-export async function replyAgentMail(opts: { messageId: string; text: string }): Promise<void> {
-  const { inboxId } = getAgentMailSettings()
+/** Reply to an inbound message, AgentMail keeps it in the same thread. The
+ *  reply must go out from the inbox that RECEIVED it, so `fromInboxId` is
+ *  required whenever the message arrived in a jig's own inbox. */
+export async function replyAgentMail(opts: { messageId: string; text: string; fromInboxId?: string }): Promise<void> {
+  const inboxId = opts.fromInboxId ?? getAgentMailSettings().inboxId
   if (!inboxId) throw new Error("AgentMail inbox is not provisioned")
   await apiFetch(
     `/inboxes/${encodeURIComponent(inboxId)}/messages/${encodeURIComponent(opts.messageId)}/reply`,

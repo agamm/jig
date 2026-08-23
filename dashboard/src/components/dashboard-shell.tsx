@@ -15,6 +15,7 @@ import { LogsSettings } from "@/components/logs-settings";
 import { ModelsSettings } from "@/components/models-settings";
 import { SystemSettings } from "@/components/system-settings";
 import { DangerSettings } from "@/components/danger-settings";
+import { BackupSettings } from "@/components/backup-settings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ModelUpgradeModal } from "@/components/model-upgrade-modal";
 import { ServiceIcon } from "@/components/service-icon";
@@ -695,8 +696,10 @@ export function DashboardShell({
         )}
 
         {view === "settings" && (() => {
-          const tab: "models" | "system" | "notifications" | "danger" =
-            settingsTab === "system" || settingsTab === "notifications" || settingsTab === "danger" ? settingsTab : "models";
+          const tab: "models" | "system" | "notifications" | "backup" | "danger" =
+            settingsTab === "system" || settingsTab === "notifications" || settingsTab === "backup" || settingsTab === "danger"
+              ? settingsTab
+              : "models";
           return (
             <main className="flex flex-col flex-1 overflow-hidden">
               <div className="flex h-11 shrink-0 items-center justify-between border-b border-[#1f1f23] px-4">
@@ -708,6 +711,7 @@ export function DashboardShell({
                     ["models", "Models"],
                     ["system", "System"],
                     ["notifications", "Notifications"],
+                    ["backup", "Backup"],
                     ["danger", "Danger"],
                   ] as const
                 ).map(([key, label]) => {
@@ -747,6 +751,16 @@ export function DashboardShell({
 	                  )}
                   {tab === "system" && <SystemSettings />}
                   {tab === "notifications" && <AgentMailSettings />}
+                  {tab === "backup" && (
+                    <BackupSettings
+                      onRestored={async () => {
+                        closeDetail();
+                        setView(null);
+                        await mutate("jigs");
+                        await mutate("connections");
+                      }}
+                    />
+                  )}
                   {tab === "danger" && (
                     <DangerSettings
                       onReset={async () => {

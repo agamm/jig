@@ -73,7 +73,7 @@ export type ToolEvalResponse =
   | { ok: false; error: string; reason?: string; hint?: string }
 
 export interface ScheduleInfo {
-  triggerType: "cron" | "webhook" | "calendar"
+  triggerType: "cron" | "webhook" | "calendar" | "email"
   cronExpr: string | null
   timezone?: string | null
   missedStrategy: "catch-up" | "skip"
@@ -82,6 +82,24 @@ export interface ScheduleInfo {
   enabled: boolean
   error: string | null
   webhookUrl?: string
+  /** Email-triggered jigs: the address mail must be sent to. */
+  inboxAddress?: string
+}
+
+/** One ctx.memory entry, for the dashboard's per-jig state view. */
+export interface JigMemoryEntry {
+  key: string
+  /** Pretty-printed JSON, or the raw string for a value that is not JSON. */
+  value: string
+  updatedAt: string
+}
+
+/** One pending ctx.remind wake-up. */
+export interface JigReminderEntry {
+  id: number
+  key: string | null
+  dueAt: string
+  payload: string | null
 }
 
 export interface UnderConstructionInfo {
@@ -121,6 +139,10 @@ export interface JigData {
   toolTimeoutMs?: number | null
   costMonth?: string
   costLifetime?: string
+  /** Cross-run state the jig has stored via ctx.memory. */
+  memory?: JigMemoryEntry[]
+  /** Wake-ups the jig has scheduled via ctx.remind and not yet received. */
+  reminders?: JigReminderEntry[]
 }
 
 export type ConnectionStatusState = "ok" | "auth-required" | "unreachable"
@@ -131,6 +153,33 @@ export interface ConnectionStatusInfo {
   detail?: string
   at: string
 }
+
+/**
+ * Result of verifying one connection. `level` says HOW strongly it was
+ * proven, so a caller can never present a bare handshake as a data-level
+ * check: "probe" called a real read-only tool, "handshake" only proved the
+ * credentials authenticate, "none" means nothing was reached at all.
+ */
+export type VerifyConnectionResponse =
+  | {
+      ok: true
+      server: string
+      level: "probe"
+      tool: string
+      summary: string
+      durationMs: number
+      warning?: string
+    }
+  | {
+      ok: true
+      server: string
+      level: "handshake"
+      toolCount: number
+      summary: string
+      durationMs: number
+      warning?: string
+    }
+  | { ok: false; server: string; level: "probe" | "handshake" | "none"; error: string; hint?: string }
 
 export interface Connection {
   name: string
@@ -239,7 +288,8 @@ export interface OpenRouterModelInfo {
   /** Whether the model accepts image input (multimodal). Derived from OpenRouter's input_modalities. */
   supportsImages: boolean
   createdAt: number
-  rank: number
+  /** Index in OpenRouter's listing (newest-first). Not popularity. */
+  catalogOrder: number
   /** p50 time-to-first-token (ms) from the fastest live endpoint. Only populated for upgrade suggestions. */
   latencyMs?: number
   /** p50 output throughput (tokens/sec). Only populated for upgrade suggestions. */
@@ -255,7 +305,7 @@ export interface ModelUpgradeSuggestion {
   slot: ModelSlot
   current: OpenRouterModelInfo
   suggested: OpenRouterModelInfo
-  // Human-readable reason: "newer • 38% cheaper • rank 12 → 8"
+  // Human-readable reason: "newer • 38% cheaper"
   reason: string
   // Counts of jigs that explicitly reference the *current* model id. Override
   // and step counts are auto-updatable on approval; code refs need a manual
@@ -628,6 +678,30 @@ export interface ApiContract<Request, Response> {
   response: Response
 }
 
+/** What a restore did, or would do when previewed with dryRun. */
+export interface BackupRestorePlan {
+  jigs: { added: string[]; overwritten: string[] }
+  credentials: number
+  connections: number
+  schemas: number
+  memory: number
+  warnings: string[]
+  credentialsSkipped?: boolean
+}
+
+export interface BackupRestoreResponse {
+  manifest: {
+    formatVersion: number
+    jigVersion: string
+    createdAt: string
+    includesCredentials: boolean
+    counts: { jigs: number; credentials: number; connections: number; schemas: number; memory: number }
+  }
+  plan: BackupRestorePlan
+  /** False for a preview, true when the archive was actually written in. */
+  applied: boolean
+}
+
 export interface ApiContracts {
   health: ApiContract<void, HealthResponse>
   completeOnboarding: ApiContract<{ openrouter_key?: string }, OkResponse>
@@ -643,6 +717,7 @@ export interface ApiContracts {
   dismissModelUpgrade: ApiContract<DismissModelUpgradeRequest, OkResponse>
   listJigs: ApiContract<void, JigData[]>
   evalTool: ApiContract<ToolEvalRequest, ToolEvalResponse>
+  verifyConnection: ApiContract<void, VerifyConnectionResponse>
   listExamples: ApiContract<void, ExampleJig[]>
   addExample: ApiContract<void, AddExampleJigResponse>
   getJig: ApiContract<void, JigData>
@@ -661,6 +736,10 @@ export interface ApiContracts {
   connectConnection: ApiContract<{ credentials?: Record<string, string> }, ConnectConnectionResponse>
   disconnectConnection: ApiContract<void, DisconnectConnectionResponse>
   getSteps: ApiContract<void, StepList>
+  // GET lists a jig's state; DELETE clears one key (?key=) or all of it.
+  jigMemory: ApiContract<void, JigMemoryEntry[] | { ok: true; deleted: number | boolean }>
+  // GET lists pending wake-ups; DELETE cancels one by ?key=.
+  jigReminders: ApiContract<void, JigReminderEntry[] | { ok: true; cancelled: boolean }>
   updateTrigger: ApiContract<{ trigger: string }, TriggerUpdateResponse>
   startAgent: ApiContract<{ instruction: string; jigId?: string; history?: AgentConversationTurn[]; images?: string[] }, StartAgentResponse>
   agentStatus: ApiContract<void, AgentStatusResponse>
@@ -685,6 +764,7 @@ export interface ApiContracts {
   toolPermissions: ApiContract<void, ToolPermission[]>
   saveToolPermission: ApiContract<{ connection: string; tool: string; policy: ToolPermissionPolicy }, OkResponse>
   resetLocalState: ApiContract<void, ResetLocalStateResponse>
+  backupRestore: ApiContract<void, BackupRestoreResponse>
   serverLogs: ApiContract<void, ServerLogsResponse>
   clearServerLogs: ApiContract<void, OkResponse>
 }

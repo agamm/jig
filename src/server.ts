@@ -56,6 +56,8 @@ import { matchRoute } from "./server/router.js"
 import {
   ensureJigExists,
   handleDeleteJig,
+  handleJigMemory,
+  handleJigReminders,
   handleGetSteps,
   handleUpdateTrigger,
 } from "./server/handlers/jigs.js"
@@ -227,7 +229,7 @@ export function createApiServer(port: number) {
           case "getJig": {
             if (req.method === "DELETE") return handleDeleteJig(route.params.id)
             ensureJigExists(route.params.id)
-            return apiJson("getJig", await buildJigResponse(route.params.id, 20, true))
+            return apiJson("getJig", await buildJigResponse(route.params.id, 20, true, true))
           }
           case "runJig": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
@@ -328,6 +330,13 @@ export function createApiServer(port: number) {
             })
             return apiJson("evalTool", result)
           }
+          case "verifyConnection": {
+            // Proves the connection works right now. The wizard advances on
+            // this, never on "a schema file exists" — see connection-verify.ts.
+            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+            const { verifyConnection } = await import("./services/connection-verify.js")
+            return apiJson("verifyConnection", await verifyConnection(route.params.name))
+          }
           case "writeJigCode": {
             // Direct code write for an existing jig — creates (or replaces) the
             // pending version. With approve:true, immediately promotes pending
@@ -404,6 +413,12 @@ export function createApiServer(port: number) {
           }
           case "getSteps": {
             return handleGetSteps(route.params.id)
+          }
+          case "jigMemory": {
+            return handleJigMemory(route.params.id, req.method, url.searchParams.get("key"))
+          }
+          case "jigReminders": {
+            return handleJigReminders(route.params.id, req.method, url.searchParams.get("key"))
           }
           case "updateTrigger": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
@@ -577,6 +592,66 @@ export function createApiServer(port: number) {
           case "resetLocalState": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
             return handleResetLocalState()
+          }
+          case "backupDownload": {
+            // Admin-only: the archive carries every credential this instance
+            // holds. Encrypted, but still not something an unauthenticated
+            // caller should be able to walk off with.
+            const denied = requireAdminAccess(req)
+            if (denied) return denied
+            if (req.method !== "GET") return json({ error: "Method not allowed" }, 405)
+
+            const { collectSnapshot } = await import("./backup/index.js")
+            const { buildArchive } = await import("./backup/archive.js")
+            const includeCredentials = url.searchParams.get("credentials") !== "0"
+            const archive = buildArchive(collectSnapshot(), {
+              jigVersion: PACKAGE_VERSION,
+              createdAt: new Date().toISOString(),
+              includeCredentials,
+            })
+            const stamp = new Date().toISOString().slice(0, 10)
+            return new Response(archive as unknown as BodyInit, {
+              headers: {
+                "Content-Type": "application/zip",
+                "Content-Disposition": `attachment; filename="jig-backup-${stamp}.zip"`,
+                "Content-Length": String(archive.length),
+              },
+            })
+          }
+          case "backupRestore": {
+            const denied = requireAdminAccess(req)
+            if (denied) return denied
+            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+
+            const { parseArchive } = await import("./backup/archive.js")
+            const { applyRestore, planRestore } = await import("./backup/index.js")
+            const body = new Uint8Array(await req.arrayBuffer())
+            if (body.length === 0) return json({ error: "No file was uploaded." }, 400)
+
+            let parsed
+            try {
+              parsed = parseArchive(body)
+            } catch (e: any) {
+              return json({ error: e?.message ?? "That file is not a jig backup." }, 400)
+            }
+
+            const dryRun = url.searchParams.get("dryRun") === "1"
+            const force = url.searchParams.get("force") === "1"
+            if (dryRun) {
+              return apiJson("backupRestore", {
+                manifest: parsed.manifest,
+                plan: planRestore(parsed.snapshot),
+                applied: false,
+              })
+            }
+            const result = applyRestore(parsed.snapshot, { force })
+            await syncSchedules()
+            broadcastJigsUpdated("backup-restore")
+            return apiJson("backupRestore", {
+              manifest: parsed.manifest,
+              plan: result,
+              applied: true,
+            })
           }
           case "serverLogs": {
             // Defense in depth: logs are admin-only even if the global route

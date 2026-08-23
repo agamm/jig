@@ -88,3 +88,32 @@ function escapeHtml(value: string): string {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;")
 }
+
+/**
+ * Strip the newlines BETWEEN html tags before an email goes out.
+ *
+ * Something on the delivery path (AgentMail's send, or the receiving client)
+ * turns every newline in an html body into a <br>. A pretty-printed template
+ * therefore arrives with a spurious line break after each block tag, which
+ * shows up as ragged vertical gaps the author never wrote. Observed on three
+ * separate jigs: the ones emitting single-line html were unaffected, so the
+ * newline is the trigger.
+ *
+ * Only whitespace sitting between a `>` and a `<` is removed, so text content
+ * is never touched, and `<pre>` / `<textarea>` blocks are left intact because
+ * their newlines sit inside the element rather than between tags.
+ */
+export function collapseHtmlTagWhitespace(html: string): string {
+  const protectedRanges: [number, number][] = []
+  for (const match of html.matchAll(/<(pre|textarea)\b[\s\S]*?<\/\1\s*>/gi)) {
+    protectedRanges.push([match.index, match.index + match[0].length])
+  }
+  const isProtected = (index: number) => protectedRanges.some(([from, to]) => index >= from && index < to)
+
+  // Test the whitespace itself, not the `>` before it: the closing `>` of
+  // `</pre>` is still inside the protected range, but the newline that follows
+  // it sits outside the element and should collapse like any other.
+  return html.replace(/>[^\S\r\n]*[\r\n]+\s*</g, (match, offset: number) =>
+    isProtected(offset + 1) ? match : "><"
+  )
+}

@@ -1,5 +1,5 @@
 import type { JigData, JigRun } from "../../shared/api.js"
-import { getJigRuns, getLastRun, getSchedule } from "../db.js"
+import { getJigInbox, getJigRuns, getLastRun, getSchedule, listJigMemory, listPendingJigReminders } from "../db.js"
 import { formatDuration } from "../utils.js"
 import { prettifyId } from "../domain/jig-source.js"
 import { getActiveRunStatusForJig } from "./run-store.js"
@@ -101,6 +101,13 @@ export async function buildJigResponse(
   id: string,
   runLimit: number,
   includeSteps = false,
+  /**
+   * Include the jig's stored state (ctx.memory, pending ctx.remind wake-ups).
+   * Off by default because the list endpoint builds one of these per jig, and a
+   * jig may hold up to 1000 keys of 64KB each. That is a detail-view payload,
+   * and the dashboard polls the list.
+   */
+  includeState = false,
 ): Promise<JigData> {
   const jig = await introspectJig(id, { includeSteps })
 
@@ -122,6 +129,11 @@ export async function buildJigResponse(
     const webhookUrl = scheduleRow.trigger_type === "webhook"
       ? `${base}/api/webhooks/${id}?token=${webhookToken(id)}`
       : undefined
+    // Undefined until the scheduler has provisioned it, the dashboard shows
+    // "setting up" rather than an address that does not exist yet.
+    const inboxAddress = scheduleRow.trigger_type === "email"
+      ? getJigInbox(id)?.address
+      : undefined
     return {
       triggerType: scheduleRow.trigger_type,
       cronExpr: scheduleRow.cron_expr,
@@ -132,6 +144,7 @@ export async function buildJigResponse(
       enabled: scheduleRow.enabled === 1,
       error: scheduleRow.error,
       webhookUrl,
+      inboxAddress,
     }
   })() : undefined
 
@@ -166,6 +179,30 @@ export async function buildJigResponse(
     toolTimeoutMs: row?.tool_timeout_ms ?? null,
     costMonth: "",
     costLifetime: "",
+    // A jig's own state, so the user can see and correct what it remembers.
+    ...(includeState ? {
+      memory: listJigMemory(id).map((row) => ({
+        key: row.key,
+        value: prettyJson(row.value),
+        updatedAt: new Date(row.updated_at).toISOString(),
+      })),
+      reminders: listPendingJigReminders(id).map((row) => ({
+        id: row.id,
+        key: row.key,
+        dueAt: new Date(row.due_at).toISOString(),
+        payload: row.payload,
+      })),
+    } : {}),
+  }
+}
+
+/** Values are stored as compact JSON; expand them so the dashboard is readable.
+ *  A value written outside the SDK may not be JSON, show it as-is. */
+function prettyJson(raw: string): string {
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2)
+  } catch {
+    return raw
   }
 }
 

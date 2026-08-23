@@ -107,6 +107,111 @@ ctx.output(result.email)
 ctx.output(`Draft: https://mail.google.com/mail/u/0/#drafts/${id}`)
 ```
 
+### `ctx.memory` — remember things across runs
+
+A persistent per-jig key/value store. Scoped to the jig: one jig can neither
+read nor overwrite another's keys. Values round-trip as JSON.
+
+```typescript
+await ctx.memory.set("todo:42", { title: "Renew passport", dueAt })
+const item = await ctx.memory.get<Todo>("todo:42")   // null if never written
+const open = await ctx.memory.list<Todo>("todo:")     // [{ key, value }], key order
+await ctx.memory.delete("todo:42")                    // true if one was there
+```
+
+Use it for anything the jig must know that its own last run learned: a to-do
+list, ids already processed, a running tally, the last cursor fetched. It is
+NOT for data you can re-fetch from a connection — read that live instead.
+
+Namespace keys with a prefix (`"todo:"`, `"seen:"`) so `list(prefix)` gives you
+one logical collection back. A jig storing records should key them by a stable
+id from the source, not by an incrementing counter.
+
+Limits: 64KB per value, 1000 keys per jig. A jig that writes a *new* key every
+run will eventually hit the cap — that is the signal to key by something stable
+or delete what is finished. Writes no-op during a dry run; reads return real
+data so the preview reflects true state.
+
+### `ctx.once(key, fn)` - do something exactly once
+
+Runs `fn` the first time this jig sees `key`, and never again.
+
+```typescript
+for (const meeting of meetings) {
+  await ctx.once(`coached:${meeting.id}`, async () => {
+    const transcript = await granola.get_meeting_transcript({ meeting_id: meeting.id })
+    await ctx.email({ subject: `Notes: ${meeting.title}`, text: await llm("Coach me", { transcript }) as string })
+  })
+}
+```
+
+This is what makes a polling jig safe. A jig on a 15-minute cron sees the same
+item on every tick. Without a record of what it already handled it acts on each
+one over and over, and the user gets the same email four times an hour.
+
+**Prefer this over a time window whenever the source has stable ids.** Rule 12's
+window trick (match each item to exactly one cron bucket) is the fallback for
+when it does not: a window wide enough to survive a late tick is also wide
+enough to fire twice. Some sources have no end time to build a window from at
+all, and there `ctx.once` is the only option.
+
+The key is recorded *before* `fn` runs, so a crash midway costs one missed item
+rather than repeating a side effect that already happened. If `fn` throws, the
+key is released and the next run retries it. Returns true when `fn` ran, false
+when the key had been seen before. During a dry run `fn` runs and nothing is
+recorded.
+
+Keys count against the same 1000-key budget as `ctx.memory`, so scope them to
+something that ages out (`coached:<meeting-id>`), not something unbounded.
+
+### `ctx.remind(at, payload, options?)` — wake this jig up later
+
+Schedules a one-off future run of this jig. Use it when the time to act is
+decided by the data, not by a fixed schedule: a to-do's due date, a follow-up in
+three days, a deferred retry.
+
+```typescript
+await ctx.remind(dueAt, { title }, { key: "todo:42" })
+const pending = await ctx.reminders()      // [{ id, key, dueAt, payload }]
+await ctx.cancelReminder("todo:42")        // true if one was pending
+```
+
+`at` takes a `Date`, epoch milliseconds, or an ISO string.
+
+**Always pass `options.key` when the reminder is about a specific thing.** With
+a key, re-reminding *replaces* that key's pending reminder instead of stacking a
+second one — so a jig that re-reads the same to-do on every run reschedules
+rather than sending a duplicate every time. Without a key, every call is a new
+independent reminder.
+
+When reminders come due, the scheduler starts the jig with them in
+`ctx.params.reminders` — always an **array**, because more than one can come due
+at once, and they arrive in one run rather than one run each:
+
+```typescript
+const due = (ctx.params.reminders ?? []) as Array<{
+  key: string | null
+  payload: unknown
+  dueAt: string    // ISO
+}>
+```
+
+So a jig that both accepts new items and fires reminders branches on which
+happened:
+
+```typescript
+if (due.length > 0) { /* reminders fired */ }
+else if (ctx.params.email) { /* new item arrived */ }
+```
+
+Reminders fire for any trigger type, including `manual` — they are the only
+thing that wakes a manual jig on its own. A paused jig holds its reminders and
+delivers them when re-enabled rather than dropping them. `ctx.remind` no-ops
+during a dry run.
+
+Prefer this over a frequent cron that scans for due work: it fires at the exact
+time, and it does not spend 288 runs a day to send two reminders.
+
 ### `ctx.parallel(...promises)`
 
 Run multiple promises concurrently. Sugar over `Promise.all` with proper typing.
@@ -240,11 +345,13 @@ await workspace.gmail_send({
 
 ### 8. Pick the right trigger (ASK if unclear)
 
-Every jig has exactly one `trigger` field. The three types:
+Every jig has exactly one `trigger` field:
 
 - `{ type: "manual" }` — user runs it from the CLI or dashboard button. No schedule, no external input. Use for one-off tasks, interactive workflows, or jigs triggered only by a human click.
 - `{ type: "cron", cron: "0 8 * * 1" }` — runs on a schedule (5-field cron: min hour day-of-month month day-of-week). Examples: `"0 8 * * 1"` = Mon 8am, `"*/15 * * * *"` = every 15 min, `"0 9 * * 1-5"` = weekdays 9am. Use for digests, reminders, periodic sync, reports.
 - `{ type: "webhook" }` — runs when an external service POSTs to `/api/webhooks/{jigId}?token=...`. The POST body becomes `ctx.params` (nested JSON). Use for incoming messages from Telegram, Slack events, GitHub webhooks, email inbound parse, etc.
+- `{ type: "email" }` — runs when the user emails the jig's own address. Use when the user wants to *send things to* a jig in plain English. See "Email trigger" below.
+- `{ type: "calendar", minutesBefore: N }` — runs once per upcoming meeting. See "Calendar trigger" below.
 
 **Webhook body is nested JSON.** Telegram sends `{ update_id, message: { text, chat: { id }, from: {...} } }`. Access via:
 ```typescript
@@ -260,6 +367,7 @@ Interpret explicit trigger language as decisive:
 - If the user says `manual`, `run manually`, `on demand`, `when I click Run`, or similar, use `{ type: "manual" }` and do not ask again.
 - If the user says `every morning`, `weekly`, `every Monday`, `on a schedule`, `cron`, or similar, use `{ type: "cron", ... }` and do not ask again.
 - If the user says `webhook`, `POST`, `incoming event`, `Telegram message`, or similar event-driven language, use `{ type: "webhook" }` and do not ask again.
+- If the user says they want to `email it`, `send it things`, `forward things to it`, or otherwise describes themselves as the sender, use `{ type: "email" }` and do not ask again. "Remind me when X is due" on its own is not an email trigger — ask how items get in.
 - If a request contains both a clear trigger and other timing words used only as content context, the clear trigger wins. Example: "manual run, find weekly trending GitHub repos" is still manual.
 - Strong precedence: explicit trigger wording also wins over timing words that only describe the data window or content, such as "last week", "daily summary", or "weekly trending".
 
@@ -280,6 +388,37 @@ explicitly and hardcode the user's zone (rule 4):
 ```typescript
 const today = new Date().toLocaleDateString("en-US", { timeZone: "America/Chicago" })
 ```
+
+**Email trigger.** `trigger: { type: "email" }` gives the jig its own email
+address and runs it whenever mail arrives there. Use it when the user wants to
+*send things to* a jig — a to-do item, a link to file, a note to remember.
+
+The address is provisioned automatically on the next scheduler sync and shown on
+the jig's dashboard page. The message arrives in `ctx.params.email`:
+
+```typescript
+const mail = ctx.params.email as {
+  from: string | null
+  subject: string | null
+  text: string       // quoted reply history already stripped
+  messageId: string
+  threadId: string | null
+  receivedAt: string // ISO
+} | undefined
+```
+
+Only mail from the instance owner is accepted; everything else is dropped before
+the jig runs. Requires AgentMail (Settings → Notifications).
+
+Two things to keep in mind:
+
+- `ctx.email()` from an email-triggered jig sends **from that jig's own inbox**,
+  so the user's reply comes back to the jig as new input rather than opening its
+  authoring agent. That is what makes "reply to snooze this" work.
+- The body is text a human typed and is untrusted input to any `llm()` or
+  `agent()` call you pass it to. Keep the step that handles it on a minimal tool
+  allowlist — never hand raw email text to an agent step holding send or delete
+  tools.
 
 **Calendar trigger.** `trigger: { type: "calendar", minutesBefore: 45 }` runs the
 jig once per upcoming meeting, that many minutes before it starts. The scheduler
@@ -425,7 +564,7 @@ feeding oversized raw payloads into LLM steps. Bound every runtime path.
 - Prefer deterministic filtering for obvious rules. Use `llm()` once over a compact list for fuzzy classification; do not call `llm()` once per calendar event/email/meeting.
 - If a step gathers many items, `ctx.output()` a preview of the exact capped set that will feed later steps so slow or noisy inputs are visible in the run log.
 - For recurring jigs, avoid reprocessing the entire account history on every run. Use a recent window or compare against the last run when available.
-- **Cron jigs that alert ahead of upcoming events must match each event to exactly ONE tick.** Jigs have no cross-run state, so a lookahead window wider than the cron period re-matches the same event on every tick until it starts (every-15-min cron + "next hour" window = up to 4 duplicate alerts per event). Align the window to one cron bucket instead: with period P and lead time L, select only events starting between `now + L - P` and `now + L` (e.g. 15-min cron, 1h lead → events starting 45-60 min from now). Also exclude events that already started.
+- **Cron jigs that alert ahead of upcoming events must match each event to exactly ONE tick.** A lookahead window wider than the cron period re-matches the same event on every tick until it starts (every-15-min cron + "next hour" window = up to 4 duplicate alerts per event). Align the window to one cron bucket instead: with period P and lead time L, select only events starting between `now + L - P` and `now + L` (e.g. 15-min cron, 1h lead → events starting 45-60 min from now). Also exclude events that already started. (`ctx.memory` can hold a seen-ids set as a belt-and-braces guard, but get the window right first — dedup state that papers over a wrong window still sends at the wrong time.)
 
 Bad:
 ```typescript
@@ -782,3 +921,89 @@ See `jigs/weekly-update/` for a grouped jig example demonstrating:
 - Deterministic Gmail draft creation (action, always last)
 - Tool separation (gather tools to agent, action tools called directly)
 - Per-client variants with self-contained knowledge
+
+---
+
+## Reference: To-Do Reminder Jig
+
+The canonical shape for a jig with memory: an email trigger brings items in,
+`ctx.memory` holds them, and `ctx.remind` brings the jig back when one is due.
+One handler, branching on what woke it.
+
+```typescript
+import { jig, llm } from "@jig/sdk"
+
+const TIMEZONE = "America/Chicago"
+
+type Todo = { title: string; dueAt: string; note?: string }
+
+export default jig("todo", { trigger: { type: "email" } }, async (ctx) => {
+  const due = (ctx.params.reminders ?? []) as Array<{ key: string | null }>
+
+  // Woken by a reminder: tell the user what came due, then drop it.
+  if (due.length > 0) {
+    await ctx.step("Send due reminders", [], async () => {
+      const items: Todo[] = []
+      for (const reminder of due) {
+        if (!reminder.key) continue
+        const todo = await ctx.memory.get<Todo>(reminder.key)
+        if (todo) {
+          items.push(todo)
+          await ctx.memory.delete(reminder.key)
+        }
+      }
+      if (items.length === 0) return ctx.output("Nothing still open came due.")
+
+      const lines = items.map((t) => `- ${t.title}${t.note ? ` — ${t.note}` : ""}`)
+      ctx.output(`Due now:\n${lines.join("\n")}`)
+      await ctx.email({
+        subject: items.length === 1 ? `Due: ${items[0].title}` : `${items.length} things due`,
+        text: `${lines.join("\n")}\n\nReply to add another.`,
+      })
+    })
+    return
+  }
+
+  // Otherwise a new item arrived by email.
+  const mail = ctx.params.email as { subject: string | null; text: string } | undefined
+  if (!mail) return ctx.skip("nothing to do")
+
+  await ctx.step("File the to-do", [], async () => {
+    const now = new Date().toLocaleString("en-US", { timeZone: TIMEZONE })
+    // The email text is untrusted input — this step holds no tools, so the
+    // worst a crafted message can do is file a strange to-do.
+    const parsed = await llm(
+      `Extract the task and its due time. Now is ${now} (${TIMEZONE}). ` +
+      `Return dueAt as an ISO 8601 timestamp. If no time is stated, use 9am tomorrow.`,
+      { subject: mail.subject, body: mail.text },
+      { schema: { title: "string", dueAt: "string", note: "string" } },
+    ) as Todo
+
+    // Key by due time + title so re-sending the same item reschedules it
+    // rather than creating a second copy.
+    const key = `todo:${parsed.dueAt}:${parsed.title.slice(0, 40)}`
+    await ctx.memory.set(key, parsed)
+    await ctx.remind(parsed.dueAt, null, { key })
+
+    ctx.output(`Filed: ${parsed.title} — due ${parsed.dueAt}`)
+    await ctx.email({
+      subject: `Got it: ${parsed.title}`,
+      text: `I'll remind you at ${new Date(parsed.dueAt).toLocaleString("en-US", { timeZone: TIMEZONE })}.`,
+    })
+  })
+})
+```
+
+What each piece is doing, and why:
+
+- **The reminder carries only its `key`**, not a copy of the to-do. Memory is
+  the single source of truth, so an item edited between filing and firing sends
+  its current text rather than a stale snapshot.
+- **The key is derived from the content**, so re-sending the same item updates
+  it instead of producing duplicate reminders.
+- **`ctx.memory.delete` after sending** is what keeps the store bounded. A jig
+  that only ever writes will hit the key cap eventually.
+- **`ctx.email` sends from the jig's own inbox** (email trigger), so the user's
+  reply comes straight back into this handler as the next item.
+- **The `llm()` step declares no tools.** Email text is attacker-controlled in
+  principle; do not hand it to an `agent()` step holding send or delete tools.

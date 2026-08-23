@@ -9,7 +9,7 @@ import { tick } from "./tick.js"
 import { recoverMissedRuns } from "./recover.js"
 import { isServiceMode } from "../config/runtime.js"
 import { isPasswordSet, isUnlocked } from "../crypto/password.js"
-import { pruneOldRuns } from "../db.js"
+import { pruneJigReminders, pruneOldRuns } from "../db.js"
 import { gcRuntimeCache } from "../services/jig-runtime.js"
 import { sweepOrphanedDraftJigs } from "../services/jig-store.js"
 import type { SchedulerHealth } from "../../shared/api.js"
@@ -108,10 +108,14 @@ function maybeRunDailyMaintenance(): void {
     const pruned = pruneOldRuns(RUN_RETENTION_DAYS)
     const swept = gcRuntimeCache()
     const orphanedDrafts = sweepOrphanedDraftJigs()
-    if (pruned.runs > 0 || swept.removed > 0 || orphanedDrafts.length > 0) {
+    // Fired reminders are a spent ledger, not history, the run they started is
+    // the record. Pending ones are never pruned, however far out they are dated.
+    const firedReminders = pruneJigReminders(Date.now() - RUN_RETENTION_DAYS * 24 * 60 * 60 * 1000)
+    if (pruned.runs > 0 || swept.removed > 0 || orphanedDrafts.length > 0 || firedReminders > 0) {
       console.log(
         `[scheduler] maintenance: pruned ${pruned.runs} runs / ${pruned.steps} steps older than ${RUN_RETENTION_DAYS}d, ` +
         `swept ${swept.removed} stale runtime files, ` +
+        `pruned ${firedReminders} fired reminders, ` +
         `removed ${orphanedDrafts.length} orphaned draft jigs${orphanedDrafts.length ? ` (${orphanedDrafts.join(", ")})` : ""}`,
       )
     }

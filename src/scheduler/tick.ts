@@ -1,11 +1,12 @@
 /**
  * Scheduler tick — fires due cron runs every 60 seconds.
  */
-import { advanceSchedule, listAllSchedules, listCalendarFires, listDueSchedules, pruneCalendarFires, recordCalendarFire, setScheduleError } from "../db.js"
+import { advanceSchedule, getSchedule, listAllSchedules, listCalendarFires, listDueJigReminders, listDueSchedules, markJigRemindersFired, pruneCalendarFires, recordCalendarFire, setScheduleError } from "../db.js"
 import { hasActiveRunForJig } from "../services/run-store.js"
 import { startBackgroundRun } from "../services/background-run.js"
 import { computeNextRun } from "./cron-utils.js"
 import { calendarTick } from "./calendar-tick.js"
+import { reminderTick } from "./reminder-tick.js"
 import { CALENDAR_SERVER, CALENDAR_TOOL, mapCalendarEvents, upcomingEventsArgs } from "./calendar-source.js"
 import { extractTriggerConfig } from "../domain/jig-source.js"
 import { getActiveCode } from "../services/jig-store.js"
@@ -42,6 +43,30 @@ export function tick(): void {
   // their next fire time comes from the calendar, not from an expression.
   void runCalendarPass().catch((e) => {
     console.error(`[scheduler] calendar pass failed:`, (e as Error)?.message ?? e)
+  })
+
+  // Reminders are likewise off the cron path, a jig sets its own wake-up time
+  // with ctx.remind, so there is no expression to advance. They fire for any
+  // trigger type, including manual jigs, which have no schedule row at all.
+  void runReminderPass().catch((e) => {
+    console.error(`[scheduler] reminder pass failed:`, (e as Error)?.message ?? e)
+  })
+}
+
+async function runReminderPass(): Promise<void> {
+  await reminderTick({
+    now: () => Date.now(),
+    listDue: listDueJigReminders,
+    // A jig with no schedule row is manual-triggered, not disabled, reminders
+    // are the only thing that ever wakes those, so they must not be gated out.
+    isEnabled: (jigId) => getSchedule(jigId)?.enabled !== 0,
+    isRunning: hasActiveRunForJig,
+    markFired: markJigRemindersFired,
+    startRun: (jigId, params) => startBackgroundRun(jigId, params),
+    onError: (jigId, error) => {
+      const message = (error as Error)?.message ?? String(error)
+      console.error(`[scheduler] reminder run failed for ${jigId}: ${message}`)
+    },
   })
 }
 

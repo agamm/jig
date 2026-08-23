@@ -1,6 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks"
 import type { JigTool } from "./jig.js"
 import { isCancellationError, USER_CANCELLED_MESSAGE } from "../run-cancel.js"
+import { createJigMemory, type JigMemory } from "./memory.js"
+import { createJigReminders, type JigReminders, type PendingReminder } from "./reminders.js"
 
 /** Thrown by ctx.skip() to short-circuit a handler. Run is NOT persisted. */
 export class SkipError extends Error {
@@ -105,6 +107,20 @@ export class Context {
   private readonly _toolTimeoutMs?: number | null
   private readonly _jigId?: string
 
+  /**
+   * Persistent per-jig store. Survives across runs, scoped so one jig can
+   * neither read nor overwrite another's keys. Values round-trip as JSON.
+   *
+   *   await ctx.memory.set("todo:42", { title: "Renew passport", dueAt })
+   *   const open = await ctx.memory.list("todo:")
+   *
+   * Writes no-op under a dry run; reads return the real stored data so the
+   * preview reflects actual state.
+   */
+  public readonly memory: JigMemory
+
+  private readonly _reminders: JigReminders
+
   constructor(
     public readonly params: Record<string, unknown> = {},
     options: { signal?: AbortSignal; toolTimeoutMs?: number | null; jigId?: string } = {},
@@ -112,6 +128,78 @@ export class Context {
     this._signal = options.signal
     this._toolTimeoutMs = options.toolTimeoutMs
     this._jigId = options.jigId
+    // Dry-run notices go through output() so they land in the run preview
+    // alongside the tool calls that were likewise not performed.
+    const note = (message: string) => this.output(message)
+    this.memory = createJigMemory(options.jigId, note)
+    this._reminders = createJigReminders(options.jigId, note)
+  }
+
+  /**
+   * Wake this jig at `at`, carrying `payload`. The scheduler starts the run and
+   * puts every payload that came due in `ctx.params.reminders` (an array, more
+   * than one can come due on the same tick).
+   *
+   *   await ctx.remind(dueAt, { todoKey: "todo:42" }, { key: "todo:42" })
+   *
+   * Passing `options.key` makes the call idempotent: it replaces that key's
+   * pending reminder instead of stacking a second one. No-ops under a dry run.
+   */
+  async remind(at: Date | number | string, payload?: unknown, options?: { key?: string }): Promise<void> {
+    return this._reminders.remind(at, payload, options)
+  }
+
+  /**
+   * Run `fn` the first time this jig sees `key`, and never again.
+   *
+   *   for (const meeting of meetings) {
+   *     await ctx.once(`coached:${meeting.id}`, async () => { ... })
+   *   }
+   *
+   * This is what makes a polling jig safe. A jig on a 15-minute cron sees the
+   * same meeting on every tick; without a record of what it already handled it
+   * would act on each one repeatedly. A time window is the usual workaround,
+   * but a window wide enough to survive a late tick is also wide enough to fire
+   * twice, and some sources (Granola meetings, for one) do not expose an end
+   * time to build a window from at all.
+   *
+   * The key is recorded BEFORE `fn` runs, so a crash midway costs one missed
+   * item rather than repeating a side effect that already happened. If `fn`
+   * throws, the key is released so the next run retries it.
+   *
+   * Returns true when `fn` ran, false when the key had already been seen.
+   * During a dry run `fn` always runs and nothing is recorded.
+   */
+  async once(key: string, fn: () => Promise<unknown>): Promise<boolean> {
+    const { isDryRun } = await import("./dryrun.js")
+    if (isDryRun()) {
+      this.output(`[dry-run] would run once for ${key}`)
+      await fn()
+      return true
+    }
+    if (await this.memory.get(key) !== null) return false
+    // Claim first. Same reasoning as the reminder and calendar-fire ledgers:
+    // claim-after would repeat the side effect on every tick until one run
+    // happened to survive long enough to record it.
+    await this.memory.set(key, { at: new Date().toISOString() })
+    try {
+      await fn()
+      return true
+    } catch (error) {
+      // The work did not happen, so the claim must not stand.
+      await this.memory.delete(key).catch(() => {})
+      throw error
+    }
+  }
+
+  /** Reminders scheduled but not yet fired, soonest first. */
+  async reminders(): Promise<PendingReminder[]> {
+    return this._reminders.reminders()
+  }
+
+  /** Cancel a pending reminder by key. True when one was actually cancelled. */
+  async cancelReminder(key: string): Promise<boolean> {
+    return this._reminders.cancelReminder(key)
   }
 
   get signal(): AbortSignal | undefined { return this._signal }
@@ -230,12 +318,19 @@ export class Context {
     if (!canSendAgentMail() || !owner) {
       throw new Error("ctx.email needs AgentMail — connect an inbox in Settings → Notifications.")
     }
+    // An email-triggered jig sends from its OWN inbox, so the user's reply lands
+    // back there and is delivered to the jig as data (a to-do, a "snooze it")
+    // rather than to its authoring agent as an instruction to rewrite the code.
+    const { getJigInbox } = await import("../db.js")
+    const ownInbox = this._jigId ? getJigInbox(this._jigId) : null
     // Reply-to-edit opens this jig's authoring agent, so the reply needs the same
     // spoof-resistant token as failure emails. Only mint one when we'll actually
-    // map the thread (jig context present).
+    // map the thread (jig context present) AND replies mean "edit", a jig with
+    // its own inbox routes replies to itself as data, where a token would only
+    // add a reply-ref line to every message for no gain.
     const { mintReplyToken, subjectWithReplyToken, replyTokenFooter, replyTokenHtmlFooter } =
       await import("../services/reply-token.js")
-    const token = this._jigId ? mintReplyToken() : null
+    const token = this._jigId && !ownInbox ? mintReplyToken() : null
     // Send HTML by default. Jig bodies are usually LLM output, which is markdown,
     // and a text/plain part renders "**bold**" literally in the client. Derive
     // the HTML part from the text when the caller didn't supply its own, keeping
@@ -249,9 +344,12 @@ export class Context {
       subject: token ? subjectWithReplyToken(opts.subject, token) : opts.subject,
       text: token && opts.text != null ? `${opts.text}${replyTokenFooter(token)}` : opts.text,
       html: token && html != null ? `${html}${replyTokenHtmlFooter(token)}` : html,
+      ...(ownInbox && { fromInboxId: ownInbox.inbox_id }),
     })
-    // Map the thread to this jig so the user's reply routes to its authoring agent.
-    if (this._jigId) {
+    // Map the thread to this jig so the user's reply routes to its authoring
+    // agent. Skipped for a jig with its own inbox: replies there are routed by
+    // inbox instead, and a thread row would send them to the authoring agent.
+    if (this._jigId && !ownInbox) {
       const { recordEmailThread } = await import("../db.js")
       recordEmailThread(res.threadId, this._jigId, "auto", token)
     }

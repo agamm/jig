@@ -17,7 +17,9 @@
  *   5. The reply echoes the thread's secret token (defeats From spoofing — the
  *      token reached only the owner's inbox). Grandfathered for pre-v20 threads.
  */
-import { getEmailThread, setEmailThreadSession, type EmailThreadRow } from "../db.js"
+import { getEmailThread, getJigByInboxId, getSchedule, setEmailThreadSession, type EmailThreadRow, type JigInboxRow } from "../db.js"
+import { startBackgroundRun } from "./background-run.js"
+import { hasActiveRunForJig } from "./run-store.js"
 import { getAgentMailSettings, replyAgentMail, verifyAgentMailWebhook } from "./agentmail.js"
 import {
   approvePendingByJig,
@@ -56,9 +58,32 @@ function stripQuotedReply(text: string): string {
   return out.join("\n").trim()
 }
 
+/**
+ * Side effects of the jig-data path, injected so the gate sequence above can be
+ * tested without a network or a live scheduler. The authoring path keeps its own
+ * imports; it is exercised through the agent-service tests instead.
+ */
+export interface InboundEmailDeps {
+  startRun: (jigId: string, params: Record<string, unknown>) => Promise<boolean>
+  reply: (opts: { messageId: string; text: string; fromInboxId?: string }) => Promise<void>
+  isRunning: (jigId: string) => boolean
+  getSchedule: (jigId: string) => { enabled: boolean } | null
+}
+
+const realInboundDeps: InboundEmailDeps = {
+  startRun: (jigId, params) => startBackgroundRun(jigId, params),
+  reply: (opts) => replyAgentMail(opts),
+  isRunning: hasActiveRunForJig,
+  getSchedule: (jigId) => {
+    const row = getSchedule(jigId)
+    return row ? { enabled: row.enabled === 1 } : null
+  },
+}
+
 export async function handleInboundEmail(
   rawBody: string,
   headers: Headers,
+  deps: InboundEmailDeps = realInboundDeps,
 ): Promise<{ status: number; body: unknown }> {
   if (!verifyAgentMailWebhook(rawBody, headers)) {
     return { status: 401, body: { error: "Invalid webhook signature" } }
@@ -89,6 +114,16 @@ export async function handleInboundEmail(
   if (!owner || !sender || sender !== owner) {
     console.warn(`[email] ignoring inbound from non-owner sender: ${sender ?? "unknown"}`)
     return { status: 200, body: { ignored: "sender is not the owner" } }
+  }
+
+  // Before thread routing: mail that arrived in a jig's OWN inbox is data for
+  // that jig, not an instruction about it. Routing on the inbox rather than the
+  // thread is what makes a first-contact email work at all, a brand-new
+  // message has no thread mapping and would otherwise be dropped below.
+  const inboxId: string | undefined = message.inbox_id
+  const jigInbox = inboxId ? getJigByInboxId(inboxId) : null
+  if (jigInbox) {
+    return deliverEmailToJig(jigInbox, message, messageId, deps)
   }
 
   // Gate 4: thread must map to a jig.
@@ -178,6 +213,107 @@ export async function handleInboundEmail(
   }
 
   return { status: 200, body: { ok: true, jigId: thread.jig_id } }
+}
+
+/**
+ * Run an email-triggered jig with the message as its input.
+ *
+ * No reply token here, unlike the authoring path. A token guards edits because
+ * a spoofed reply would otherwise rewrite a jig's code; this path only hands
+ * text to a jig that already decided to accept mail. The gate that matters is
+ * still upstream: we subscribe only to `message.received`, and AgentMail routes
+ * anything failing SPF/DKIM/DMARC to `.unauthenticated`/`.spam`/`.blocked`
+ * instead, so the owner match above is on authenticated mail, not on a bare
+ * From header.
+ *
+ * The body still reaches an `llm()` or `agent()` call inside the jig, so it is
+ * untrusted input in the prompt-injection sense. That is the jig author's
+ * problem to scope (see the tool allowlist per step), not something this
+ * function can decide.
+ */
+export interface InboundEmailParams {
+  email: {
+    from: string | null
+    subject: string | null
+    text: string
+    messageId: string
+    threadId: string | null
+    receivedAt: string
+  }
+}
+
+/**
+ * What the jig sees as ctx.params. Prefers AgentMail's own reply extraction
+ * (Talon) over raw text: on a threaded reply, `text` still carries the whole
+ * quoted history, which would hand the jig its own last email as new input.
+ * When AgentMail supplies no extraction, fall back to the same line heuristics
+ * the authoring path uses rather than to the raw body, so the documented
+ * "quoted history already stripped" contract holds either way.
+ */
+export function emailRunParams(message: any, messageId: string, now = () => new Date()): InboundEmailParams | null {
+  const extracted = typeof message.extracted_text === "string" ? message.extracted_text.trim() : ""
+  const text = extracted || stripQuotedReply(typeof message.text === "string" ? message.text : "")
+  if (!text) return null
+  return {
+    email: {
+      from: parseAddress(message.from),
+      subject: typeof message.subject === "string" ? message.subject : null,
+      text,
+      messageId,
+      threadId: typeof message.thread_id === "string" ? message.thread_id : null,
+      receivedAt: typeof message.timestamp === "string" ? message.timestamp : now().toISOString(),
+    },
+  }
+}
+
+async function deliverEmailToJig(
+  jigInbox: JigInboxRow,
+  message: any,
+  messageId: string,
+  deps: InboundEmailDeps,
+): Promise<{ status: number; body: unknown }> {
+  const jigId = jigInbox.jig_id
+  const params = emailRunParams(message, messageId)
+  if (!params) {
+    return { status: 200, body: { ignored: "empty email body", jigId } }
+  }
+
+  // A paused jig stays paused, the same way the webhook trigger refuses to fire
+  // one (see scheduler/webhooks.ts). Without this, disabling a misbehaving
+  // email jig on the dashboard would not actually stop it.
+  const schedule = deps.getSchedule(jigId)
+  if (schedule && !schedule.enabled) {
+    await deps.reply({
+      messageId,
+      fromInboxId: jigInbox.inbox_id,
+      text: "This jig is paused, so I did not run it. Re-enable it on the dashboard and send this again.",
+    }).catch(() => {})
+    return { status: 200, body: { ignored: "schedule disabled", jigId } }
+  }
+
+  // Checked here rather than inferred from startRun's return value: a run can
+  // fail to start for several unrelated reasons (missing connection, no active
+  // version), and reporting all of them as "already running" sends the user
+  // into a resend loop that can never succeed.
+  if (deps.isRunning(jigId)) {
+    await deps.reply({
+      messageId,
+      fromInboxId: jigInbox.inbox_id,
+      text: "This jig was already running, so I did not start a second copy. Send this again in a moment.",
+    }).catch(() => {})
+    return { status: 200, body: { error: "run in progress", jigId } }
+  }
+
+  // Fire and forget, like the webhook trigger. Awaiting the run would hold the
+  // Svix POST open for its whole duration (startBackgroundRun awaits the run to
+  // completion), and AgentMail would time out and redeliver, which either
+  // double-files the item or reports a spurious failure for a run that is in
+  // fact succeeding.
+  void deps.startRun(jigId, params as unknown as Record<string, unknown>).catch((e) => {
+    console.error(`[email] failed to run ${jigId} from inbound mail: ${(e as Error)?.message ?? e}`)
+  })
+
+  return { status: 202, body: { ok: true, jigId, delivered: true } }
 }
 
 /**

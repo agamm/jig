@@ -2,7 +2,7 @@ import { cronToText } from "./triggers.js"
 import { getImportedServers } from "./source-analysis.js"
 
 export interface TriggerConfig {
-  type: "cron" | "manual" | "webhook" | "calendar"
+  type: "cron" | "manual" | "webhook" | "calendar" | "email"
   cron?: string
   /** Calendar triggers only: lead time in minutes before the event starts. */
   minutesBefore?: number
@@ -76,7 +76,7 @@ export function extractTriggerConfig(code: string): TriggerParseResult {
   const missedStrategyMatch = objectText.match(/missedStrategy\s*:\s*["'`](catch-up|skip)["'`]/)
   const missedStrategy = missedStrategyMatch?.[1] as "catch-up" | "skip" | undefined
 
-  if (type === "manual" || type === "webhook") {
+  if (type === "manual" || type === "webhook" || type === "email") {
     return { trigger: { type, missedStrategy } as TriggerConfig }
   }
 
@@ -96,7 +96,7 @@ export function extractTriggerConfig(code: string): TriggerParseResult {
     return { trigger: { type: "calendar", minutesBefore: Number(leadMatch[1]), missedStrategy } }
   }
 
-  return { trigger: null, error: `Unsupported trigger type: ${type}. Expected: cron, calendar, manual, webhook` }
+  return { trigger: null, error: `Unsupported trigger type: ${type}. Expected: cron, calendar, email, manual, webhook` }
 }
 
 export function prettifyId(id: string): string {
@@ -123,6 +123,7 @@ export function extractTrigger(code: string): string {
       ? "At each meeting start"
       : `${trigger.minutesBefore}m before each meeting`
   }
+  if (type === "email") return "Email"
   if (type === "manual") return "Manual"
   if (type === "webhook") return "Webhook"
   return ""

@@ -1,8 +1,8 @@
 /**
  * Jig routes that are not part of the version lifecycle (see versions.ts):
- * derived step listing, trigger editing, and deletion.
+ * derived step listing, trigger editing, per-jig state, and deletion.
  */
-import { deleteJigLocalState } from "../../db.js"
+import { cancelJigReminder, clearJigMemory, countJigMemory, deleteJigLocalState, deleteJigMemory, listJigMemory, listPendingJigReminders } from "../../db.js"
 import { ApiError, apiJson } from "../http.js"
 import { cronToText, replaceTriggerInSource, textToTrigger, textToTriggerLLM, triggerToSource } from "../../domain/triggers.js"
 import { syncSchedules } from "../../scheduler/sync.js"
@@ -96,4 +96,54 @@ export async function handleDeleteJig(id: string): Promise<Response> {
   clearTrackedRunsForJig(id)
 
   return apiJson("deleteJig", { ok: true, jigId: id })
+}
+
+
+/**
+ * Read or clear one jig's ctx.memory.
+ *
+ * A jig that remembers things is only trustworthy if the user can see what it
+ * remembers and delete an entry that is wrong, a to-do list you cannot correct
+ * is worse than none. DELETE takes ?key= to remove one entry, or clears all
+ * when no key is given.
+ */
+export async function handleJigMemory(id: string, method: string, key: string | null): Promise<Response> {
+  ensureJigExists(id)
+  if (method !== "GET" && method !== "DELETE") throw new ApiError(405, "Method not allowed")
+
+  if (method === "DELETE") {
+    if (key) {
+      return apiJson("jigMemory", { ok: true as const, deleted: deleteJigMemory(id, key) })
+    }
+    const deleted = countJigMemory(id)
+    clearJigMemory(id)
+    return apiJson("jigMemory", { ok: true as const, deleted })
+  }
+
+  return apiJson("jigMemory", listJigMemory(id).map((row) => ({
+    key: row.key,
+    value: row.value,
+    updatedAt: new Date(row.updated_at).toISOString(),
+  })))
+}
+
+/** Read pending ctx.remind wake-ups, or cancel one by ?key=. */
+export async function handleJigReminders(id: string, method: string, key: string | null): Promise<Response> {
+  ensureJigExists(id)
+  if (method !== "GET" && method !== "DELETE") throw new ApiError(405, "Method not allowed")
+
+  if (method === "DELETE") {
+    // Keyless reminders have no stable handle to cancel by; that is the
+    // trade-off of omitting a key, and the error should say so rather than
+    // silently cancelling something else.
+    if (!key) throw new ApiError(400, "Pass ?key= to cancel a reminder. Reminders scheduled without a key cannot be cancelled individually.")
+    return apiJson("jigReminders", { ok: true as const, cancelled: cancelJigReminder(id, key) })
+  }
+
+  return apiJson("jigReminders", listPendingJigReminders(id).map((row) => ({
+    id: row.id,
+    key: row.key,
+    dueAt: new Date(row.due_at).toISOString(),
+    payload: row.payload,
+  })))
 }

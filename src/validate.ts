@@ -80,9 +80,10 @@ export function validateTrigger(trigger: unknown): ValidationError[] {
     }
     case "manual":
     case "webhook":
+    case "email":
       break // no additional fields required
     default:
-      errors.push({ field: "trigger.type", message: `Unknown trigger type: "${t.type}". Expected: cron, calendar, manual, webhook` })
+      errors.push({ field: "trigger.type", message: `Unknown trigger type: "${t.type}". Expected: cron, calendar, email, manual, webhook` })
   }
   return errors
 }

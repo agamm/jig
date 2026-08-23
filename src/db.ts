@@ -218,6 +218,47 @@ CREATE TABLE IF NOT EXISTS email_threads (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Cross-run jig state, the store behind ctx.memory. Scoped per jig: a jig can
+-- neither read nor clobber another's keys. Values are JSON written by the SDK.
+-- The primary key doubles as the prefix-scan index for ctx.memory.list().
+CREATE TABLE IF NOT EXISTS jig_memory (
+  jig_id TEXT NOT NULL,
+  key TEXT NOT NULL,
+  value TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (jig_id, key)
+);
+
+-- Self-scheduled wake-ups behind ctx.remind(). A row is a promise to run
+-- jig_id at due_at carrying payload. fired_at NULL means still pending; setting
+-- it is what consumes the reminder, so the partial indexes below only ever
+-- cover pending rows and stay small as the fired ones accumulate.
+CREATE TABLE IF NOT EXISTS jig_reminders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  jig_id TEXT NOT NULL,
+  key TEXT,
+  due_at INTEGER NOT NULL,
+  payload TEXT,
+  created_at INTEGER NOT NULL,
+  fired_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_jig_reminders_due ON jig_reminders(due_at) WHERE fired_at IS NULL;
+-- A caller-supplied key makes ctx.remind idempotent: re-reminding under the same
+-- key reschedules rather than stacking a duplicate. Unique over PENDING rows
+-- only, so the key is reusable once its reminder has fired.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_jig_reminders_key ON jig_reminders(jig_id, key) WHERE key IS NOT NULL AND fired_at IS NULL;
+
+-- The AgentMail inbox owned by an email-triggered jig. Inbound mail is routed
+-- by the inbox that received it (message.inbox_id), not by thread, that is
+-- what separates "data for this jig" from "edit this jig", which is what a
+-- reply to any other jig thread still means.
+CREATE TABLE IF NOT EXISTS jig_inboxes (
+  jig_id TEXT PRIMARY KEY,
+  inbox_id TEXT NOT NULL UNIQUE,
+  address TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
 `
 
 /** Schema generation SCHEMA represents. MIGRATIONS[i] upgrades BASELINE + i to BASELINE + i + 1. */
@@ -243,6 +284,34 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (jig_id, event_id)
   );
   CREATE INDEX IF NOT EXISTS idx_calendar_fires_fired_at ON calendar_fires(fired_at);`,
+  // v23: cross-run jig state (ctx.memory), self-scheduled wake-ups
+  // (ctx.remind), and the per-jig AgentMail inbox that email-triggered jigs
+  // receive on. Together these are what let a jig remember something now and
+  // act on it later.
+  `CREATE TABLE IF NOT EXISTS jig_memory (
+    jig_id TEXT NOT NULL,
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (jig_id, key)
+  );
+  CREATE TABLE IF NOT EXISTS jig_reminders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    jig_id TEXT NOT NULL,
+    key TEXT,
+    due_at INTEGER NOT NULL,
+    payload TEXT,
+    created_at INTEGER NOT NULL,
+    fired_at INTEGER
+  );
+  CREATE INDEX IF NOT EXISTS idx_jig_reminders_due ON jig_reminders(due_at) WHERE fired_at IS NULL;
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_jig_reminders_key ON jig_reminders(jig_id, key) WHERE key IS NOT NULL AND fired_at IS NULL;
+  CREATE TABLE IF NOT EXISTS jig_inboxes (
+    jig_id TEXT PRIMARY KEY,
+    inbox_id TEXT NOT NULL UNIQUE,
+    address TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );`,
 ]
 
 // ---------------------------------------------------------------------------
@@ -535,6 +604,12 @@ export function deleteJigLocalState(jigId: string): void {
   // Otherwise a reply to an old failure email would route to a jig that no
   // longer exists.
   db.prepare(`DELETE FROM email_threads WHERE jig_id = ?`).run(jigId)
+  // Same reasoning for the jig's own state: a pending reminder would wake a jig
+  // that is gone, and orphaned memory would be silently inherited by the next
+  // jig to reuse the id.
+  db.prepare(`DELETE FROM jig_memory WHERE jig_id = ?`).run(jigId)
+  db.prepare(`DELETE FROM jig_reminders WHERE jig_id = ?`).run(jigId)
+  db.prepare(`DELETE FROM jig_inboxes WHERE jig_id = ?`).run(jigId)
 }
 
 export function renameJigLocalState(oldJigId: string, newJigId: string): void {
@@ -548,6 +623,14 @@ export function renameJigLocalState(oldJigId: string, newJigId: string): void {
   db.prepare(`UPDATE schedules SET jig_id = ? WHERE jig_id = ?`).run(newJigId, oldJigId)
   db.prepare(`UPDATE agent_sessions SET jig_id = ?, updated_at = ? WHERE jig_id = ?`).run(newJigId, Date.now(), oldJigId)
   db.prepare(`UPDATE email_threads SET jig_id = ?, updated_at = datetime('now') WHERE jig_id = ?`).run(newJigId, oldJigId)
+  // A rename must carry the jig's state with it, a to-do jig that lost its
+  // list and its pending reminders on rename would look like data loss.
+  db.prepare(`DELETE FROM jig_memory WHERE jig_id = ?`).run(newJigId)
+  db.prepare(`DELETE FROM jig_reminders WHERE jig_id = ?`).run(newJigId)
+  db.prepare(`DELETE FROM jig_inboxes WHERE jig_id = ?`).run(newJigId)
+  db.prepare(`UPDATE jig_memory SET jig_id = ? WHERE jig_id = ?`).run(newJigId, oldJigId)
+  db.prepare(`UPDATE jig_reminders SET jig_id = ? WHERE jig_id = ?`).run(newJigId, oldJigId)
+  db.prepare(`UPDATE jig_inboxes SET jig_id = ? WHERE jig_id = ?`).run(newJigId, oldJigId)
 }
 
 // ---------------------------------------------------------------------------
@@ -665,7 +748,7 @@ export function jigHasActiveSession(jigId: string, excludeSessionId?: string): b
 
 export interface ScheduleRow {
   jig_id: string
-  trigger_type: "cron" | "webhook" | "calendar"
+  trigger_type: "cron" | "webhook" | "calendar" | "email"
   cron_expr: string | null
   timezone: string | null
   missed_strategy: "catch-up" | "skip"
@@ -711,7 +794,7 @@ export function pruneCalendarFires(beforeMs: number): void {
 
 export function upsertSchedule(
   jigId: string,
-  triggerType: "cron" | "webhook" | "calendar",
+  triggerType: "cron" | "webhook" | "calendar" | "email",
   cronExpr: string | null,
   missedStrategy: "catch-up" | "skip",
   nextRunAt: number | null,
@@ -844,6 +927,64 @@ export function listCredentials(server?: string): { key: string; server: string;
   return db.prepare(`SELECT key, server, created_at FROM credentials`).all() as any[]
 }
 
+export interface RawCredentialRow {
+  key: string
+  value: string
+  server: string
+  encrypted: number
+}
+
+/**
+ * Every credential row exactly as stored, ciphertext and all.
+ *
+ * Backup needs this rather than getCredential(): decrypting would require the
+ * instance to be unlocked and would put plaintext secrets in the archive. The
+ * ciphertext travels with the salt instead, so the file holds nothing readable
+ * without the password that made it.
+ */
+export function listRawCredentials(): RawCredentialRow[] {
+  return openDb()
+    .prepare(`SELECT key, value, server, encrypted FROM credentials ORDER BY key`)
+    .all() as RawCredentialRow[]
+}
+
+/** Write a credential row verbatim, bypassing encryption. Restore only. */
+export function putRawCredential(row: RawCredentialRow): void {
+  openDb()
+    .prepare(`INSERT OR REPLACE INTO credentials (key, value, server, encrypted) VALUES (?, ?, ?, ?)`)
+    .run(row.key, row.value, row.server, row.encrypted)
+}
+
+/** Every settings row, undecoded. Backup carries settings through opaquely. */
+export function listRawSettings(): { key: string; value: string }[] {
+  return openDb().prepare(`SELECT key, value FROM settings ORDER BY key`).all() as { key: string; value: string }[]
+}
+
+/**
+ * One settings row, undecoded.
+ *
+ * getSetting() JSON.parses and returns null when that throws. The crypto module
+ * keeps its own private accessors that write the salt and canary as RAW strings,
+ * so reading those through getSetting() silently yields null. Anything touching
+ * password.salt / password.canary must come through here.
+ */
+export function getRawSetting(key: string): string | null {
+  const row = openDb().prepare(`SELECT value FROM settings WHERE key = ?`).get(key) as
+    | { value: string }
+    | undefined
+  return row?.value ?? null
+}
+
+/** Write a settings row verbatim, keeping the stored JSON encoding as-is. */
+export function putRawSetting(key: string, value: string): void {
+  openDb()
+    .prepare(
+      `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`
+    )
+    .run(key, value)
+}
+
 export function deleteCredentials(server: string): void {
   const db = openDb()
   db.prepare(`DELETE FROM credentials WHERE server = ?`).run(server)
@@ -954,6 +1095,210 @@ export function setEmailThreadSession(threadId: string, sessionId: string | null
   db.prepare(
     `UPDATE email_threads SET agent_session_id = ?, updated_at = datetime('now') WHERE thread_id = ?`
   ).run(sessionId, threadId)
+}
+
+// ---------------------------------------------------------------------------
+// Jig memory, the store behind ctx.memory
+// ---------------------------------------------------------------------------
+
+/**
+ * Caps exist because nothing else bounds this table: a jig that writes a key
+ * per run grows the database forever, and jig.db sits on the same volume as
+ * credentials and run history. Both limits are generous for the intended use
+ * (a to-do list, a seen-ids set) and are enforced at the SDK boundary so the
+ * jig author gets a real error instead of a silently truncated write.
+ */
+export const MEMORY_MAX_VALUE_BYTES = 64 * 1024
+export const MEMORY_MAX_KEYS_PER_JIG = 1000
+
+export interface JigMemoryRow {
+  key: string
+  value: string
+  updated_at: number
+}
+
+export function getJigMemory(jigId: string, key: string): string | null {
+  const db = openDb()
+  const row = db.prepare(
+    `SELECT value FROM jig_memory WHERE jig_id = ? AND key = ?`
+  ).get(jigId, key) as { value: string } | undefined
+  return row?.value ?? null
+}
+
+/** Upsert. Returns false when the jig is already at MEMORY_MAX_KEYS_PER_JIG and
+ *  this would add a NEW key; overwriting an existing key always succeeds. */
+export function setJigMemory(jigId: string, key: string, value: string): boolean {
+  const db = openDb()
+  const exists = db.prepare(
+    `SELECT 1 FROM jig_memory WHERE jig_id = ? AND key = ?`
+  ).get(jigId, key) != null
+  if (!exists && countJigMemory(jigId) >= MEMORY_MAX_KEYS_PER_JIG) return false
+  db.prepare(
+    `INSERT INTO jig_memory (jig_id, key, value, updated_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(jig_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+  ).run(jigId, key, value, Date.now())
+  return true
+}
+
+/** True when a row was actually removed. */
+export function deleteJigMemory(jigId: string, key: string): boolean {
+  const db = openDb()
+  return db.prepare(`DELETE FROM jig_memory WHERE jig_id = ? AND key = ?`).run(jigId, key).changes > 0
+}
+
+/** Keys in insertion-independent (lexical) order so listings are stable. */
+export function listJigMemory(jigId: string, prefix?: string): JigMemoryRow[] {
+  const db = openDb()
+  if (prefix != null && prefix !== "") {
+    // Escape LIKE wildcards so a key prefix containing % or _ matches literally.
+    const escaped = prefix.replace(/[\\%_]/g, (c) => `\\${c}`)
+    return db.prepare(
+      `SELECT key, value, updated_at FROM jig_memory
+       WHERE jig_id = ? AND key LIKE ? ESCAPE '\\' ORDER BY key`
+    ).all(jigId, `${escaped}%`) as JigMemoryRow[]
+  }
+  return db.prepare(
+    `SELECT key, value, updated_at FROM jig_memory WHERE jig_id = ? ORDER BY key`
+  ).all(jigId) as JigMemoryRow[]
+}
+
+export function countJigMemory(jigId: string): number {
+  const db = openDb()
+  const row = db.prepare(`SELECT COUNT(*) AS n FROM jig_memory WHERE jig_id = ?`).get(jigId) as { n: number }
+  return row.n
+}
+
+export function clearJigMemory(jigId: string): void {
+  const db = openDb()
+  db.prepare(`DELETE FROM jig_memory WHERE jig_id = ?`).run(jigId)
+}
+
+// ---------------------------------------------------------------------------
+// Jig reminders, the store behind ctx.remind
+// ---------------------------------------------------------------------------
+
+export interface JigReminderRow {
+  id: number
+  jig_id: string
+  key: string | null
+  due_at: number
+  payload: string | null
+  created_at: number
+  fired_at: number | null
+}
+
+/**
+ * Schedule a wake-up. With a `key`, this replaces that key's pending reminder
+ * rather than adding a second one, so a jig re-reading the same to-do on every
+ * run reschedules it instead of stacking duplicates. Returns the row id.
+ */
+export function scheduleJigReminder(
+  jigId: string,
+  dueAt: number,
+  payload: string | null,
+  key: string | null = null,
+): number {
+  const db = openDb()
+  if (key != null) {
+    db.prepare(
+      `DELETE FROM jig_reminders WHERE jig_id = ? AND key = ? AND fired_at IS NULL`
+    ).run(jigId, key)
+  }
+  const res = db.prepare(
+    `INSERT INTO jig_reminders (jig_id, key, due_at, payload, created_at) VALUES (?, ?, ?, ?, ?)`
+  ).run(jigId, key, dueAt, payload, Date.now())
+  return Number(res.lastInsertRowid)
+}
+
+/** Pending reminders due at or before `nowMs`, oldest first, grouped-ready. */
+export function listDueJigReminders(nowMs: number): JigReminderRow[] {
+  const db = openDb()
+  return db.prepare(
+    `SELECT * FROM jig_reminders WHERE fired_at IS NULL AND due_at <= ? ORDER BY due_at, id`
+  ).all(nowMs) as JigReminderRow[]
+}
+
+/**
+ * Consume reminders, returning the ids this call actually claimed. Guarded on
+ * fired_at IS NULL so a concurrent tick that already claimed some cannot
+ * double-fire them, and RETURNING (rather than a count) is what lets the
+ * caller fire exactly the reminders it won, not the ones it merely asked for.
+ */
+export function markJigRemindersFired(ids: number[], firedAt: number): number[] {
+  if (ids.length === 0) return []
+  const db = openDb()
+  const placeholders = ids.map(() => "?").join(", ")
+  const rows = db.prepare(
+    `UPDATE jig_reminders SET fired_at = ? WHERE fired_at IS NULL AND id IN (${placeholders}) RETURNING id`
+  ).all(firedAt, ...ids) as { id: number }[]
+  return rows.map((r) => r.id)
+}
+
+export function listPendingJigReminders(jigId: string): JigReminderRow[] {
+  const db = openDb()
+  return db.prepare(
+    `SELECT * FROM jig_reminders WHERE jig_id = ? AND fired_at IS NULL ORDER BY due_at, id`
+  ).all(jigId) as JigReminderRow[]
+}
+
+/** Cancel a pending reminder by its key. True when one was actually cancelled. */
+export function cancelJigReminder(jigId: string, key: string): boolean {
+  const db = openDb()
+  return db.prepare(
+    `DELETE FROM jig_reminders WHERE jig_id = ? AND key = ? AND fired_at IS NULL`
+  ).run(jigId, key).changes > 0
+}
+
+/** Drop fired reminders older than `beforeMs`. Pending ones are never pruned,
+ *  however far out they are dated, a reminder set for next year must survive. */
+export function pruneJigReminders(beforeMs: number): number {
+  const db = openDb()
+  return db.prepare(
+    `DELETE FROM jig_reminders WHERE fired_at IS NOT NULL AND fired_at < ?`
+  ).run(beforeMs).changes
+}
+
+export function clearJigReminders(jigId: string): void {
+  const db = openDb()
+  db.prepare(`DELETE FROM jig_reminders WHERE jig_id = ?`).run(jigId)
+}
+
+// ---------------------------------------------------------------------------
+// Per-jig AgentMail inboxes, the routing table for email-triggered jigs
+// ---------------------------------------------------------------------------
+
+export interface JigInboxRow {
+  jig_id: string
+  inbox_id: string
+  address: string
+  created_at: number
+}
+
+export function getJigInbox(jigId: string): JigInboxRow | null {
+  const db = openDb()
+  return db.prepare(`SELECT * FROM jig_inboxes WHERE jig_id = ?`).get(jigId) as JigInboxRow | null
+}
+
+/** The router lookup: which jig owns the inbox this message arrived in. */
+export function getJigByInboxId(inboxId: string): JigInboxRow | null {
+  const db = openDb()
+  return db.prepare(`SELECT * FROM jig_inboxes WHERE inbox_id = ?`).get(inboxId) as JigInboxRow | null
+}
+
+export function recordJigInbox(jigId: string, inboxId: string, address: string): void {
+  const db = openDb()
+  db.prepare(
+    `INSERT INTO jig_inboxes (jig_id, inbox_id, address, created_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(jig_id) DO UPDATE SET inbox_id = excluded.inbox_id, address = excluded.address`
+  ).run(jigId, inboxId, address, Date.now())
+}
+
+/** Forget the local mapping. The AgentMail inbox itself is left alone, mail
+ *  already delivered there stays retrievable, and deleting it would be
+ *  irreversible from a routine like archiving a jig. */
+export function deleteJigInbox(jigId: string): void {
+  const db = openDb()
+  db.prepare(`DELETE FROM jig_inboxes WHERE jig_id = ?`).run(jigId)
 }
 
 // ---------------------------------------------------------------------------

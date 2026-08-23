@@ -5,7 +5,7 @@
  * trigger without executing module side effects.
  */
 import { extractTriggerConfig } from "../domain/jig-source.js"
-import { deleteSchedule, getSchedule, listAllSchedules, setScheduleError, upsertSchedule } from "../db.js"
+import { deleteJigInbox, deleteSchedule, getJigInbox, getSchedule, listAllSchedules, recordJigInbox, setScheduleError, upsertSchedule } from "../db.js"
 import { schedulerTimeZone } from "../config/timezone.js"
 import { computeNextRun } from "./cron-utils.js"
 import { getActiveCode, listJigs } from "../services/jig-store.js"
@@ -20,6 +20,34 @@ function readTriggerConfig(jigId: string) {
   }
 }
 
+/**
+ * Give an email-triggered jig its own AgentMail address, once.
+ *
+ * Runs on every sync cycle, so it must stay cheap and idempotent: the local row
+ * short-circuits it after the first success, and AgentMail's `client_id` makes
+ * even a repeat call return the existing inbox rather than a second one.
+ */
+async function ensureJigInbox(jigId: string): Promise<void> {
+  if (getJigInbox(jigId)) return
+  const { canSendAgentMail, createJigInbox } = await import("../services/agentmail.js")
+  // Without a key there is nothing to provision against. Say so on the schedule
+  // rather than throwing every minute, the fix is in Settings, not in the jig.
+  if (!canSendAgentMail()) {
+    setScheduleError(jigId, "Email trigger needs AgentMail, connect an inbox in Settings → Notifications.")
+    return
+  }
+  const { inboxId, address } = await createJigInbox(jigId)
+  recordJigInbox(jigId, inboxId, address)
+  console.log(`[scheduler] ${jigId} receives mail at ${address}`)
+}
+
+/** Forget a jig's inbox mapping. The AgentMail inbox itself is left alone, so
+ *  mail already delivered there stays retrievable and nothing is destroyed by a
+ *  trigger edit. Cheap no-op when there was no mapping. */
+function releaseJigInbox(jigId: string): void {
+  if (getJigInbox(jigId)) deleteJigInbox(jigId)
+}
+
 export async function syncSchedules(): Promise<void> {
   const activeJigIds = new Set(listJigs().filter((j) => j.activeVersionId != null).map((j) => j.id))
 
@@ -32,6 +60,12 @@ export async function syncSchedules(): Promise<void> {
       if (existing) setScheduleError(jigId, error)
       continue
     }
+
+    // Any trigger other than email means the jig no longer receives mail. Drop
+    // the inbox mapping: leaving it would keep routing inbound mail into a jig
+    // that no longer reads it, and would keep ctx.email sending from an address
+    // whose replies never reach the authoring agent.
+    if (trigger?.type !== "email") releaseJigInbox(jigId)
 
     if (!trigger || trigger.type === "manual") {
       deleteSchedule(jigId)
@@ -65,6 +99,21 @@ export async function syncSchedules(): Promise<void> {
 
     if (trigger.type === "webhook") {
       upsertSchedule(jigId, "webhook", null, "skip", null, null)
+      continue
+    }
+
+    if (trigger.type === "email") {
+      // Like calendar and webhook, there is no next_run_at: arriving mail is
+      // what fires it. The schedule row exists so the jig can be paused.
+      upsertSchedule(jigId, "email", null, "skip", null, null)
+      // Provisioning needs the network, so it must not block the rest of the
+      // sync, a jig whose inbox is not up yet simply has no address to show
+      // until the next cycle.
+      void ensureJigInbox(jigId).catch((error) => {
+        const message = (error as Error)?.message ?? String(error)
+        console.error(`[scheduler] could not provision an inbox for ${jigId}: ${message}`)
+        setScheduleError(jigId, `Email inbox setup failed: ${message}`)
+      })
       continue
     }
 

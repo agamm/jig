@@ -8,6 +8,7 @@ import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js"
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
 import type { Tool } from "@modelcontextprotocol/sdk/types.js"
 import type { ServerConfig } from "./config.js"
+import type { JigSchema } from "../sdk/llm.js"
 import { resolveToken } from "./config.js"
 import { JigOAuthProvider } from "./auth.js"
 import { deleteCredential } from "../db.js"
@@ -416,6 +417,17 @@ export async function discoverTools(connection: McpConnection, options: { signal
 }
 
 /**
+ * Two lists of tool names.
+ *
+ * `["string"]` is the item-shape form. The bare `"array"` this used to pass is
+ * rejected by buildJsonSchema, because strict mode needs to know what the array
+ * holds, so the call threw before it ever reached the model, on every connect
+ * of every server, and the catch below quietly classified everything as
+ * not-read-only. Exported so a test can pin the shape.
+ */
+export const ANNOTATION_SCHEMA: JigSchema = { readOnly: ["string"], destructive: ["string"] }
+
+/**
  * Ensures every tool has readOnlyHint and destructiveHint annotations. Uses LLM
  * to infer missing ones and verify existing ones. Called once during
  * `jig connect`, not on subsequent runtime connections.
@@ -446,10 +458,16 @@ Everything not in "readOnly" or "destructive" is a normal mutate tool (create, s
 Tools:
 ${toolList}`,
       {},
-      { schema: { readOnly: "array", destructive: "array" } as any, signal: options.signal }
+      { schema: ANNOTATION_SCHEMA, signal: options.signal }
     )
   } catch (error) {
-    console.warn(`[typegen] annotation LLM failed; using deterministic hints: ${error instanceof Error ? error.message : String(error)}`)
+    // Loud, because the fallback is not a neutral degradation: it marks
+    // nothing read-only, which silently disables read-only-gated retries,
+    // stubs every tool in dry-run, and makes introspection refuse to probe.
+    console.warn(
+      `[typegen] annotation LLM failed. Every tool will be treated as NOT read-only ` +
+      `until the next successful connect: ${error instanceof Error ? error.message : String(error)}`
+    )
     result = inferToolAnnotations(tools)
   }
   throwIfAborted(options.signal)
@@ -764,7 +782,10 @@ function previewPayload(value: unknown): string {
   return text.length > MAX_TOOL_ERROR_CHARS ? `${text.slice(0, MAX_TOOL_ERROR_CHARS)}…` : text
 }
 
-export function shouldReconnectMcpConnection(error: unknown): boolean {
+export function shouldReconnectMcpConnection(
+  error: unknown,
+  options: { readOnly?: boolean } = {},
+): boolean {
   // Auth-denied errors from a cached connection: the saved tokens expired
   // mid-run. Dropping the cached connection lets the typegen wrapper's
   // retry go through connectServer() again, where `connectWithOAuth` will
@@ -775,7 +796,44 @@ export function shouldReconnectMcpConnection(error: unknown): boolean {
 
   // Transport-layer disconnects / missing sessions: classic reconnect case,
   // nothing to do with credentials.
-  return isTransportReconnectable(error)
+  if (isTransportReconnectable(error)) return true
+
+  // Same failure reported through the protocol instead of the socket. Only
+  // read-only tools, see isRetryableServerError.
+  return options.readOnly === true && isRetryableServerError(error)
+}
+
+/**
+ * JSON-RPC server errors worth a second attempt.
+ *
+ * The MCP SDK reports these as `McpError`, whose `.code` is a NUMBER. Every
+ * check above misses it: `isTransportReconnectable` reads `.code` only when
+ * it's a string, and "McpError" is neither class name it recognises. So a
+ * dead session surfaced through the protocol rather than the socket reached
+ * the jig unretried and killed the run.
+ *
+ *   -32000  ErrorCode.ConnectionClosed. The SDK's own code for a dropped
+ *           session, and what gateways reuse for "my upstream failed".
+ *           Composio returned it in 276ms where the same call takes ~5s when
+ *           it works, i.e. before it had even reached the provider.
+ *   -32001  ErrorCode.RequestTimeout.
+ *
+ * Deliberately not the whole -32000..-32099 "server error" band that JSON-RPC
+ * reserves: -32042 is UrlElicitationRequired, where a retry would just bury
+ * the authorization prompt the user needs to see. Widen this set when a real
+ * gateway is observed using another code, not in anticipation.
+ *
+ * Read-only callers only. Neither code says whether the server had already
+ * applied the effect before the reply went missing, so retrying a send could
+ * send twice.
+ */
+const RETRYABLE_MCP_SERVER_CODES = new Set([-32000, -32001])
+
+export function isRetryableServerError(error: unknown): boolean {
+  for (const c of walkErrorShape(error)) {
+    if (typeof c.code === "number" && RETRYABLE_MCP_SERVER_CODES.has(c.code)) return true
+  }
+  return false
 }
 
 function isDisconnectedMcpClientError(error: unknown): boolean {
@@ -799,6 +857,9 @@ const MCP_RECONNECT_DELAYS_MS = [100, 500, 2000]
  * attempt goes through connectServer() again. Used by the generated
  * connection modules (typegen) — the single retry path for every tool call.
  *
+ * `options.readOnly` additionally retries server-reported errors that a write
+ * must not repeat (isRetryableServerError). Pass the tool's readOnlyHint.
+ *
  * Exhausting all retries marks the connection unreachable (dashboard status
  * + debounced system notification) and rethrows the last error.
  */
@@ -806,12 +867,13 @@ export async function invokeWithMcpReconnect<T>(
   serverName: string,
   closeStaleConnection: () => Promise<void>,
   run: () => Promise<T>,
+  options: { readOnly?: boolean } = {},
 ): Promise<T> {
   let lastError: unknown
   try {
     return await run()
   } catch (error) {
-    if (!shouldReconnectMcpConnection(error)) throw error
+    if (!shouldReconnectMcpConnection(error, options)) throw error
     lastError = error
   }
   for (let attempt = 1; attempt <= MCP_RECONNECT_DELAYS_MS.length; attempt++) {
@@ -827,7 +889,7 @@ export async function invokeWithMcpReconnect<T>(
     try {
       return await run()
     } catch (error) {
-      if (!shouldReconnectMcpConnection(error)) throw error
+      if (!shouldReconnectMcpConnection(error, options)) throw error
       lastError = error
     }
   }

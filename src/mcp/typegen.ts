@@ -147,7 +147,7 @@ export function generateTypeDeclaration(serverName: string, tools: Tool[]): stri
  * compares it and regenerates stale files, so deployed volumes pick up
  * template fixes without waiting for the next `jig connect`.
  */
-export const TYPEGEN_VERSION = 2
+export const TYPEGEN_VERSION = 3
 
 export function generateRuntimeModule(serverName: string, tools: Tool[]): string {
   const readOnlySet = new Set(tools.filter(t => (t as any).annotations?.readOnlyHint).map(t => t.name))
@@ -195,8 +195,8 @@ export async function closeConnection() {
   }
 }
 
-async function invokeWithReconnect<T>(run: () => Promise<T>): Promise<T> {
-  return invokeWithMcpReconnect("${serverName}", closeConnection, run)
+async function invokeWithReconnect<T>(run: () => Promise<T>, readOnly: boolean): Promise<T> {
+  return invokeWithMcpReconnect("${serverName}", closeConnection, run, { readOnly })
 }
 
 function tool<TInput extends Record<string, unknown>, TOutput = any>(name: string, readOnly: boolean): JigTool<TInput, TOutput> {
@@ -218,7 +218,7 @@ function tool<TInput extends Record<string, unknown>, TOutput = any>(name: strin
     }
     return invokeWithReconnect(async () => (
       await callTool(await conn(), name, (params ?? {}) as Record<string, unknown>)
-    ) as TOutput)
+    ) as TOutput, readOnly)
   }
   fn._serverName = "${serverName}"
   fn._toolName = name
@@ -279,8 +279,8 @@ export async function closeConnection() {
   }
 }
 
-async function invokeWithReconnect<T>(run: () => Promise<T>): Promise<T> {
-  return invokeWithMcpReconnect("${serverName}", closeConnection, run)
+async function invokeWithReconnect<T>(run: () => Promise<T>, readOnly: boolean): Promise<T> {
+  return invokeWithMcpReconnect("${serverName}", closeConnection, run, { readOnly })
 }
 
 function tool<TInput extends Record<string, unknown>, TOutput = any>(name: string, readOnly: boolean): JigTool<TInput, TOutput> {
@@ -302,7 +302,7 @@ function tool<TInput extends Record<string, unknown>, TOutput = any>(name: strin
     }
     return invokeWithReconnect(async () => {
 ${proxyCallCode}
-    }) as Promise<TOutput>
+    }, readOnly) as Promise<TOutput>
   }
   fn._serverName = "${serverName}"
   fn._toolName = name

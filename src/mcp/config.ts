@@ -30,6 +30,12 @@ export type RepoServerConfig = {
 }
 
 export type ServerMeta = {
+  /**
+   * Read-only tool the onboarding wizard calls to prove this connection
+   * returns real data, not just that a schema file exists. Optional: without
+   * it, verification falls back to an authenticated tools/list handshake.
+   */
+  verify?: { tool: string; args?: Record<string, unknown> }
   pricing?: string
   limits?: string
   docs?: string

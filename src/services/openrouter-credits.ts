@@ -15,6 +15,17 @@ type Cache = { at: number; data: OpenRouterCredits | null }
 let cache: Cache | null = null
 const TTL_MS = 60_000
 
+/**
+ * Drop the cached balance. MUST be called whenever the OpenRouter key changes:
+ * the 60s TTL otherwise serves the pre-key `null` straight back, so a freshly
+ * pasted, perfectly valid key reads as rejected. The setup wizard verifies a
+ * key by re-reading the balance immediately after saving it, which lands
+ * inside that window every time.
+ */
+export function invalidateOpenRouterCredits(): void {
+  cache = null
+}
+
 export async function fetchOpenRouterCredits(): Promise<OpenRouterCredits | null> {
   if (cache && Date.now() - cache.at < TTL_MS) return cache.data
 

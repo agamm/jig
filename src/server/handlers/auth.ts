@@ -112,6 +112,11 @@ export async function handleCompleteOnboarding(req: Request): Promise<Response> 
   const body = (await req.json().catch(() => ({}))) as { openrouter_key?: unknown }
   if (typeof body.openrouter_key === "string" && body.openrouter_key.trim()) {
     setCredential("openrouter:api_key", body.openrouter_key.trim(), "openrouter")
+    // The balance is cached for 60s; without this, an immediate re-check
+    // (which is exactly what the setup wizard does to verify the key) sees
+    // the stale pre-key null and reports a good key as invalid.
+    const { invalidateOpenRouterCredits } = await import("../../services/openrouter-credits.js")
+    invalidateOpenRouterCredits()
   }
   markOnboardingComplete()
   return apiJson("completeOnboarding", { ok: true })

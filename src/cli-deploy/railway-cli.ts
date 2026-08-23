@@ -256,12 +256,24 @@ export async function listVolumes(cwd = process.cwd()): Promise<RailwayVolumeSum
       if (id) out.push({ id, name, mountPath })
     }
     return out
-  } catch {
-    return []
+  } catch (error) {
+    // Deliberately NOT swallowed into an empty list. "I could not ask Railway"
+    // and "Railway says there are no volumes" are different answers, and the
+    // caller that matters (deploy) attaches a volume on the second one. A
+    // mount at /data shadows whatever is already there, so a transient CLI or
+    // network blip turned into a false "no volume" is how an instance loses
+    // its credentials, jigs, schedules, and run history.
+    throw new Error(
+      `Could not list Railway volumes: ${(error as Error)?.message ?? String(error)}`,
+    )
   }
 }
 
-/** True iff a volume is currently mounted at the given path. */
+/**
+ * True iff a volume is currently mounted at the given path.
+ * Throws when the answer cannot be determined; callers must not treat a
+ * failure to check as "no volume".
+ */
 export async function hasVolumeAtPath(mountPath: string, cwd = process.cwd()): Promise<boolean> {
   const volumes = await listVolumes(cwd)
   return volumes.some((v) => v.mountPath === mountPath)

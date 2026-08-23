@@ -120,9 +120,15 @@ async function runAttachVolume(): Promise<void> {
     console.error("This directory isn't linked to a Railway project. Run `railway link` or `jig deploy` first.")
     process.exit(1)
   }
-  if (await hasVolumeAtPath("/data")) {
-    console.log(`  ✓ ${status.projectName} already has a volume at /data. Nothing to do.`)
-    return
+  try {
+    if (await hasVolumeAtPath("/data")) {
+      console.log(`  ✓ ${status.projectName} already has a volume at /data. Nothing to do.`)
+      return
+    }
+  } catch (error) {
+    console.error(`\nCould not check existing volumes: ${(error as Error)?.message ?? error}`)
+    console.error("Not attaching blind: a second mount at /data would shadow the current one.")
+    process.exit(1)
   }
   console.log(`  Linked to: ${status.projectName} / ${status.serviceId.slice(0, 8)}`)
   console.log("  No volume at /data — attaching now.\n")
@@ -137,7 +143,7 @@ async function runAttachVolume(): Promise<void> {
     console.error("\nrailway volume add failed — see output above.")
     process.exit(1)
   }
-  if (!(await hasVolumeAtPath("/data"))) {
+  if (!(await hasVolumeAtPath("/data").catch(() => false))) {
     console.error("\nVolume still missing after attach. Check the Railway dashboard and retry.")
     process.exit(1)
   }
@@ -172,8 +178,23 @@ async function runUpdateInPlace(): Promise<void> {
   // tokens, jigs). Auto-attach if missing — shadows whatever's in the
   // ephemeral /data (which was going to die at the next redeploy anyway),
   // and gives subsequent --updates real persistence.
-  if (!(await hasVolumeAtPath("/data"))) {
-    console.log("No Railway volume at /data — auto-attaching before redeploy.")
+  // Attaching shadows whatever is already at /data, so this must run only when
+  // we KNOW there is no volume. A failed lookup is not that: it used to come
+  // back as "no volumes" and would have attached a second mount over a healthy
+  // instance's credentials, jigs, schedules, and history.
+  let volumeAtData: boolean
+  try {
+    volumeAtData = await hasVolumeAtPath("/data")
+  } catch (error) {
+    console.error(`\nCould not check whether /data has a volume: ${(error as Error)?.message ?? error}`)
+    console.error("Refusing to redeploy while the volume state is unknown, because attaching one")
+    console.error("would shadow the existing /data and lose credentials, jigs, and history.")
+    console.error("Check `railway volume list --json`, then re-run.")
+    process.exit(1)
+  }
+
+  if (!volumeAtData) {
+    console.log("No Railway volume at /data - auto-attaching before redeploy.")
     console.log("  SQLite (password, OAuth tokens, jigs) is lost on redeploy without a volume.")
     console.log("  Anything currently in the ephemeral /data will be shadowed by the new mount —")
     console.log("  you'll need to re-onboard once. Subsequent --updates will persist normally.\n")
@@ -185,7 +206,8 @@ async function runUpdateInPlace(): Promise<void> {
       "-e", status.environmentId,
       "add", "--mount-path", "/data",
     ])
-    if (code !== 0 || !(await hasVolumeAtPath("/data"))) {
+    const attached = code === 0 && await hasVolumeAtPath("/data").catch(() => false)
+    if (!attached) {
       console.error("\nVolume attach failed. Attach it manually in the Railway dashboard, then re-run.")
       process.exit(1)
     }
@@ -335,7 +357,10 @@ export async function runDeploy(targetArg?: string): Promise<void> {
   // Authoritative check — a missing volume silently wipes SQLite on every
   // redeploy. Better to fail the deploy here than let onboarding evaporate
   // later.
-  const volumesAfter = await listVolumes()
+  const volumesAfter = await listVolumes().catch((error) => {
+    console.error(`\nCould not verify the volume: ${(error as Error)?.message ?? error}`)
+    return [] as Awaited<ReturnType<typeof listVolumes>>
+  })
   if (!volumesAfter.some((v) => v.mountPath === "/data")) {
     console.error("")
     console.error("Volume attach did NOT create a volume at /data.")

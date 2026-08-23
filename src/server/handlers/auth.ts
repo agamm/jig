@@ -193,6 +193,41 @@ export async function handleUnlock(req: Request): Promise<Response> {
   return apiJsonWithHeaders("unlock", { ok: true }, { "Set-Cookie": setCookieHeader(token) })
 }
 
+/**
+ * OpenRouter's PKCE return leg.
+ *
+ * Separate from `handleOAuthCallback` because OpenRouter's flow has no `state`
+ * parameter, so there is nothing to route on: this path IS the routing. The
+ * exchange happens here rather than in the wizard so the key lands in the
+ * credentials store even if the CLI that started the flow has since exited.
+ */
+export async function handleOpenRouterCallback(url: URL): Promise<Response> {
+  const { renderOAuthErrorPage, renderOAuthSuccessPage } = await import("../../mcp/auth.js")
+  const errorPage = (message: string, status: number) =>
+    new Response(renderOAuthErrorPage("OpenRouter", message), {
+      status,
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+    })
+
+  const denied = url.searchParams.get("error")
+  if (denied) return errorPage(denied, 400)
+
+  const code = url.searchParams.get("code")
+  if (!code) return errorPage("OpenRouter sent no code back.", 400)
+
+  const { completeOpenRouterOAuth } = await import("../../services/openrouter-oauth.js")
+  const result = await completeOpenRouterOAuth(code)
+  if (!result.ok) return errorPage(result.error, 400)
+
+  return new Response(
+    renderOAuthSuccessPage("OpenRouter", {
+      deepLink: false,
+      message: "Jig has its own OpenRouter key now. Return to setup, which is already waiting for this.",
+    }),
+    { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } },
+  )
+}
+
 export function handleOAuthCallback(url: URL): Response {
   const state = url.searchParams.get("state")
   const code = url.searchParams.get("code")

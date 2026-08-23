@@ -280,14 +280,22 @@ function renderCallbackPage(input: {
 </html>`
 }
 
-export function renderOAuthSuccessPage(serverName: string): string {
+/**
+ * `deepLink: false` for authorizations that are not MCP connections (OpenRouter's
+ * PKCE flow), where a `?connection=` deep-link would open a pane for a connection
+ * that does not exist.
+ */
+export function renderOAuthSuccessPage(serverName: string, opts: { deepLink?: boolean; message?: string } = {}): string {
+  const deepLink = opts.deepLink !== false
   return renderCallbackPage({
     tone: "success",
     eyebrow: `${serverName} connected`,
     title: "Authorization complete",
-    message: "Your account is connected. Return to Jig to finish setup and refresh the tool catalog.",
+    message: opts.message ?? "Your account is connected. Return to Jig to finish setup and refresh the tool catalog.",
     detail: `Connected service: ${serverName}`,
-    primaryHref: `${dashboardBaseUrl()}/?view=connections&connection=${encodeURIComponent(serverName)}`,
+    primaryHref: deepLink
+      ? `${dashboardBaseUrl()}/?view=connections&connection=${encodeURIComponent(serverName)}`
+      : `${dashboardBaseUrl()}/`,
     primaryLabel: "Return to Jig",
     autoClose: true,
   })

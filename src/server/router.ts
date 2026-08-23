@@ -26,6 +26,8 @@ const ROUTES: [pattern: string, handler: string][] = [
   ["/api/change-password", "changePassword"],
   ["/api/onboarding/complete", "completeOnboarding"],
   ["/api/oauth/callback", "oauthCallback"],
+  ["/api/openrouter/oauth/start", "startOpenRouterOAuth"],
+  ["/api/openrouter/callback", "openRouterOAuthCallback"],
   ["/api/events", "liveUpdates"],
 
   ["/api/models", "models"],

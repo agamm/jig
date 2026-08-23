@@ -7,11 +7,17 @@
  * Two audiences, one code path:
  *
  *   - A human at a TTY gets prompts and an auto-opened browser.
- *   - A CODING AGENT gets the same flow with every secret supplied up front by
- *     flag or env. Nothing may block on readline in that mode, because an agent
- *     has no TTY and a blocked prompt looks exactly like a hang. When a secret
- *     is missing and we cannot ask, we fail with the flag to pass rather than
- *     waiting for input that will never arrive.
+ *   - A CODING AGENT gets the same flow with nothing to type. The required step
+ *     is a browser authorization, so the agent prints a URL and waits for the
+ *     human to click it; no secret ever passes through the agent. Nothing may
+ *     block on readline in that mode, because an agent has no TTY and a blocked
+ *     prompt looks exactly like a hang.
+ *
+ * The `--openrouter-key` / `--agentmail-key` / `--owner` flags are an escape
+ * hatch for callers with no browser (CI, a scripted rebuild). They are applied
+ * BEFORE the flow runs rather than fed to its prompts: a step that finds itself
+ * already satisfied skips its own dialogue, so pre-seeding needs no second code
+ * path inside the wizard.
  */
 import { runSetupFlow, type SetupBackend, type SetupEvent, type SetupIO } from "../../shared/setup-flow.js"
 import type { Connection, OpenRouterCredits, VerifyConnectionResponse } from "../../shared/api.js"
@@ -112,16 +118,10 @@ function renderEvent(event: SetupEvent): void {
 // ---------------------------------------------------------------------------
 
 function makeIO(args: SetupArgs): SetupIO {
-  // Secrets supplied up front are consumed in order of demand. This is what
-  // lets an agent run the whole wizard without a TTY.
-  const supplied = new Map<string, { value?: string; flag: string; env: string }>([
-    ["OpenRouter", { value: args.openrouterKey, flag: "--openrouter-key=<key>", env: "JIG_OPENROUTER_KEY" }],
-    ["AgentMail", { value: args.agentmailKey, flag: "--agentmail-key=<key>", env: "JIG_AGENTMAIL_KEY" }],
-  ])
-
   return {
+    canPrompt: interactive,
+
     ask: async (question: string) => {
-      if (/email address should Jig send/i.test(question) && args.owner) return args.owner
       if (!interactive()) {
         throw new Error(`Cannot prompt without a TTY. Supply it up front: --owner=<email>. (asked: ${question})`)
       }
@@ -133,24 +133,9 @@ function makeIO(args: SetupArgs): SetupIO {
     },
 
     askSecret: async (question: string) => {
-      const entry = [...supplied.entries()].find(([label]) => question.includes(label))
-      if (entry) {
-        const [label, spec] = entry
-        if (spec.value) {
-          supplied.set(label, { ...spec, value: undefined }) // single use, so a retry re-prompts
-          return spec.value
-        }
-      }
       const hidden = await promptHiddenPassword(`  ${question.replace(/:$/, "")}`)
       if (hidden == null) {
-        // Name ONLY the flag that is actually missing. Listing every flag makes
-        // the reader hunt for which one applies to the step that just failed.
-        const spec = entry?.[1]
-        throw new Error(
-          spec
-            ? `No TTY to read the ${entry![0]} key. Pass ${spec.flag} (or set ${spec.env}) and re-run.`
-            : `No TTY to read a secret, and none was supplied up front. (asked: ${question})`,
-        )
+        throw new Error(`No TTY to read a secret. Pass --agentmail-key=<key> (or set JIG_AGENTMAIL_KEY) and re-run. (asked: ${question})`)
       }
       return hidden
     },
@@ -213,6 +198,9 @@ export function makeHttpBackend(base: string, cookie?: string): SetupBackend {
       return { ok: true, balance: credits.remaining }
     },
 
+    startOpenRouterOAuth: () =>
+      call<{ authorizationUrl: string; callbackUrl: string }>("/api/openrouter/oauth/start", { method: "POST" }),
+
     setOpenRouterKey: async (key: string) => {
       await call("/api/onboarding/complete", {
         method: "POST",
@@ -259,29 +247,72 @@ export function makeHttpBackend(base: string, cookie?: string): SetupBackend {
 // Entry point
 // ---------------------------------------------------------------------------
 
+/** A dashboard answers with HTML. The bare API server answers with a JSON 404. */
+async function probeDashboard(url: string): Promise<string | undefined> {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(2_000) })
+    return res.headers.get("content-type")?.includes("text/html") ? url : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Apply secrets passed by flag or env. Failures here are not fatal: the wizard
+ * re-checks every one of these and will report the real problem in the step it
+ * belongs to, with better wording than this function could manage.
+ */
+async function preseed(args: SetupArgs, backend: SetupBackend): Promise<void> {
+  if (args.openrouterKey) {
+    await backend.setOpenRouterKey(args.openrouterKey).catch(() => {})
+  }
+  if (args.agentmailKey || args.owner) {
+    await backend
+      .saveAgentMail({
+        ...(args.agentmailKey ? { apiKey: args.agentmailKey } : {}),
+        ...(args.owner ? { owner: args.owner } : {}),
+      })
+      .catch(() => {})
+  }
+}
+
 export async function runSetup(argv: string[], ensureLocalServer: () => Promise<string>): Promise<void> {
   const args = parseSetupArgs(argv)
 
   let base: string
   let cookie: string | undefined
+  // Where a browser should go to finish a step by hand. Remote instances serve
+  // the dashboard and the API off the same origin; locally they are two ports.
+  let dashboardUrl: string | undefined
 
   if (args.url) {
     base = args.url.replace(/\/$/, "")
+    dashboardUrl = base
   } else {
     const { listRemotes, resolveActiveRemote } = await import("../cli-remote/manifest.js")
     if (listRemotes().length > 0) {
       const remote = resolveActiveRemote(args.handle)
       base = remote.public_url
       cookie = remote.session_cookie
+      dashboardUrl = base
       console.log(`Setting up ${remote.handle} (${base}).\n`)
     } else {
       base = await ensureLocalServer()
+      // `jig setup` boots the API server but not Next, so the dashboard may not
+      // be up. Offering a URL that answers {"error":"Unknown API route"} is
+      // worse than admitting there is nowhere to send them.
+      dashboardUrl = await probeDashboard(`http://localhost:${process.env.JIG_DASHBOARD_PORT ?? "3141"}`)
       console.log(`Setting up your local instance (${base}).\n`)
     }
   }
 
   const backend = makeHttpBackend(base, cookie)
   const io = makeIO(args)
+
+  // Escape hatch, applied before the wizard rather than inside it: a step that
+  // is already satisfied never opens its dialogue, so a caller with no browser
+  // can still get through a step whose normal path is a browser.
+  await preseed(args, backend)
 
   // A locked remote answers everything with 423, which would surface as a
   // confusing per-step failure. Say the real thing instead.
@@ -292,7 +323,10 @@ export async function runSetup(argv: string[], ensureLocalServer: () => Promise<
   }
 
   try {
-    await runSetupFlow(io, backend, { skipOptional: args.skipOptional || (!interactive() && !args.assumeYes) })
+    await runSetupFlow(io, backend, {
+      skipOptional: args.skipOptional || (!interactive() && !args.assumeYes),
+      dashboardUrl,
+    })
   } catch {
     // runSetupFlow already emitted step-failed + error, which the renderer
     // printed. Re-throwing would make cli.ts print the same line again.

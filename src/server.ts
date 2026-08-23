@@ -48,6 +48,7 @@ import {
   handleCompleteOnboarding,
   handleHealth,
   handleOAuthCallback,
+  handleOpenRouterCallback,
   handleSetupPassword,
   handleUnlock,
 } from "./server/handlers/auth.js"
@@ -156,6 +157,13 @@ export function createApiServer(port: number) {
             return handleChangePassword(req)
           case "oauthCallback":
             return handleOAuthCallback(url)
+          case "startOpenRouterOAuth": {
+            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+            const { startOpenRouterOAuth } = await import("./services/openrouter-oauth.js")
+            return apiJson("startOpenRouterOAuth", startOpenRouterOAuth())
+          }
+          case "openRouterOAuthCallback":
+            return handleOpenRouterCallback(url)
           case "liveUpdates":
             return createLiveUpdatesResponse()
           case "models": {

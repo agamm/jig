@@ -35,10 +35,11 @@ generated schemas, logs, or personal configuration.
 
 ## Dependencies for Jig Hosting
 
-Jig needs an OpenRouter API key for model calls. Add it inside Jig after first
-unlock; it is not a Railway template variable. External connections such as
-Gmail, Calendar, GitHub, Apify, or Composio are optional and are connected by
-each deployer from the dashboard.
+Jig needs an OpenRouter account for model calls. Authorize it inside Jig after
+first unlock and the instance receives its own key; it is not a Railway template
+variable and there is nothing to paste. External connections such as Gmail,
+Calendar, GitHub, Apify, or Composio are optional and are connected by each
+deployer from the dashboard.
 
 ### Deployment Dependencies
 
@@ -53,7 +54,7 @@ After deployment:
 
 1. open the generated Railway domain;
 2. create the instance password;
-3. add your OpenRouter API key in Settings;
+3. authorize OpenRouter when prompted;
 4. connect the services your workflows need;
 5. describe a jig, review its TypeScript, and approve it.
 

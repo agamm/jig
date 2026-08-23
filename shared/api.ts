@@ -702,6 +702,13 @@ export interface BackupRestoreResponse {
   applied: boolean
 }
 
+/** Staged OpenRouter PKCE authorization: open this, the key arrives at the callback. */
+export interface OpenRouterOAuthStart {
+  authorizationUrl: string
+  /** Where OpenRouter will send the browser back to. Shown when a redirect fails. */
+  callbackUrl: string
+}
+
 export interface ApiContracts {
   health: ApiContract<void, HealthResponse>
   completeOnboarding: ApiContract<{ openrouter_key?: string }, OkResponse>
@@ -711,6 +718,7 @@ export interface ApiContracts {
   models: ApiContract<ModelOverrideInput | void, ModelCatalog>
   modelsCatalog: ApiContract<void, OpenRouterCatalogResponse>
   openrouterCredits: ApiContract<void, OpenRouterCredits | null>
+  startOpenRouterOAuth: ApiContract<void, OpenRouterOAuthStart>
   classifyFailure: ApiContract<{ error: string }, { needsReauth: boolean }>
   modelUpgrades: ApiContract<void, ModelUpgradesResponse>
   applyModelUpgrade: ApiContract<ApplyModelUpgradeRequest, ApplyModelUpgradeResponse>

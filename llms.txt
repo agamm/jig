@@ -19,7 +19,7 @@ bun install
 bun run jig start
 ```
 
-The dashboard opens on a loopback URL. Add an OpenRouter key in Settings, connect the required services, then author and run jigs from the dashboard.
+The dashboard opens on a loopback URL. Authorize OpenRouter when it asks (browser flow, no key to paste), connect the required services, then author and run jigs from the dashboard. `bun run jig setup` does the same walk from a terminal.
 
 ### Author a jig
 

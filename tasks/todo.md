@@ -253,7 +253,9 @@ the dashboard stays, but the primary surface is the CLI driven by an agent.
 - [x] Verifies only AFTER oauth completes, never before
 - [x] Required-step failure aborts; optional-step failure continues
 - [x] Zero OpenRouter balance is reported as a warning, not as healthy
-- [x] Bad key rejected on the balance re-check, not trusted from the paste
+- [x] SUPERSEDED by the token-free default in section 8: there is no paste to
+      distrust on the default path. Replaced with "OpenRouter is not called
+      verified until the balance check passes", same invariant, new route in.
 - [x] FIXED a real bug found while wiring this: OpenRouter credits are cached
       for 60s, so the wizard's verify-right-after-paste read the stale pre-key
       null and reported a GOOD key as invalid. Added
@@ -270,3 +272,42 @@ the dashboard stays, but the primary surface is the CLI driven by an agent.
 - RESOLVED: `railway logs -s jig --lines 400` finds the setup code fine from the
   linked dir.
 - RESOLVED: `railway whoami --json` lists workspaces even with 0 projects.
+
+
+## 8. Token-free default setup (2026-08-23)
+
+The wizard asked for two pasted keys, which contradicted the repo's own
+"browser OAuth only" rule and meant a coding agent had to handle secrets.
+
+Verified before deciding, not assumed:
+- OpenRouter supports OAuth PKCE (`openrouter.ai/docs/use-cases/oauth-pkce`):
+  localhost callback on any port, exchange at `POST /api/v1/auth/keys` -> `{ key }`.
+  The flow carries NO `state` parameter, so it cannot share `/api/oauth/callback`,
+  which routes MCP codes by state. Hence its own callback path.
+- Composio was already browser-only. No change.
+- AgentMail has no authorization server: `/.well-known/oauth-authorization-server`
+  and `/oauth/authorize` 404 on both the api and console hosts, and the docs list
+  only console-created `am_` keys. Its key can only be pasted.
+
+Shipped:
+- [x] `src/services/openrouter-oauth.ts`: PKCE start + exchange, key written to
+      credentials, credits cache invalidated.
+- [x] `POST /api/openrouter/oauth/start`, `GET /api/openrouter/callback`
+      (public handler: the returning browser has no session cookie).
+- [x] OpenRouter setup step authorizes in a browser and polls the balance.
+- [x] AgentMail stays REQUIRED (a silent failure channel is not a feature) and is
+      guided instead: setup opens the console, gives the four clicks, and takes
+      the key. With no terminal it opens the dashboard's notifications settings
+      and polls until the key and owner are saved, so a coding agent never
+      handles the secret and never blocks on a prompt nobody can answer.
+      The dashboard URL is probed first: `jig setup` boots the API server but
+      not Next, and a URL that answers `{"error":"Unknown API route"}` is worse
+      than saying there is nowhere to send you.
+- [x] Dashboard onboarding leads with Authorize; paste is a fallback behind a link.
+- [x] CLI key flags now pre-seed before the flow instead of feeding its prompts.
+- [x] README, llms.txt, operations.md, railway-template.md updated together.
+
+Open:
+- [ ] Settings still offers only a pasted OpenRouter key. The onboarding gate is
+      the fixed path; Settings should get the same Authorize button.
+- [ ] Alerts being off has no dashboard indicator, only the wizard's warning.

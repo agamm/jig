@@ -34,9 +34,9 @@ After the service is healthy:
 
 1. open the generated URL;
 2. set the instance password;
-3. add an OpenRouter API key in Settings;
+3. authorize OpenRouter when the dashboard asks (browser flow; pasting a key in Settings stays available as a fallback);
 4. connect only the services the jigs need;
-5. configure AgentMail if failure alerts and reply-to-edit are wanted.
+5. configure AgentMail so failures reach you; `bun run jig setup` walks through this and the steps above, and verifies each one.
 
 ## Update safely
 

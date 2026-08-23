@@ -12,6 +12,13 @@
  *   2. A CONNECTION STEP ADVANCES ONLY ON PROOF. "Connected" is not enough,
  *      because a generated schema file outlives an expired token. Every
  *      connection step ends in a real call through `backend.verify`.
+ *   3. NOTHING IS LEFT TO THE READER. Where a step can be an authorization, it
+ *      is one and no key is ever seen (OpenRouter, Composio). Where it cannot
+ *      be, the wizard walks the user through it click by click rather than
+ *      naming a service and wishing them luck. AgentMail is that case: it
+ *      publishes no authorization server, so setup opens the console, says what
+ *      to click, and takes the key wherever the user can give it, including a
+ *      browser when there is no terminal to type into.
  *
  * Steps are resumable by construction: each one asks the backend whether it is
  * already satisfied before doing anything, so re-running setup after a failure
@@ -69,6 +76,12 @@ export interface SetupIO {
   confirm(question: string): Promise<boolean>
   /** Open a URL for the user. Returns false when no browser could be opened. */
   openUrl(url: string): Promise<boolean>
+  /**
+   * Whether a human can answer a prompt right now. False under a coding agent
+   * or any other TTY-less caller, where `ask`/`askSecret` would throw rather
+   * than return. Steps use it to choose a browser path over a paste path.
+   */
+  canPrompt(): boolean
   emit(event: SetupEvent): void
   /** Injected so tests do not sleep. */
   wait(ms: number): Promise<void>
@@ -78,6 +91,8 @@ export interface SetupBackend {
   /** Credit balance doubles as the OpenRouter proof: a valid key with no credits still fails every model call. */
   openRouterCredits(): Promise<{ ok: boolean; balance?: number; error?: string }>
   setOpenRouterKey(key: string): Promise<void>
+  /** Stage an OpenRouter PKCE authorization; the key arrives at the callback, not here. */
+  startOpenRouterOAuth(): Promise<{ authorizationUrl: string }>
   agentMailStatus(): Promise<{ hasKey: boolean; owner: string | null; address: string | null; canSend: boolean; webhookReady: boolean }>
   saveAgentMail(input: { apiKey?: string; owner?: string }): Promise<void>
   provisionAgentMailInbox(): Promise<{ ok: boolean; address?: string; webhookReady?: boolean; error?: string }>
@@ -91,6 +106,15 @@ export interface SetupBackend {
   verify(name: string): Promise<VerifyConnectionResponse>
 }
 
+/** Console that mints the key, and the numbered walk-through for getting one. */
+const AGENTMAIL_CONSOLE_URL = "https://console.agentmail.to"
+const AGENTMAIL_STEPS = [
+  "1. Sign up or log in (free tier, no card).",
+  "2. Open API Keys in the left sidebar.",
+  "3. Click Create New API Key and name it \"jig\".",
+  "4. Copy it now: AgentMail shows a key once and never again.",
+]
+
 export interface SetupOptions {
   /** Skip optional steps without asking. Used by non-interactive runs. */
   skipOptional?: boolean
@@ -98,6 +122,11 @@ export interface SetupOptions {
   oauthTimeoutMs?: number
   /** Poll interval while waiting for OAuth. */
   pollIntervalMs?: number
+  /**
+   * Where this instance's dashboard lives. Used to hand a step off to a browser
+   * when there is no terminal to type into.
+   */
+  dashboardUrl?: string
 }
 
 const DEFAULT_OAUTH_TIMEOUT_MS = 5 * 60_000
@@ -145,20 +174,25 @@ async function runStep(
 ): Promise<StepOutcome> {
   switch (step.id) {
     case "openrouter":
-      return runOpenRouterStep(io, backend)
+      return runOpenRouterStep(io, backend, options)
     case "agentmail":
-      return runAgentMailStep(io, backend)
+      return runAgentMailStep(io, backend, options)
     case "composio":
       return runComposioStep(io, backend, options)
   }
 }
 
 /**
- * OpenRouter. Verification checks the BALANCE, not just the key: a fresh
- * account authenticates fine and then fails every model call, which reads as
- * "Jig is broken" rather than "top up your account".
+ * OpenRouter, via the PKCE flow: the user authorizes in a browser and the key
+ * is delivered to the instance's callback. Nobody creates a key, copies it, or
+ * pastes it, which also means a coding agent driving setup never handles a
+ * secret it should not have.
+ *
+ * Verification checks the BALANCE, not just the key: a fresh account
+ * authenticates fine and then fails every model call, which reads as "Jig is
+ * broken" rather than "top up your account".
  */
-async function runOpenRouterStep(io: SetupIO, backend: SetupBackend): Promise<StepOutcome> {
+async function runOpenRouterStep(io: SetupIO, backend: SetupBackend, options: SetupOptions): Promise<StepOutcome> {
   const existing = await backend.openRouterCredits()
   if (existing.ok) {
     io.emit({ type: "step-satisfied", id: "openrouter", detail: describeBalance(existing.balance) })
@@ -166,20 +200,38 @@ async function runOpenRouterStep(io: SetupIO, backend: SetupBackend): Promise<St
     return "verified"
   }
 
-  io.emit({ type: "instruction", message: "Jig needs an OpenRouter key for model calls." })
-  const opened = await io.openUrl("https://openrouter.ai/keys")
-  io.emit({ type: "open-url", url: "https://openrouter.ai/keys", purpose: "create an API key", opened })
+  io.emit({ type: "instruction", message: "Jig needs an OpenRouter account for model calls. Authorize it in the browser; no key to copy." })
+  const { authorizationUrl } = await backend.startOpenRouterOAuth()
+  const opened = await io.openUrl(authorizationUrl)
+  io.emit({ type: "open-url", url: authorizationUrl, purpose: "authorize OpenRouter", opened })
 
-  const key = (await io.askSecret("Paste your OpenRouter API key:")).trim()
-  if (!key) throw new Error("An OpenRouter key is required.")
-  await backend.setOpenRouterKey(key)
-
-  io.emit({ type: "verifying", id: "openrouter", detail: "checking the key and credit balance" })
-  const check = await backend.openRouterCredits()
-  if (!check.ok) throw new Error(check.error ?? "OpenRouter rejected that key.")
-
+  const check = await waitForOpenRouterKey(io, backend, options)
   io.emit({ type: "verified", id: "openrouter", summary: `openrouter: ${describeBalance(check.balance)}`, level: "probe" })
   return "verified"
+}
+
+/**
+ * Poll until the callback has stored a key. The authorization completes out of
+ * band in the browser, so the balance check is the only signal that it landed,
+ * and it doubles as the proof the step needs.
+ */
+async function waitForOpenRouterKey(
+  io: SetupIO,
+  backend: SetupBackend,
+  options: SetupOptions,
+): Promise<{ ok: boolean; balance?: number; error?: string }> {
+  const timeoutMs = options.oauthTimeoutMs ?? DEFAULT_OAUTH_TIMEOUT_MS
+  const intervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS
+  const deadline = Date.now() + timeoutMs
+
+  io.emit({ type: "waiting", id: "openrouter", detail: "waiting for you to authorize OpenRouter in the browser" })
+
+  while (Date.now() < deadline) {
+    await io.wait(intervalMs)
+    const check = await backend.openRouterCredits()
+    if (check.ok) return check
+  }
+  throw new Error("Timed out waiting for OpenRouter authorization. Re-run setup to try again.")
 }
 
 function describeBalance(balance: number | undefined): string {
@@ -189,31 +241,48 @@ function describeBalance(balance: number | undefined): string {
 }
 
 /**
- * AgentMail. Required, because it is how an unattended Jig tells you a jig
- * broke. Verified by actually sending mail to the owner: that proves the key,
- * the inbox, AND that the owner address is real, which a key check alone does
- * not.
+ * AgentMail: how an unattended Jig tells you a jig broke. Verified by actually
+ * sending mail to the owner, which proves the key, the inbox, AND that the owner
+ * address is real; a key check alone proves none of that.
+ *
+ * Optional, reluctantly. AgentMail publishes no authorization server (no
+ * `/.well-known/oauth-authorization-server`, no authorize endpoint), so its key
+ * can only be created in a console and pasted. Requiring it would put a paste
+ * back in the middle of the default path, so instead the step offers itself and
+ * says plainly what staying without it costs.
  */
-async function runAgentMailStep(io: SetupIO, backend: SetupBackend): Promise<StepOutcome> {
+async function runAgentMailStep(io: SetupIO, backend: SetupBackend, options: SetupOptions): Promise<StepOutcome> {
   let status = await backend.agentMailStatus()
 
-  if (!status.hasKey) {
+  if (!status.hasKey || !status.owner) {
     io.emit({
       type: "instruction",
       message: "AgentMail gives Jig a mailbox so it can email you when a jig fails, and so you can reply to fix it. Free tier, no card.",
     })
-    const opened = await io.openUrl("https://console.agentmail.to")
-    io.emit({ type: "open-url", url: "https://console.agentmail.to", purpose: "sign up and create an API key", opened })
-    const apiKey = (await io.askSecret("Paste your AgentMail API key (starts with am_):")).trim()
-    if (!apiKey) throw new Error("An AgentMail API key is required.")
-    await backend.saveAgentMail({ apiKey })
-    status = await backend.agentMailStatus()
-  }
+    // Spelled out click by click. "Create an API key" is where people stall, and
+    // the one that matters is the last line: the key is shown exactly once.
+    for (const line of AGENTMAIL_STEPS) io.emit({ type: "instruction", message: line })
+    const opened = await io.openUrl(AGENTMAIL_CONSOLE_URL)
+    io.emit({ type: "open-url", url: AGENTMAIL_CONSOLE_URL, purpose: "create an API key", opened })
 
-  if (!status.owner) {
-    const owner = (await io.ask("Which email address should Jig send alerts to?")).trim()
-    if (!owner.includes("@")) throw new Error("That does not look like an email address.")
-    await backend.saveAgentMail({ owner })
+    if (io.canPrompt()) {
+      if (!status.hasKey) {
+        const apiKey = (await io.askSecret("Paste your AgentMail API key (starts with am_):")).trim()
+        if (!apiKey) throw new Error("An AgentMail API key is required.")
+        await backend.saveAgentMail({ apiKey })
+      }
+      if (!status.owner) {
+        const owner = (await io.ask("Which email address should Jig send alerts to?")).trim()
+        if (!owner.includes("@")) throw new Error("That does not look like an email address.")
+        await backend.saveAgentMail({ owner })
+      }
+      status = await backend.agentMailStatus()
+    } else {
+      // No terminal to paste into. The dashboard has the same two fields, so the
+      // step continues in the browser rather than failing at the one thing that
+      // cannot be an authorization.
+      status = await waitForAgentMailInBrowser(io, backend, options)
+    }
   }
 
   if (!status.address) {
@@ -244,6 +313,45 @@ async function runAgentMailStep(io: SetupIO, backend: SetupBackend): Promise<Ste
   // jig on top of this one. Better said now than discovered at the third jig.
   io.emit({ type: "instruction", message: "Free tier allows 3 inboxes. Jig uses one here, plus one per email-triggered jig." })
   return "verified"
+}
+
+/**
+ * Finish AgentMail in the dashboard.
+ *
+ * Reached when nothing can be typed at the caller (a coding agent, a script).
+ * The dashboard collects the key and the owner address on one screen, so the
+ * wizard sends the user there and waits for the server to report both, rather
+ * than failing a required step over the absence of a terminal.
+ */
+async function waitForAgentMailInBrowser(
+  io: SetupIO,
+  backend: SetupBackend,
+  options: SetupOptions,
+): Promise<Awaited<ReturnType<SetupBackend["agentMailStatus"]>>> {
+  const dashboard = options.dashboardUrl
+  if (!dashboard) {
+    throw new Error(
+      "AgentMail needs a key and an owner address. There is no terminal to ask on, and no dashboard running to collect them in. Start one with `jig start` and re-run setup, or pass --agentmail-key=<key> and --owner=<email>.",
+    )
+  }
+
+  const settingsUrl = `${dashboard.replace(/\/$/, "")}/?view=settings&tab=notifications`
+  const opened = await io.openUrl(settingsUrl)
+  io.emit({ type: "open-url", url: settingsUrl, purpose: "paste the key and your alert address into Jig", opened })
+  io.emit({ type: "waiting", id: "agentmail", detail: "waiting for the AgentMail key and owner address to be saved" })
+
+  const timeoutMs = options.oauthTimeoutMs ?? DEFAULT_OAUTH_TIMEOUT_MS
+  const intervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS
+  const deadline = Date.now() + timeoutMs
+
+  while (Date.now() < deadline) {
+    await io.wait(intervalMs)
+    const status = await backend.agentMailStatus()
+    if (status.hasKey && status.owner) return status
+  }
+  throw new Error(
+    "Timed out waiting for AgentMail. Save the key and your alert address in the dashboard under Settings, Notifications, then re-run setup.",
+  )
 }
 
 /**

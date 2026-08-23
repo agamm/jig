@@ -24,6 +24,7 @@ const PUBLIC_HANDLERS = new Set<string>([
   "unlock",
   "setupPassword",
   "oauthCallback",
+  "openRouterOAuthCallback", // the browser coming back from OpenRouter carries no session cookie
   "webhook", // external webhook triggers carry their own per-jig token
   "emailInbound", // AgentMail inbound webhook — authed by Svix signature + owner check
 ])

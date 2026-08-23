@@ -80,10 +80,12 @@ Let a coding agent do the install. Paste this into Claude Code, in the directory
 
 ```text
 Install Jig from https://github.com/agamm/jig.git: clone it, run `bun install`, then run
-`bun run jig setup` to configure it. You have no TTY, so setup cannot prompt you: ask me for
-each secret first and pass them as flags, `--openrouter-key=`, `--agentmail-key=` and
-`--owner=<my email>`. Then start it with `bun run jig start` and give me the dashboard URL.
+`bun run jig setup --yes`. Setup will print links for me to open; wait for it, do not answer
+for me. Then start it with `bun run jig start` and give me the dashboard URL.
 ```
+
+Setup asks the agent for nothing, because there is nothing an agent should hold. Each step ends
+in your browser, and the credentials go straight into Jig's own store.
 
 ### Local
 
@@ -97,13 +99,15 @@ bun run jig start
 
 ## Setup
 
-`bun run jig setup` walks the three things a new instance needs and verifies each one rather than assuming it:
+`bun run jig setup` walks what a new instance needs and verifies each step rather than assuming it:
 
-* **OpenRouter** for model calls, checked for credit balance and not just for a key the API accepts
-* **AgentMail** for failure alerts and reply-to-edit, verified by sending a real message to your address
-* **Composio** app integrations, optional
+* **OpenRouter** for model calls. Authorize in the browser and Jig receives its own key; the step passes only once the credit balance reads back, because a valid key with no credit fails every model call.
+* **AgentMail** for failure alerts and reply-to-edit. Setup opens the console and walks you through creating a key click by click, then proves it by sending a real message to your address.
+* **Composio** for app integrations, optional. One browser authorization covers Gmail, Calendar, Slack, Telegram and a long tail of others.
 
-Run it again whenever you want; steps that are already satisfied report as done and are skipped. At a terminal it prompts for each secret and opens the browser for you. Under a coding agent, or anywhere else without a TTY, pass the secrets up front as flags (`--openrouter-key=`, `--agentmail-key=`, `--owner=`) or as environment variables (`JIG_OPENROUTER_KEY`, `JIG_AGENTMAIL_KEY`, `JIG_OWNER_EMAIL`); a missing one fails with the flag to pass instead of waiting for input that will never arrive. Pass a deployed instance's handle (`bun run jig setup <handle>`) to set that one up instead of the local one.
+OpenRouter and Composio are authorizations, so you never see a key. AgentMail publishes no authorization server, so its key has to be created in a console; setup does not just name the service and wish you luck, it opens the right page and tells you which button to press. Alerts stay required because without them a failing jig fails silently.
+
+Run setup again whenever you want. Steps already satisfied report as done and are skipped. Without a terminal (a coding agent, a script), nothing is asked of the caller: the authorization URLs are printed for you to click, and the AgentMail key is collected in the dashboard, which setup opens and then waits on. If you would rather supply values directly, `--openrouter-key=`, `--agentmail-key=` and `--owner=` (or `JIG_OPENROUTER_KEY`, `JIG_AGENTMAIL_KEY`, `JIG_OWNER_EMAIL`) pre-seed them and the matching step then finds itself already done. Pass a deployed instance's handle (`bun run jig setup <handle>`) to set that one up instead of the local one.
 
 Open the dashboard, connect the services you want, and tell Jig what to build.
 

@@ -17,14 +17,14 @@ import type {
 // Types
 // ---------------------------------------------------------------------------
 
-type SortKey = "blended" | "rank" | "context" | "name" | "prompt" | "completion" | "recency";
+type SortKey = "blended" | "listed" | "context" | "name" | "prompt" | "completion" | "recency";
 type SortDir = "asc" | "desc";
 
 const DEFAULT_DIR: Record<SortKey, SortDir> = {
   blended: "asc",
   prompt: "asc",
   completion: "asc",
-  rank: "asc",
+  listed: "asc",
   context: "desc",
   name: "asc",
   recency: "desc",
@@ -32,7 +32,7 @@ const DEFAULT_DIR: Record<SortKey, SortDir> = {
 
 const SORT_LABELS: Record<SortKey, string> = {
   blended: "Price",
-  rank: "Popularity",
+  listed: "Listed",
   context: "Context",
   name: "Name",
   prompt: "$ in",
@@ -89,28 +89,47 @@ function isNitro(id: string): boolean {
 // ---------------------------------------------------------------------------
 // Role scoring — purely from API-provided fields
 //
-// Main:   popularity ranked, must call tools, blended price < $5, not free.
+// Main:   from a foundational lab, must call tools, blended price < $5, not free.
 // Editor: same hard filter; reasoning-capable heavily preferred as tiebreaker.
-// Fast:   blended price < $1; :nitro variants get a strong boost; then most
-//         popular.
-// Recency (`createdAt`) is a weak tiebreaker across the board so newer
-// generations rise when popularity is close.
+// Fast:   blended price < $1; :nitro variants get a strong boost.
+// Release date (`createdAt`) orders what is left, so newer generations rise.
+//
+// These used to rank on `catalogOrder`, i.e. position in OpenRouter's /models
+// response, under the belief it meant popularity. It does not: the listing is
+// newest-first and OpenRouter publishes no usage figure through its public API.
+// The effect was that whichever obscure vendor had published most recently
+// scored highest and became the recommendation.
 // ---------------------------------------------------------------------------
 
-const POPULARITY_WEIGHT = 10_000;
+// Vendors whose models may be recommended. Mirrors FOUNDATIONAL_PROVIDERS in
+// src/services/model-upgrade.ts; keep the two in step.
+const FOUNDATIONAL_PROVIDERS = new Set([
+  "anthropic", "openai", "google", "meta-llama", "meta", "mistralai",
+  "x-ai", "deepseek", "qwen", "microsoft", "amazon", "cohere",
+]);
+
+function isFoundational(id: string): boolean {
+  return FOUNDATIONAL_PROVIDERS.has(id.split("/")[0]?.replace(/^~/, "") ?? "");
+}
+
+/** Newer is better, and only known labs are eligible at all. */
+function baseScore(m: OpenRouterModelInfo): number {
+  if (!isFoundational(m.id)) return -Infinity;
+  return (m.createdAt ?? 0) / 1e6;
+}
 
 function scoreMain(m: OpenRouterModelInfo): number {
   if (!m.supportsTools) return -Infinity;
   if (m.blendedPriceUsdPerM <= 0) return -Infinity;
   if (m.blendedPriceUsdPerM >= PRICE_CEILING_USD_PER_M) return -Infinity;
-  return POPULARITY_WEIGHT - m.rank + (m.createdAt ?? 0) / 1e11;
+  return baseScore(m);
 }
 
 function scoreEditor(m: OpenRouterModelInfo): number {
   if (!m.supportsTools) return -Infinity;
   if (m.blendedPriceUsdPerM <= 0) return -Infinity;
   if (m.blendedPriceUsdPerM >= PRICE_CEILING_USD_PER_M) return -Infinity;
-  let s = POPULARITY_WEIGHT - m.rank + (m.createdAt ?? 0) / 1e11;
+  let s = baseScore(m);
   if (m.supportsReasoning) s += 5_000;
   return s;
 }
@@ -118,7 +137,7 @@ function scoreEditor(m: OpenRouterModelInfo): number {
 function scoreFast(m: OpenRouterModelInfo): number {
   if (m.blendedPriceUsdPerM <= 0) return -Infinity;
   if (m.blendedPriceUsdPerM >= FAST_PRICE_CEILING_USD_PER_M) return -Infinity;
-  let s = POPULARITY_WEIGHT - m.rank + (m.createdAt ?? 0) / 1e11;
+  let s = baseScore(m);
   if (isNitro(m.id)) s += 50_000;
   return s;
 }
@@ -191,7 +210,7 @@ function sortModels(models: OpenRouterModelInfo[], sort: SortKey, dir: SortDir):
     blended: (a, b) => a.blendedPriceUsdPerM - b.blendedPriceUsdPerM,
     prompt: (a, b) => a.promptPriceUsdPerM - b.promptPriceUsdPerM,
     completion: (a, b) => a.completionPriceUsdPerM - b.completionPriceUsdPerM,
-    rank: (a, b) => a.rank - b.rank,
+    listed: (a, b) => a.catalogOrder - b.catalogOrder,
     context: (a, b) => a.contextLength - b.contextLength,
     name: (a, b) => a.name.localeCompare(b.name),
     recency: (a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0),
@@ -642,7 +661,7 @@ function ModelTable({
             align="right"
           />
           <SortableHeader label="Context" col="context" sort={sort} sortDir={sortDir} onSort={onSort} align="right" />
-          <SortableHeader label="Rank" col="rank" sort={sort} sortDir={sortDir} onSort={onSort} align="right" />
+          <SortableHeader label="Listed" col="listed" sort={sort} sortDir={sortDir} onSort={onSort} align="right" />
           <SortableHeader
             label="Created"
             col="recency"
@@ -694,7 +713,7 @@ function ModelTable({
               <td className="px-3 py-1.5 text-right font-mono text-[10px] text-[var(--text-dim)]">
                 {fmtContext(m.contextLength)}
               </td>
-              <td className="px-3 py-1.5 text-right font-mono text-[10px] text-[var(--text-dim)]">#{m.rank + 1}</td>
+              <td className="px-3 py-1.5 text-right font-mono text-[10px] text-[var(--text-dim)]">#{m.catalogOrder + 1}</td>
               <td className="px-3 py-1.5 text-right font-mono text-[10px] text-[var(--text-dim)]">
                 {m.createdAt ? new Date(m.createdAt * 1000).toISOString().slice(0, 7) : "—"}
               </td>

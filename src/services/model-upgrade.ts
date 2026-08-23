@@ -2,11 +2,11 @@
  * Computes "equivalent but better" model upgrade suggestions for the user's
  * main / editor / fast slots, and applies them on approval.
  *
- * Matching rule: a higher OpenRouter rank than the current model, at no more
- * than +20% of its blended price (cross-provider allowed — the best model in
- * your price band often isn't the same family). Free-tier models are never
- * upgraded to paid ones silently. The agentic main/editor slots also require
- * `supportsTools` so the agent loop keeps working.
+ * Matching rule: a NEWER model from one of the foundational labs, at no more
+ * than +20% of the current model's blended price (cross-provider allowed, the
+ * best model in your price band often isn't the same family). Free-tier models
+ * are never upgraded to paid ones silently. The agentic main/editor slots also
+ * require `supportsTools` so the agent loop keeps working.
  *
  * Dismissals are persisted in a single settings row so a suggestion the user
  * said "no" to once doesn't keep nagging them on every dashboard open.
@@ -39,7 +39,7 @@ import { introspectJig } from "./introspect-jig.js"
 const DISMISSED_KEY = "modelUpgrades"
 
 // A suggestion may cost at most this factor more than the current model.
-// Beyond it, a "better rank" model is a price tradeoff, not an upgrade.
+// Beyond it, a newer model is a price tradeoff, not an upgrade.
 const MAX_PRICE_INCREASE = 1.2
 
 type DismissedMap = Partial<Record<ModelSlot, string[]>>
@@ -59,14 +59,78 @@ function readDismissed(): DismissedMap {
 /**
  * OpenRouter variant suffixes that change how a call is delivered, not just how
  * well it performs. `:batch` is an async queue with turnaround measured in
- * hours, so it is cheaper and often better ranked and therefore looks like a
- * pure win to the ranker — but a jig awaiting one would hang past its run
- * timeout. Never offer these as a drop-in upgrade for a synchronous slot.
+ * hours, so it is cheaper and ships alongside its parent model, which makes it
+ * look like a pure win. A jig awaiting one would hang past its run timeout, so
+ * never offer these as a drop-in upgrade for a synchronous slot.
  */
 const NON_INTERACTIVE_VARIANTS = [":batch"]
 
+/**
+ * Only these vendors may be suggested.
+ *
+ * OpenRouter lists 60+ providers and publishes no usage or popularity figure
+ * through its public API: /models comes back in newest-first catalog order and
+ * ignores `?order=`. So "better" had nothing real to stand on, and because a
+ * brand-new listing sorts to the top, the suggestions were whatever obscure
+ * vendor had shipped most recently (tencent/hy-mt2-1.8b, dots-studio, sakana).
+ *
+ * Absent a popularity signal, the honest filter is provenance: a slot only
+ * moves to a model from a lab whose name the operator already trusts. Add to
+ * this list deliberately; every entry is a vendor whose models are allowed to
+ * run the user's workflows unattended.
+ */
+const FOUNDATIONAL_PROVIDERS = new Set([
+  "anthropic",
+  "openai",
+  "google",
+  "meta-llama",
+  "meta",
+  "mistralai",
+  "x-ai",
+  "deepseek",
+  "qwen",
+  "microsoft",
+  "amazon",
+  "cohere",
+])
+
+/** Vendor prefix of an OpenRouter id, minus the `~` alias marker. */
+export function providerOf(modelId: string): string {
+  return modelId.split("/")[0]?.replace(/^~/, "") ?? ""
+}
+
+export function isFoundationalProvider(modelId: string): boolean {
+  return FOUNDATIONAL_PROVIDERS.has(providerOf(modelId))
+}
+
 function isNonInteractiveVariant(m: OpenRouterModelInfo): boolean {
   return NON_INTERACTIVE_VARIANTS.some((suffix) => m.id.endsWith(suffix))
+}
+
+/**
+ * Builds a real lab publishes that are still not a flagship to point a
+ * production slot at.
+ *
+ * Coming from a trusted vendor is not sufficient on its own: `meta/` genuinely
+ * is Meta, but `meta/muse-spark-1.2-contributor` is a contributor build, and
+ * `deepseek/...-vision-exp` is an experiment. Both were the newest entries in
+ * the catalog and so won outright. A `~vendor/...-latest` alias is excluded for
+ * a different reason: it silently repoints, and a slot should stay pinned to a
+ * version the operator actually approved.
+ */
+const PRERELEASE_MARKERS = [
+  /-exp$/,
+  /-experimental$/,
+  /-preview$/,
+  /-alpha$/,
+  /-beta$/,
+  /-contributor$/,
+]
+
+function isPrereleaseBuild(id: string): boolean {
+  if (id.startsWith("~")) return true
+  const withoutVariant = id.split(":")[0]
+  return PRERELEASE_MARKERS.some((re) => re.test(withoutVariant))
 }
 
 function isFree(m: OpenRouterModelInfo): boolean {
@@ -83,23 +147,27 @@ export function pickBest(
     if (m.id === current.id) return false
     if (dismissed.includes(m.id)) return false
     if (isNonInteractiveVariant(m)) return false
+    // Provenance gate, see FOUNDATIONAL_PROVIDERS.
+    if (!isFoundationalProvider(m.id)) return false
+    if (isPrereleaseBuild(m.id)) return false
     // Agentic slots run tool-calling loops — a non-tool model would break them.
     if ((slot === "main" || slot === "editor") && !m.supportsTools) return false
-    // Never silently move a free model to a paid one (keeps the fast/free slot free).
-    if (isFree(current) && !isFree(m)) return false
-    // Stay within the cost cap: cheaper, or at most +20% pricier. A better-ranked
-    // but far pricier model (haiku-4.5 $4/M → fable-5 $40/M, +900%) is a tradeoff,
+    // Never cross the free/paid line in either direction. Upward is a surprise
+    // bill; downward looks like a saving but free tiers are rate-limited, which
+    // an unattended cron jig experiences as random failure rather than thrift.
+    if (isFree(current) !== isFree(m)) return false
+    // Stay within the cost cap: cheaper, or at most +20% pricier. A newer but
+    // far pricier model (haiku-4.5 $4/M to fable-5 $40/M, +900%) is a tradeoff,
     // not an upgrade.
     if (m.blendedPriceUsdPerM > current.blendedPriceUsdPerM * MAX_PRICE_INCREASE) return false
-    // "Better" = higher OpenRouter rank. Cross-provider is allowed — the best
-    // model within your price often isn't from the same family (e.g. a cheap,
-    // low-ranked model has no same-provider upgrade under the price cap, but
-    // plenty of better-ranked options exist elsewhere).
-    return m.rank < current.rank
+    // "Better" = genuinely newer, by the model's own release timestamp rather
+    // than its position in OpenRouter's listing. Cross-provider is allowed
+    // within the allowlist above.
+    return m.createdAt > current.createdAt
   })
   if (candidates.length === 0) return null
   candidates.sort((a, b) => {
-    if (a.rank !== b.rank) return a.rank - b.rank
+    if (a.createdAt !== b.createdAt) return b.createdAt - a.createdAt
     return a.blendedPriceUsdPerM - b.blendedPriceUsdPerM
   })
   return candidates[0]
@@ -114,10 +182,8 @@ function reasonString(current: OpenRouterModelInfo, suggested: OpenRouterModelIn
   } else if (current.blendedPriceUsdPerM === 0 && suggested.blendedPriceUsdPerM === 0) {
     parts.push("free tier")
   }
-  if (suggested.rank < current.rank) {
-    // OpenRouter ranks are 0-indexed in our catalog; show 1-indexed to humans.
-    parts.push(`rank #${suggested.rank + 1} (was #${current.rank + 1})`)
-  }
+  const vendor = providerOf(suggested.id)
+  if (vendor && vendor !== providerOf(current.id)) parts.push(`by ${vendor}`)
   return parts.join(" • ")
 }
 

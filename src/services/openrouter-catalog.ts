@@ -25,8 +25,15 @@ export interface OpenRouterModelInfo {
   supportsImages: boolean
   /** Unix-seconds timestamp from OpenRouter's `created` field. 0 if missing. */
   createdAt: number
-  /** Ranking index from OpenRouter's default sort order (lower = more popular). */
-  rank: number
+  /**
+   * Position in OpenRouter's /models response. This is CATALOG ORDER, which is
+   * newest-first, NOT a popularity ranking: index 0 is simply the most recently
+   * listed model, whoever published it. OpenRouter exposes no usage or
+   * popularity figure through its public API, and `?order=` is ignored. Treating
+   * this as a quality signal is what made upgrade suggestions favour brand-new
+   * models from unknown vendors.
+   */
+  catalogOrder: number
 }
 
 type CatalogCache = { at: number; data: OpenRouterModelInfo[] }
@@ -95,7 +102,7 @@ export async function fetchOpenRouterModels(): Promise<{ models: OpenRouterModel
         supportsReasoning: supported.includes("reasoning") || supported.includes("include_reasoning"),
         supportsImages,
         createdAt: typeof e.created === "number" ? e.created : 0,
-        rank: idx,
+        catalogOrder: idx,
       }
       return info
     })

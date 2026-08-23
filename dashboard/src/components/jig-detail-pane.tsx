@@ -29,6 +29,7 @@ import { PendingChangesBanner } from "@/components/pending-changes-banner";
 import { ServiceIcon } from "@/components/service-icon";
 import { PaneHeader } from "@/components/pane-header";
 import { PaneSection } from "@/components/pane-section";
+import { JigStatePanel } from "@/components/jig-state";
 import { SegmentedControl } from "@/components/segmented-control";
 import { LoadingState, Notice } from "@/components/state-panel";
 import { TriggerEditor } from "@/components/trigger-editor";
@@ -115,8 +116,53 @@ function ScheduleSection({ schedule, jigId, onRefresh }: { schedule: ScheduleInf
         {schedule.triggerType === "webhook" && schedule.webhookUrl && (
           <WebhookUrlRow url={schedule.webhookUrl} />
         )}
+        {schedule.triggerType === "email" && <InboxAddressRow address={schedule.inboxAddress} />}
       </div>
     </PaneSection>
+  );
+}
+
+/**
+ * The address an email-triggered jig receives on. Provisioning happens on the
+ * scheduler's next sync, so the address can legitimately be missing for up to a
+ * minute after the jig is created, say so rather than showing a blank.
+ */
+function InboxAddressRow({ address }: { address?: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    if (!address) return;
+    try {
+      await navigator.clipboard.writeText(address);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      toast.error("Failed to copy");
+    }
+  }
+
+  return (
+    <div className="border-t border-[#1f1f23] px-3 py-2">
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <span className="text-[9px] text-[#444] uppercase tracking-wider">Email it at</span>
+        {address && (
+          <button
+            onClick={copy}
+            className="text-[9px] text-[#666] hover:text-emerald-400 transition-colors"
+            type="button"
+          >
+            {copied ? "copied" : "copy"}
+          </button>
+        )}
+      </div>
+      {address ? (
+        <code className="block text-[10px] font-mono text-[#888] break-all">{address}</code>
+      ) : (
+        <span className="text-[10px] text-[#666]">
+          Setting up the address, it appears within a minute. Needs AgentMail in Settings.
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -781,6 +827,18 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
           </div>
         </PaneSection>
 
+        {((jig.memory?.length ?? 0) > 0 || (jig.reminders?.length ?? 0) > 0
+          || jig.schedule?.triggerType === "email") && (
+          <PaneSection title="Memory">
+            <JigStatePanel
+              jigId={jigId}
+              memory={jig.memory ?? []}
+              reminders={jig.reminders ?? []}
+              onRefresh={onRefresh}
+            />
+          </PaneSection>
+        )}
+
         <PaneSection title="History">
           <JigVersions
             jigId={jigId}
@@ -1067,7 +1125,7 @@ function ModelSelector({ jig, onChange }: { jig: Jig; onChange: () => void }) {
         supportsReasoning: false,
         supportsImages: false,
         createdAt: 0,
-        rank: 0,
+        catalogOrder: 0,
       };
       return [synthesized, ...head];
     }

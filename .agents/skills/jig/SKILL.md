@@ -5,9 +5,15 @@ description: Install, set up, connect, deploy and update a Jig instance. Use whe
 
 # Operating Jig
 
-Jig turns plain-English requests into versioned TypeScript workflows. This skill covers
-running an instance. It does not cover authoring jigs: for that, read `SKILL.md` in the
-repo root, completely, before touching workflow code.
+Jig turns plain-English requests into versioned TypeScript workflows. There are two skills and
+the split matters:
+
+- **This one** is how you operate an instance: install it, set it up, connect services, deploy
+  it, update it, and get a jig authored, approved and run.
+- **`SKILL.md` in the repo root** is how you WRITE the workflow code itself: the SDK, `ctx.step`,
+  `llm()` versus `agent()`, tool scoping. Read it completely before writing or editing a jig.
+
+Reach for that one when you are producing TypeScript, this one for everything else.
 
 ## Ground rules
 
@@ -121,6 +127,48 @@ and `jig debug` command against that instance works without asking again.
 working directory. One directory above it, `bun run jig` matches the `jig` FOLDER rather than the
 package script and exits 0 having printed nothing. Any `bun run jig` command that produces no
 output at all means exactly that: check `pwd` before believing the command is broken.
+
+## Create and run a jig
+
+Writing the workflow code is a different skill: read `SKILL.md` in the repo root, completely,
+before you write or edit any jig. This section is only about which commands move a jig around
+and how a jig gets made in the first place, which differs by where the instance runs.
+
+**Local instance.** `jig new` starts the authoring agent, which writes the code and leaves it
+pending for review:
+
+```sh
+bun run jig new "email me a random number, once"
+bun run jig pending <jig-id>            # read the diff it proposes
+bun run jig pending <jig-id> approve    # or: discard
+bun run jig run <jig-id> --dry-run      # prove it without side effects
+bun run jig run <jig-id>                # trigger it once for real
+```
+
+**Hosted instance. `jig new` and `jig edit` cannot reach it.** Both call `ensureServer()` and
+post to a LOCAL server, so they always author against localhost no matter which remote is
+active. There is no CLI command that creates a NEW jig on a deployed instance. Say so rather
+than reverse-engineering the HTTP API: new jigs are authored in the dashboard's chat, and the
+CLI does everything after.
+
+```sh
+bun run jig debug ls                          # what is on the remote
+bun run jig debug pull <jig-id> --out=jig.ts  # its live code
+bun run jig debug push <jig-id> jig.ts        # upload as PENDING
+bun run jig debug push <jig-id> jig.ts --approve   # skip the review gate
+bun run jig debug run <jig-id>                # trigger once, stream the logs
+bun run jig debug tail                        # keep watching
+```
+
+`pull` → edit → `push` → `run` → `tail` is the supported loop for changing a deployed jig from
+your own editor. `push` leaves the change pending on purpose, which is the same human gate the
+dashboard and auto-repair use; `--approve` opts out of it.
+
+All of these need a cached session, which is what pairing above is for, and they accept a
+`[handle]` argument when more than one instance is known.
+
+**Never hand-edit files under `jigs/`.** SQLite is the source of truth; a hand edit is
+overwritten by the next write and skips version history entirely.
 
 ## Connect services
 

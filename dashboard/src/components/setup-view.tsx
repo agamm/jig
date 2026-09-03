@@ -485,7 +485,13 @@ function CliPairing() {
     return () => clearInterval(timer);
   }, [code, paired]);
 
-  const command = code ? `bun run jig pair ${code} --url=${typeof window === "undefined" ? "" : window.location.origin}` : "";
+  // `bunx github:` rather than `bun run jig`, because this line gets pasted into
+  // a terminal or an agent whose working directory we do not control. `bun run
+  // jig` needs the clone, and one directory above it matches the `jig` FOLDER
+  // instead of the script and exits silently. This form needs no clone at all.
+  const command = code
+    ? `bunx --bun github:agamm/jig pair ${code} --url=${typeof window === "undefined" ? "" : window.location.origin}`
+    : "";
 
   const generate = async () => {
     setBusy(true);
@@ -513,10 +519,8 @@ function CliPairing() {
           <h3 className="text-[14px] font-medium text-[#ededed]">Connect the CLI</h3>
           <p className="mt-1 text-[12px] leading-relaxed text-[var(--text-dim)]">
             Lets <code className="text-[#ededed]">jig</code> on your machine talk to this instance. Single-use code,
-            good for 10 minutes, so the command is safe to paste to a coding agent.{" "}
-            <strong className="text-[var(--text-muted)]">Run it inside your Jig checkout</strong>: from the folder above
-            it, <code className="text-[#ededed]">bun run jig</code> matches the directory instead of the script and exits
-            silently.
+            good for 10 minutes, so the command is safe to paste to a coding agent. Runs from any directory and needs no
+            checkout; the first run fetches the CLI, so give it a moment.
           </p>
         </div>
         <Button size="sm" variant={code ? "subtle" : "success"} onClick={() => void generate()} disabled={busy}>

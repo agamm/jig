@@ -107,17 +107,20 @@ Ask the user to open the dashboard's **Setup** page, press **Generate command** 
 the CLI", and paste you the line it produces:
 
 ```sh
-bun run jig pair <code> --url=https://<their-instance>
+bunx --bun github:agamm/jig pair <code> --url=https://<their-instance>
 ```
+
+`bunx` on purpose: it runs from any directory and needs no checkout, so you can paste it
+wherever you happen to be. The first run fetches the CLI and takes a moment.
 
 The code is single use and expires in ten minutes, which is what makes it safe to paste. Running
 it caches a 30-day session in `~/.config/jig/remotes/`, and every later `jig setup`, `jig update`
 and `jig debug` command against that instance works without asking again.
 
-**Run it from inside the clone.** One directory up, `bun run jig` resolves the `jig` FOLDER
-rather than the package script and exits 0 having done nothing at all. If any `bun run jig`
-command produces no output whatsoever, that is what happened: check `pwd` before assuming the
-command is broken.
+**One trap worth knowing for the other commands.** `bun run jig …` needs the clone as your
+working directory. One directory above it, `bun run jig` matches the `jig` FOLDER rather than the
+package script and exits 0 having printed nothing. Any `bun run jig` command that produces no
+output at all means exactly that: check `pwd` before believing the command is broken.
 
 ## Connect services
 

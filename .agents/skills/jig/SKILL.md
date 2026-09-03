@@ -98,6 +98,22 @@ step with its live status, a button per card so one thing can be fixed without r
 others, and a panel showing where the instance runs and whether `/data` survives a restart.
 Point a human there; use the CLI when you are driving.
 
+### Connecting the CLI to a hosted instance
+
+`jig setup` signs itself in when it needs to, prompting for the instance password or reading
+`JIG_PASSWORD`. You have neither, and a password must not pass through a chat.
+
+Ask the user to open the dashboard's **Setup** page, press **Generate command** under "Connect
+the CLI", and paste you the line it produces:
+
+```sh
+bun run jig pair <code> --url=https://<their-instance>
+```
+
+The code is single use and expires in ten minutes, which is what makes it safe to paste. Running
+it caches a 30-day session in `~/.config/jig/remotes/`, and every later `jig setup`, `jig update`
+and `jig debug` command against that instance works without asking again.
+
 ## Connect services
 
 ```sh

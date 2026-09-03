@@ -83,6 +83,10 @@ export function startOpenRouterOAuth(): Promise<ApiResponse<"startOpenRouterOAut
   return fetchApi("startOpenRouterOAuth", "/api/openrouter/oauth/start", { method: "POST" })
 }
 
+export function createPairingCode(): Promise<ApiResponse<"createPairingCode">> {
+  return fetchApi("createPairingCode", "/api/cli/pair", { method: "POST" })
+}
+
 export function setupPassword(password: string, setupCode?: string): Promise<ApiResponse<"setupPassword">> {
   return fetchApi("setupPassword", "/api/setup-password", {
     method: "POST",

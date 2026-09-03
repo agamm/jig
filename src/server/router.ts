@@ -28,6 +28,8 @@ const ROUTES: [pattern: string, handler: string][] = [
   ["/api/oauth/callback", "oauthCallback"],
   ["/api/openrouter/oauth/start", "startOpenRouterOAuth"],
   ["/api/openrouter/callback", "openRouterOAuthCallback"],
+  ["/api/cli/pair", "createPairingCode"],
+  ["/api/cli/pair/claim", "claimPairingCode"],
   ["/api/events", "liveUpdates"],
 
   ["/api/models", "models"],

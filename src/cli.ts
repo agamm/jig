@@ -303,6 +303,12 @@ try {
       break
     }
 
+    case "pair": {
+      const { runPair } = await import("./cli-remote/pair.js")
+      await runPair(rest)
+      break
+    }
+
     case "unlock": {
       const { resolveActiveRemote, listRemotes } = await import("./cli-remote/manifest.js")
       const { ensureUnlocked } = await import("./cli-remote/unlock.js")
@@ -365,6 +371,7 @@ try {
       console.log(`  jig deploy --update    Redeploy current code to the linked Railway project`)
       console.log(`  jig update [handle]    Update a deployed jig to the latest tag (rolls back on failure)`)
       console.log(`  jig doctor [handle]    Health-check deployed instances`)
+      console.log(`  jig pair <code>        Cache a CLI session from a dashboard pairing code`)
       console.log(`  jig unlock [handle]    Unlock a deployed instance after a restart (hidden prompt)`)
       console.log(`  jig debug <sub>        Remote runs, logs, and jig pull/push (see "jig debug")`)
       break

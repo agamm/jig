@@ -709,6 +709,17 @@ export interface OpenRouterOAuthStart {
   callbackUrl: string
 }
 
+/** One-time code that lets a CLI cache an admin session without the password. */
+export interface PairingCode {
+  code: string
+  expiresInS: number
+}
+
+export interface PairingClaim {
+  /** The `jig-admin` session value to store in the remote manifest. */
+  token: string
+}
+
 export interface ApiContracts {
   health: ApiContract<void, HealthResponse>
   completeOnboarding: ApiContract<{ openrouter_key?: string }, OkResponse>
@@ -719,6 +730,8 @@ export interface ApiContracts {
   modelsCatalog: ApiContract<void, OpenRouterCatalogResponse>
   openrouterCredits: ApiContract<void, OpenRouterCredits | null>
   startOpenRouterOAuth: ApiContract<void, OpenRouterOAuthStart>
+  createPairingCode: ApiContract<void, PairingCode>
+  claimPairingCode: ApiContract<{ code: string }, PairingClaim>
   classifyFailure: ApiContract<{ error: string }, { needsReauth: boolean }>
   modelUpgrades: ApiContract<void, ModelUpgradesResponse>
   applyModelUpgrade: ApiContract<ApplyModelUpgradeRequest, ApplyModelUpgradeResponse>

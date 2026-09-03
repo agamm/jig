@@ -167,6 +167,22 @@ export function createApiServer(port: number) {
           }
           case "openRouterOAuthCallback":
             return handleOpenRouterCallback(url)
+          case "createPairingCode": {
+            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+            const { mintPairingCode } = await import("./auth/pairing.js")
+            return apiJson("createPairingCode", mintPairingCode())
+          }
+          case "claimPairingCode": {
+            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+            const body = (await req.json().catch(() => ({}))) as { code?: unknown }
+            const code = typeof body.code === "string" ? body.code : ""
+            const { claimPairingCode } = await import("./auth/pairing.js")
+            if (!code || !claimPairingCode(code)) {
+              return json({ error: "That pairing code is not valid, already used, or expired." }, 401)
+            }
+            const { issueToken } = await import("./auth/session.js")
+            return apiJson("claimPairingCode", { token: issueToken() })
+          }
           case "liveUpdates":
             return createLiveUpdatesResponse()
           case "models": {

@@ -11,6 +11,7 @@ import { Spinner } from "@/components/spinner";
 import { Notice } from "@/components/state-panel";
 import {
   completeOnboarding,
+  createPairingCode,
   connectConnection,
   fetchAgentMailSettings,
   fetchConnections,
@@ -291,6 +292,8 @@ export function SetupView() {
           </Notice>
         ) : null}
 
+        <CliPairing />
+
         <div className="flex flex-col gap-3">
           {SETUP_STEPS.map((step) => {
             const state = steps[step.id];
@@ -361,26 +364,38 @@ export function SetupView() {
 
                 {asking ? (
                   <form
-                    className="mt-3 flex gap-2 pl-[30px]"
+                    // Keyed on the question so a new one remounts the field:
+                    // otherwise the box silently swaps its meaning under the
+                    // user, and autoFocus does not re-fire on the same element.
+                    key={prompt.question}
+                    className="mt-3 pl-[30px]"
                     onSubmit={(e) => {
                       e.preventDefault();
                       answerPrompt();
                     }}
                   >
+                    <label className="mb-1.5 block text-[12px] text-[#ededed]">{prompt.question}</label>
+                    {prompt.secret ? null : (
+                      <p className="mb-1.5 text-[11px] text-[var(--text-faint)]">
+                        Saved the key. One more thing before alerts work.
+                      </p>
+                    )}
+                    <div className="flex gap-2">
                     <TextInput
                       autoFocus
                       type={prompt.secret ? "password" : "text"}
-                      placeholder={prompt.question}
+                      placeholder={prompt.secret ? "am_..." : "you@example.com"}
                       value={promptValue}
                       onChange={(e) => setPromptValue(e.target.value)}
                       className="flex-1"
                     />
-                    <Button type="submit" variant="accent" size="sm" disabled={!promptValue.trim()}>
+                    <Button type="submit" variant="success" size="sm" disabled={!promptValue.trim()}>
                       Save
                     </Button>
                     <Button type="button" size="sm" onClick={cancelPrompt}>
                       Cancel
                     </Button>
+                    </div>
                   </form>
                 ) : null}
               </section>
@@ -389,6 +404,75 @@ export function SetupView() {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Connect the CLI without the password.
+ *
+ * The command a user needed here used to be `jig unlock`, which prompts for the
+ * instance password: fine in your own terminal, impossible to hand to a coding
+ * agent. A pairing code is single use and expires in ten minutes, so the whole
+ * line is safe to paste into a chat.
+ */
+function CliPairing() {
+  const [code, setCode] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const command = code ? `bun run jig pair ${code} --url=${typeof window === "undefined" ? "" : window.location.origin}` : "";
+
+  const generate = async () => {
+    setBusy(true);
+    setErr(null);
+    setCopied(false);
+    try {
+      const res = await createPairingCode();
+      setCode(res.code);
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="rounded-xl border border-[#1f1f23] bg-[#0d0d0f] p-4">
+      <div className="flex items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <h3 className="text-[14px] font-medium text-[#ededed]">Connect the CLI</h3>
+          <p className="mt-1 text-[12px] leading-relaxed text-[var(--text-dim)]">
+            Lets <code className="text-[#ededed]">jig</code> on your machine talk to this instance. Single-use code,
+            good for 10 minutes, so the command is safe to paste to a coding agent.
+          </p>
+        </div>
+        <Button size="sm" variant={code ? "subtle" : "success"} onClick={() => void generate()} disabled={busy}>
+          {busy ? "Working…" : code ? "New code" : "Generate command"}
+        </Button>
+      </div>
+
+      {code ? (
+        <div className="mt-3 flex items-center gap-2">
+          <code className="flex-1 truncate rounded-md border border-[#1f1f23] bg-[#111113] px-3 py-2 font-mono text-[11px] text-[#ededed]">
+            {command}
+          </code>
+          <Button
+            size="sm"
+            onClick={() => {
+              void navigator.clipboard.writeText(command).then(
+                () => setCopied(true),
+                () => setErr("Could not write to the clipboard. Select the text and copy it."),
+              );
+            }}
+          >
+            {copied ? "Copied" : "Copy"}
+          </Button>
+        </div>
+      ) : null}
+
+      {err ? <p className="mt-2 text-[12px] text-rose-300">{err}</p> : null}
+    </section>
   );
 }
 

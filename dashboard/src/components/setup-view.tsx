@@ -27,6 +27,7 @@ import type { HealthResponse } from "@shared/api";
 import {
   SETUP_STEPS,
   runSetupFlow,
+  summarizeSetup,
   type SetupBackend,
   type SetupEvent,
   type SetupIO,
@@ -50,6 +51,8 @@ type StepState = {
   status: "unknown" | "checking" | "waiting" | "ready" | "failed" | "skipped";
   detail?: string;
   authUrl?: string;
+  /** The browser refused to open the tab, so the link is the only way through. */
+  blocked?: boolean;
 };
 
 type Prompt = {
@@ -89,6 +92,35 @@ function statusPill(state: StepState) {
   );
 }
 
+/**
+ * Just the reads `summarizeSetup` performs. The write paths are supplied
+ * separately when the wizard actually runs, so a passive status check cannot
+ * accidentally change anything.
+ */
+function readOnlyBackend(): SetupBackend {
+  const unused = () => {
+    throw new Error("read-only backend");
+  };
+  return {
+    openRouterCredits: async () => {
+      const credits = await fetchOpenRouterCredits().catch(() => null);
+      return credits ? { ok: true, balance: credits.remaining } : { ok: false, error: "No usable OpenRouter key yet." };
+    },
+    agentMailStatus: async () => {
+      const s = await fetchAgentMailSettings();
+      return { hasKey: s.hasKey, owner: s.owner, address: s.address, canSend: s.canSend, webhookReady: s.webhookReady };
+    },
+    listConnections: () => fetchConnections(),
+    startOpenRouterOAuth: unused,
+    setOpenRouterKey: unused,
+    saveAgentMail: unused,
+    provisionAgentMailInbox: unused,
+    sendAgentMailTest: unused,
+    connect: unused,
+    verify: unused,
+  };
+}
+
 export function SetupView() {
   const [steps, setSteps] = useState<Record<SetupStepId, StepState>>(INITIAL);
   const [health, setHealth] = useState<HealthResponse | null>(null);
@@ -98,31 +130,33 @@ export function SetupView() {
   const [finished, setFinished] = useState<{ verified: SetupStepId[]; skipped: SetupStepId[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const promptRef = useRef<Prompt | null>(null);
+  const currentStep = useRef<SetupStepId | null>(null);
 
   const patch = useCallback((id: SetupStepId, next: Partial<StepState>) => {
     setSteps((prev) => ({ ...prev, [id]: { ...prev[id], ...next } }));
   }, []);
 
-  /** Passive read, so the page shows where you stand before you press anything. */
+  /**
+   * Passive read, so the page shows where you stand before you press anything.
+   * The rules for "satisfied" come from the shared module, the same ones the CLI
+   * uses to decide whether running the wizard is worth anyone's time.
+   */
   const refreshStatus = useCallback(async () => {
-    const [credits, mail, connections, h] = await Promise.all([
-      fetchOpenRouterCredits().catch(() => null),
-      fetchAgentMailSettings().catch(() => null),
-      fetchConnections().catch(() => []),
+    const [state, h] = await Promise.all([
+      summarizeSetup(readOnlyBackend()).catch(() => null),
       fetchHealth().catch(() => null),
     ]);
     setHealth(h);
-    setSteps({
-      openrouter: credits
-        ? { status: "ready", detail: `balance $${credits.remaining.toFixed(2)}` }
-        : { status: "failed", detail: "No usable key yet." },
-      agentmail: mail?.canSend
-        ? { status: "ready", detail: `alerts go to ${mail.owner} from ${mail.address}` }
-        : { status: "failed", detail: mail?.hasKey ? "Key saved, inbox not provisioned yet." : "No AgentMail key yet." },
-      composio: connections.find((c) => c.name === "composio")?.connected
-        ? { status: "ready", detail: "connected" }
-        : { status: "unknown", detail: "Not connected. Optional, but it is the one that unlocks most apps." },
-    });
+    if (!state) return;
+    setSteps(
+      state.reduce(
+        (acc, s) => ({
+          ...acc,
+          [s.id]: { status: s.satisfied ? "ready" : s.required ? "failed" : "unknown", detail: s.detail },
+        }),
+        {} as Record<SetupStepId, StepState>,
+      ),
+    );
   }, []);
 
   useEffect(() => {
@@ -171,8 +205,11 @@ export function SetupView() {
       confirm: async () => true, // the user pressed Run; do not ask again per step
       openUrl: async (url) => {
         try {
-          window.open(url, "_blank", "noopener,noreferrer");
-          return true;
+          // Opened after a network round-trip rather than straight off the
+          // click, so a popup blocker can refuse it. A null handle is that
+          // refusal, and the caller renders the link instead.
+          const win = window.open(url, "_blank", "noopener,noreferrer");
+          return win !== null;
         } catch {
           return false;
         }
@@ -210,13 +247,16 @@ export function SetupView() {
     function renderEvent(event: SetupEvent) {
       switch (event.type) {
         case "step-begin":
-          patch(event.id, { status: "checking", detail: undefined, authUrl: undefined });
+          currentStep.current = event.id;
+          patch(event.id, { status: "checking", detail: undefined, authUrl: undefined, blocked: false });
           break;
         case "step-satisfied":
           patch(event.id, { status: "ready", detail: event.detail });
           break;
         case "open-url":
-          if (event.purpose.includes("OpenRouter")) patch("openrouter", { authUrl: event.url });
+          // Held for whichever step is mid-flight. Losing it for composio meant
+          // a blocked popup left the user with nothing to click.
+          patch(currentStep.current ?? "openrouter", { authUrl: event.url, blocked: !event.opened });
           break;
         case "waiting":
           patch(event.id, { status: "waiting", detail: event.detail });
@@ -229,6 +269,10 @@ export function SetupView() {
           break;
         case "step-failed":
           patch(event.id, { status: "failed", detail: event.message });
+          // Also held at page level: the status refresh that runs when the flow
+          // ends rewrites every card from the server's view, which would erase
+          // the one thing explaining what just went wrong.
+          setError(`${event.id}: ${event.message}`);
           break;
         case "step-skipped":
           patch(event.id, { status: "skipped", detail: event.reason });
@@ -286,7 +330,7 @@ export function SetupView() {
         {error ? <Notice tone="danger" title="Setup stopped">{error}</Notice> : null}
 
         {finished && !error ? (
-          <Notice tone="success" title="Setup complete">
+          <Notice tone="success" title={finished.verified.length ? "Setup complete" : "Nothing changed"}>
             Verified: {finished.verified.join(", ") || "none"}.
             {finished.skipped.length ? ` Skipped: ${finished.skipped.join(", ")}.` : ""}
           </Notice>
@@ -351,14 +395,18 @@ export function SetupView() {
                   </p>
                 ) : null}
 
-                {state.authUrl && state.status === "waiting" ? (
+                {state.authUrl && (state.status === "waiting" || state.status === "checking") ? (
                   <a
-                    className="mt-2 inline-block pl-[30px] text-[12px] text-emerald-400 underline"
+                    className={`mt-2 inline-block pl-[30px] text-[12px] underline ${
+                      state.blocked ? "font-medium text-amber-300" : "text-emerald-400"
+                    }`}
                     href={state.authUrl}
                     target="_blank"
                     rel="noreferrer"
                   >
-                    Authorization did not open? Use this link.
+                    {state.blocked
+                      ? "Your browser blocked the popup. Open the authorization here."
+                      : "Authorization did not open? Use this link."}
                   </a>
                 ) : null}
 

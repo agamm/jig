@@ -19,7 +19,7 @@
  * already satisfied skips its own dialogue, so pre-seeding needs no second code
  * path inside the wizard.
  */
-import { runSetupFlow, type SetupBackend, type SetupEvent, type SetupIO } from "../../shared/setup-flow.js"
+import { runSetupFlow, summarizeSetup, type SetupBackend, type SetupEvent, type SetupIO } from "../../shared/setup-flow.js"
 import type { Connection, OpenRouterCredits, VerifyConnectionResponse } from "../../shared/api.js"
 import { promptHiddenPassword } from "../cli-remote/unlock.js"
 
@@ -38,6 +38,8 @@ export interface SetupArgs {
   railway: boolean
   /** Set up a local instance instead of a hosted one. */
   local: boolean
+  /** Walk every step even when the instance already reports itself ready. */
+  force: boolean
 }
 
 export function parseSetupArgs(argv: string[]): SetupArgs {
@@ -52,6 +54,7 @@ export function parseSetupArgs(argv: string[]): SetupArgs {
     assumeYes: argv.includes("--yes") || argv.includes("-y"),
     railway: argv.includes("--railway"),
     local: argv.includes("--local"),
+    force: argv.includes("--force"),
   }
 }
 
@@ -428,6 +431,28 @@ export async function runSetup(argv: string[], ensureLocalServer: () => Promise<
   // is already satisfied never opens its dialogue, so a caller with no browser
   // can still get through a step whose normal path is a browser.
   await preseed(args, backend)
+
+  // The dashboard is the main way people set this up, so by the time anyone
+  // reaches for the CLI the instance is often already done. Walking the wizard
+  // then is not harmless: the alerts step proves itself by sending mail, so a
+  // no-op run emails the owner. Report and stop instead.
+  if (!args.force) {
+    const state = await summarizeSetup(backend)
+    const outstanding = state.filter((s) => s.required && !s.satisfied)
+    if (outstanding.length === 0) {
+      console.log("Already set up. Nothing to do.\n")
+      for (const s of state) {
+        console.log(`  ${s.satisfied ? "\u2713" : "\u25CB"} ${s.id}: ${s.detail}`)
+      }
+      const optional = state.filter((s) => !s.required && !s.satisfied)
+      if (optional.length > 0) {
+        console.log(`\n  Optional and not connected: ${optional.map((s) => s.id).join(", ")}.`)
+      }
+      console.log(`\n  Re-check or change anything on the dashboard's Setup page${dashboardUrl ? ` (${dashboardUrl}/?view=setup)` : ""}.`)
+      console.log(`  Run \`jig setup --force\` to walk every step again.`)
+      return
+    }
+  }
 
   try {
     await runSetupFlow(io, backend, {

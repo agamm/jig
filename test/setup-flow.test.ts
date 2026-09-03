@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { runSetupFlow, type SetupBackend, type SetupEvent, type SetupIO } from "../shared/setup-flow.js"
+import { runSetupFlow, summarizeSetup, type SetupBackend, type SetupEvent, type SetupIO } from "../shared/setup-flow.js"
 import type { Connection, VerifyConnectionResponse } from "../shared/api.js"
 import { parseSetupArgs } from "../src/cli-setup/index.js"
 
@@ -264,6 +264,39 @@ describe("runSetupFlow", () => {
     const rec = events.find((e) => e.type === "recommendations") as { apps: { name: string }[]; dashboardUrl?: string }
     expect(rec.apps.map((a) => a.name)).toEqual(["Gmail", "Google Calendar", "Telegram or Slack"])
     expect(rec.dashboardUrl).toBe("https://dashboard.composio.dev/")
+  })
+})
+
+describe("summarizeSetup", () => {
+  it("reports a finished instance as satisfied WITHOUT sending a test email", async () => {
+    // The wizard proves alerts by mailing the owner. Asking must not, or every
+    // status check on a healthy instance spams them.
+    let sends = 0
+    const state = await summarizeSetup(makeBackend({ sendAgentMailTest: async () => { sends++; return { ok: true } } }))
+
+    expect(sends).toBe(0)
+    expect(state.filter((s) => s.satisfied).map((s) => s.id)).toEqual(["openrouter", "agentmail", "composio"])
+  })
+
+  it("marks a required step unsatisfied when its proof is missing", async () => {
+    const state = await summarizeSetup(
+      makeBackend({
+        agentMailStatus: async () => ({ hasKey: true, owner: null, address: null, canSend: false, webhookReady: false }),
+      }),
+    )
+    const mail = state.find((s) => s.id === "agentmail")!
+    expect({ satisfied: mail.satisfied, required: mail.required }).toEqual({ satisfied: false, required: true })
+    expect(mail.detail).toMatch(/not sending yet/)
+  })
+
+  it("survives a backend that cannot be reached", async () => {
+    const dead = makeBackend({
+      openRouterCredits: async () => { throw new Error("network") },
+      agentMailStatus: async () => { throw new Error("network") },
+      listConnections: async () => { throw new Error("network") },
+    })
+    const state = await summarizeSetup(dead)
+    expect(state.every((s) => !s.satisfied)).toBe(true)
   })
 })
 

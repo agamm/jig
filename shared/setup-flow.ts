@@ -138,6 +138,53 @@ export interface SetupOptions {
 const DEFAULT_OAUTH_TIMEOUT_MS = 5 * 60_000
 const DEFAULT_POLL_INTERVAL_MS = 2_000
 
+/** What each step reports when asked, without doing anything about it. */
+export interface SetupStepState {
+  id: SetupStepId
+  required: boolean
+  satisfied: boolean
+  detail: string
+}
+
+/**
+ * Read-only "where does this instance stand".
+ *
+ * Separate from `runSetupFlow` because asking is not the same as fixing: the
+ * wizard's agentmail step proves itself by SENDING mail, so re-running it on a
+ * finished instance mails the owner for no reason. Callers that only want to
+ * know (the CLI deciding whether to bother, the dashboard drawing its cards) ask
+ * here, and the rules for "satisfied" stay in one place either way.
+ */
+export async function summarizeSetup(backend: SetupBackend): Promise<SetupStepState[]> {
+  const [credits, mail, connections] = await Promise.all([
+    backend.openRouterCredits().catch(() => ({ ok: false, error: "Could not reach the instance." })),
+    backend.agentMailStatus().catch(() => null),
+    backend.listConnections().catch(() => [] as Connection[]),
+  ])
+
+  const composio = connections.find((c) => c.name === "composio")
+  const byId: Record<SetupStepId, { satisfied: boolean; detail: string }> = {
+    openrouter: {
+      satisfied: credits.ok,
+      detail: credits.ok ? describeBalance((credits as { balance?: number }).balance) : ((credits as { error?: string }).error ?? "No usable key yet."),
+    },
+    agentmail: {
+      satisfied: Boolean(mail?.canSend && mail.owner),
+      detail: mail?.canSend
+        ? `alerts go to ${mail.owner} from ${mail.address}`
+        : mail?.hasKey
+          ? "Key saved, but the inbox is not sending yet."
+          : "No AgentMail key yet.",
+    },
+    composio: {
+      satisfied: Boolean(composio?.connected),
+      detail: composio?.connected ? "connected" : composio ? "Not connected." : "Not in this instance's registry.",
+    },
+  }
+
+  return SETUP_STEPS.map((step) => ({ id: step.id, required: step.required, ...byId[step.id] }))
+}
+
 export async function runSetupFlow(
   io: SetupIO,
   backend: SetupBackend,

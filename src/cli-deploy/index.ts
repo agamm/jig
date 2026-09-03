@@ -8,7 +8,8 @@
  *   1. Detect `railway` binary; offer `bun install -g @railway/cli`.
  *   2. `railway login` (opens browser) if not already logged in.
  *   3. Prompt for a project slug.
- *   4. `railway init --name <slug>`.
+ *   4. `railway init --name <slug>`, then `railway add --service <slug>` when
+ *      the CLI did not create one (5.45+ does not).
  *   5. `railway volume add <slug>-data --mount-path /data`.
  *   6. `railway up --detach` — uploads local repo, Railway builds + runs.
  *   7. `railway domain` → public URL.
@@ -334,9 +335,25 @@ export async function runDeploy(targetArg?: string): Promise<void> {
     process.exit(1)
   }
 
+  // Step 4a: make sure a service exists.
+  //
+  // Older Railway CLIs created one during `init`, and this script assumed that
+  // for so long that the assumption outlived it: as of 5.45 `init` makes the
+  // project and nothing else. The link below then failed, the volume had no
+  // service to attach to, and deploy died at the volume step needing a manual
+  // repair. getStatus() returns null exactly when the project has no service
+  // instance, so it doubles as the version check.
+  if (!(await getStatus())) {
+    console.log(`  Creating service "${slug}"...`)
+    const addCode = await railwayInteractive(["add", "--service", slug])
+    if (addCode !== 0) {
+      console.error(`Could not create a service in "${slug}". Add one in the Railway dashboard and re-run \`jig deploy --update\`.`)
+      process.exit(1)
+    }
+  }
+
   // Step 4b: link the newly-created service so subsequent volume/up calls
-  // target it without interactive prompts. Railway creates a service named
-  // after the project during init.
+  // target it without interactive prompts.
   console.log(`  Linking cwd to service "${slug}"...`)
   await linkService(slug).catch(() => {
     console.log(`  (service link non-zero; continuing — may already be linked)`)

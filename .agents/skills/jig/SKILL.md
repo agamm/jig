@@ -24,6 +24,12 @@ Reach for that one when you are producing TypeScript, this one for everything el
   built so nobody types a secret at you.
 - **Never automate the dashboard in a browser.** Everything it does has a CLI path; driving it
   with browser tools lands you on a login screen you cannot pass, and wastes the user's time.
+- **Probe before you state.** Never report what is connected, what tools exist, or what a tool
+  returns from inference, from a file on disk, or from what was true earlier in the session. Run
+  the command that answers it, then say what came back. "Connected" in particular is layered:
+  a connection can be authorized while the apps inside it are not, so name which layer you
+  checked and how. If you catch yourself writing "X is not connected" without having just asked
+  the instance, stop and ask it.
 
 ## Ask before you start
 

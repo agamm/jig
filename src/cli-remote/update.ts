@@ -144,7 +144,8 @@ async function gitStash(): Promise<string | null> {
     .map((l) => l.trim())
     .filter(Boolean)
     .map((l) => l.split("\0"))
-    .find(([, msg]) => msg === label)?.[0]
+    // "On <branch>: <label>", not the bare label. See the same fix in cli.ts.
+    .find(([, msg]) => msg.includes(label))?.[0]
   return ref ?? null
 }
 

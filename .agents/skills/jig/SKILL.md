@@ -22,6 +22,8 @@ Reach for that one when you are producing TypeScript, this one for everything el
 - **Never commit runtime state**: `.env`, `.jig/`, `jig.db*`, `jig.log`, `runtime/`, `tmp/`.
 - **Never ask the user for an API key you could get from a browser authorization.** Setup is
   built so nobody types a secret at you.
+- **Never automate the dashboard in a browser.** Everything it does has a CLI path; driving it
+  with browser tools lands you on a login screen you cannot pass, and wastes the user's time.
 
 ## Ask before you start
 
@@ -130,12 +132,9 @@ output at all means exactly that: check `pwd` before believing the command is br
 
 ## Create and run a jig
 
-Writing the workflow code is a different skill: read `SKILL.md` in the repo root, completely,
-before you write or edit any jig. This section is only about which commands move a jig around
-and how a jig gets made in the first place, which differs by where the instance runs.
-
-**Local instance.** `jig new` starts the authoring agent, which writes the code and leaves it
-pending for review:
+Coding agents are the main way jigs get written, so this is a first-class CLI path, not a
+fallback. Writing the workflow code itself is a different skill: read `SKILL.md` in the repo
+root, completely, before you write or edit any jig.
 
 ```sh
 bun run jig new "email me a random number, once"
@@ -145,11 +144,16 @@ bun run jig run <jig-id> --dry-run      # prove it without side effects
 bun run jig run <jig-id>                # trigger it once for real
 ```
 
-**Hosted instance. `jig new` and `jig edit` cannot reach it.** Both call `ensureServer()` and
-post to a LOCAL server, so they always author against localhost no matter which remote is
-active. There is no CLI command that creates a NEW jig on a deployed instance. Say so rather
-than reverse-engineering the HTTP API: new jigs are authored in the dashboard's chat, and the
-CLI does everything after.
+**`jig new` authors on the instance you deployed**, not on this machine. It resolves the active
+remote from `~/.config/jig/remotes/` and posts to its authoring agent over the paired session,
+and it prints which instance it chose before it starts. Add `--local` when you mean this
+machine, or `--handle=<name>` to pick between several instances.
+
+If the remote has no cached session it refuses rather than quietly authoring locally, because
+a jig on the wrong instance is a mistake you notice much later. Pair it first: see "Connecting
+the CLI to a hosted instance" above.
+
+Once a jig exists on a remote, the rest of the loop is `jig debug`:
 
 ```sh
 bun run jig debug ls                          # what is on the remote
@@ -161,11 +165,13 @@ bun run jig debug tail                        # keep watching
 ```
 
 `pull` → edit → `push` → `run` → `tail` is the supported loop for changing a deployed jig from
-your own editor. `push` leaves the change pending on purpose, which is the same human gate the
-dashboard and auto-repair use; `--approve` opts out of it.
+your own editor. `push` leaves the change pending on purpose, the same human gate the dashboard
+and auto-repair use; `--approve` opts out of it.
 
-All of these need a cached session, which is what pairing above is for, and they accept a
-`[handle]` argument when more than one instance is known.
+**Never drive the dashboard through a browser.** If you find yourself opening Chrome to click
+"New Jig", stop: you cannot authenticate that tab, the password is not yours to type, and every
+button there has a CLI equivalent above. A missing capability is something to report, not
+something to automate around.
 
 **Never hand-edit files under `jigs/`.** SQLite is the source of truth; a hand edit is
 overwritten by the next write and skips version history entirely.
@@ -207,33 +213,39 @@ volume loses everything on restart.
 
 ## Update
 
-Pick by how it was installed.
-
 ```sh
-# A local clone
-git pull && bun install
-
-# A Railway instance deployed from this clone
-bun run jig update [handle]
-
-# The exact working tree instead of a release tag
-bun run jig deploy --update
+bun run jig update            # latest code AND agent skills from GitHub
+bun run jig update --remote   # ...then redeploy your instance with it
 ```
 
-`jig update` deploys the newest **semver tag** on origin, waits for `/api/health` to report
-the new version, and rolls back to the previous commit if the deploy fails. It compares
-versions numerically and refuses to move an instance onto an older tag, because old code
-against a volume whose migrations already ran is data damage, not a failed update.
+`jig update` pulls this checkout forward (stashing local changes and restoring them after) and
+reinstalls dashboard deps. **If it reports that `.agents/skills` changed, re-read this file
+before continuing**: the instructions you are following may have just moved.
 
-Consequences worth stating to the user rather than working around:
+`--remote` deploys what you have just pulled, rather than the newest release tag, because tags
+lag `main` and the point of the flag is to ship the code in front of you. Redeploying is opt-in
+on purpose: it restarts someone's running automation, which should never be a side effect of
+updating a checkout.
 
-- If `main` is ahead of the newest tag, `jig update` correctly refuses. Tag the release
-  first: `git tag v0.2.0 && git push origin v0.2.0`.
-- A **template-button instance has no clone and no manifest**, so `jig update` cannot reach
-  it. Update it by redeploying the service in Railway, which re-pulls the image.
+For the tag-based flow with health-check rollback, use the handle form:
 
-Jigs, credentials and schedules live in the database (`/data` hosted, `jig.db` local), never
-in the source tree, so updating code does not touch them.
+```sh
+bun run jig update <handle>   # deploy the newest semver tag, roll back if it fails
+```
+
+It compares versions numerically and refuses to move an instance onto an older tag, since old
+code against a volume whose migrations already ran is data damage rather than a failed update.
+If `main` is ahead of the newest tag it correctly refuses; tag the release first
+(`git tag v0.2.0 && git push origin v0.2.0`).
+
+Other ways in:
+
+- **A local clone with no instance:** `git pull && bun install` is what `jig update` does.
+- **A Railway instance from the template button:** no clone and no manifest, so `jig update`
+  cannot reach it. Redeploy the service in Railway, which re-pulls the published image.
+
+Jigs, credentials and schedules live in the database (`/data` hosted, `jig.db` local), never in
+the source tree, so updating code does not touch them.
 
 ## When something is wrong
 

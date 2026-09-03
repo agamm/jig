@@ -122,62 +122,40 @@ async function ensureServer(): Promise<void> {
   throw new Error("Failed to start server")
 }
 
-async function agentCommand(instruction: string, jigId?: string): Promise<void> {
-  await ensureServer()
-
-  // Start agent session
-  const startRes = await fetch(`${API_BASE}/api/agent`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ instruction, jigId }),
-  })
-  if (!startRes.ok) {
-    const err = await startRes.json().catch(() => ({ error: "Failed" }))
-    console.error(err.error ?? "Failed to start agent")
+async function agentCommand(instruction: string, jigId?: string, argv: string[] = []): Promise<void> {
+  const { resolveAuthoringTarget } = await import("./cli-agent/target.js")
+  let target
+  try {
+    target = resolveAuthoringTarget(argv, API_BASE)
+  } catch (e: any) {
+    console.error(e?.message ?? e)
     process.exit(1)
   }
 
-  const { sessionId } = await startRes.json()
-  let eventIndex = 0
+  // Only stand up a local server when local is actually the target. Starting one
+  // to author on a remote would be pure surprise.
+  if (!target.remote) await ensureServer()
+  console.log(`Authoring on ${target.label}.\n`)
 
-  // Poll for events
-  for (let i = 0; i < 300; i++) {
-    await new Promise(r => setTimeout(r, 1000))
-
-    const res = await fetch(`${API_BASE}/api/agent/${sessionId}?since=${eventIndex}`)
-    if (!res.ok) continue
-    const data = await res.json()
-
-    // Render new events
-    for (const event of data.events ?? []) {
-      if (event.type === "tool-call") {
-        const statusIcon = event.status === "done" ? "\u2713" : event.status === "error" ? "\u2717" : "\u2026"
-        const argsStr = Object.entries(event.args as Record<string, any>)
-          .filter(([k]) => k !== "code")
-          .map(([k, v]) => `${k}=${typeof v === "string" ? v.slice(0, 50) : JSON.stringify(v)}`)
-          .join(", ")
-        console.log(`  ${statusIcon} ${event.tool}${argsStr ? ` (${argsStr})` : ""}`)
-        if (event.tool === "check_jig" && event.result && event.result !== "ok") {
-          console.log(`    ${event.result.replace(/\n/g, "\n    ")}`)
-        }
-      } else if (event.type === "text") {
-        console.log(`\n${event.content}`)
-      }
-    }
-
-    eventIndex += (data.events?.length ?? 0)
-
-    if (data.status === "done") {
-      if (data.jigId) console.log(`\nJig: ${data.jigId}`)
+  const { runAgentSession } = await import("./cli-agent/session.js")
+  try {
+    const id = await runAgentSession({ base: target.base, headers: target.headers, instruction, jigId })
+    if (!id) {
+      console.log("\nThe agent finished without producing a jig.")
       return
     }
-    if (data.status === "error") {
-      process.exit(1)
+    console.log(`\n✓ Jig: ${id}`)
+    if (target.remote) {
+      console.log(`  Review it:  jig debug pull ${id}`)
+      console.log(`  Run it:     jig debug run ${id}`)
+    } else {
+      console.log(`  Review it:  jig pending ${id}`)
+      console.log(`  Run it:     jig run ${id}`)
     }
+  } catch (e: any) {
+    console.error(`\n✗ ${e?.message ?? e}`)
+    process.exit(1)
   }
-
-  console.error("Agent timed out")
-  process.exit(1)
 }
 
 // ---------------------------------------------------------------------------
@@ -195,19 +173,20 @@ try {
       break
 
     case "new": {
-      const desc = rest.join(" ") || await io.ask("What should this jig do?")
+      const words = rest.filter((a) => !a.startsWith("--"))
+      const desc = words.join(" ") || await io.ask("What should this jig do?")
       console.log("")
-      await agentCommand(desc)
+      await agentCommand(desc, undefined, rest)
       process.exit(0)
       break
     }
 
     case "edit": {
-      const [name] = rest
+      const name = rest.find((a) => !a.startsWith("--"))
       if (!name) { io.emit({ type: "error", code: "usage", message: "Usage: jig edit <name>" }); process.exit(1) }
       const instruction = await io.ask("What should change?")
       console.log("")
-      await agentCommand(instruction, name)
+      await agentCommand(instruction, name, rest)
       process.exit(0)
       break
     }
@@ -340,15 +319,41 @@ try {
     }
 
     case "update": {
-      // Prefer remote update when a manifest exists; otherwise fall back to
-      // the local git-pull path so developers working from a clone are
-      // unaffected.
-      const { listRemotes } = await import("./cli-remote/manifest.js")
-      if (listRemotes().length > 0) {
+      // `jig update` means "get the latest jig", and the thing in front of you
+      // is this checkout: its code and the agent skills under .agents. Updating
+      // the deployed instance is a second, explicit step, because redeploying
+      // someone's running automation should never be a side effect.
+      // A handle names an instance, which means the tag-based flow with its
+      // health check and rollback. Keep it: it is the safe way to move a
+      // production instance between releases.
+      const handleArg = rest.find((a) => !a.startsWith("--"))
+      if (handleArg) {
         const { runUpdate } = await import("./cli-remote/update.js")
-        await runUpdate(rest[0])
-      } else {
-        await update()
+        await runUpdate(handleArg)
+        break
+      }
+
+      const updated = await update()
+      if (rest.includes("--remote")) {
+        if (!updated) {
+          // Shipping a half-updated checkout to a running instance is worse
+          // than not updating at all.
+          console.error("Not redeploying: the local update did not finish cleanly.")
+          process.exitCode = 1
+          break
+        }
+        console.log("Pushing this checkout to your deployed instance...\n")
+        const { listRemotes } = await import("./cli-remote/manifest.js")
+        if (listRemotes().length === 0) {
+          console.error("No deployed instances known here. Run `jig deploy` first.")
+          process.exitCode = 1
+          break
+        }
+        // Deploys what was just pulled, rather than the newest release TAG:
+        // tags lag main, and `jig update --remote` should ship the code you can
+        // see in front of you. `jig update <handle>` still does the tag flow.
+        const { runDeployArgs } = await import("./cli-deploy/index.js")
+        await runDeployArgs(["--update"])
       }
       break
     }
@@ -360,7 +365,7 @@ try {
       console.log(`  jig setup [handle]     Guided setup: models, alerts, connections (--railway | --local | --force)`)
   console.log(`  jig connect [server]   List servers or connect one`)
       console.log(`  jig run <name> [args]  Run a jig`)
-      console.log(`  jig new [description]  AI generates a new jig`)
+      console.log(`  jig new [description]  AI generates a new jig (on your deployed instance; --local for here)`)
       console.log(`  jig edit <name> [ent]  AI modifies an existing jig`)
       console.log(`  jig versions <name>    List versions for a jig`)
       console.log(`  jig restore <name> <v> Restore version <v> as a pending change`)
@@ -369,7 +374,9 @@ try {
       console.log(`  jig backup restore <f> Restore from a backup .zip (--dry-run to preview)`)
       console.log(`  jig deploy             Provision a new Railway-hosted instance (interactive)`)
       console.log(`  jig deploy --update    Redeploy current code to the linked Railway project`)
-      console.log(`  jig update [handle]    Update a deployed jig to the latest tag (rolls back on failure)`)
+      console.log(`  jig update             Pull the latest code and agent skills from GitHub`)
+      console.log(`  jig update --remote    ...and redeploy your instance with it`)
+      console.log(`  jig update <handle>    Move a deployed instance to the latest release tag`)
       console.log(`  jig doctor [handle]    Health-check deployed instances`)
       console.log(`  jig pair <code>        Cache a CLI session from a dashboard pairing code`)
       console.log(`  jig unlock [handle]    Unlock a deployed instance after a restart (hidden prompt)`)
@@ -385,7 +392,234 @@ try {
 // update — pull latest from upstream, reinstall deps
 // ---------------------------------------------------------------------------
 
-async function update() {
+// ---------------------------------------------------------------------------
+// Command dispatch
+// ---------------------------------------------------------------------------
+
+try {
+  switch (command) {
+    case "connect":
+      await connect(rest[0], io)
+      break
+
+    case "run":
+      await handleRun(rest[0])
+      break
+
+    case "new": {
+      const words = rest.filter((a) => !a.startsWith("--"))
+      const desc = words.join(" ") || await io.ask("What should this jig do?")
+      console.log("")
+      await agentCommand(desc, undefined, rest)
+      process.exit(0)
+      break
+    }
+
+    case "edit": {
+      const name = rest.find((a) => !a.startsWith("--"))
+      if (!name) { io.emit({ type: "error", code: "usage", message: "Usage: jig edit <name>" }); process.exit(1) }
+      const instruction = await io.ask("What should change?")
+      console.log("")
+      await agentCommand(instruction, name, rest)
+      process.exit(0)
+      break
+    }
+
+    case "start": {
+      const { startServer } = await import("./start.js")
+      await startServer()
+      break
+    }
+
+    case "versions": {
+      const [name] = rest
+      if (!name) { io.emit({ type: "error", code: "usage", message: "Usage: jig versions <name>" }); process.exit(1) }
+      const { listAllVersions, getJigRow } = await import("./services/jig-store.js")
+      const jig = getJigRow(name)
+      if (!jig) { console.error(`Jig not found: ${name}`); process.exit(1); }
+      const versions = listAllVersions(name)
+      if (versions.length === 0) { console.log("(no versions)"); break }
+      for (const v of versions) {
+        const tag = v.id === jig.active_version_id ? " ACTIVE" : v.id === jig.pending_version_id ? " PENDING" : ""
+        const date = new Date(v.createdAt).toISOString().slice(0, 16).replace("T", " ")
+        console.log(`v${String(v.id).padStart(4)}  ${date}  ${v.author.padEnd(8)}${tag.padEnd(8)}  ${v.message ?? ""}`)
+      }
+      process.exit(0)
+      break
+    }
+
+    case "restore": {
+      const [name, versionArg] = rest
+      const versionId = versionArg?.startsWith("v") ? parseInt(versionArg.slice(1)) : parseInt(versionArg)
+      if (!name || !Number.isFinite(versionId)) {
+        io.emit({ type: "error", code: "usage", message: "Usage: jig restore <name> <versionId>" })
+        process.exit(1)
+      }
+      const { restoreVersion, getPending } = await import("./services/jig-store.js")
+      if (getPending(name)) {
+        console.error(`A pending change already exists for ${name}. Approve or discard it first.`)
+        process.exit(1)
+      }
+      const { pendingVersionId } = restoreVersion({ jigId: name, versionId, author: "cli" })
+      console.log(`Restored v${versionId} as pending v${pendingVersionId}. Use 'jig pending ${name}' to review and approve.`)
+      process.exit(0)
+      break
+    }
+
+    case "pending": {
+      const [name, action] = rest
+      if (!name) { io.emit({ type: "error", code: "usage", message: "Usage: jig pending <name> [approve|discard]" }); process.exit(1) }
+      const { getPending, approvePending, discardPending } = await import("./services/jig-store.js")
+      const pending = getPending(name)
+      if (!pending) { console.log(`No pending changes for ${name}.`); break }
+
+      if (action === "approve") {
+        approvePending(name)
+        console.log(`Approved pending changes for ${name} (now active).`)
+        process.exit(0)
+        break
+      }
+      if (action === "discard") {
+        discardPending(name)
+        console.log(`Discarded pending changes for ${name}.`)
+        process.exit(0)
+        break
+      }
+      // Default: show diff
+      console.log(`Pending changes for ${name}: +${pending.addedLines} −${pending.removedLines} lines\n`)
+      console.log(pending.diff)
+      console.log(`\nRun 'jig pending ${name} approve' to apply, or 'jig pending ${name} discard' to drop.`)
+      process.exit(0)
+      break
+    }
+
+    case "setup": {
+      const { runSetup } = await import("./cli-setup/index.js")
+      await runSetup(rest, async () => {
+        await ensureServer()
+        return API_BASE
+      })
+      process.exit(0)
+      break
+    }
+
+    case "backup": {
+      const { runBackupArgs } = await import("./cli-backup/index.js")
+      await runBackupArgs(rest)
+      process.exit(0)
+      break
+    }
+
+    case "deploy": {
+      const { runDeployArgs } = await import("./cli-deploy/index.js")
+      await runDeployArgs(rest)
+      break
+    }
+
+    case "pair": {
+      const { runPair } = await import("./cli-remote/pair.js")
+      await runPair(rest)
+      break
+    }
+
+    case "unlock": {
+      const { resolveActiveRemote, listRemotes } = await import("./cli-remote/manifest.js")
+      const { ensureUnlocked } = await import("./cli-remote/unlock.js")
+      const handle = rest.find((a) => !a.startsWith("--"))
+      const passwordFlag = rest.find((a) => a.startsWith("--password="))?.slice("--password=".length)
+      if (listRemotes().length === 0) {
+        console.error("No deployed instances. Run `jig deploy` first.")
+        process.exitCode = 1
+        break
+      }
+      const remote = resolveActiveRemote(handle)
+      const ok = await ensureUnlocked(remote, { password: passwordFlag })
+      if (!ok) process.exitCode = 1
+      break
+    }
+
+    case "doctor": {
+      const { runDoctor } = await import("./cli-doctor/index.js")
+      const jsonFlag = rest.includes("--json")
+      const positional = rest.find((a) => !a.startsWith("--"))
+      await runDoctor({ handle: positional, json: jsonFlag })
+      break
+    }
+
+    case "debug": {
+      const { runDebug } = await import("./cli-debug/index.js")
+      await runDebug(rest)
+      break
+    }
+
+    case "update": {
+      // `jig update` means "get the latest jig", and the thing in front of you
+      // is this checkout: its code and the agent skills under .agents. Updating
+      // the deployed instance is a second, explicit step, because redeploying
+      // someone's running automation should never be a side effect.
+      // A handle names an instance, which means the tag-based flow with its
+      // health check and rollback. Keep it: it is the safe way to move a
+      // production instance between releases.
+      const handleArg = rest.find((a) => !a.startsWith("--"))
+      if (handleArg) {
+        const { runUpdate } = await import("./cli-remote/update.js")
+        await runUpdate(handleArg)
+        break
+      }
+
+      await update()
+      if (rest.includes("--remote")) {
+        console.log("Pushing this checkout to your deployed instance...\n")
+        const { listRemotes } = await import("./cli-remote/manifest.js")
+        if (listRemotes().length === 0) {
+          console.error("No deployed instances known here. Run `jig deploy` first.")
+          process.exitCode = 1
+          break
+        }
+        // Deploys what was just pulled, rather than the newest release TAG:
+        // tags lag main, and `jig update --remote` should ship the code you can
+        // see in front of you. `jig update <handle>` still does the tag flow.
+        const { runDeployArgs } = await import("./cli-deploy/index.js")
+        await runDeployArgs(["--update"])
+      }
+      break
+    }
+
+    default:
+      console.log(`jig — AI workflow automation\n`)
+      console.log(`Commands:`)
+      console.log(`  jig start              Start dashboard + API server`)
+      console.log(`  jig setup [handle]     Guided setup: models, alerts, connections (--railway | --local | --force)`)
+  console.log(`  jig connect [server]   List servers or connect one`)
+      console.log(`  jig run <name> [args]  Run a jig`)
+      console.log(`  jig new [description]  AI generates a new jig (on your deployed instance; --local for here)`)
+      console.log(`  jig edit <name> [ent]  AI modifies an existing jig`)
+      console.log(`  jig versions <name>    List versions for a jig`)
+      console.log(`  jig restore <name> <v> Restore version <v> as a pending change`)
+      console.log(`  jig pending <name>     Show pending diff; append 'approve' or 'discard'`)
+      console.log(`  jig backup             Write a .zip of jigs, connections and settings`)
+      console.log(`  jig backup restore <f> Restore from a backup .zip (--dry-run to preview)`)
+      console.log(`  jig deploy             Provision a new Railway-hosted instance (interactive)`)
+      console.log(`  jig deploy --update    Redeploy current code to the linked Railway project`)
+      console.log(`  jig update             Pull the latest code and agent skills from GitHub`)
+      console.log(`  jig update --remote    ...and redeploy your instance with it`)
+      console.log(`  jig update <handle>    Move a deployed instance to the latest release tag`)
+      console.log(`  jig doctor [handle]    Health-check deployed instances`)
+      console.log(`  jig pair <code>        Cache a CLI session from a dashboard pairing code`)
+      console.log(`  jig unlock [handle]    Unlock a deployed instance after a restart (hidden prompt)`)
+      console.log(`  jig debug <sub>        Remote runs, logs, and jig pull/push (see "jig debug")`)
+      break
+  }
+} catch (e: any) {
+  if (e?.message) console.error(e.message)
+  process.exit(1)
+}
+
+// ---------------------------------------------------------------------------
+// update — pull latest from upstream, reinstall deps
+// ---------------------------------------------------------------------------
+
+async function update(): Promise<boolean> {
   const runInherited = async (args: string[], cwd: string): Promise<number> => {
     const proc = Bun.spawn(args, { cwd, stdout: "inherit", stderr: "inherit" })
     return await proc.exited
@@ -400,16 +634,25 @@ async function update() {
     return stdout
   }
 
-  // Check if upstream remote exists
-  const remoteCheck = Bun.spawn(["git", "remote", "get-url", "upstream"], { cwd: PROJECT_ROOT, stdout: "pipe", stderr: "pipe" })
-  await remoteCheck.exited
-  if (remoteCheck.exitCode !== 0) {
-    console.log("No upstream remote found — this is the upstream repo.")
-    console.log("Use git pull directly.")
-    return
+  // A fork has `upstream`; a plain clone of the repo has only `origin`, and
+  // refusing to update that one was wrong: "no upstream remote" is the normal
+  // case for everyone who followed the README.
+  const hasUpstream = async (name: string): Promise<boolean> => {
+    const check = Bun.spawn(["git", "remote", "get-url", name], { cwd: PROJECT_ROOT, stdout: "pipe", stderr: "pipe" })
+    await check.exited
+    return check.exitCode === 0
+  }
+  const source = (await hasUpstream("upstream")) ? "upstream" : "origin"
+  if (!(await hasUpstream(source))) {
+    console.error("This checkout has no git remote to update from.")
+    return false
   }
 
-  console.log("Updating from upstream...\n")
+  // Remembered so the summary can say whether the agent skills moved, which is
+  // the part a coding agent needs to know it should re-read.
+  const skillsBefore = await runText(["git", "rev-parse", "HEAD:.agents"], PROJECT_ROOT).catch(() => "")
+
+  console.log(`Updating from ${source}...\n`)
 
   // Stash any local changes (lockfile diffs, etc.)
   const status = await runText(["git", "status", "--porcelain"], PROJECT_ROOT)
@@ -422,7 +665,7 @@ async function update() {
     const stashCode = await runInherited(["git", "stash", "push", "--include-untracked", "--message", stashLabel], PROJECT_ROOT)
     if (stashCode !== 0) {
       console.error("Failed to stash changes.")
-      return
+      return false
     }
 
     const stashList = await runText(["git", "stash", "list", "--format=%gd%x00%s"], PROJECT_ROOT)
@@ -431,11 +674,15 @@ async function update() {
       .map((line) => line.trim())
       .filter(Boolean)
       .map((line) => line.split("\0"))
-      .find(([, message]) => message === stashLabel)?.[0] ?? null
+      // git records the subject as "On <branch>: <label>", not the bare label.
+      // Comparing for equality never matched, so a stash was taken and then
+      // orphaned: local changes vanished from the working tree.
+      .find(([, message]) => message.includes(stashLabel))?.[0] ?? null
 
     if (!stashRef) {
-      console.error("Failed to locate the temporary stash created for update.")
-      return
+      console.error("Stashed your local changes but could not find the stash to restore.")
+      console.error("They are safe: `git stash list` and `git stash pop`.")
+      return false
     }
   }
 
@@ -448,7 +695,7 @@ async function update() {
     if (stashRef) {
       console.error(`Your local changes are stored in ${stashRef}. Re-apply them after resolving the pull/rebase.`)
     }
-    return
+    return false
   }
 
   // Restore stash only after a successful pull. Use apply+drop so the stash is
@@ -459,14 +706,14 @@ async function update() {
     if (applyCode !== 0) {
       console.error(`\nUpdate completed, but restoring local changes failed. Your stash was kept as ${stashRef}.`)
       console.error(`Resolve the conflicts, then drop it manually with: git stash drop ${stashRef}`)
-      return
+      return false
     }
 
     const dropCode = await runInherited(["git", "stash", "drop", stashRef], PROJECT_ROOT)
     if (dropCode !== 0) {
       console.error(`\nUpdated and restored local changes, but failed to drop ${stashRef}.`)
       console.error(`You can remove it manually with: git stash drop ${stashRef}`)
-      return
+      return false
     }
   }
 
@@ -475,10 +722,18 @@ async function update() {
   const installCode = await runInherited(["pnpm", "install"], join(PROJECT_ROOT, "dashboard"))
   if (installCode !== 0) {
     console.error("\nDependencies failed to install. Fix the install issue and run `pnpm install` in dashboard.")
-    return
+    return false
   }
 
-  console.log("\n  ✓ Updated successfully.\n")
+  const skillsAfter = await runText(["git", "rev-parse", "HEAD:.agents"], PROJECT_ROOT).catch(() => "")
+  const version = JSON.parse(await Bun.file(join(PROJECT_ROOT, "package.json")).text()).version
+
+  console.log(`\n  ✓ Updated to ${version}.`)
+  if (skillsBefore && skillsAfter && skillsBefore.trim() !== skillsAfter.trim()) {
+    console.log("  The agent skills under .agents/skills changed. Re-read them before continuing.")
+  }
+  console.log("")
+  return true
 }
 
 // ---------------------------------------------------------------------------

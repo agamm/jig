@@ -149,8 +149,45 @@ function renderCallbackPage(input: {
   const accent = input.tone === "success" ? "#34d399" : "#fb7185"
   const accentSoft = input.tone === "success" ? "rgba(52,211,153,0.12)" : "rgba(251,113,133,0.12)"
   const detail = input.detail ? `<p class="detail">${escapeHtml(input.detail)}</p>` : ""
+
+  // Five seconds, counted down out loud. The old version closed after 1600ms
+  // with nothing on screen, which reads as the tab vanishing rather than as the
+  // flow finishing. window.close() only works on a tab script opened, so when it
+  // does not, say so instead of leaving a page that promised to close.
+  const AUTO_CLOSE_S = 5
+  const countdown = input.autoClose
+    ? `
+      <div class="countdown" id="countdown">
+        <div class="countdown-track"><div class="countdown-fill" id="countdown-fill"></div></div>
+        <span class="countdown-label">Closing in <span id="countdown-n">${AUTO_CLOSE_S}</span>s</span>
+      </div>`
+    : ""
   const autoCloseScript = input.autoClose
-    ? `<script>setTimeout(()=>window.close(),1600)</script>`
+    ? `<script>
+      (function () {
+        var left = ${AUTO_CLOSE_S};
+        var n = document.getElementById("countdown-n");
+        var fill = document.getElementById("countdown-fill");
+        var label = document.querySelector(".countdown-label");
+        if (fill) {
+          fill.style.transition = "width ${AUTO_CLOSE_S}s linear";
+          requestAnimationFrame(function () { fill.style.width = "0%"; });
+        }
+        var timer = setInterval(function () {
+          left -= 1;
+          if (n) n.textContent = String(Math.max(0, left));
+          if (left > 0) return;
+          clearInterval(timer);
+          window.close();
+          // Still here a moment later means the browser refused, which it does
+          // for any tab it did not open itself.
+          setTimeout(function () {
+            if (fill) fill.style.display = "none";
+            if (label) label.textContent = "You can close this tab.";
+          }, 250);
+        }, 1000);
+      })();
+    </script>`
     : ""
 
   return `<!doctype html>
@@ -230,6 +267,39 @@ function renderCallbackPage(input: {
         color: var(--soft);
         font-size: 13px;
       }
+      .countdown {
+        margin-top: 22px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .countdown-track {
+        height: 2px;
+        border-radius: 999px;
+        background: var(--border);
+        overflow: hidden;
+      }
+      .countdown-fill {
+        height: 100%;
+        width: 100%;
+        border-radius: 999px;
+        background: var(--accent);
+        box-shadow: 0 0 8px var(--accent-soft);
+      }
+      .countdown-label {
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--soft);
+      }
+      .countdown-label span {
+        color: var(--accent);
+        font-variant-numeric: tabular-nums;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .countdown-fill { transition: none !important; }
+      }
       .actions {
         display: flex;
         flex-wrap: wrap;
@@ -273,7 +343,8 @@ function renderCallbackPage(input: {
         <a class="btn btn-primary" href="${escapeHtml(input.primaryHref)}">${escapeHtml(input.primaryLabel)}</a>
         <a class="btn btn-secondary" href="#" onclick="window.close(); return false;">Close Window</a>
       </div>
-      <p class="footer">If this tab does not close automatically, return to Jig and continue there.</p>
+      ${countdown}
+      <p class="footer">Nothing else to do here. Everything landed on the instance.</p>
     </main>
     ${autoCloseScript}
   </body>

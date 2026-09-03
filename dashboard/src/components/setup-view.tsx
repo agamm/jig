@@ -337,6 +337,8 @@ export function SetupView() {
           </Notice>
         ) : null}
 
+        {requiredBlocked.length === 0 ? <FirstJig /> : null}
+
         <CliPairing />
 
         <div className="flex flex-col gap-3">
@@ -453,6 +455,51 @@ export function SetupView() {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * The last thing this page should do is get out of the way and hand over a
+ * first thing to try. "Ready" here means three green ticks, which proves the
+ * pieces answer, not that they work together: a jig that emails you exercises
+ * the model, the mailbox and the runner in one go, and the proof arrives in
+ * your inbox rather than as another status pill.
+ */
+const FIRST_JIG_PROMPT = "create a jig that sends me hello world via email";
+
+function FirstJig() {
+  const [copied, setCopied] = useState(false);
+
+  return (
+    <section className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.03] p-4">
+      <h3 className="text-[14px] font-medium text-[#ededed]">Everything is connected. Try it.</h3>
+      <p className="mt-1 text-[12px] leading-relaxed text-[var(--text-dim)]">
+        Paste this into Jig and approve the jig it writes. It runs a model call, sends real mail through your inbox,
+        and lands in your inbox as proof the whole path works.
+      </p>
+      <div className="mt-3 flex items-center gap-2">
+        <code className="flex-1 truncate rounded-md border border-[#1f1f23] bg-[#111113] px-3 py-2 font-mono text-[11px] text-[#ededed]">
+          {FIRST_JIG_PROMPT}
+        </code>
+        <Button
+          size="sm"
+          onClick={() => {
+            void navigator.clipboard.writeText(FIRST_JIG_PROMPT).then(
+              () => setCopied(true),
+              () => setCopied(false),
+            );
+          }}
+        >
+          {copied ? "Copied" : "Copy"}
+        </Button>
+        <a
+          href="/"
+          className="inline-flex items-center whitespace-nowrap rounded-md border border-emerald-500/40 bg-[var(--accent-primary-strong)] px-2 py-1 text-[11px] font-medium text-white transition hover:bg-[var(--accent-primary)]"
+        >
+          Open Jigs
+        </a>
+      </div>
+    </section>
   );
 }
 

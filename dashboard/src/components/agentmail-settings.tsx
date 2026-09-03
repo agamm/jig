@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Button } from "@/components/button";
-import { TextInput } from "@/components/input";
+import { TextInput, secretFieldProps } from "@/components/input";
 import { LoadingState, Notice } from "@/components/state-panel";
 import {
   fetchAgentMailSettings,
@@ -213,7 +213,7 @@ export function AgentMailSettings() {
             AgentMail API key
           </span>
           <TextInput
-            type="password"
+            {...secretFieldProps}
             value={apiKey}
             placeholder={hasKey ? "•••••••••• (stored — leave blank to keep)" : "..."}
             inputClassName="ui-input-compact"

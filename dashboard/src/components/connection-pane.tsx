@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { mutate } from "swr"
 import { Button } from "@/components/button"
-import { TextInput } from "@/components/input"
+import { TextInput, secretFieldProps } from "@/components/input"
 import { PaneHeader } from "@/components/pane-header"
 import { PaneSection } from "@/components/pane-section"
 import { RotatingFrame } from "@/components/rotating-frame"
@@ -468,7 +468,7 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
                       {missingCredentials.map((key) => (
                         <TextInput
                           key={key}
-                          type="password"
+                          {...secretFieldProps}
                           placeholder={key}
                           value={credentialValues[key] ?? ""}
                           onChange={(e) => setCredentialValues((prev) => ({ ...prev, [key]: e.target.value }))}

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { mutate } from "swr";
 import { Button } from "@/components/button";
-import { TextInput } from "@/components/input";
+import { TextInput, secretFieldProps } from "@/components/input";
 import { PaneHeader } from "@/components/pane-header";
 import { ServiceIcon } from "@/components/service-icon";
 import { ShimmerText } from "@/components/shimmer-text";
@@ -434,7 +434,8 @@ export function SetupView() {
                     <div className="flex gap-2">
                     <TextInput
                       autoFocus
-                      type={prompt.secret ? "password" : "text"}
+                      // A key is not a password: see secretFieldProps.
+                      {...(prompt.secret ? secretFieldProps : { type: "text" as const })}
                       placeholder={prompt.secret ? "am_..." : "you@example.com"}
                       value={promptValue}
                       onChange={(e) => setPromptValue(e.target.value)}

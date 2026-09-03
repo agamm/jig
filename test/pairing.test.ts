@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "bun:test"
-import { claimPairingCode, mintPairingCode, resetPairingCodes } from "../src/auth/pairing.js"
+import { claimPairingCode, getPairingStatus, mintPairingCode, resetPairingCodes } from "../src/auth/pairing.js"
 
 beforeEach(() => resetPairingCodes())
 
@@ -32,5 +32,20 @@ describe("pairing codes", () => {
     expect(code.length).toBeGreaterThanOrEqual(32)
     expect(/^[A-Za-z0-9_-]+$/.test(code)).toBe(true) // url-safe, pasteable
     expect(expiresInS).toBe(600)
+  })
+
+  it("reports back to the page that minted the code", () => {
+    expect(getPairingStatus()).toEqual({ outstanding: false, claimed: false })
+    const { code } = mintPairingCode()
+    expect(getPairingStatus()).toEqual({ outstanding: true, claimed: false })
+    claimPairingCode(code)
+    // The dashboard polls this to turn its panel green.
+    expect(getPairingStatus()).toEqual({ outstanding: false, claimed: true })
+  })
+
+  it("does not report a stale yes when a new code is minted", () => {
+    claimPairingCode(mintPairingCode().code)
+    mintPairingCode()
+    expect(getPairingStatus().claimed).toBe(false)
   })
 })

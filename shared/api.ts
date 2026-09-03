@@ -715,6 +715,13 @@ export interface PairingCode {
   expiresInS: number
 }
 
+export interface PairingStatus {
+  /** A code is minted and still inside its window. */
+  outstanding: boolean
+  /** A CLI has redeemed a code on this instance since it started. */
+  claimed: boolean
+}
+
 export interface PairingClaim {
   /** The `jig-admin` session value to store in the remote manifest. */
   token: string
@@ -732,6 +739,7 @@ export interface ApiContracts {
   startOpenRouterOAuth: ApiContract<void, OpenRouterOAuthStart>
   createPairingCode: ApiContract<void, PairingCode>
   claimPairingCode: ApiContract<{ code: string }, PairingClaim>
+  pairingStatus: ApiContract<void, PairingStatus>
   classifyFailure: ApiContract<{ error: string }, { needsReauth: boolean }>
   modelUpgrades: ApiContract<void, ModelUpgradesResponse>
   applyModelUpgrade: ApiContract<ApplyModelUpgradeRequest, ApplyModelUpgradeResponse>

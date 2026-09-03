@@ -45,7 +45,7 @@ export async function runPair(argv: string[]): Promise<void> {
 
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string }
-    console.error(body.error ?? `Pairing failed (HTTP ${res.status}).`)
+    console.error(`\u2717 Pairing failed: ${body.error ?? `HTTP ${res.status}`}`)
     console.error("Codes are single use and expire after 10 minutes. Generate a fresh one and retry.")
     process.exit(1)
   }
@@ -64,5 +64,7 @@ export async function runPair(argv: string[]): Promise<void> {
     })
   }
   setSessionCookie(derivedHandle, token)
-  console.log(`Paired with ${derivedHandle} (${url}). Session cached for 30 days.`)
+  console.log(`\u2713 Paired with ${derivedHandle} (${url}).`)
+  console.log(`  Session cached for 30 days in ~/.config/jig/remotes/${derivedHandle}.json.`)
+  console.log(`  \`jig setup\`, \`jig update\` and \`jig debug\` now work against this instance.`)
 }

@@ -172,6 +172,10 @@ export function createApiServer(port: number) {
             const { mintPairingCode } = await import("./auth/pairing.js")
             return apiJson("createPairingCode", mintPairingCode())
           }
+          case "pairingStatus": {
+            const { getPairingStatus } = await import("./auth/pairing.js")
+            return apiJson("pairingStatus", getPairingStatus())
+          }
           case "claimPairingCode": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
             const body = (await req.json().catch(() => ({}))) as { code?: unknown }

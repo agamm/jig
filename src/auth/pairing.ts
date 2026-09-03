@@ -22,6 +22,8 @@ const CODE_BYTES = 24
 type Pending = { code: string; expiresAt: number }
 
 let pending: Pending | null = null
+/** When a code was last redeemed, so the page that minted it can say "done". */
+let claimedAt: number | null = null
 
 function base64url(input: Buffer): string {
   return input.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
@@ -35,6 +37,7 @@ function base64url(input: Buffer): string {
 export function mintPairingCode(): { code: string; expiresInS: number } {
   const code = base64url(randomBytes(CODE_BYTES))
   pending = { code, expiresAt: Date.now() + TTL_MS }
+  claimedAt = null // a fresh code is a fresh question, not a stale yes
   return { code, expiresInS: Math.floor(TTL_MS / 1000) }
 }
 
@@ -57,10 +60,18 @@ export function claimPairingCode(code: string): boolean {
   if (diff !== 0) return false
 
   pending = null
+  claimedAt = Date.now()
   return true
+}
+
+/** For the page that minted the code: has a CLI redeemed it yet? */
+export function getPairingStatus(): { outstanding: boolean; claimed: boolean } {
+  const live = pending !== null && Date.now() <= pending.expiresAt
+  return { outstanding: live, claimed: claimedAt !== null }
 }
 
 /** Test seam. */
 export function resetPairingCodes(): void {
   pending = null
+  claimedAt = null
 }

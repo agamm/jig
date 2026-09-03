@@ -106,13 +106,16 @@ export interface SetupBackend {
   verify(name: string): Promise<VerifyConnectionResponse>
 }
 
-/** Console that mints the key, and the numbered walk-through for getting one. */
-const AGENTMAIL_CONSOLE_URL = "https://console.agentmail.to"
+/**
+ * Straight to the page that mints the key. Note the console 404s every app route
+ * for a signed-out visitor rather than redirecting to sign-in, so step 1 names
+ * that instead of leaving someone staring at a 404 thinking the link is broken.
+ */
+const AGENTMAIL_CONSOLE_URL = "https://console.agentmail.to/dashboard/api-keys"
 const AGENTMAIL_STEPS = [
-  "1. Sign up or log in (free tier, no card).",
-  "2. Open API Keys in the left sidebar.",
-  "3. Click Create New API Key and name it \"jig\".",
-  "4. Copy it now: AgentMail shows a key once and never again.",
+  "1. Signed out? That page 404s. Sign up at console.agentmail.to first (free tier, no card), then come back to it.",
+  "2. Click Create New API Key and name it \"jig\".",
+  "3. Copy it now: AgentMail shows a key once and never again.",
 ]
 
 export interface SetupOptions {

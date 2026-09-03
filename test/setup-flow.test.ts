@@ -223,7 +223,7 @@ describe("runSetupFlow", () => {
     )
 
     const said = events.filter((e) => e.type === "instruction").map((e) => (e as { message: string }).message)
-    expect(said.some((m) => m.includes("API Keys in the left sidebar"))).toBe(true)
+    expect(said.some((m) => m.includes("Create New API Key"))).toBe(true)
     expect(said.some((m) => m.includes("shows a key once"))).toBe(true)
   })
 

@@ -87,6 +87,10 @@ export function createPairingCode(): Promise<ApiResponse<"createPairingCode">> {
   return fetchApi("createPairingCode", "/api/cli/pair", { method: "POST" })
 }
 
+export function fetchPairingStatus(): Promise<ApiResponse<"pairingStatus">> {
+  return fetchApi("pairingStatus", "/api/cli/pair/status", { cache: "no-store" })
+}
+
 export function setupPassword(password: string, setupCode?: string): Promise<ApiResponse<"setupPassword">> {
   return fetchApi("setupPassword", "/api/setup-password", {
     method: "POST",

@@ -386,7 +386,23 @@ Rules:
 - Omit fields that are not present
 - Return JSON only`,
     { markdown },
-    { schema: { actors: "array" } }
+    {
+      schema: {
+        actors: [
+          {
+            fullName: "string",
+            title: "string",
+            description: "string",
+            url: "string",
+            totalUsers: "number",
+            monthlyUsers: "number",
+            successRate: "number",
+            bookmarks: "number",
+            rating: "number",
+          },
+        ],
+      },
+    }
   )
 
   return (result.actors ?? [])

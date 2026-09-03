@@ -12,6 +12,7 @@ import { Notice } from "@/components/state-panel";
 import {
   completeOnboarding,
   createPairingCode,
+  fetchPairingStatus,
   connectConnection,
   fetchAgentMailSettings,
   fetchConnections,
@@ -467,7 +468,22 @@ function CliPairing() {
   const [code, setCode] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [paired, setPaired] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // The CLI redeems the code out of band, so the only way this page learns it
+  // worked is to ask. Poll only while a code is outstanding.
+  useEffect(() => {
+    if (!code || paired) return;
+    const timer = setInterval(async () => {
+      const status = await fetchPairingStatus().catch(() => null);
+      if (status?.claimed) {
+        setPaired(true);
+        clearInterval(timer);
+      }
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [code, paired]);
 
   const command = code ? `bun run jig pair ${code} --url=${typeof window === "undefined" ? "" : window.location.origin}` : "";
 
@@ -475,6 +491,7 @@ function CliPairing() {
     setBusy(true);
     setErr(null);
     setCopied(false);
+    setPaired(false);
     try {
       const res = await createPairingCode();
       setCode(res.code);
@@ -486,7 +503,11 @@ function CliPairing() {
   };
 
   return (
-    <section className="rounded-xl border border-[#1f1f23] bg-[#0d0d0f] p-4">
+    <section
+      className={`rounded-xl border p-4 transition-colors ${
+        paired ? "border-emerald-500/20 bg-emerald-500/[0.03]" : "border-[#1f1f23] bg-[#0d0d0f]"
+      }`}
+    >
       <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
           <h3 className="text-[14px] font-medium text-[#ededed]">Connect the CLI</h3>
@@ -500,7 +521,13 @@ function CliPairing() {
         </Button>
       </div>
 
-      {code ? (
+      {paired ? (
+        <p className="mt-3 flex items-center gap-2 text-[12px] text-emerald-300">
+          <span aria-hidden>✓</span> CLI connected. That code is spent; generate a new one for another machine.
+        </p>
+      ) : null}
+
+      {code && !paired ? (
         <div className="mt-3 flex items-center gap-2">
           <code className="flex-1 truncate rounded-md border border-[#1f1f23] bg-[#111113] px-3 py-2 font-mono text-[11px] text-[#ededed]">
             {command}

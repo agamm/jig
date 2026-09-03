@@ -22,7 +22,7 @@ export async function runPair(argv: string[]): Promise<void> {
   }
 
   // A URL given explicitly wins, so this works before any manifest exists.
-  let handle = handleArg
+  let handle: string | undefined = handleArg
   let url = urlFlag
   if (!url) {
     if (listRemotes().length === 0) {
@@ -32,6 +32,11 @@ export async function runPair(argv: string[]): Promise<void> {
     const remote = resolveActiveRemote(handle)
     handle = remote.handle
     url = remote.public_url
+  } else if (!handle) {
+    // Prefer the manifest that already points at this URL. Deriving a fresh
+    // handle from the hostname would write the session to a SECOND manifest,
+    // leaving `jig setup` reading the original one and still unauthenticated.
+    handle = listRemotes().find((r) => r.public_url.replace(/\/$/, "") === url)?.handle
   }
 
   const res = await fetch(`${url}/api/cli/pair/claim`, {
@@ -54,7 +59,7 @@ export async function runPair(argv: string[]): Promise<void> {
 
   // No manifest yet (paired straight from a URL): write a minimal one so later
   // commands can find this instance by handle.
-  const derivedHandle = handle ?? new URL(url).hostname.split(".")[0]
+  const derivedHandle = handle ?? (new URL(url).hostname.split(".")[0] || "instance")
   if (!getRemote(derivedHandle)) {
     saveRemote({
       handle: derivedHandle,

@@ -513,7 +513,10 @@ function CliPairing() {
           <h3 className="text-[14px] font-medium text-[#ededed]">Connect the CLI</h3>
           <p className="mt-1 text-[12px] leading-relaxed text-[var(--text-dim)]">
             Lets <code className="text-[#ededed]">jig</code> on your machine talk to this instance. Single-use code,
-            good for 10 minutes, so the command is safe to paste to a coding agent.
+            good for 10 minutes, so the command is safe to paste to a coding agent.{" "}
+            <strong className="text-[var(--text-muted)]">Run it inside your Jig checkout</strong>: from the folder above
+            it, <code className="text-[#ededed]">bun run jig</code> matches the directory instead of the script and exits
+            silently.
           </p>
         </div>
         <Button size="sm" variant={code ? "subtle" : "success"} onClick={() => void generate()} disabled={busy}>

@@ -114,6 +114,11 @@ The code is single use and expires in ten minutes, which is what makes it safe t
 it caches a 30-day session in `~/.config/jig/remotes/`, and every later `jig setup`, `jig update`
 and `jig debug` command against that instance works without asking again.
 
+**Run it from inside the clone.** One directory up, `bun run jig` resolves the `jig` FOLDER
+rather than the package script and exits 0 having done nothing at all. If any `bun run jig`
+command produces no output whatsoever, that is what happened: check `pwd` before assuming the
+command is broken.
+
 ## Connect services
 
 ```sh

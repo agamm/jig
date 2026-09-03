@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { mutate } from "swr";
 import { Button } from "@/components/button";
 import { TextInput, secretFieldProps } from "@/components/input";
@@ -318,9 +318,7 @@ export function SetupView() {
         }
       />
 
-      <div className="flex flex-col gap-4 p-4">
-        <InstancePanel health={health} />
-
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 p-5">
         {requiredBlocked.length > 0 && running === null ? (
           <Notice tone="warning" title="Jig is not fully wired up yet">
             {requiredBlocked.map((s) => s.title).join(" and ")} still {requiredBlocked.length === 1 ? "needs" : "need"} attention.
@@ -330,41 +328,70 @@ export function SetupView() {
 
         {error ? <Notice tone="danger" title="Setup stopped">{error}</Notice> : null}
 
-        {finished && !error ? (
-          <Notice tone="success" title={finished.verified.length ? "Setup complete" : "Nothing changed"}>
-            Verified: {finished.verified.join(", ") || "none"}.
-            {finished.skipped.length ? ` Skipped: ${finished.skipped.join(", ")}.` : ""}
+        {/* The old "Setup complete: verified composio" notice sat above three
+            green cards saying the same thing, and named only the step that had
+            just run, which read as though the others had not. The cards below
+            are the status; a run only needs to report what it could not do. */}
+        {finished && !error && finished.skipped.length > 0 ? (
+          <Notice tone="neutral" title="Some steps were skipped">
+            {finished.skipped.join(", ")}. Everything else is shown below.
           </Notice>
         ) : null}
 
         {requiredBlocked.length === 0 ? <FirstJig /> : null}
 
-        <CliPairing />
-
-        <div className="flex flex-col gap-3">
+        <Section label={requiredBlocked.length ? "What Jig needs" : "Connected"}>
           {SETUP_STEPS.map((step) => {
             const state = steps[step.id];
             const asking = prompt?.stepId === step.id;
+            const done = state.status === "ready" && !asking;
             return (
               <section
                 key={step.id}
-                className={`rounded-xl border p-4 transition-colors ${
-                  state.status === "ready" ? "border-emerald-500/20 bg-emerald-500/[0.03]" : "border-[#1f1f23] bg-[#0d0d0f]"
+                // A finished step is reference, not work: it collapses to one
+                // line and drops the explanation, because nobody needs to be
+                // told what OpenRouter is for once it is connected. Anything
+                // still outstanding keeps the full card and the blurb.
+                className={`rounded-xl border transition-colors ${done ? "px-4 py-2.5" : "p-4"} ${
+                  done ? "border-[#1f1f23] bg-[#0b0b0d]" : "border-[#1f1f23] bg-[#0d0d0f]"
                 }`}
               >
-                <div className="flex items-center gap-3">
-                  <ServiceIcon name={step.id} size={18} />
+                {/* Icons line up with the title. Centring them drifts to the
+                    middle of a three-line card and reads as misaligned. */}
+                <div className={`flex gap-3 ${done ? "items-center" : "items-start"}`}>
+                  <span className={done ? "" : "mt-0.5 shrink-0"}>
+                    <ServiceIcon name={step.id} size={done ? 15 : 18} />
+                  </span>
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <h3 className="truncate text-[14px] font-medium text-[#ededed]">{step.title}</h3>
-                      {!step.required ? (
+                    <div className="flex min-w-0 items-baseline gap-2">
+                      {/* The name identifies the row, so the DETAIL gives way
+                          when space runs out, never the title. */}
+                      <h3
+                        className={`font-medium text-[#ededed] ${done ? "shrink-0 whitespace-nowrap text-[13px]" : "truncate text-[14px]"}`}
+                      >
+                        {step.title}
+                      </h3>
+                      {!step.required && !done ? (
                         <span className="shrink-0 text-[10px] uppercase tracking-[0.1em] text-[var(--text-faint)]">optional</span>
                       ) : null}
+                      {done && state.detail ? (
+                        <span className="min-w-0 truncate text-[12px] text-[var(--text-dim)]" title={state.detail}>
+                          {state.detail}
+                        </span>
+                      ) : null}
                     </div>
-                    <p className="mt-1 text-[12px] leading-relaxed text-[var(--text-dim)]">{STEP_BLURB[step.id]}</p>
+                    {!done ? (
+                      <p className="mt-1 text-[12px] leading-relaxed text-[var(--text-dim)]">{STEP_BLURB[step.id]}</p>
+                    ) : null}
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
-                    {statusPill(state)}
+                    {done ? (
+                      <span className="text-[13px] text-emerald-400" title="ready" aria-label="ready">
+                        ✓
+                      </span>
+                    ) : (
+                      statusPill(state)
+                    )}
                     <Button
                       size="sm"
                       // Filled when there is something to do, so the action reads
@@ -387,7 +414,7 @@ export function SetupView() {
                   </div>
                 </div>
 
-                {state.detail ? (
+                {state.detail && !done ? (
                   <p className="mt-3 flex items-center gap-2 pl-[30px] text-[12px] text-[var(--text-dim)]">
                     {state.status === "checking" || state.status === "waiting" ? <Spinner size={12} /> : null}
                     {state.status === "checking" || state.status === "waiting" ? (
@@ -453,9 +480,27 @@ export function SetupView() {
               </section>
             );
           })}
-        </div>
+        </Section>
+
+        <Section label="This instance">
+          <InstancePanel health={health} />
+        </Section>
+
+        <Section label="Your machine">
+          <CliPairing />
+        </Section>
       </div>
     </div>
+  );
+}
+
+/** A titled group. Three flat stacks of cards read as one undifferentiated list. */
+function Section({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <section className="flex flex-col gap-2.5">
+      <h2 className="px-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-[var(--text-faint)]">{label}</h2>
+      {children}
+    </section>
   );
 }
 
@@ -472,9 +517,10 @@ function FirstJig() {
   const [copied, setCopied] = useState(false);
 
   return (
-    <section className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.03] p-4">
-      <h3 className="text-[14px] font-medium text-[#ededed]">Everything is connected. Try it.</h3>
-      <p className="mt-1 text-[12px] leading-relaxed text-[var(--text-dim)]">
+    <section className="rounded-xl border border-emerald-500/25 bg-emerald-500/[0.05] p-5 shadow-[0_0_0_1px_rgba(16,185,129,0.04)]">
+      <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-emerald-300/80">Ready</span>
+      <h3 className="mt-1.5 text-[17px] font-semibold tracking-[-0.01em] text-[#ededed]">Everything is connected. Try it.</h3>
+      <p className="mt-1.5 max-w-[62ch] text-[12px] leading-relaxed text-[var(--text-dim)]">
         Paste this into Jig and approve the jig it writes. It runs a model call, sends real mail through your inbox,
         and lands in your inbox as proof the whole path works.
       </p>
@@ -565,10 +611,9 @@ function CliPairing() {
       <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
           <h3 className="text-[14px] font-medium text-[#ededed]">Connect the CLI</h3>
-          <p className="mt-1 text-[12px] leading-relaxed text-[var(--text-dim)]">
+          <p className="mt-1 max-w-[62ch] text-[12px] leading-relaxed text-[var(--text-dim)]">
             Lets <code className="text-[#ededed]">jig</code> on your machine talk to this instance. Single-use code,
-            good for 10 minutes, so the command is safe to paste to a coding agent. Runs from any directory and needs no
-            checkout; the first run fetches the CLI, so give it a moment.
+            good for 10 minutes, so it is safe to paste to a coding agent. Runs from any directory, no checkout needed.
           </p>
         </div>
         <Button size="sm" variant={code ? "subtle" : "success"} onClick={() => void generate()} disabled={busy}>
@@ -635,8 +680,8 @@ function InstancePanel({ health }: { health: HealthResponse | null }) {
   ];
 
   return (
-    <div className="rounded-xl border border-[#1f1f23] bg-[#0d0d0f] p-4">
-      <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[12px]">
+    <div className="rounded-xl border border-[#1f1f23] bg-[#0b0b0d] px-4 py-3">
+      <div className="grid grid-cols-[auto_1fr] gap-x-5 gap-y-1.5 text-[12px]">
         {rows.map((row) => (
           <div key={row.label} className="contents">
             <span className="text-[var(--text-faint)]">{row.label}</span>

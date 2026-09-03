@@ -93,6 +93,10 @@ export async function handleHealth(req: Request, version: string, startedAt: num
     password_set: isPasswordSet(),
     setup_code_required: isServiceMode() && !isPasswordSet(),
     onboarding_complete: isOnboardingComplete(),
+    // Told to the client on purpose: an unlocked instance and an authenticated
+    // browser are different things, and the dashboard cannot tell them apart
+    // from `locked` alone.
+    authenticated: authed,
     data_storage: await getDataStorageHealth(),
   }
   if (!authed) return apiJson("health", base)

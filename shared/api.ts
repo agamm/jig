@@ -611,6 +611,13 @@ export interface HealthResponse {
    * setup code printed in the server logs before it can claim the instance. */
   setup_code_required?: boolean
   onboarding_complete: boolean
+  /**
+   * Whether THIS request carried a valid admin session. Distinct from `locked`,
+   * which is about the process holding a crypto key: the CLI can unlock the
+   * instance, leaving it unlocked for a browser that has never authenticated.
+   * Always true in local mode, which is not gated.
+   */
+  authenticated: boolean
   has_openrouter_key?: boolean
   uptime_s?: number
   data_storage?: DataStorageHealth

@@ -60,7 +60,10 @@ export function UnlockGate({ children }: { children: ReactNode }) {
   }
   if (!health.password_set)
     return <PasswordForm mode="set" setupCodeRequired={!!health.setup_code_required} onDone={refresh} />;
-  if (health.locked) return <PasswordForm mode="unlock" onDone={refresh} />;
+  // `locked` is about the instance; `authenticated` is about this browser. The
+  // CLI unlocking the process used to let a cookieless tab through the gate into
+  // a dashboard where every request came back 401 Unauthorized.
+  if (health.locked || !health.authenticated) return <PasswordForm mode="unlock" onDone={refresh} />;
   if (!health.onboarding_complete) return <OnboardingForm onDone={refresh} />;
   return <>{children}</>;
 }

@@ -155,6 +155,31 @@ export default jig("${JIG_ID}", { trigger: { type: "manual" }, tools: [apify.cal
 })
 
 describe("auth handlers", () => {
+  it("separates an unlocked instance from an authenticated browser", async () => {
+    // The bug: `locked` is about the process holding a crypto key, and the CLI
+    // unlocking an instance flipped it to false. The dashboard gated on that
+    // alone, so a browser holding no cookie was waved through into a UI where
+    // every request came back 401. Health has to report BOTH facts.
+    const previous = process.env.RAILWAY_ENVIRONMENT_ID
+    process.env.RAILWAY_ENVIRONMENT_ID = "env_test" // service mode
+    try {
+      const res = await handleHealth(new Request("http://jig.example/api/health"), "9.9.9", Date.now())
+      const payload = await body(res)
+      expect(payload.mode).toBe("service")
+      expect(payload.authenticated).toBe(false)
+      // Admin-only fields stay behind auth, which is how we know it is honest.
+      expect(payload.uptime_s).toBeUndefined()
+    } finally {
+      if (previous === undefined) delete process.env.RAILWAY_ENVIRONMENT_ID
+      else process.env.RAILWAY_ENVIRONMENT_ID = previous
+    }
+  })
+
+  it("reports an ungated local instance as authenticated", async () => {
+    const res = await handleHealth(new Request("http://localhost/api/health"), "9.9.9", Date.now())
+    expect((await body(res)).authenticated).toBe(true)
+  })
+
   it("serves health without auth in local mode", async () => {
     const res = await handleHealth(new Request("http://localhost/api/health"), "9.9.9", Date.now() - 5000)
     const payload = await body(res)

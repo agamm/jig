@@ -1,9 +1,8 @@
-// Send a compact executive coaching note from meetings, calendar, and recent email signal.
+// Send yourself a compact executive coaching note from meeting notes and inbox pressure.
+// Uses the granola connection, plus Composio with the Gmail toolkit authorized.
 import { jig, llm, type Context } from "@jig/sdk"
-import { granola } from "@jig/connections/granola"
-import { composio } from "@jig/connections/composio"
-
-const RECIPIENT_EMAIL = "you@example.com"
+import { granola } from "@jig/connections/granola.js"
+import { composio } from "@jig/connections/composio.js"
 
 type EmailSignal = {
   subject: string
@@ -19,12 +18,6 @@ type CoachingSection = {
 function brief(value: unknown, max = 900): string {
   const text = typeof value === "string" ? value : JSON.stringify(value ?? "")
   return text.replace(/\s+/g, " ").trim().slice(0, max)
-}
-
-function itemText(item: unknown): string {
-  if (!item || typeof item !== "object") return brief(item, 160)
-  const record = item as Record<string, any>
-  return brief(record.summary ?? record.title ?? record.subject ?? record.name ?? record.snippet ?? item, 180)
 }
 
 function emailSignals(result: unknown): EmailSignal[] {
@@ -123,14 +116,11 @@ export default jig(
     trigger: { type: "cron", cron: "0 8 * * *" },
     tools: [
       granola.query_granola_meetings,
-      composio.googlecalendar_events_list,
       composio.gmail_fetch_emails,
-      composio.gmail_send_email,
     ],
   },
   async (ctx: Context) => {
     let meetingSignal = ""
-    let calendarSignal = ""
     let inboxSignal: EmailSignal[] = []
 
     await ctx.step("Find leadership signal", [granola.query_granola_meetings], async () => {
@@ -145,33 +135,14 @@ export default jig(
       ctx.output(meetingSignal || "No meeting-note signal found.")
     })
 
-    await ctx.step("Check calendar and inbox pressure", [composio.googlecalendar_events_list, composio.gmail_fetch_emails], async () => {
-      const now = new Date()
-      const weekStart = new Date(now)
-      weekStart.setDate(now.getDate() - 7)
-
-      const events = await composio.googlecalendar_events_list({
-        calendar_id: "primary",
-        timeMin: weekStart.toISOString(),
-        timeMax: now.toISOString(),
-        single_events: true,
-        order_by: "startTime",
-        max_results: 20,
-      })
-      const eventList = Array.isArray(events) ? events : (events as any)?.items ?? []
-      calendarSignal = eventList.slice(0, 8).map(itemText).filter(Boolean).join("\n")
-
+    await ctx.step("Read inbox pressure", [composio.gmail_fetch_emails], async () => {
       const emails = await composio.gmail_fetch_emails({
         query: "newer_than:7d -category:promotions -category:social -label:SPAM -label:TRASH",
-        max_results: 8,
+        max_results: 5,
         user_id: "me",
       })
       inboxSignal = emailSignals(emails)
-
-      ctx.output([
-        `Calendar items: ${eventList.length}`,
-        `Email signals: ${inboxSignal.length}`,
-      ].join("\n"))
+      ctx.output(`Email signals: ${inboxSignal.length}`)
     })
 
     const note = await ctx.step("Write the coaching note", [], async () => {
@@ -193,9 +164,6 @@ Plain text only. Do not use Markdown, headings, bullets, bold markers, or a titl
 MEETING SIGNAL:
 ${meetingSignal || "(none)"}
 
-CALENDAR SIGNAL:
-${calendarSignal || "(none)"}
-
 INBOX SIGNAL:
 ${inboxSignal.map((email) => `- ${email.subject} from ${email.sender}: ${email.snippet}`).join("\n") || "(none)"}`,
         { maxTokens: 420 }
@@ -205,24 +173,20 @@ ${inboxSignal.map((email) => `- ${email.subject} from ${email.sender}: ${email.s
       return text
     })
 
-    await ctx.step("Send executive coaching email", [composio.gmail_send_email], async () => {
+    await ctx.step("Send executive coaching email", [], async () => {
       const dateLabel = new Date().toLocaleDateString("en-US", {
         weekday: "long",
         month: "long",
         day: "numeric",
       })
-      await composio.gmail_send_email({
-        recipient_email: RECIPIENT_EMAIL,
+      // ctx.email goes to the configured owner, so there is no address to
+      // hardcode and forget. Replying to it edits this jig.
+      await ctx.email({
         subject: `Executive coach: ${dateLabel}`,
-        body: coachingHtml(note, dateLabel),
-        is_html: true,
-        user_id: "me",
+        html: coachingHtml(note, dateLabel),
+        text: note,
       })
-      ctx.output([
-        `Email sent to ${RECIPIENT_EMAIL}`,
-        "",
-        note,
-      ].filter(Boolean).join("\n"))
+      ctx.output(note)
     })
   }
 )

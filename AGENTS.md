@@ -2,6 +2,7 @@
 
 Start with [`llms.txt`](llms.txt). It routes each task to the smallest authoritative guide.
 
+- Running an instance (install, setup, connect, Railway deploy, update): read [`.agents/skills/jig/SKILL.md`](.agents/skills/jig/SKILL.md).
 - Writing or editing a jig: read [`SKILL.md`](SKILL.md) completely before changing workflow code.
 - Modifying Jig itself: follow [`CLAUDE.md`](CLAUDE.md), including its privacy, database, architecture, and verification rules.
 - Deploying, diagnosing, or recovering an instance: follow [`docs/operations.md`](docs/operations.md).

@@ -4,6 +4,7 @@
 
 ## Agent routing
 
+- To install, set up, connect, deploy or update an instance, read `.agents/skills/jig/SKILL.md`.
 - To write or edit a jig, read `SKILL.md` completely.
 - To change the Jig runtime, API, scheduler, dashboard, database, or connection system, read `CLAUDE.md`.
 - To deploy, diagnose, recover, or self-heal an instance, read `docs/operations.md`.

@@ -3,7 +3,7 @@
 ## Start Here
 - Read `llms.txt` for task routing and supported commands.
 - Read `SKILL.md` completely before writing or editing jig workflow code.
-- Read `docs/operations.md` before deploying, diagnosing, recovering, or operating a hosted instance.
+- Read `.agents/skills/jig/SKILL.md` before installing, setting up, connecting, deploying, or updating an instance; `docs/operations.md` for triage and recovery.
 - `AGENTS.md` is the cross-agent compatibility entry point; keep these guides consistent when workflows change.
 
 ## 1. Plan Mode Default

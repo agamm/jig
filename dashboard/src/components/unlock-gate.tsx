@@ -1,9 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { completeOnboarding, fetchHealth, fetchOpenRouterCredits, setupPassword, startOpenRouterOAuth, unlock } from "@/lib/api";
+import { completeOnboarding, fetchHealth, setupPassword, unlock } from "@/lib/api";
 import { Spinner } from "@/components/spinner";
-import { ShimmerText } from "@/components/shimmer-text";
 import type { DataStorageHealth, HealthResponse } from "@shared/api";
 
 /**
@@ -13,9 +12,7 @@ import type { DataStorageHealth, HealthResponse } from "@shared/api";
  *   1. Set-password form — if no password has been set yet.
  *   2. Unlock form — if a password exists but the in-memory key is gone.
  *   3. Onboarding - if unlocked but onboarding has not been marked complete.
- *      One step: authorize OpenRouter in a browser. Pasting a key is kept as a
- *      fallback for anyone who cannot complete a redirect, but it is not the
- *      path we put in front of people.
+ *      Hands straight over to the setup page, which owns every credential step.
  *
  * In local mode the server reports mode: "local" and we skip the gate.
  */
@@ -181,129 +178,52 @@ function PasswordForm({
 }
 
 /**
- * OpenRouter onboarding.
+ * First screen after the password is set.
  *
- * The button is the whole point: OpenRouter's PKCE flow hands the instance a
- * user-owned key directly, so nobody has to find, copy, or paste one. The key
- * arrives at /api/openrouter/callback out of band, which is why finishing means
- * polling the credit balance rather than reading a response.
+ * It used to run its own OpenRouter authorization here: start PKCE, open a tab,
+ * poll the credit balance, plus a paste fallback. All of that now lives in the
+ * setup page, which runs the same shared flow the CLI runs and covers alerts and
+ * integrations too. Duplicating a third of it here only created a second thing
+ * to keep in step, so this hands over instead.
  */
 function OnboardingForm({ onDone }: { onDone: () => void }) {
-  const [apiKey, setApiKey] = useState("");
-  const [pasting, setPasting] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [waiting, setWaiting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const complete = async (withKey: boolean) => {
+  const begin = async () => {
     setBusy(true);
     setErr(null);
     try {
-      await completeOnboarding(withKey ? apiKey.trim() : undefined);
+      // Marks the gate satisfied so the dashboard renders; the setup page is
+      // what actually reports whether this instance can run anything.
+      await completeOnboarding();
+      if (typeof window !== "undefined") window.history.replaceState(null, "", "/?view=setup");
       onDone();
     } catch (e: any) {
       setErr(e?.message ?? "Request failed");
-    } finally {
       setBusy(false);
-    }
-  };
-
-  const authorize = async () => {
-    setErr(null);
-    setWaiting(true);
-    try {
-      const { authorizationUrl } = await startOpenRouterOAuth();
-      window.open(authorizationUrl, "_blank", "noopener");
-      // The tab that finishes the flow is not this one, so the balance is the
-      // only thing that can tell us it worked.
-      const deadline = Date.now() + 5 * 60_000;
-      while (Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 2000));
-        const credits = await fetchOpenRouterCredits().catch(() => null);
-        if (credits) {
-          await completeOnboarding();
-          onDone();
-          return;
-        }
-      }
-      setErr("Timed out waiting for OpenRouter. Try again, or paste a key instead.");
-    } catch (e: any) {
-      setErr(e?.message ?? "Could not start the OpenRouter authorization");
-    } finally {
-      setWaiting(false);
     }
   };
 
   return (
     <Frame>
-      <h1>Connect OpenRouter</h1>
+      <h1>Let's get Jig working</h1>
       <p>
-        Jigs that call <code className="text-[#ededed]">llm()</code> or{" "}
-        <code className="text-[#ededed]">agent()</code> run on OpenRouter. Authorize it and Jig
-        gets its own key. Nothing to copy.
+        Three things to wire up: model access, failure alerts, and whichever apps your workflows
+        touch. The next screen shows each one, its status, and what it needs. Everything that can
+        be a browser authorization is one, so there is almost nothing to type.
       </p>
-
-      {waiting ? (
-        <div className="mt-5 flex items-center gap-2">
-          <Spinner />
-          <ShimmerText className="text-[14px]">Waiting for you to authorize in the new tab…</ShimmerText>
-        </div>
-      ) : (
-        <div className="mt-5 flex flex-col gap-3">
-          <button
-            type="button"
-            onClick={() => void authorize()}
-            disabled={busy}
-            className="rounded-md bg-emerald-500 px-3 py-2 text-[14px] font-semibold text-white transition disabled:opacity-40"
-          >
-            Authorize OpenRouter
-          </button>
-          <div className="flex gap-3 text-[13px]">
-            <button
-              type="button"
-              onClick={() => setPasting((v) => !v)}
-              className="text-[#888] underline transition hover:text-[#ededed]"
-            >
-              Paste a key instead
-            </button>
-            <button
-              type="button"
-              onClick={() => void complete(false)}
-              disabled={busy}
-              className="text-[#888] transition hover:text-[#ededed]"
-            >
-              Skip for now
-            </button>
-          </div>
-        </div>
-      )}
-
-      {pasting && !waiting && (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            void complete(true);
-          }}
-          className="mt-4 flex flex-col gap-3"
+      <div className="mt-5 flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => void begin()}
+          disabled={busy}
+          className="rounded-md bg-emerald-500 px-3 py-2 text-[14px] font-semibold text-white transition disabled:opacity-40"
         >
-          <input
-            type="password"
-            autoFocus
-            placeholder="sk-or-v1-..."
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            className="rounded-md border border-[#222226] bg-[#111113] px-3 py-2 font-mono text-[13px] text-[#ededed] placeholder-[#555] outline-none focus:border-[#3f3f46]"
-          />
-          <button
-            type="submit"
-            disabled={busy || !apiKey.trim()}
-            className="rounded-md border border-[#222226] bg-[#111113] px-3 py-2 text-[14px] text-[#ededed] transition disabled:opacity-40"
-          >
-            {busy ? "Saving…" : "Save key"}
-          </button>
-        </form>
-      )}
-
+          {busy ? "Opening…" : "Start setup"}
+        </button>
+        {busy ? <Spinner /> : null}
+      </div>
       {err && <p className="mt-3 text-[13px] text-[#fb7185]">{err}</p>}
     </Frame>
   );

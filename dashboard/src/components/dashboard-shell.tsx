@@ -5,6 +5,7 @@ import { useQueryState, parseAsString, parseAsBoolean } from "nuqs";
 import { mutate } from "swr";
 import type { Jig } from "@/types/jig";
 import { OnboardingView } from "@/components/onboarding-view";
+import { SetupView } from "@/components/setup-view";
 import { JigList } from "@/components/jig-list";
 import { JigDetailPane } from "@/components/jig-detail-pane";
 import { CreateJigPane } from "@/components/create-jig-pane";
@@ -619,6 +620,7 @@ export function DashboardShell({
 
         <div className="flex-1 flex flex-col gap-0.5 py-2">
           <NavItem icon={NavIcons.jigs} label="Jigs" href="/" active={!view || view === "jigs"} collapsed={collapsed} onActivate={() => { setView(null); closeDetail(); }} />
+          <NavItem icon={NavIcons.setup} label="Setup" href="/?view=setup" active={view === "setup"} collapsed={collapsed} onActivate={() => { setView("setup"); closeDetail(); }} />
           <NavItem icon={NavIcons.connections} label="Connections" href="/?view=connections" active={view === "connections"} collapsed={collapsed} onActivate={() => { setView("connections"); closeDetail(); }} />
           <NavItem icon={NavIcons.settings} label="Settings" href="/?view=settings" active={view === "settings"} collapsed={collapsed} onActivate={() => { setView("settings"); closeDetail(); }} />
           <NavItem icon={NavIcons.logs} label="Logs" href="/?view=logs" active={view === "logs"} collapsed={collapsed} onActivate={() => { setView("logs"); closeDetail(); }} />
@@ -679,6 +681,8 @@ export function DashboardShell({
       </nav>
 
       <div className="flex flex-1 overflow-hidden">
+        {view === "setup" && <SetupView />}
+
         {view === "connections" && (
           selectedConnection && detailPane ? (
             <ResizablePanelGroup direction="horizontal" className="flex-1">
@@ -867,6 +871,14 @@ const NavIcons = {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="3" />
       <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  ),
+  setup: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 7h5" />
+      <path d="M4 17h5" />
+      <path d="m12.5 5.5 2 2 4-4" />
+      <path d="m12.5 15.5 2 2 4-4" />
     </svg>
   ),
   logs: (

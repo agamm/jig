@@ -70,24 +70,9 @@ export default jig("weekly-client-update", {
 
 ## Install
 
-### Railway
+**Railway:** the button above creates a fresh service with a blank `/data` volume and none of the maintainer's data, credentials, or configuration.
 
-The Railway button creates a fresh service with a blank persistent `/data` volume and no maintainer data, credentials, OAuth state, variables, logs, or personal configuration.
-
-### Claude Code
-
-Let a coding agent do the install. Paste this into Claude Code, in the directory Jig should live in:
-
-```text
-Install Jig from https://github.com/agamm/jig.git: clone it, run `bun install`, then run
-`bun run jig setup --yes`. Setup will print links for me to open; wait for it, do not answer
-for me. Then start it with `bun run jig start` and give me the dashboard URL.
-```
-
-Setup asks the agent for nothing, because there is nothing an agent should hold. Each step ends
-in your browser, and the credentials go straight into Jig's own store.
-
-### Local
+**Local:**
 
 ```Shell
 git clone https://github.com/agamm/jig.git
@@ -97,26 +82,35 @@ bun run jig setup
 bun run jig start
 ```
 
+**With a coding agent:** this repo ships a skill covering install, setup, Railway deploys and updates, so Claude Code or Codex can do the whole thing. Paste:
+
+```text
+Install and set up Jig from https://github.com/agamm/jig.git. Clone it, read
+.agents/skills/jig/SKILL.md in the clone, and follow it. Setup opens links for me to
+authorize; wait for me rather than answering for me. When it is done, give me the
+dashboard URL and tell me which steps came back ready.
+```
+
 ## Setup
 
-`bun run jig setup` walks what a new instance needs and verifies each step rather than assuming it:
+`bun run jig setup` walks what a new instance needs and proves each step rather than assuming it:
 
-* **OpenRouter** for model calls. Authorize in the browser and Jig receives its own key; the step passes only once the credit balance reads back, because a valid key with no credit fails every model call.
-* **AgentMail** for failure alerts and reply-to-edit. Setup opens the console and walks you through creating a key click by click, then proves it by sending a real message to your address.
-* **Composio** for app integrations, optional. One browser authorization covers Gmail, Calendar, Slack, Telegram and a long tail of others.
+* **OpenRouter** for model calls. Authorize in the browser; the key is delivered to your instance and checked for credit, because a valid key with no balance fails every model call.
+* **AgentMail** for failure alerts and reply-to-edit. Setup opens the console, names the clicks, and proves it by mailing you.
+* **Composio** for app integrations, optional. One authorization covers Gmail, Calendar, Slack, Telegram and a long tail.
 
-OpenRouter and Composio are authorizations, so you never see a key. AgentMail publishes no authorization server, so its key has to be created in a console; setup does not just name the service and wish you luck, it opens the right page and tells you which button to press. Alerts stay required because without them a failing jig fails silently.
+The dashboard's **Setup** page shows the same steps with live status, a button per step, and whether this instance's data will survive a restart. Nothing is pasted that a browser can authorize instead, so an agent running setup for you never handles a secret. Re-run it any time; satisfied steps are skipped. Details, including the no-terminal path, live in [`.agents/skills/jig/SKILL.md`](.agents/skills/jig/SKILL.md).
 
-Run setup again whenever you want. Steps already satisfied report as done and are skipped. Without a terminal (a coding agent, a script), nothing is asked of the caller: the authorization URLs are printed for you to click, and the AgentMail key is collected in the dashboard, which setup opens and then waits on. If you would rather supply values directly, `--openrouter-key=`, `--agentmail-key=` and `--owner=` (or `JIG_OPENROUTER_KEY`, `JIG_AGENTMAIL_KEY`, `JIG_OWNER_EMAIL`) pre-seed them and the matching step then finds itself already done. Pass a deployed instance's handle (`bun run jig setup <handle>`) to set that one up instead of the local one.
+Then open the dashboard, connect what you need, and describe the workflow you want.
 
-Open the dashboard, connect the services you want, and tell Jig what to build.
+## Updating
 
-* connect Gmail, Calendar, GitHub, Apify, or other services
-* describe the workflow in plain English
-* review the generated jig as code
-* run it manually or leave it scheduled
+```Shell
+git pull && bun install        # a local clone
+bun run jig update             # a Railway instance you deployed from this clone
+```
 
-On first run, Jig installs the dashboard dependencies. Runtime state belongs in the ignored local database or Railway `/data` volume; do not commit credentials or instance data.
+`jig update` deploys the newest release tag, waits for the health check, and rolls back if it fails. It will not move an instance onto an older tag. A Railway instance created with the template button has no clone attached, so update it by redeploying the service, which re-pulls the published image. Your jigs, credentials and schedules live in the database, not the source tree.
 
 ## Connections
 
@@ -165,13 +159,19 @@ Generated jigs use these import aliases:
 
 ## Coding Agents
 
-Start with [`llms.txt`](llms.txt). Claude Code and other repository-aware agents should also read [`AGENTS.md`](AGENTS.md); jig authors should follow [`SKILL.md`](SKILL.md), and deployment or recovery work should follow [`docs/operations.md`](docs/operations.md).
+Two skills, split by what you are doing:
+
+* **Running an instance** (install, setup, connect, Railway deploy, update): [`.agents/skills/jig/SKILL.md`](.agents/skills/jig/SKILL.md), the cross-agent skills directory Claude Code, Codex, Cursor and OpenCode all read.
+* **Writing workflow code**: [`SKILL.md`](SKILL.md), read completely before editing a jig.
+
+[`llms.txt`](llms.txt) routes any other task, [`AGENTS.md`](AGENTS.md) is the cross-agent entry point, and [`docs/operations.md`](docs/operations.md) covers triage and recovery.
 
 ## CLI Commands
 
 ```Shell
 bun run jig setup
 bun run jig start
+bun run jig update
 bun run jig connect
 bun run jig connect composio
 bun run jig new "Every Friday at 4pm, draft a weekly update email from my meetings and emails."

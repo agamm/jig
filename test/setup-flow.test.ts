@@ -244,6 +244,19 @@ describe("runSetupFlow", () => {
     expect(verified.summary).toMatch(/balance is 0/)
   })
 
+  it("runs only the requested step, so a dashboard card can fix one thing", async () => {
+    // The setup page offers a button per card. Without this, pressing "Set up"
+    // on alerts would also re-walk model access and integrations.
+    const { io, events } = makeIO({ confirm: [true] })
+    const result = await runSetupFlow(io, makeBackend(), { only: ["agentmail"] })
+
+    expect(result.verified).toEqual(["agentmail"])
+    const begun = events.filter((e) => e.type === "step-begin").map((e) => (e as { id: string }).id)
+    expect(begun).toEqual(["agentmail"])
+    const plan = events.find((e) => e.type === "plan") as { steps: { id: string }[] }
+    expect(plan.steps.map((s) => s.id)).toEqual(["agentmail"])
+  })
+
   it("surfaces the composio app recommendations after verifying", async () => {
     const { io, events } = makeIO({ confirm: [true] })
     await runSetupFlow(io, makeBackend())

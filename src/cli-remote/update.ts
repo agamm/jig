@@ -35,13 +35,13 @@ async function runText(cmd: string[], cwd = process.cwd()): Promise<string> {
   return stdout
 }
 
-function parseSemverTag(tag: string): [number, number, number] | null {
+export function parseSemverTag(tag: string): [number, number, number] | null {
   const m = tag.match(/^v?(\d+)\.(\d+)\.(\d+)$/)
   if (!m) return null
   return [parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10)]
 }
 
-function compareSemver(a: [number, number, number], b: [number, number, number]): number {
+export function compareSemver(a: [number, number, number], b: [number, number, number]): number {
   for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] - b[i]
   return 0
 }
@@ -59,6 +59,52 @@ async function getLatestRemoteTag(): Promise<{ tag: string; sha: string } | null
   const tag = tags[0]
   const sha = (await runText(["git", "rev-parse", `${tag}^{commit}`])).trim()
   return { tag, sha }
+}
+
+/**
+ * Should this instance move to that tag?
+ *
+ * Pure, because the answer is the whole safety property and the rest of this
+ * file is git and network. The bug it exists to prevent: the check used to be
+ * string equality, so an instance running a version NEWER than the newest tag
+ * (tags lag main) failed the equality test and was checked out backwards onto
+ * the old tag. That is a live downgrade past migrations that have already run
+ * against the volume, which is not an update failure, it is data damage.
+ */
+export function decideUpdate(
+  currentVersion: string,
+  latestTag: string,
+): { action: "update" | "current" | "ahead"; messages: string[] } {
+  const running = parseSemverTag(currentVersion)
+  const target = parseSemverTag(latestTag)
+
+  if (running && target) {
+    const delta = compareSemver(target, running)
+    if (delta === 0) return { action: "current", messages: ["Already current."] }
+    if (delta < 0) {
+      return {
+        action: "ahead",
+        messages: [
+          `This instance runs ${currentVersion}, which is newer than the latest tag ${latestTag}. Refusing to move it backwards.`,
+          "Tag the release you want on origin (e.g. `git tag v0.2.0 && git push origin v0.2.0`), then re-run.",
+        ],
+      }
+    }
+    return { action: "update", messages: [] }
+  }
+
+  // One side is not a semver. Only an exact match is safe to call current;
+  // anything else gets no direction guess.
+  if (currentVersion === latestTag || `v${currentVersion}` === latestTag) {
+    return { action: "current", messages: ["Already current."] }
+  }
+  return {
+    action: "ahead",
+    messages: [
+      `Cannot compare the running version (${currentVersion}) with the latest tag (${latestTag}).`,
+      "Refusing to deploy blind. Check both, then deploy the tag directly if it really is newer.",
+    ],
+  }
 }
 
 async function fetchHealth(publicUrl: string): Promise<HealthResponse> {
@@ -141,8 +187,9 @@ export async function runUpdate(handle?: string): Promise<void> {
   console.log(`  Current: ${current.version}`)
   console.log(`  Latest:  ${latest.tag} (${latest.sha.slice(0, 7)})`)
 
-  if (current.version === latest.tag || `v${current.version}` === latest.tag) {
-    console.log("Already current.")
+  const decision = decideUpdate(current.version, latest.tag)
+  if (decision.action !== "update") {
+    for (const line of decision.messages) console.log(line)
     return
   }
 

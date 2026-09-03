@@ -363,7 +363,10 @@ export function ModelsSettings({ autofocusSlot }: { autofocusSlot?: ModelSlot } 
             <button
               key={slot}
               onClick={() => setActiveSlot(slot)}
-              className={`group flex min-w-0 flex-1 items-center gap-2 px-3 py-2 text-left transition-colors ${
+              // The bar clips its children, so the global focus ring would be
+              // sheared into a hard green edge against the container. Draw it
+              // inside the tab instead.
+              className={`group flex min-w-0 flex-1 items-center gap-2 px-3 py-2 text-left transition-colors focus-visible:shadow-[inset_0_0_0_1px_rgba(16,185,129,0.55)] ${
                 i > 0 ? "border-l border-[#1f1f23]" : ""
               } ${active ? "bg-emerald-500/[0.07]" : "hover:bg-[#141416]"}`}
             >

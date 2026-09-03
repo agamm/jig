@@ -127,6 +127,12 @@ export interface SetupOptions {
    * when there is no terminal to type into.
    */
   dashboardUrl?: string
+  /**
+   * Run only these steps. The dashboard uses it so a card that says "needs
+   * attention" can offer a button that fixes only that thing, instead of making
+   * someone re-walk the steps that already pass.
+   */
+  only?: SetupStepId[]
 }
 
 const DEFAULT_OAUTH_TIMEOUT_MS = 5 * 60_000
@@ -140,10 +146,11 @@ export async function runSetupFlow(
   const verified: SetupStepId[] = []
   const skipped: SetupStepId[] = []
 
-  io.emit({ type: "plan", steps: SETUP_STEPS })
+  const steps = options.only ? SETUP_STEPS.filter((s) => options.only!.includes(s.id)) : SETUP_STEPS
+  io.emit({ type: "plan", steps })
 
-  for (const [index, step] of SETUP_STEPS.entries()) {
-    io.emit({ type: "step-begin", id: step.id, title: step.title, index: index + 1, total: SETUP_STEPS.length })
+  for (const [index, step] of steps.entries()) {
+    io.emit({ type: "step-begin", id: step.id, title: step.title, index: index + 1, total: steps.length })
 
     try {
       const outcome = await runStep(step, io, backend, options)

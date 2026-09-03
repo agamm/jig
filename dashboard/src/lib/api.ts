@@ -234,6 +234,10 @@ export function connectConnection(
   })
 }
 
+export function verifyConnection(name: string): Promise<ApiResponse<"verifyConnection">> {
+  return fetchApi("verifyConnection", `/api/connections/${encodeURIComponent(name)}/verify`, { method: "POST" })
+}
+
 export function disconnectConnection(name: string): Promise<ApiResponse<"disconnectConnection">> {
   return fetchApi("disconnectConnection", `/api/connections/${encodeURIComponent(name)}/disconnect`, { method: "POST" })
 }
@@ -324,10 +328,6 @@ export function startJigRun(jigId: string, payload: {
 
 export function fetchRunStatus(runId: number): Promise<RunDetail> {
   return fetchApi("getRun", `/api/runs/${runId}`)
-}
-
-export function fetchActiveRun(): Promise<RunStatus> {
-  return fetchApi("activeRun", "/api/runs/active")
 }
 
 export function fetchActiveRunForJig(jigId: string): Promise<RunStatus> {
@@ -449,10 +449,6 @@ export function changePassword(newPassword: string): Promise<ApiResponse<"change
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ newPassword }),
   })
-}
-
-export function fetchToolPermissions(): Promise<ToolPermission[]> {
-  return fetchApi("toolPermissions", "/api/permissions")
 }
 
 export function saveToolPermission(input: {

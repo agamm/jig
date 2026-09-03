@@ -1,57 +1,99 @@
 import { describe, expect, it } from "bun:test"
 import { readFileSync } from "fs"
 import { listExampleJigs } from "../src/services/example-jigs.js"
+import { loadServerConfigs } from "../src/mcp/config.js"
+
+const read = (id: string) => readFileSync(`examples/${id}.ts`, "utf-8")
+const EXAMPLE_IDS = ["weekly-update", "pre-meeting-briefing", "executive-coach-daily"]
 
 describe("example jig catalog", () => {
   it("loads durable example jigs from examples/", () => {
     const examples = listExampleJigs()
     const ids = examples.map((example) => example.id)
 
-    expect(ids).toContain("weekly-update")
-    expect(ids).toContain("pre-meeting-briefing")
-    expect(ids).toContain("executive-coach-daily")
+    for (const id of EXAMPLE_IDS) expect(ids).toContain(id)
     expect(examples.every((example) => example.steps.length > 0)).toBe(true)
     expect(examples.every((example) => example.trigger.length > 0)).toBe(true)
     expect(examples.every((example) => example.connections.length > 0)).toBe(true)
-    expect(readFileSync("examples/weekly-update.ts", "utf-8")).not.toContain("params:")
+    expect(read("weekly-update")).not.toContain("params:")
   })
 
-  it("uses the expected generated tool names", () => {
-    const weekly = readFileSync("examples/weekly-update.ts", "utf-8")
-    const briefing = readFileSync("examples/pre-meeting-briefing.ts", "utf-8")
-    const coach = readFileSync("examples/executive-coach-daily.ts", "utf-8")
+  it("only imports connections that are enabled in the default registry", async () => {
+    // The bug this exists for: both briefing examples imported `workspace`,
+    // which has been disabled in default.json since 2026-06-15. Adding one of
+    // those examples installed an immediately-active jig that could never
+    // resolve its import, and the old assertions pinned the broken names in
+    // place. Read the registry instead of restating it.
+    const available = new Set(Object.keys(await loadServerConfigs()))
+
+    for (const id of EXAMPLE_IDS) {
+      const imported = [...read(id).matchAll(/@jig\/connections\/([a-z0-9_-]+)\.js/g)].map((m) => m[1])
+      expect(imported.length).toBeGreaterThan(0)
+      for (const name of imported) {
+        expect({ example: id, connection: name, enabled: available.has(name) }).toEqual({
+          example: id,
+          connection: name,
+          enabled: true,
+        })
+      }
+    }
+  })
+
+  it("imports connections with the .js specifier the authoring guide mandates", () => {
+    for (const id of EXAMPLE_IDS) {
+      const bare = [...read(id).matchAll(/@jig\/connections\/([a-z0-9_-]+)(?!\.js)["']/g)]
+      expect({ example: id, bareImports: bare.map((m) => m[1]) }).toEqual({ example: id, bareImports: [] })
+    }
+  })
+
+  it("uses the generated tool names, not the underlying provider spellings", () => {
+    const weekly = read("weekly-update")
+    const briefing = read("pre-meeting-briefing")
+    const coach = read("executive-coach-daily")
 
     expect(weekly).toContain("agent<")
-    expect(weekly).toContain("workspace.calendar_listEvents")
-    expect(weekly).toContain("workspace.gmail_search")
-    expect(weekly).toContain("workspace.gmail_get")
-    expect(weekly).toContain("workspace.drive_search")
-    expect(weekly).toContain("workspace.people_getMe")
-    expect(weekly).toContain("workspace.gmail_createDraft")
-    expect(weekly).not.toContain("google_calendar_list_events")
-    expect(weekly).not.toContain("gmail_search_emails")
-    expect(weekly).not.toContain("google_drive_search")
-    expect(weekly).not.toContain("gmail_create_draft")
-
-    expect(briefing).toContain("workspace.calendar_listEvents")
-    expect(briefing).toContain("workspace.gmail_search")
-    expect(briefing).not.toContain("google_calendar_list_events")
-    expect(briefing).not.toContain("gmail_search_emails")
-
+    expect(weekly).toContain("granola.query_granola_meetings")
+    expect(briefing).toContain("granola.query_granola_meetings")
     expect(coach).toContain("granola.query_granola_meetings")
-    expect(coach).toContain("composio.googlecalendar_events_list")
     expect(coach).toContain("composio.gmail_fetch_emails")
-    expect(coach).toContain("composio.gmail_send_email")
-    expect(coach).not.toContain("workspace.")
+
+    // Provider-style spellings that do not exist on the generated clients.
+    for (const [id, source] of EXAMPLE_IDS.map((id) => [id, read(id)] as const)) {
+      for (const wrong of ["google_calendar_list_events", "gmail_search_emails", "google_drive_search", "gmail_create_draft"]) {
+        expect({ example: id, wrong, present: source.includes(wrong) }).toEqual({ example: id, wrong, present: false })
+      }
+    }
   })
 
-  it("keeps example output inside steps", () => {
-    const weekly = readFileSync("examples/weekly-update.ts", "utf-8")
-    const briefing = readFileSync("examples/pre-meeting-briefing.ts", "utf-8")
-    const coach = readFileSync("examples/executive-coach-daily.ts", "utf-8")
+  it("does not tell the reader to discover their own identity at runtime", () => {
+    // Personal constants are hardcoded: a lookup spends a tool call on
+    // something that never changes, and examples get copied verbatim.
+    for (const id of EXAMPLE_IDS) {
+      for (const lookup of ["people_getMe", "gmail_get_profile", "get_account_info"]) {
+        expect({ example: id, lookup, present: read(id).includes(lookup) }).toEqual({ example: id, lookup, present: false })
+      }
+    }
+  })
 
-    expect(weekly.match(/ctx\.output\(/g)?.length ?? 0).toBe(1)
-    expect(briefing.match(/ctx\.output\(/g)?.length ?? 0).toBe(1)
-    expect((coach.match(/ctx\.output\(/g)?.length ?? 0)).toBeGreaterThan(0)
+  it("keeps every ctx.output call inside a step", () => {
+    // Was a count (`toBe(1)`), which pinned the shape of one specific example
+    // rather than the rule. Check the rule: an output outside a step escapes
+    // the tool allowlist that steps exist to enforce.
+    for (const id of EXAMPLE_IDS) {
+      const source = read(id)
+      expect(source).toContain("ctx.output(")
+
+      let depth = 0
+      let stepDepth: number | null = null
+      const outsideStep: number[] = []
+      source.split("\n").forEach((line, i) => {
+        if (/ctx\.step\(/.test(line) && stepDepth === null) stepDepth = depth
+        if (/ctx\.output\(/.test(line) && stepDepth === null) outsideStep.push(i + 1)
+        depth += (line.match(/[{(]/g)?.length ?? 0) - (line.match(/[})]/g)?.length ?? 0)
+        if (stepDepth !== null && depth <= stepDepth) stepDepth = null
+      })
+
+      expect({ example: id, outputsOutsideSteps: outsideStep }).toEqual({ example: id, outputsOutsideSteps: [] })
+    }
   })
 })

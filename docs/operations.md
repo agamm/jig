@@ -2,52 +2,29 @@
 
 This runbook is for coding agents and operators. It covers supported local and Railway paths only.
 
-## Deploy a clean instance
+## Deploy and update
 
-The README's Deploy on Railway button provisions a new service from the public
-`ghcr.io/agamm/jig:latest` image plus a blank persistent volume mounted at
-`/data`. GitHub Actions builds that image from an allowlisted subset of the
-public repository; local state and secret paths are excluded from the build
-context.
+The commands and their order live in the `jig` skill
+([`.agents/skills/jig/SKILL.md`](../.agents/skills/jig/SKILL.md)). This runbook keeps only the
+constraints that outlive them.
 
-The template must never contain a maintainer database, environment variables, OAuth state, credentials, connection schemas, logs, or other runtime data. Users add their own password, OpenRouter key, and connections after deployment.
+**The published template must stay clean.** It must never contain a maintainer database,
+environment variables, OAuth state, credentials, connection schemas, logs, or other runtime
+data. GitHub Actions builds `ghcr.io/agamm/jig:latest` from an allowlisted subset of the
+public repository; local state and secret paths are excluded from the build context. Users add
+their own password, model access, and connections after deployment.
 
-CLI alternative:
+**`/data` persistence is not optional.** `deploy --update` refuses to proceed without it and
+will attempt to attach a missing volume. Attaching a volume hides any old ephemeral `/data`,
+so a deployment that previously ran without one must be treated as a fresh instance.
 
-```sh
-bun install
-bun run jig deploy
-```
-
-The deploy wizard:
-
-1. authenticates the Railway CLI;
-2. creates and links a project;
-3. creates a service;
-4. mounts a persistent volume at `/data`;
-5. deploys the repository;
-6. creates a public domain;
-7. waits for `/api/health`;
-8. saves a local remote manifest under `~/.config/jig/remotes/`.
-
-After the service is healthy:
-
-1. open the generated URL;
-2. set the instance password;
-3. authorize OpenRouter when the dashboard asks (browser flow; pasting a key in Settings stays available as a fallback);
-4. connect only the services the jigs need;
-5. configure AgentMail so failures reach you; `bun run jig setup` walks through this and the steps above, and verifies each one.
-
-## Update safely
+**A remote update rolls back on a failed health check.** It will not move an instance onto a
+version older than the one it runs, because old code against a volume whose migrations have
+already advanced is data damage rather than a failed deploy.
 
 ```sh
-bun run jig deploy --update
 bun run jig doctor
 ```
-
-`deploy --update` refuses to proceed without `/data` persistence and will attempt to attach a missing volume. Attaching a volume hides any old ephemeral `/data`, so a deployment that previously ran without a volume must be treated as a fresh instance.
-
-Use `bun run jig update [handle]` for the remote update flow. It rolls back when the new deployment fails its health check.
 
 ## Health triage
 

@@ -13,3 +13,15 @@
 **What happened:** A test script for the OAuth provider set `RAILWAY_PUBLIC_DOMAIN` assuming it would trip `isServiceMode()` and suppress the browser-open in `redirectToAuthorization`. It checks `RAILWAY_ENVIRONMENT_ID`/`RAILWAY_PROJECT_ID`/`JIG_PUBLIC_URL` — not that var — so `open(url)` fired and popped dead tabs in the user's browser.
 
 **Rule:** When a test relies on an env var/flag to neutralize a side effect (browser open, email send, network call), ASSERT the guard is active inside the test before exercising the code (e.g. `if (!isServiceMode()) throw`), or stub the side-effecting call directly. Read the guard's implementation — don't guess its trigger from the var name.
+
+## A Required Step That Is Inconvenient Gets Guided, Not Demoted
+
+**What happened:** Asked to make setup need no pasted tokens, I made AgentMail optional because it has no OAuth. That quietly traded away the failure-alert channel: a jig that breaks would email nobody. The user's answer was "guide via setup to set it up", not "drop it".
+
+**Rule:** When a requirement blocks a goal, the first move is to make the requirement easier to satisfy (open the console, name the clicks, collect it in the browser where there is no terminal). Demoting it to optional changes the product's guarantees and is the user's call, not a workaround to reach for.
+
+## Examples Ship As Active Jigs, So Validate Them Like Jigs
+
+**What happened:** `examples/weekly-update.ts` read a `templates/` file that does not exist in the repo, and two examples imported the `workspace` connection, disabled in `servers/default.json` since 2026-06-15. `addExampleJig` writes an example straight to active with no review gate, so both would have installed a jig that could never run. The test that covered examples asserted the broken tool names, so it stayed green.
+
+**Rule:** Run `validateJigFile` and `validateTsFile` (the same checks the runtime uses) over every example after touching one. Assert the RULE (connection is enabled in the registry, output is inside a step), never the current spelling of one example, or the test pins the bug in place.

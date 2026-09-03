@@ -316,8 +316,11 @@ export function SetupView() {
                   <div className="flex shrink-0 items-center gap-2">
                     {statusPill(state)}
                     <Button
-                      size="xs"
-                      variant={state.status === "ready" ? "subtle" : "accent"}
+                      size="sm"
+                      // Filled when there is something to do, so the action reads
+                      // as a button rather than as a second status chip sitting
+                      // next to the first one.
+                      variant={state.status === "ready" ? "subtle" : "success"}
                       onClick={() => void run([step.id])}
                       disabled={running !== null}
                     >

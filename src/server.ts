@@ -160,7 +160,10 @@ export function createApiServer(port: number) {
           case "startOpenRouterOAuth": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
             const { startOpenRouterOAuth } = await import("./services/openrouter-oauth.js")
-            return apiJson("startOpenRouterOAuth", startOpenRouterOAuth())
+            // The origin the caller reached us on is the most reliable answer to
+            // "where can OpenRouter send them back", better than an env var the
+            // platform may not have set.
+            return apiJson("startOpenRouterOAuth", startOpenRouterOAuth(publicUrlFromRequest(req)))
           }
           case "openRouterOAuthCallback":
             return handleOpenRouterCallback(url)

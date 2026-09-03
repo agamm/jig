@@ -42,11 +42,22 @@ function base64url(input: Buffer): string {
   return input.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
 }
 
-/** Where OpenRouter should send the user back to. Mirrors `oauthRedirectUrl()`. */
-export function openRouterCallbackUrl(): string {
+/**
+ * Where OpenRouter should send the user back to. Mirrors `oauthRedirectUrl()`.
+ *
+ * `requestOrigin` is the origin the dashboard was actually loaded from, and it
+ * is the fallback that matters: Railway sets RAILWAY_ENVIRONMENT_ID (so we are
+ * in service mode) without always setting RAILWAY_PUBLIC_DOMAIN, and an
+ * instance the user is plainly browsing is not an instance with no address.
+ */
+export function openRouterCallbackUrl(requestOrigin?: string): string {
   if (isServiceMode()) {
-    const base = publicUrl()
-    if (!base) throw new Error("This instance has no public URL, so OpenRouter cannot redirect back to it.")
+    const base = publicUrl() ?? requestOrigin
+    if (!base) {
+      throw new Error(
+        "Could not work out a public URL for this instance, so OpenRouter has nowhere to redirect back to. Set JIG_PUBLIC_URL to the address you reach the dashboard at, then try again.",
+      )
+    }
     return `${base}${OPENROUTER_CALLBACK_PATH}`
   }
   const apiPort = process.env.JIG_API_PORT || "4173"
@@ -57,12 +68,12 @@ export function openRouterCallbackUrl(): string {
  * Stage a PKCE authorization. Returns the URL to open in a browser; the key
  * arrives later, at the callback.
  */
-export function startOpenRouterOAuth(): { authorizationUrl: string; callbackUrl: string } {
+export function startOpenRouterOAuth(requestOrigin?: string): { authorizationUrl: string; callbackUrl: string } {
   const verifier = base64url(randomBytes(32))
   const challenge = base64url(createHash("sha256").update(verifier).digest())
   pending = { verifier, startedAt: Date.now() }
 
-  const callbackUrl = openRouterCallbackUrl()
+  const callbackUrl = openRouterCallbackUrl(requestOrigin)
   const params = new URLSearchParams({
     callback_url: callbackUrl,
     code_challenge: challenge,

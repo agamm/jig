@@ -34,6 +34,10 @@ export interface SetupArgs {
   skipOptional: boolean
   /** Answer yes to every confirmation. Implied when there is no TTY. */
   assumeYes: boolean
+  /** Provision a hosted Railway instance without asking which kind to make. */
+  railway: boolean
+  /** Set up a local instance instead of a hosted one. */
+  local: boolean
 }
 
 export function parseSetupArgs(argv: string[]): SetupArgs {
@@ -46,6 +50,8 @@ export function parseSetupArgs(argv: string[]): SetupArgs {
     owner: flag("owner") ?? process.env.JIG_OWNER_EMAIL,
     skipOptional: argv.includes("--skip-optional"),
     assumeYes: argv.includes("--yes") || argv.includes("-y"),
+    railway: argv.includes("--railway"),
+    local: argv.includes("--local"),
   }
 }
 
@@ -247,6 +253,18 @@ export function makeHttpBackend(base: string, cookie?: string): SetupBackend {
 // Entry point
 // ---------------------------------------------------------------------------
 
+/** Hosted or local, asked once, defaulting to hosted. */
+async function askHosted(): Promise<boolean> {
+  const { createInterface } = await import("node:readline/promises")
+  const rl = createInterface({ input: process.stdin, output: process.stdout })
+  console.log("No Jig instance yet.")
+  console.log("  Hosted on Railway keeps schedules running when your machine is off.")
+  console.log("  Local runs only while `jig start` is running on this machine.")
+  const answer = await rl.question("Provision a hosted instance on Railway? [Y/n] ")
+  rl.close()
+  return !answer.trim() || answer.trim().toLowerCase().startsWith("y")
+}
+
 /** A dashboard answers with HTML. The bare API server answers with a JSON 404. */
 async function probeDashboard(url: string): Promise<string | undefined> {
   try {
@@ -290,7 +308,31 @@ export async function runSetup(argv: string[], ensureLocalServer: () => Promise<
     dashboardUrl = base
   } else {
     const { listRemotes, resolveActiveRemote } = await import("../cli-remote/manifest.js")
-    if (listRemotes().length > 0) {
+
+    // No instance yet. Hosted is the answer we recommend, because a jig that
+    // only runs while a laptop is open is not automation, so ask for it rather
+    // than quietly standing up a local server and calling setup done.
+    if (listRemotes().length === 0 && !args.local) {
+      const provision = args.railway ? true : interactive() ? await askHosted() : null
+      if (provision === null) {
+        console.error(
+          "No instance yet, and no terminal to ask which kind to make.\n" +
+            "  Hosted (recommended): re-run with --railway, or run `jig deploy` first.\n" +
+            "  Local:                re-run with --local.",
+        )
+        process.exit(1)
+      }
+      if (provision) {
+        // Deploy asks its own questions and writes the remote manifest we then
+        // set up against. It is interactive on purpose: it creates billed cloud
+        // resources under whichever Railway account is active.
+        const { runDeploy } = await import("../cli-deploy/index.js")
+        await runDeploy()
+        console.log("")
+      }
+    }
+
+    if (listRemotes().length > 0 && !args.local) {
       const remote = resolveActiveRemote(args.handle)
       base = remote.public_url
       cookie = remote.session_cookie

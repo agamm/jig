@@ -17,26 +17,60 @@ repo root, completely, before touching workflow code.
 - **Never ask the user for an API key you could get from a browser authorization.** Setup is
   built so nobody types a secret at you.
 
+## Ask before you start
+
+Setup makes two decisions that are the user's, not yours, and both are awkward to undo. Ask
+them **before running anything** rather than discovering them mid-flow. In Claude Code that is
+the AskUserQuestion tool; otherwise just ask in the conversation and wait.
+
+1. **Hosted or local?** Recommend hosted. A jig that only runs while their machine is on is not
+   automation. Local is right for trying it out or developing Jig itself.
+2. **If hosted, which Railway account or team?** `jig deploy` uses whichever scope the Railway
+   CLI is currently logged into and never asks. Deploying one client's work into another's
+   account is not a thing you can quietly fix afterwards, so confirm the scope out loud even
+   when the CLI is already authenticated.
+
+Then run setup non-interactively with the answer baked in: `--railway` or `--local`. You have no
+TTY, so setup cannot ask you, and it refuses rather than guessing.
+
+Everything after that point is a browser authorization the user completes themselves. Print the
+link, wait, and do not answer on their behalf.
+
 ## Install
+
+Jig is meant to run hosted. A jig that only runs while a laptop is open is not automation, so
+the default is a Railway instance and local is the deliberate alternative.
 
 ```sh
 git clone https://github.com/agamm/jig.git
 cd jig
 bun install
-bun run jig setup      # at a terminal: prompts you, then start it
+bun run jig setup          # asks hosted-or-local, defaults to hosted
+```
+
+With no instance yet, `jig setup` offers to provision one on Railway and then sets that one up.
+At a terminal it asks; with the answers you gathered above, pass `--railway` or `--local` and it
+skips the question. With no terminal and no flag it refuses rather than quietly standing up a
+local server, because a local instance is not what most people wanted and it looks like success.
+
+For a local instance:
+
+```sh
+bun run jig setup --local
 bun run jig start
 ```
 
-**Running this as an agent, start the dashboard first**, because the no-terminal path for
-AgentMail collects its key there:
+**Running this as an agent against a local instance, start the dashboard first**, because the
+no-terminal path for AgentMail collects its key there:
 
 ```sh
-bun run jig start &    # wait for the dashboard to answer
-bun run jig setup --yes
+bun run jig start &        # wait for the dashboard to answer
+bun run jig setup --local --yes
 ```
 
 `jig start` runs the Next dashboard (3141) and the Bun API behind it. First run installs the
-dashboard's deps with pnpm, not bun.
+dashboard's deps with pnpm, not bun. A hosted instance serves both from its public URL and
+needs no `jig start`.
 
 ## Setup and onboarding
 
@@ -83,7 +117,7 @@ Two supported paths.
 plus a blank `/data` volume. No clone, no CLI. `.github/workflows/publish-container.yml`
 republishes that image on every push to `main`.
 
-**From a clone**, when the user wants the CLI to own the instance:
+**From a clone**, which is what `jig setup` runs for you when you accept the hosted default:
 
 ```sh
 bun run jig deploy

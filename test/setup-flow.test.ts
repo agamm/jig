@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import { runSetupFlow, type SetupBackend, type SetupEvent, type SetupIO } from "../shared/setup-flow.js"
 import type { Connection, VerifyConnectionResponse } from "../shared/api.js"
+import { parseSetupArgs } from "../src/cli-setup/index.js"
 
 const OK_VERIFY: VerifyConnectionResponse = {
   ok: true,
@@ -263,5 +264,16 @@ describe("runSetupFlow", () => {
     const rec = events.find((e) => e.type === "recommendations") as { apps: { name: string }[]; dashboardUrl?: string }
     expect(rec.apps.map((a) => a.name)).toEqual(["Gmail", "Google Calendar", "Telegram or Slack"])
     expect(rec.dashboardUrl).toBe("https://dashboard.composio.dev/")
+  })
+})
+
+describe("parseSetupArgs", () => {
+  it("reads the instance-kind flags", () => {
+    expect(parseSetupArgs(["--railway"]).railway).toBe(true)
+    expect(parseSetupArgs(["--local"]).local).toBe(true)
+    // Neither flag is the ask-me case; nothing may default to true here or
+    // setup would silently pick an instance kind for the user.
+    const bare = parseSetupArgs([])
+    expect({ railway: bare.railway, local: bare.local }).toEqual({ railway: false, local: false })
   })
 })

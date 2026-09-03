@@ -1,9 +1,9 @@
 import type { ModelCatalog } from "../../shared/api.js"
 import { getSetting, setSetting } from "../db.js"
 
-export const DEFAULT_MAIN_MODEL = "anthropic/claude-haiku-4.5"
-export const DEFAULT_FAST_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
-export const DEFAULT_EDITOR_MODEL = "deepseek/deepseek-v3.2"
+export const DEFAULT_MAIN_MODEL = "meta/muse-spark-1.3"
+export const DEFAULT_FAST_MODEL = "deepseek/deepseek-v4-flash-0731"
+export const DEFAULT_EDITOR_MODEL = "qwen/qwen3.8-flash"
 
 const SETTINGS_KEY = "models"
 

@@ -72,23 +72,26 @@ export default jig("weekly-client-update", {
 
 **Railway:** the button above creates a fresh service with a blank `/data` volume and none of the maintainer's data, credentials, or configuration.
 
-**Local:**
+**From a clone:**
 
 ```Shell
 git clone https://github.com/agamm/jig.git
 cd jig
 bun install
-bun run jig setup
-bun run jig start
+bun run jig setup          # offers to provision a hosted instance; --local for this machine
 ```
+
+`jig setup` defaults to hosted, because a jig that only runs while your laptop is open is not
+automation. Add `--local` to set up this machine instead, then `bun run jig start`.
 
 **With a coding agent:** this repo ships a skill covering install, setup, Railway deploys and updates, so Claude Code or Codex can do the whole thing. Paste:
 
 ```text
 Install and set up Jig from https://github.com/agamm/jig.git. Clone it, read
-.agents/skills/jig/SKILL.md in the clone, and follow it. Setup opens links for me to
-authorize; wait for me rather than answering for me. When it is done, give me the
-dashboard URL and tell me which steps came back ready.
+.agents/skills/jig/SKILL.md in the clone, and follow it. Ask me the questions it says to
+ask before you start anything. Setup opens links for me to authorize; wait for me rather
+than answering for me. When it is done, give me the dashboard URL and tell me which steps
+came back ready.
 ```
 
 ## Setup

@@ -4,6 +4,7 @@
  */
 import type { CachedStep, CachedStepTool } from "./db.js"
 import { getConnectionImportBindings } from "./domain/source-analysis.js"
+import { DEFAULT_MAIN_MODEL } from "./config/models.js"
 
 function parseConnectionImports(code: string): Map<string, string> {
   return new Map(getConnectionImportBindings(code).map((binding) => [binding.localName, binding.serverName]))
@@ -89,7 +90,9 @@ export function parseStepsFromSource(code: string): CachedStep[] {
     const bodyStart = match.index! + match[0].length
     const bodyEnd = matches[i + 1]?.index ?? code.length
     const body = code.slice(bodyStart, bodyEnd)
-    const defaultModel = "claude-haiku-4.5"
+    // Derived, not spelled out: this label tells the user which model a step
+    // will use, so a hardcoded copy starts lying the day the default changes.
+    const defaultModel = DEFAULT_MAIN_MODEL.split("/").pop()!
     if (/\bllm\s*[<(]/.test(body)) {
       const modelMatch = body.match(/\bllm\s*(?:<[^>]*>)?\s*\([^)]*\{[^}]*model\s*:\s*["']([^"']+)["']/)
       const model = modelMatch?.[1]?.split("/").pop() ?? defaultModel

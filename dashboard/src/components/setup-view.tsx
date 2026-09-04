@@ -344,11 +344,11 @@ export function SetupView() {
           break;
         case "complete": {
           setFinished({ verified: event.verified, skipped: event.skipped });
-          // Celebrate once: when this run turned the last required step green,
-          // not on a re-check of an instance that was already done.
-          const required = SETUP_STEPS.filter((s) => s.required).map((s) => s.id);
-          const allReady = required.every((id) => event.verified.includes(id) || readyAtRunStart.has(id));
-          const finishedNow = required.some((id) => event.verified.includes(id) && !readyAtRunStart.has(id));
+          // Celebrate once: when this run turned the last step green (optional
+          // ones included), not on a re-check of an instance that was already done.
+          const all = SETUP_STEPS.map((s) => s.id);
+          const allReady = all.every((id) => event.verified.includes(id) || readyAtRunStart.has(id));
+          const finishedNow = all.some((id) => event.verified.includes(id) && !readyAtRunStart.has(id));
           if (allReady && finishedNow) celebrate();
           break;
         }
@@ -409,7 +409,14 @@ export function SetupView() {
           </Notice>
         ) : null}
 
-        {requiredBlocked.length === 0 ? <FirstJig /> : null}
+        {requiredBlocked.length === 0 ? (
+          <>
+            <FirstJig />
+            <Section label="Your machine">
+              <CliPairing />
+            </Section>
+          </>
+        ) : null}
 
         <Section label={requiredBlocked.length ? "What Jig needs" : "Connected"}>
           {SETUP_STEPS.map((step) => {
@@ -572,9 +579,11 @@ export function SetupView() {
           <InstancePanel health={health} />
         </Section>
 
-        <Section label="Your machine">
-          <CliPairing />
-        </Section>
+        {requiredBlocked.length > 0 ? (
+          <Section label="Your machine">
+            <CliPairing />
+          </Section>
+        ) : null}
       </div>
     </div>
   );
@@ -629,12 +638,11 @@ function FirstJig() {
         </code>
         <CopyButton
           text={prompt}
+          label="Copy prompt"
+          variant="success"
           toast="Prompt copied. Paste it into Claude Code or Codex in your paired checkout."
         />
-        <a
-          href="/"
-          className="inline-flex items-center whitespace-nowrap rounded-md border border-emerald-500/40 bg-[var(--accent-primary-strong)] px-2 py-1 text-[11px] font-medium text-white transition hover:bg-[var(--accent-primary)]"
-        >
+        <a href="/" className={buttonClasses({ variant: "subtle", size: "sm" })}>
           Open Jigs
         </a>
       </div>

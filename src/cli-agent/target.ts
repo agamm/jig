@@ -40,7 +40,7 @@ export function resolveAuthoringTarget(
   const remote = resolveActiveRemote(handle)
   if (!remote.session_cookie) {
     throw new Error(
-      `No cached session for ${remote.handle}. Open its Setup page, press "Generate command" under Connect the CLI, and run the line it gives you.\n` +
+      `No cached session for ${remote.handle}. Run \`jig unlock ${remote.handle}\` (instance password), or paste the pairing command from its Setup page.\n` +
         `  Or author locally instead with --local.`,
     )
   }

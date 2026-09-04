@@ -551,7 +551,7 @@ function numericFlag(args: string[], name: string): number | undefined {
 function resolveAuthedRemoteOrExit(handle: string | undefined): { remote: RemoteManifest; cookie: string } {
   const remote = resolveRemoteOrExit(handle)
   if (!remote.session_cookie) {
-    console.error(`No session cookie cached. Run "jig unlock ${remote.handle}" first.`)
+    console.error(`No session cookie cached. Run \`jig unlock ${remote.handle}\` (instance password), or paste the pairing command from its Setup page.`)
     process.exit(1)
   }
   return { remote, cookie: remote.session_cookie }

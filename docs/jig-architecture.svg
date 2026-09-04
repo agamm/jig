@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="780" viewBox="0 0 1600 780" role="img" aria-labelledby="title description">
   <title id="title">Jig architecture</title>
-  <desc id="description">A dashboard or CLI asks an authoring agent to create a versioned TypeScript jig. Triggers and the active jig enter the runtime engine, which executes through the Jig SDK. The SDK makes model calls and step-scoped MCP tool calls explicit.</desc>
+  <desc id="description">A coding agent writes a versioned TypeScript jig in a paired checkout and pushes it over the CLI; replying to a failure email edits it. Triggers and the active jig enter the runtime engine, which executes through the Jig SDK. The SDK makes model calls and step-scoped MCP tool calls explicit.</desc>
 
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
@@ -24,16 +24,16 @@
 
     <g>
       <rect x="56" y="170" width="260" height="150" rx="16" fill="#111419" stroke="#292e36" stroke-width="2"/>
-      <text x="82" y="214" fill="#f2f4f7" font-size="25" font-weight="600">Dashboard / CLI</text>
-      <text x="82" y="249" fill="#9ca3ad" font-size="17">Describe and review</text>
-      <text x="82" y="282" fill="#6f7781" font-size="15" font-family="'SFMono-Regular', Consolas, monospace">plain-English intent</text>
+      <text x="82" y="214" fill="#f2f4f7" font-size="25" font-weight="600">Claude Code / Codex</text>
+      <text x="82" y="249" fill="#9ca3ad" font-size="17">Writes the jig file</text>
+      <text x="82" y="282" fill="#6f7781" font-size="15" font-family="'SFMono-Regular', Consolas, monospace">in a paired checkout</text>
     </g>
 
     <g>
       <rect x="376" y="160" width="300" height="170" rx="18" fill="#101824" stroke="#6da8ff" stroke-opacity="0.72" stroke-width="2"/>
-      <text x="404" y="203" fill="#87b8ff" font-size="13" font-weight="700" letter-spacing="1.8">AUTHORING AGENT</text>
-      <text x="404" y="246" fill="#f2f4f7" font-size="27" font-weight="600">Prompt → code</text>
-      <text x="404" y="281" fill="#aeb5bf" font-size="17">discover · generate · validate</text>
+      <text x="404" y="203" fill="#87b8ff" font-size="13" font-weight="700" letter-spacing="1.8">JIG CLI</text>
+      <text x="404" y="246" fill="#f2f4f7" font-size="27" font-weight="600">jig edit --file</text>
+      <text x="404" y="281" fill="#aeb5bf" font-size="17">typecheck · pending · approve</text>
       <text x="404" y="309" fill="#7188a7" font-size="14" font-family="'SFMono-Regular', Consolas, monospace">TypeScript</text>
     </g>
 
@@ -50,7 +50,7 @@
       <path d="M676 245H726"/>
     </g>
     <g fill="#7d858f" font-size="13" font-family="'SFMono-Regular', Consolas, monospace">
-      <text x="323" y="231">prompt</text>
+      <text x="323" y="231">file</text>
       <text x="683" y="231">writes</text>
     </g>
 

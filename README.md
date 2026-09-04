@@ -104,7 +104,7 @@ came back ready.
 
 The dashboard's **Setup** page shows the same steps with live status, a button per step, and whether this instance's data will survive a restart. Nothing is pasted that a browser can authorize instead, so an agent running setup for you never handles a secret. Re-run it any time; satisfied steps are skipped. Details, including the no-terminal path, live in [`.agents/skills/jig/SKILL.md`](.agents/skills/jig/SKILL.md).
 
-Then open the dashboard, connect what you need, and describe the workflow you want.
+Then open the dashboard, connect what you need, and hand the first-jig prompt from the Setup page to your coding agent.
 
 ## Updating
 

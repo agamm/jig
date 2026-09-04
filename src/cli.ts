@@ -146,8 +146,8 @@ async function agentCommand(instruction: string, jigId?: string, argv: string[] 
     }
     console.log(`\n✓ Jig: ${id}`)
     if (target.remote) {
-      console.log(`  Review it:  jig debug pull ${id}`)
-      console.log(`  Run it:     jig debug run ${id}`)
+      console.log(`  Review it:  jig edit ${id} --out=<file>`)
+      console.log(`  Run it:     jig run ${id}`)
     } else {
       console.log(`  Review it:  jig pending ${id}`)
       console.log(`  Run it:     jig run ${id}`)
@@ -180,7 +180,7 @@ try {
       }
       if (runTarget.remote) {
         const { runRemoteJig } = await import("./cli-debug/index.js")
-        await runRemoteJig(rest)
+        await runRemoteJig(rest, runTarget.manifest)
       } else {
         await handleRun(rest.find((a) => !a.startsWith("--")))
       }
@@ -222,8 +222,8 @@ try {
       if (outFlag || fileFlag) {
         if (editTarget.remote) {
           const { pullRemoteJig, pushRemoteJig } = await import("./cli-debug/index.js")
-          if (outFlag) await pullRemoteJig(rest)
-          else await pushRemoteJig([name, fileFlag!.slice("--file=".length), ...rest.filter((a) => a.startsWith("--") && !a.startsWith("--file="))])
+          if (outFlag) await pullRemoteJig(rest, editTarget.manifest)
+          else await pushRemoteJig(rest, editTarget.manifest)
         } else {
           const { getActiveCode, writePending, approvePending } = await import("./services/jig-store.js")
           if (outFlag) {
@@ -429,7 +429,7 @@ try {
       console.log(`Commands:`)
       console.log(`  jig start              Start dashboard + API server`)
       console.log(`  jig setup [handle]     Guided setup: models, alerts, connections (--railway | --local | --force)`)
-  console.log(`  jig connect [server]   List servers or connect one`)
+      console.log(`  jig connect [server]   List servers or connect one`)
       console.log(`  jig run <name>         Run a jig on your deployed instance (--local for here)`)
       console.log(`  jig new [description]  AI generates a new jig (on your deployed instance; --local for here)`)
       console.log(`  jig edit <name>        AI modifies a jig; --out=<f> exports code, --file=<f> uploads it`)
@@ -447,6 +447,7 @@ try {
       console.log(`  jig pair <code>        Cache a CLI session from a dashboard pairing code`)
       console.log(`  jig unlock [handle]    Sign in to a deployed instance with its password (hidden prompt)`)
       console.log(`  jig debug <sub>        Diagnostics: logs, connections, tool probes (see "jig debug")`)
+      console.log(`\nTarget flags for run/new/edit: --handle=<name> | --local`)
       break
   }
 } catch (e: any) {

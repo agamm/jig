@@ -187,4 +187,5 @@ bun run jig debug connections    # what a deployed instance has connected
 ```
 
 `new`, `edit` and `run` act on your deployed instance when you have one, and print which
-instance they chose before starting. Add `--local` to act on this machine instead.
+instance they chose before starting. Add `--local` to act on this machine, or
+`--handle=<name>` to choose between deployed instances.

@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs"
-import { tmpdir, homedir } from "node:os"
+import { rmSync, writeFileSync, mkdirSync } from "node:fs"
 import { join } from "node:path"
 import { resolveAuthoringTarget } from "../src/cli-agent/target.js"
 
@@ -9,28 +8,16 @@ import { resolveAuthoringTarget } from "../src/cli-agent/target.js"
  * agent asked to make a jig on a deployed instance either authored into the
  * wrong place or went off to drive the dashboard in a browser.
  */
-const remotesDir = join(homedir(), ".config", "jig", "remotes")
+const remotesDir = process.env.JIG_REMOTES_DIR!
 const LOCAL = "http://localhost:3141"
-let stash: string | null = null
 
 beforeEach(() => {
+  rmSync(remotesDir, { recursive: true, force: true })
   mkdirSync(remotesDir, { recursive: true })
-  stash = mkdtempSync(join(tmpdir(), "jig-remotes-stash-"))
-  // Move any real manifests aside so this never depends on the dev's machine.
-  for (const f of require("node:fs").readdirSync(remotesDir)) {
-    require("node:fs").renameSync(join(remotesDir, f), join(stash!, f))
-  }
 })
 
 afterEach(() => {
-  for (const f of require("node:fs").readdirSync(remotesDir)) rmSync(join(remotesDir, f), { force: true })
-  if (stash) {
-    for (const f of require("node:fs").readdirSync(stash)) {
-      require("node:fs").renameSync(join(stash, f), join(remotesDir, f))
-    }
-    rmSync(stash, { recursive: true, force: true })
-    stash = null
-  }
+  rmSync(remotesDir, { recursive: true, force: true })
 })
 
 function writeRemote(handle: string, extra: Record<string, unknown> = {}) {
@@ -57,6 +44,23 @@ describe("resolveAuthoringTarget", () => {
   it("honours --local even with a deployed instance", () => {
     writeRemote("prod", { session_cookie: "cookie-value" })
     expect(resolveAuthoringTarget(["--local"], LOCAL).remote).toBe(false)
+  })
+
+  it("rejects conflicting or nonexistent explicit targets", () => {
+    expect(() => resolveAuthoringTarget(["--local", "--handle=prod"], LOCAL)).toThrow(/Choose one target/)
+    expect(() => resolveAuthoringTarget(["--handle="], LOCAL)).toThrow(/requires a remote name/)
+    expect(() => resolveAuthoringTarget(["--handle=prod"], LOCAL)).toThrow(/No remotes configured/)
+  })
+
+  it("selects one remote with --handle when several exist", () => {
+    writeRemote("staging", { session_cookie: "staging-cookie" })
+    writeRemote("prod", { session_cookie: "prod-cookie" })
+
+    const target = resolveAuthoringTarget(["--handle=prod"], LOCAL)
+    expect(target.remote).toBe(true)
+    expect(target.base).toBe("https://prod.example")
+    expect(target.headers.Cookie).toBe("jig-admin=prod-cookie")
+    if (target.remote) expect(target.manifest.handle).toBe("prod")
   })
 
   it("refuses rather than silently authoring locally when the remote is unpaired", () => {

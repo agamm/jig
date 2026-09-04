@@ -585,20 +585,6 @@ const AGENT_TOOL_DEFS: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
-      name: "browse",
-      description: "Navigate to a URL and return the page content as text. Use only for external docs or API references that are not already in the prompt context.",
-      parameters: {
-        type: "object",
-        properties: {
-          url: { type: "string", description: "The URL to navigate to" },
-        },
-        required: ["url"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
       name: "web_search",
       description: "Search the web and return results. Use only for external docs or examples that are not already in the prompt context.",
       parameters: {
@@ -854,63 +840,6 @@ async function toolIntrospectToolOutput(args: {
   }
 }
 
-async function toolBrowse(args: { url: string }): Promise<string> {
-  const timeout = new Promise<string>((_, reject) =>
-    setTimeout(() => reject(new Error("Browse timed out after 45s")), 45_000)
-  )
-  return Promise.race([timeout, _toolBrowse(args)])
-}
-
-async function _toolBrowse(args: { url: string }): Promise<string> {
-  const url = args.url
-  if (url.startsWith("file://") || url.startsWith("/")) {
-    return JSON.stringify({ error: "Cannot browse local files. Tool schemas and type definitions are already in your system prompt — look there instead." })
-  }
-  // SSRF guard: reject loopback/private/link-local/metadata targets before the
-  // headless browser fetches them — otherwise a prompt-injected URL like
-  // http://169.254.169.254/... could pull cloud-metadata/IAM creds into context.
-  try {
-    const { assertPublicUrl } = await import("../net/ssrf.js")
-    await assertPublicUrl(url)
-  } catch (e: any) {
-    return JSON.stringify({ error: `Refused to browse ${url}: ${e?.message ?? "blocked address"}. Only public http(s) URLs are allowed.` })
-  }
-  // Both commands MUST carry the same isolated session. Previously `open` was
-  // passed "--engine chromium --headless" — neither is valid (headless is the
-  // default; the flag is --headed, and the engine is chrome/lightpanda), so the
-  // navigation always exited non-zero. Its status went unchecked and the
-  // follow-up `snapshot` ran with no flags, picking up the user's config
-  // (engine: chrome, auto-connect) and returning whatever page their REAL
-  // browser had open — wrong content, and a leak of their session into the
-  // agent's context that walked straight past the SSRF guard above.
-  const session = ["--session", "jig-browse"]
-  try {
-    const proc = Bun.spawn(
-      ["npx", "agent-browser", ...session, "open", args.url],
-      { stdout: "pipe", stderr: "pipe", timeout: 45_000 }
-    )
-    const navExit = await proc.exited
-    if (navExit !== 0) {
-      const err = (await new Response(proc.stderr).text()).trim() || (await new Response(proc.stdout).text()).trim()
-      return JSON.stringify({ error: `Could not open ${args.url}: ${err.slice(0, 300) || `exit ${navExit}`}` })
-    }
-
-    const snap = Bun.spawn(
-      ["npx", "agent-browser", ...session, "snapshot"],
-      { stdout: "pipe", stderr: "pipe", timeout: 20_000 }
-    )
-    const text = await new Response(snap.stdout).text()
-    const snapExit = await snap.exited
-    if (snapExit !== 0) {
-      const err = (await new Response(snap.stderr).text()).trim()
-      return JSON.stringify({ error: `Could not read ${args.url}: ${err.slice(0, 300) || `exit ${snapExit}`}` })
-    }
-    return text.slice(0, 50_000) || "(empty page)"
-  } catch (e: any) {
-    return JSON.stringify({ error: `Browse failed: ${e?.message}` })
-  }
-}
-
 /**
  * Web search via OpenRouter's built-in web plugin.
  *
@@ -936,8 +865,7 @@ async function toolWebSearch(args: { query: string }): Promise<string> {
     body: { plugins: [{ id: "web", max_results: 5 }] },
   })
 
-  // Hand back the citation list too — the agent's usual next move is to
-  // `browse` the most relevant source for the full page.
+  // Hand the citation list back with the summary so claims remain traceable.
   const sources = (message?.annotations ?? [])
     .map((a) => a.url_citation)
     .filter((c): c is UrlCitation => !!c?.url)
@@ -958,7 +886,6 @@ async function executeAgentTool(name: string, args: Record<string, any>, session
     case "introspect_tool_output": return toolIntrospectToolOutput(args as any)
     case "rename_jig": return toolRenameJig(args as any, session)
     case "ask_user": return ASK_USER_SENTINEL
-    case "browse": return toolBrowse(args as any)
     case "web_search": return toolWebSearch(args as any)
     default: return JSON.stringify({ error: `Unknown tool: ${name}` })
   }

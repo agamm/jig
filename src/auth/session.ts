@@ -50,8 +50,14 @@ export function verifyToken(token: string | undefined): boolean {
   const [issuedAtStr, expStr, sig] = parts
   const payload = `${issuedAtStr}.${expStr}`
   const expected = sign(payload)
-  if (sig.length !== expected.length) return false
-  if (!timingSafeEqual(Buffer.from(sig, "hex"), Buffer.from(expected, "hex"))) return false
+  // Buffer.from(value, "hex") silently truncates at the first non-hex byte.
+  // Comparing character counts alone therefore lets a 64-character junk
+  // signature reach timingSafeEqual with unequal buffers, which throws.
+  if (!/^[0-9a-f]{64}$/i.test(sig)) return false
+  const providedBytes = Buffer.from(sig, "hex")
+  const expectedBytes = Buffer.from(expected, "hex")
+  if (providedBytes.length !== expectedBytes.length) return false
+  if (!timingSafeEqual(providedBytes, expectedBytes)) return false
   const exp = parseInt(expStr, 10)
   if (!Number.isFinite(exp)) return false
   if (exp < Math.floor(Date.now() / 1000)) return false
@@ -80,10 +86,3 @@ export function setCookieHeader(token: string): string {
   ]
   return attrs.join("; ")
 }
-
-/** Produce a Set-Cookie header that clears the session. */
-export function clearCookieHeader(): string {
-  return `${COOKIE_NAME}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax`
-}
-
-export const SESSION_COOKIE_NAME = COOKIE_NAME

@@ -6,11 +6,7 @@
  * DNS-resolved so a public name pointing at an internal IP (e.g. an attacker
  * domain aliased to 169.254.169.254) is still rejected.
  *
- * Note on rebinding: resolving here narrows the window but a caller that
- * re-resolves at fetch time (or follows redirects) can still be rebound to an
- * internal IP between check and use. Where the fetch is ours, re-validate each
- * hop; where it's a headless browser / SDK transport we don't control the
- * socket, this blocks the direct and static-DNS cases (the common exploit).
+ * Callers must still avoid silently following redirects to a different host.
  */
 import { lookup } from "node:dns/promises"
 import { isIP } from "node:net"
@@ -86,10 +82,7 @@ function isBlockedIp(ip: string): boolean {
   return true // not a parseable IP — fail closed
 }
 
-/**
- * Throw {@link BlockedUrlError} unless `raw` is an http(s) URL whose host is
- * public. Returns the parsed URL on success.
- */
+/** Validate an http(s) URL whose host resolves only to public addresses. */
 export async function assertPublicUrl(raw: string): Promise<URL> {
   let url: URL
   try {
@@ -123,14 +116,4 @@ export async function assertPublicUrl(raw: string): Promise<URL> {
     }
   }
   return url
-}
-
-/** Boolean convenience wrapper around {@link assertPublicUrl}. */
-export async function isPublicUrl(raw: string): Promise<boolean> {
-  try {
-    await assertPublicUrl(raw)
-    return true
-  } catch {
-    return false
-  }
 }

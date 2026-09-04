@@ -4,18 +4,9 @@
  * Subcommands:
  *   - connections [name]        What is connected on the remote and how many
  *                               tools it exposes; --refresh re-runs discovery.
- *   - run <jigId> [handle]      Trigger a run, stream debug logs, exit on finish.
  *   - tail [handle]             Stream debug logs continuously (Ctrl-C to stop).
  *   - ls [handle]               List the jigs on the remote.
- *   - pull <jigId> [handle]     Print a jig's live code (or --out it to a file).
- *   - push <jigId> <file>       Upload code as a pending version.
  *   - eval <server> <tool>      Call one tool, print its real response shape.
- *
- * pull/push exist so you can edit a deployed jig in whatever editor or agent
- * harness you actually use, instead of only through the dashboard's authoring
- * agent. The loop is: pull to a file, edit, push, `run` to prove it, `tail` to
- * watch. push leaves the change PENDING unless you pass --approve, so the
- * default keeps the same human gate the dashboard and auto-repair use.
  *
  * Auth: POST /api/unlock returns an HMAC-signed cookie (30-day TTL). We stash
  * the cookie value in the remote manifest (file mode 0600) and replay it as
@@ -56,11 +47,6 @@ export async function runDebug(args: string[]): Promise<void> {
   console.log("  jig debug tail [handle]           Stream debug logs (Ctrl-C to stop)")
   console.log("  jig debug ls [handle]             List jigs on the remote")
   console.log("  jig debug eval <server> <tool>    Call one tool and print its real response shape")
-  console.log("")
-  console.log("Editing a deployed jig:")
-  console.log("  --out=<path>           pull: write the code to a file instead of stdout")
-  console.log("  --message=<msg>        push: version note shown in the jig's history")
-  console.log("  --approve              push: make it active immediately (default: leave pending)")
   console.log("")
   console.log("Testing a connection:")
   console.log("  --args=<json>          eval: tool arguments, e.g. --args='{\"max_results\":3}'")
@@ -173,14 +159,13 @@ async function connectionsCmd(args: string[]): Promise<void> {
 // run
 // ---------------------------------------------------------------------------
 
-export async function runRemoteJig(args: string[]): Promise<void> {
-  const positionals = args.filter((a) => !a.startsWith("--"))
-  const jigId = positionals[0]
+export async function runRemoteJig(args: string[], remote: RemoteManifest): Promise<void> {
+  const jigId = positional(args)
   if (!jigId) {
-    console.error("Usage: jig debug run <jigId> [handle]")
+    console.error("Usage: jig run <jigId>")
     process.exit(1)
   }
-  const { remote, cookie } = resolveAuthedRemoteOrExit(positionals[1])
+  const cookie = sessionCookieOrExit(remote)
   const dryRun = args.includes("--dry-run")
 
   // Anchor at the current log head so we don't replay old entries.
@@ -289,7 +274,7 @@ async function tailLocalCmd(args: string[]): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// ls / pull / push
+// ls
 // ---------------------------------------------------------------------------
 
 async function lsCmd(args: string[]): Promise<void> {
@@ -306,14 +291,13 @@ async function lsCmd(args: string[]): Promise<void> {
   }
 }
 
-export async function pullRemoteJig(args: string[]): Promise<void> {
-  const positionals = args.filter((a) => !a.startsWith("--"))
-  const jigId = positionals[0]
+export async function pullRemoteJig(args: string[], remote: RemoteManifest): Promise<void> {
+  const jigId = positional(args)
   if (!jigId) {
-    console.error("Usage: jig debug pull <jigId> [handle] [--out=<path>]")
+    console.error("Usage: jig edit <jigId> --out=<path>")
     process.exit(1)
   }
-  const { remote, cookie } = resolveAuthedRemoteOrExit(positionals[1])
+  const cookie = sessionCookieOrExit(remote)
   const jig = await getJson<JigData>(remote, cookie, `/api/jigs/${encodeURIComponent(jigId)}`)
 
   const out = stringFlag(args, "--out")
@@ -375,14 +359,14 @@ async function evalCmd(args: string[]): Promise<void> {
   console.log(res.preview)
 }
 
-export async function pushRemoteJig(args: string[]): Promise<void> {
-  const positionals = args.filter((a) => !a.startsWith("--"))
-  const [jigId, file] = positionals
+export async function pushRemoteJig(args: string[], remote: RemoteManifest): Promise<void> {
+  const jigId = positional(args)
+  const file = stringFlag(args, "--file")
   if (!jigId || !file) {
-    console.error("Usage: jig debug push <jigId> <file> [handle] [--message=<msg>] [--approve]")
+    console.error("Usage: jig edit <jigId> --file=<path> [--message=<msg>] [--approve]")
     process.exit(1)
   }
-  const { remote, cookie } = resolveAuthedRemoteOrExit(positionals[2])
+  const cookie = sessionCookieOrExit(remote)
 
   let code: string
   try {
@@ -548,13 +532,18 @@ function numericFlag(args: string[], name: string): number | undefined {
 
 
 /** Every admin-gated subcommand needs both; the cookie comes from `jig unlock` or `jig pair`. */
-function resolveAuthedRemoteOrExit(handle: string | undefined): { remote: RemoteManifest; cookie: string } {
-  const remote = resolveRemoteOrExit(handle)
+function sessionCookieOrExit(remote: RemoteManifest): string {
   if (!remote.session_cookie) {
     console.error(`No session cookie cached. Run \`jig unlock ${remote.handle}\` (instance password), or paste the pairing command from its Setup page.`)
     process.exit(1)
   }
-  return { remote, cookie: remote.session_cookie }
+  return remote.session_cookie
+}
+
+/** Every admin-gated debug command needs a target and its cached session. */
+function resolveAuthedRemoteOrExit(handle: string | undefined): { remote: RemoteManifest; cookie: string } {
+  const remote = resolveRemoteOrExit(handle)
+  return { remote, cookie: sessionCookieOrExit(remote) }
 }
 
 function resolveRemoteOrExit(handle: string | undefined): RemoteManifest {

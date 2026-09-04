@@ -37,7 +37,8 @@ export interface RemoteManifest {
   session_cookie?: string
 }
 
-const remotesDir = (): string => join(homedir(), ".config", "jig", "remotes")
+const remotesDir = (): string =>
+  process.env.JIG_REMOTES_DIR || join(homedir(), ".config", "jig", "remotes")
 
 function ensureDir(): void {
   const dir = remotesDir()
@@ -93,6 +94,6 @@ export function resolveActiveRemote(handle?: string): RemoteManifest {
   }
   if (remotes.length === 1) return remotes[0]
   throw new Error(
-    `Multiple remotes configured (${remotes.map((r) => r.handle).join(", ")}). Pass one: jig update <handle>`,
+    `Multiple remotes configured (${remotes.map((r) => r.handle).join(", ")}). Choose one explicitly.`,
   )
 }

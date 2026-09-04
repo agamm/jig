@@ -136,14 +136,14 @@ export function createApiServer(port: number) {
     // close the stream first and produce noisy "failed to pipe response" logs.
     idleTimeout: 30,
     async fetch(req) {
-      const url = new URL(req.url)
-      const route = matchRoute(url.pathname)
-      if (!route) return json({ error: "Unknown API route" }, 404)
-
-      const blocked = checkAccess(req, route.handler)
-      if (blocked) return blocked
-
       try {
+        const url = new URL(req.url)
+        const route = matchRoute(url.pathname)
+        if (!route) return json({ error: "Unknown API route" }, 404)
+
+        const blocked = checkAccess(req, route.handler)
+        if (blocked) return blocked
+
         switch (route.handler) {
           case "health":
             return handleHealth(req, PACKAGE_VERSION, SERVER_STARTED_AT)

@@ -1,5 +1,16 @@
 import { describe, expect, it } from "bun:test"
-import { compareSemver, decideUpdate, parseSemverTag } from "../src/cli-remote/update.js"
+import { compareSemver, decideUpdate, parseSemverTag, releaseTagCandidates } from "../src/cli-remote/update.js"
+
+describe("releaseTagCandidates", () => {
+  it("accepts either common exact-tag spelling without inventing a commit", () => {
+    expect(releaseTagCandidates("0.1.105")).toEqual(["v0.1.105", "0.1.105"])
+    expect(releaseTagCandidates("v0.1.105")).toEqual(["v0.1.105", "0.1.105"])
+  })
+
+  it("rejects versions that cannot name a release tag", () => {
+    expect(releaseTagCandidates("0.1.105-dev")).toEqual([])
+  })
+})
 
 describe("decideUpdate", () => {
   it("refuses to move an instance backwards onto an older tag", () => {

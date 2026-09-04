@@ -144,14 +144,14 @@ describe("custom server configs", () => {
   it("creates and persists a custom remote MCP server", async () => {
     const result = await createCustomRemoteServer({
       name: "custom-test",
-      url: "https://example.com/mcp",
+      url: "https://1.1.1.1/mcp",
       description: "Test MCP",
     })
 
     expect(result.name).toBe("custom-test")
     expect(result.config).toEqual({
       type: "remote",
-      url: "https://example.com/mcp",
+      url: "https://1.1.1.1/mcp",
       description: "Test MCP",
     })
 

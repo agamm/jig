@@ -6,23 +6,24 @@
  *   2. `git fetch --tags origin`.
  *   3. Pick highest semver tag locally.
  *   4. Compare against /api/health on the remote; exit if current.
- *   5. Record current HEAD commit for rollback.
- *   6. Stash any dirty working tree changes.
+ *   5. Resolve the running version's exact tag for rollback.
+ *   6. Remember the local checkout and stash any dirty working tree changes.
  *   7. `git checkout <tag>` and `railway up` (synchronous, waits for deploy).
  *   8. Poll /api/health until version matches target.
- *   9. Restore stash; done.
- *  10. On failure: `git checkout <previous commit>` + `railway up` +
- *      restore stash.
+ *   9. Restore the original checkout and stash; done.
+ *  10. On failure: deploy the running version's tag, then restore the local
+ *      checkout and stash.
  */
 import { resolveActiveRemote } from "./manifest.js"
 import { railwayInteractive } from "../cli-deploy/railway-cli.js"
+import { PROJECT_ROOT } from "../config/paths.js"
 
 interface HealthResponse {
   version: string
   locked: boolean
 }
 
-async function runText(cmd: string[], cwd = process.cwd()): Promise<string> {
+async function runText(cmd: string[], cwd = PROJECT_ROOT): Promise<string> {
   const proc = Bun.spawn(cmd, { cwd, stdout: "pipe", stderr: "pipe" })
   const [stdout, stderr] = await Promise.all([
     new Response(proc.stdout).text(),
@@ -33,6 +34,12 @@ async function runText(cmd: string[], cwd = process.cwd()): Promise<string> {
     throw new Error(`${cmd.join(" ")} failed (${code}): ${stderr.trim() || stdout.trim()}`)
   }
   return stdout
+}
+
+export function releaseTagCandidates(version: string): string[] {
+  const bare = version.replace(/^v/, "")
+  if (!parseSemverTag(bare)) return []
+  return [`v${bare}`, bare]
 }
 
 export function parseSemverTag(tag: string): [number, number, number] | null {
@@ -48,17 +55,43 @@ export function compareSemver(a: [number, number, number], b: [number, number, n
 
 async function getLatestRemoteTag(): Promise<{ tag: string; sha: string } | null> {
   await runText(["git", "fetch", "--tags", "--quiet", "origin"])
-  const tagsRaw = await runText(["git", "tag", "--list"])
+  // `git tag --list` also includes unpushed local tags. Only origin tags are
+  // release inputs; otherwise a stray local tag could become production code.
+  const tagsRaw = await runText(["git", "ls-remote", "--tags", "--refs", "origin"])
   const tags = tagsRaw
     .split("\n")
-    .map((t) => t.trim())
+    .map((line) => line.trim().split(/\s+/)[1]?.replace(/^refs\/tags\//, ""))
     .filter(Boolean)
     .filter((t) => parseSemverTag(t))
     .sort((a, b) => compareSemver(parseSemverTag(b)!, parseSemverTag(a)!))
   if (tags.length === 0) return null
   const tag = tags[0]
-  const sha = (await runText(["git", "rev-parse", `${tag}^{commit}`])).trim()
+  const sha = (await runText(["git", "rev-parse", `refs/tags/${tag}^{commit}`])).trim()
   return { tag, sha }
+}
+
+async function getReleaseTag(version: string): Promise<{ tag: string; sha: string } | null> {
+  const candidates = releaseTagCandidates(version)
+  if (candidates.length === 0) return null
+  const raw = await runText([
+    "git", "ls-remote", "--tags", "--refs", "origin",
+    ...candidates.map((tag) => `refs/tags/${tag}`),
+  ])
+  const remoteTags = new Set(
+    raw.split("\n")
+      .map((line) => line.trim().split(/\s+/)[1]?.replace(/^refs\/tags\//, ""))
+      .filter(Boolean),
+  )
+  for (const tag of candidates) {
+    if (!remoteTags.has(tag)) continue
+    try {
+      const sha = (await runText(["git", "rev-parse", `refs/tags/${tag}^{commit}`])).trim()
+      if (sha) return { tag, sha }
+    } catch {
+      // Repositories may consistently use either v-prefixed or bare tags.
+    }
+  }
+  return null
 }
 
 /**
@@ -129,6 +162,14 @@ async function currentHeadCommit(): Promise<string> {
   return (await runText(["git", "rev-parse", "HEAD"])).trim()
 }
 
+async function currentCheckout(): Promise<{ restoreRef: string; label: string }> {
+  const commit = await currentHeadCommit()
+  const branch = (await runText(["git", "symbolic-ref", "--quiet", "--short", "HEAD"]).catch(() => "")).trim()
+  return branch
+    ? { restoreRef: branch, label: branch }
+    : { restoreRef: commit, label: commit.slice(0, 7) }
+}
+
 async function gitClean(): Promise<boolean> {
   const status = await runText(["git", "status", "--porcelain"])
   return status.trim() === ""
@@ -146,21 +187,27 @@ async function gitStash(): Promise<string | null> {
     .map((l) => l.split("\0"))
     // "On <branch>: <label>", not the bare label. See the same fix in cli.ts.
     .find(([, msg]) => msg.includes(label))?.[0]
-  return ref ?? null
+  if (!ref) {
+    throw new Error("Local changes were stashed, but the updater could not identify the stash to restore. They remain safe in `git stash list`.")
+  }
+  return ref
 }
 
 async function gitStashPop(ref: string | null): Promise<void> {
   if (!ref) return
-  await runText(["git", "stash", "pop", ref]).catch((e) => {
+  try {
+    await runText(["git", "stash", "apply", "--index", ref])
+    await runText(["git", "stash", "drop", ref])
+  } catch (e) {
     console.warn(`  Warning: couldn't re-apply stash ${ref}. Resolve with: git stash pop ${ref}`)
     console.warn(`  ${e}`)
-  })
+  }
 }
 
 async function railwayDeploy(): Promise<boolean> {
   // `--ci` streams build logs and exits when the build terminates. Gives the
   // user live progress AND a reliable exit code (non-zero on build failure).
-  const code = await railwayInteractive(["up", "--ci"])
+  const code = await railwayInteractive(["up", "--ci"], PROJECT_ROOT)
   return code === 0
 }
 
@@ -194,10 +241,20 @@ export async function runUpdate(handle?: string): Promise<void> {
     return
   }
 
-  const rollbackCommit = await currentHeadCommit()
+  // A rollback must redeploy the source that produced the running version,
+  // never whichever unrelated commit happens to be checked out locally.
+  const rollback = await getReleaseTag(current.version)
+  if (!rollback) {
+    throw new Error(
+      `Cannot prove a rollback source for the running version ${current.version}. ` +
+      `Expected one of these tags on origin: ${releaseTagCandidates(current.version).join(", ") || "a semver release tag"}.`,
+    )
+  }
+
+  const originalCheckout = await currentCheckout()
   const stashRef = await gitStash()
 
-  let reverted = false
+  let deployedTarget = false
   try {
     console.log(`  Checking out ${latest.tag}...`)
     await runText(["git", "checkout", latest.tag])
@@ -207,38 +264,43 @@ export async function runUpdate(handle?: string): Promise<void> {
     if (!deployed) throw new Error("railway up failed")
 
     console.log(`  Waiting for ${remote.public_url}/api/health to report ${latest.tag}...`)
-    const expected = [latest.tag, latest.tag.replace(/^v/, "")]
+    const expected = releaseTagCandidates(latest.tag)
     const seen = await waitForVersion(remote.public_url, expected)
     if (!seen) throw new Error(`Health didn't report ${latest.tag} in time`)
 
+    deployedTarget = true
     console.log(`\n  ✓ Updated to ${latest.tag}.`)
-
-    // A restart re-locks the instance and the scheduler stays paused until
-    // someone unlocks — ask now, while the operator is still watching.
-    const { ensureUnlocked } = await import("./unlock.js")
-    await ensureUnlocked(remote)
   } catch (e: any) {
     console.error(`  Deploy failed: ${e?.message ?? e}`)
-    console.error(`  Rolling back to ${rollbackCommit.slice(0, 7)}...`)
+    console.error(`  Rolling back to ${rollback.tag} (${rollback.sha.slice(0, 7)})...`)
     try {
-      await runText(["git", "checkout", rollbackCommit])
+      await runText(["git", "checkout", rollback.tag])
       const rolledBack = await railwayDeploy()
       if (!rolledBack) throw new Error("rollback railway up failed")
-      const expected = [current.version, `v${current.version}`]
+      const expected = releaseTagCandidates(current.version)
       const seen = await waitForVersion(remote.public_url, expected, 5 * 60_000)
       if (!seen) throw new Error("Health didn't return to previous version in time")
       console.error("  Rollback complete.")
-      reverted = true
     } catch (rollbackErr: any) {
       console.error(`  Rollback also failed: ${rollbackErr?.message ?? rollbackErr}`)
       console.error("  Investigate with: railway logs")
     }
     process.exitCode = 1
   } finally {
-    if (!reverted && rollbackCommit) {
-      // We left the working tree on the new tag on success; stash pop may
-      // conflict with new source. That's preferable to losing changes.
+    try {
+      await runText(["git", "checkout", originalCheckout.restoreRef])
+      await gitStashPop(stashRef)
+    } catch (restoreErr) {
+      console.warn(`  Warning: couldn't restore the original checkout ${originalCheckout.label}.`)
+      if (stashRef) console.warn(`  Local changes remain safe in ${stashRef}; restore them after checking out ${originalCheckout.label}.`)
+      console.warn(`  ${restoreErr}`)
     }
-    await gitStashPop(stashRef)
+  }
+
+  // Unlocking is post-deploy recovery, not part of the deploy transaction. A
+  // missing or mistyped password must never roll a healthy new release back.
+  if (deployedTarget) {
+    const { ensureUnlocked } = await import("./unlock.js")
+    await ensureUnlocked(remote)
   }
 }

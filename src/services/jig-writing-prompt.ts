@@ -51,7 +51,7 @@ function agentToolProtocol() {
 - Use the provided type definitions, tool catalog, schemas, and current code. Existing-edit prompts may include only the schemas for tools already referenced in the jig; call get_tool_schema when you need an exact schema that is not in the prompt.
 - Do not browse local files or URLs to rediscover Jig-specific behavior already present in this prompt.
 - After writing code, always run check_jig. If it reports errors, patch only the narrow issue and check again.
-- Use web_search and browse only for external API docs not already in context.
+- Use web_search only for external API docs not already in context.
 - When done, reply with 1-2 short plain text sentences summarizing what changed. No markdown, no code blocks, no bullet points.`
 }
 

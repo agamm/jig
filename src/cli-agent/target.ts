@@ -6,20 +6,26 @@
  * authoring follows the same rule: an active remote wins, local is the fallback
  * and `--local` is how you say you meant it.
  */
-import { listRemotes, resolveActiveRemote } from "../cli-remote/manifest.js"
+import { listRemotes, resolveActiveRemote, type RemoteManifest } from "../cli-remote/manifest.js"
 
-export interface AuthoringTarget {
+interface AuthoringTargetBase {
   base: string
   headers: Record<string, string>
   /** For the "Authoring on X" line, so it is never a surprise where this landed. */
   label: string
-  remote: boolean
 }
 
+export type AuthoringTarget =
+  | AuthoringTargetBase & { remote: false }
+  | AuthoringTargetBase & { remote: true; manifest: RemoteManifest }
+
 function parseTargetArgs(argv: string[]): { local: boolean; handle?: string } {
+  const handleFlag = argv.find((a) => a.startsWith("--handle="))
+  const handle = handleFlag?.slice("--handle=".length)
+  if (handleFlag && !handle) throw new Error("--handle requires a remote name.")
   return {
     local: argv.includes("--local"),
-    handle: argv.find((a) => a.startsWith("--handle="))?.slice("--handle=".length),
+    handle,
   }
 }
 
@@ -32,8 +38,10 @@ export function resolveAuthoringTarget(
   localBase: string,
 ): AuthoringTarget {
   const { local, handle } = parseTargetArgs(argv)
+  if (local && handle) throw new Error("Choose one target: --local or --handle=<name>.")
   if (local) return { base: localBase, headers: {}, label: "this machine", remote: false }
   if (listRemotes().length === 0) {
+    if (handle) throw new Error("No remotes configured. Run `jig deploy` first, or omit --handle to use this machine.")
     return { base: localBase, headers: {}, label: "this machine", remote: false }
   }
 
@@ -49,5 +57,6 @@ export function resolveAuthoringTarget(
     headers: { Cookie: `jig-admin=${remote.session_cookie}` },
     label: `${remote.handle} (${remote.public_url})`,
     remote: true,
+    manifest: remote,
   }
 }

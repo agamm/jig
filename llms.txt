@@ -33,8 +33,9 @@ bun run jig run <jig-id>
 ```
 
 `new`, `edit` and `run` act on the deployed instance in `~/.config/jig/remotes/` when one
-exists, and on this machine otherwise; `--local` forces this machine. They print the target
-before starting. An unpaired remote is an error rather than a silent fall back to local.
+exists, and on this machine otherwise; `--local` forces this machine and `--handle=<name>`
+chooses between deployed instances. They print the target before starting. An unpaired remote
+is an error rather than a silent fall back to local.
 
 Every jig exports `jig(name, options, handler)` from `@jig/sdk`. Every logical unit of work belongs in a flat `ctx.step()` block. Direct code is preferred over `llm()`, and `llm()` is preferred over `agent()`. Connection tools must appear in the jig-level and current-step allowlists. Use `ctx.output()` for observable results.
 

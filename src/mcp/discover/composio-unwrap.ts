@@ -25,8 +25,6 @@
  * `nextPageToken` so the inline response stays under the spill threshold.
  */
 
-export type CallToolFn = (toolName: string, args: Record<string, unknown>) => Promise<any>
-
 export class ComposioSpillError extends Error {
   filePath: string
   constructor(filePath: string, tokenEstimate?: number) {
@@ -43,7 +41,7 @@ export class ComposioSpillError extends Error {
 
 const SPILL_PATH_RE = /^\/mnt\/files\/[A-Za-z0-9_./-]+\.json$/
 
-export async function unwrapComposioResult(raw: any, _callTool?: CallToolFn): Promise<any> {
+export async function unwrapComposioResult(raw: any): Promise<any> {
   const top = raw?.data ?? {}
   const execResult = top?.results?.[0] ?? {}
   const response = execResult?.response

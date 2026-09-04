@@ -38,7 +38,3 @@ export function apiJsonWithHeaders<K extends ApiEndpointKey>(
     headers: { "Content-Type": "application/json", ...headers },
   })
 }
-
-export function notFound(message: string): never {
-  throw new ApiError(404, message)
-}

@@ -17,11 +17,11 @@
  * the agent from sending test emails / writing files while probing.
  */
 import { join } from "node:path"
-import { acquireConnection, callTool } from "../mcp/client.js"
 import { getServerConfig } from "../mcp/config.js"
+import { callServerTool } from "../mcp/call-server-tool.js"
 import { SCHEMAS_DIR } from "../config/paths.js"
 import { redact } from "../debug/redact.js"
-import { ComposioSpillError, unwrapComposioResult } from "../mcp/discover/composio-unwrap.js"
+import { ComposioSpillError } from "../mcp/discover/composio-unwrap.js"
 
 export type Shape =
   | { type: "null" }
@@ -136,9 +136,8 @@ export async function introspectToolOutput(args: {
     }
   }
 
-  let config
   try {
-    config = await getServerConfig(args.server)
+    await getServerConfig(args.server)
   } catch (err: any) {
     return {
       ok: false,
@@ -148,43 +147,23 @@ export async function introspectToolOutput(args: {
   }
 
   const startedAt = Date.now()
-  const connection = await acquireConnection(args.server, config)
-  // For proxy servers (composio, etc.), the cached schema names like
-  // `gmail_fetch_emails` aren't real MCP tools — they're proxied via
-  // `COMPOSIO_MULTI_EXECUTE_TOOL`. Detect via config.proxy and wrap the call
-  // the same way the generated binding does, then unwrap the envelope so the
-  // shape descriptor reflects what the jig actually sees inside its handler.
-  // callTool emits [mcp.tool] events, so probes show up in the dashboard logs.
   let result: unknown
-  const proxyVia = (config as any)?.proxy?.via
-  if (typeof proxyVia === "string" && proxyVia.length > 0) {
-    const slug = args.tool.toUpperCase()
-    const raw: any = await callTool(connection, proxyVia, {
-      tools: [{ tool_slug: slug, arguments: args.args ?? {} }],
-      sync_response_to_workbench: false,
-    })
-    try {
-      result = await unwrapComposioResult(raw)
-    } catch (err: any) {
-      // Surface the spill case as a *refusal* — the agent introspected with
-      // these args so it could write code; if the args trigger a spill, the
-      // jig will hit ComposioSpillError at runtime. Returning early with a
-      // structured refusal forces the agent to shrink args before writing.
-      if (err instanceof ComposioSpillError) {
-        return {
-          ok: false,
-          error: err.message,
-          reason: "response_truncated",
-          hint:
-            "Re-introspect with smaller args: drop verbose / include_payload, " +
-            "reduce max_results (try 3 first), or paginate. Composio caps inline " +
-            "responses at ~10k tokens; over that they spill to an unreachable file.",
-        }
+  try {
+    result = await callServerTool(args.server, args.tool, args.args ?? {})
+  } catch (err: any) {
+    // A partial Composio preview is not safe input for generated workflow code.
+    if (err instanceof ComposioSpillError) {
+      return {
+        ok: false,
+        error: err.message,
+        reason: "response_truncated",
+        hint:
+          "Re-introspect with smaller args: drop verbose / include_payload, " +
+          "reduce max_results (try 3 first), or paginate. Composio caps inline " +
+          "responses at ~10k tokens; over that they spill to an unreachable file.",
       }
-      throw err
     }
-  } else {
-    result = await callTool(connection, args.tool, (args.args ?? {}) as Record<string, unknown>)
+    throw err
   }
   const durationMs = Date.now() - startedAt
 
@@ -194,7 +173,7 @@ export async function introspectToolOutput(args: {
   try { preview = JSON.stringify(redacted).slice(0, PREVIEW_BYTES) } catch { preview = "<unserializable>" }
   if (preview.length === PREVIEW_BYTES) preview += "…"
 
-  const warnings = collectShapeWarnings(redacted, shape)
+  const warnings = collectShapeWarnings(redacted)
 
   return {
     ok: true,
@@ -218,7 +197,7 @@ export async function introspectToolOutput(args: {
  *   - response was suspiciously close to a known size cap (best-effort
  *     heuristic, not authoritative)
  */
-export function collectShapeWarnings(value: unknown, _shape: Shape): string[] {
+export function collectShapeWarnings(value: unknown): string[] {
   const warnings: string[] = []
   const SENTINEL_RE = /^(\.\.\.|…)\s*\d+\s*more\s+items$/i
   let sentinelCount = 0

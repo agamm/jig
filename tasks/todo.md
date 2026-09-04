@@ -1,5 +1,34 @@
 # Onboarding: a two-minute, agent-driven install
 
+## Review fixes (2026-09-03)
+
+- [x] Make remote updates resolve the running version to an exact rollback tag
+      and restore the caller's original checkout after every outcome.
+- [x] Remove the unused authoring browser tool and its SSRF, redirect, DNS, and
+      shared-browser-session attack surface; retain isolated web search.
+- [x] Treat malformed session-cookie signatures as unauthorized, never as an
+      exception outside the API error boundary.
+- [x] Carry one resolved remote target through run/export/upload instead of
+      resolving it a second time and losing `--handle=`.
+- [x] Redirect remote-manifest tests into the suite's scratch tree.
+- [x] Remove confirmed dead exports/parameters and centralize proxy tool calls.
+- [x] Run focused tests, full tests, both typechecks, dashboard production build,
+      `git diff --check`, and a tracked-source privacy/secret scan.
+
+### Review
+
+- Remote rollback now requires the exact tag matching the version reported by
+  `/api/health`; an absent tag stops before checkout or deploy. The updater
+  always returns to the caller's branch/commit and restores local changes.
+- `jig run/new/edit` resolve `--handle=` once. Remote helpers require that
+  resolved manifest, and edit upload reads the existing `--file=` flag directly.
+- Removed the built-in headless browser tool. OpenRouter-backed `web_search`
+  still returns summaries with source citations without browser state or direct
+  access to caller-supplied URLs.
+- Focused suite: 49 passed. Final full suite: 718 passed. Root and dashboard
+  typechecks passed. Dashboard production build passed. `git diff --check` and
+  the changed-source privacy/secret scan passed.
+
 Goal: someone lands on the GitHub repo, pastes one line into Claude Code or
 Codex, and has a running Jig instance with verified connections and a first jig
 in two to three minutes. The agent is the installer. Jig becomes headless-first:

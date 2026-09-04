@@ -9,10 +9,10 @@
  * clone had no connections at all, so connection-dependent tests silently
  * no-op'd instead of running.
  *
- * Here we point DATA_DIR and META_DIR at a scratch tree and generate connection
- * artifacts from the frozen schemas in `test/fixtures/schemas/`. The scratch
- * tree stays under the project root so tsconfig path aliases resolve the same
- * way they do for a real jig.
+ * Here we point DATA_DIR, META_DIR, and the CLI remote-manifest directory at a
+ * scratch tree and generate connection artifacts from the frozen schemas in
+ * `test/fixtures/schemas/`. The scratch tree stays under the project root so
+ * tsconfig path aliases resolve the same way they do for a real jig.
  *
  * Registered via `[test] preload` in bunfig.toml, so it runs before any test
  * file imports src/config/paths.ts and freezes those paths.
@@ -27,6 +27,7 @@ const SCRATCH_DIR = join(TEST_DIR, ".tmp")
 // Must be set before src/config/paths.ts is imported anywhere.
 process.env.JIG_DATA_DIR = SCRATCH_DIR
 process.env.JIG_META_DIR = SCRATCH_DIR
+process.env.JIG_REMOTES_DIR = join(SCRATCH_DIR, "remotes")
 // Never let a test take the service-mode branch off a stray platform env var.
 delete process.env.JIG_PUBLIC_URL
 delete process.env.RAILWAY_ENVIRONMENT_ID

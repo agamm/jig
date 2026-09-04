@@ -103,7 +103,6 @@ export async function buildAuthoringState(
   description: string,
   options: {
     existingCode?: string
-    ask?: (question: string) => Promise<string>
   } = {}
 ): Promise<AuthoringState> {
   const serverConfigs = await loadServerConfigs()
@@ -129,7 +128,7 @@ export async function buildAuthoringState(
     checkConnections(allServers, blockingUnknowns, serverConfigs, importedServers)
   }
 
-  const buildResolutions = await resolveBuildTimeTargets(description, buildResolutionServers, serverConfigs, options.ask)
+  const buildResolutions = await resolveBuildTimeTargets(description, buildResolutionServers, serverConfigs)
   ensureAuthoringDiscoveryResolved(description, buildResolutionServers, serverConfigs, buildResolutions)
   let relevantTools: string[]
   let includeAllToolsWhenUnscoped = true
@@ -634,13 +633,11 @@ type BuildDiscoverModule = {
   resolveForBuild?: (args: {
     description: string
     connection: McpConnection
-    ask?: (question: string) => Promise<string>
   }) => Promise<{ context: string; requiredTools?: string[]; includeTools?: string[]; excludeTools?: string[]; resolvedTarget?: string; resolvedInputSchema?: unknown } | null>
   resolveForBuildWithOps?: (
     args: {
       description: string
       connection: McpConnection
-      ask?: (question: string) => Promise<string>
     },
     ops: {
       callTool: typeof callTool
@@ -694,8 +691,7 @@ function ensureAuthoringDiscoveryResolved(
 async function resolveBuildTimeTargets(
   description: string,
   servers: string[],
-  serverConfigs: Record<string, any>,
-  ask?: (question: string) => Promise<string>
+  serverConfigs: Record<string, any>
 ): Promise<BuildTimeResolution[]> {
   const results: BuildTimeResolution[] = []
   if (servers.length > 0) {
@@ -796,7 +792,6 @@ async function resolveBuildTimeTargets(
       const discoveryArgs = {
         description,
         connection,
-        ask,
       }
 
       const resolved = typeof mod.resolveForBuildWithOps === "function"

@@ -102,19 +102,11 @@ export interface JigReminderEntry {
   payload: string | null
 }
 
-export interface UnderConstructionInfo {
-  sessionId: string
-  jigId?: string
-  status: AgentStatus
-  updatedAt: string
-}
-
 export interface JigData {
   id: string
   name: string
   trigger: string
   status: JigHealth
-  underConstruction?: UnderConstructionInfo
   running?: boolean
   sparkline: number[]
   steps: JigStep[]
@@ -360,9 +352,6 @@ export interface ModelOverrideInput {
 export interface AgentConversationTurn {
   role: "user" | "assistant"
   content: string
-  /** Pasted image data: URLs attached to a user turn (multimodal input). Only rides through to
-   * the LLM via buildConversationMessages; stripped from history round-trips and intent rendering. */
-  images?: string[]
 }
 
 export type AgentEvent =
@@ -384,34 +373,13 @@ export type AgentEvent =
 
 export type AgentStatus = "thinking" | "tool-calling" | "waiting" | "done" | "error" | "idle"
 
-export interface AgentMetrics {
-  model?: string
-  round?: number
-  activeTool?: string
-  activeStartedAt?: number
-  estimatedPromptTokens?: number
-  promptTokens?: number
-  completionTokens?: number
-  totalTokens?: number
-  updatedAt?: number
-}
-
-export interface AgentDraftApproval {
-  jig: JigData
-}
-
-export interface StartAgentResponse {
-  sessionId: string
-  jigId?: string
-}
-
 export interface AgentStatusResponse {
   status: AgentStatus
-  jigId?: string
+  jigId: string
   events: AgentEvent[]
   totalEvents: number
-  metrics?: AgentMetrics
-  draftApproval?: AgentDraftApproval
+  /** Never set anymore; the email bridge still reads it to tell a question from a draft. */
+  draftApproval?: never
   conversationHistory?: AgentConversationTurn[]
 }
 
@@ -803,11 +771,6 @@ export interface ApiContracts {
   // GET lists pending wake-ups; DELETE cancels one by ?key=.
   jigReminders: ApiContract<void, JigReminderEntry[] | { ok: true; cancelled: boolean }>
   updateTrigger: ApiContract<{ trigger: string }, TriggerUpdateResponse>
-  startAgent: ApiContract<{ instruction: string; jigId?: string; history?: AgentConversationTurn[]; images?: string[] }, StartAgentResponse>
-  agentStatus: ApiContract<void, AgentStatusResponse>
-  agentMessage: ApiContract<{ message: string; history?: AgentConversationTurn[]; images?: string[] }, OkResponse>
-  agentApprove: ApiContract<void, OkResponse>
-  agentClose: ApiContract<void, OkResponse>
   // v12 — code-as-versions endpoints
   getPending: ApiContract<void, PendingState | null>
   approvePending: ApiContract<void, ApprovePendingResponse>

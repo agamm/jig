@@ -122,42 +122,6 @@ async function ensureServer(): Promise<void> {
   throw new Error("Failed to start server")
 }
 
-async function agentCommand(instruction: string, jigId?: string, argv: string[] = []): Promise<void> {
-  const { resolveAuthoringTarget } = await import("./cli-agent/target.js")
-  let target
-  try {
-    target = resolveAuthoringTarget(argv, API_BASE)
-  } catch (e: any) {
-    console.error(e?.message ?? e)
-    process.exit(1)
-  }
-
-  // Only stand up a local server when local is actually the target. Starting one
-  // to author on a remote would be pure surprise.
-  if (!target.remote) await ensureServer()
-  console.log(`Authoring on ${target.label}.\n`)
-
-  const { runAgentSession } = await import("./cli-agent/session.js")
-  try {
-    const id = await runAgentSession({ base: target.base, headers: target.headers, instruction, jigId })
-    if (!id) {
-      console.log("\nThe agent finished without producing a jig.")
-      return
-    }
-    console.log(`\n✓ Jig: ${id}`)
-    if (target.remote) {
-      console.log(`  Review it:  jig edit ${id} --out=<file>`)
-      console.log(`  Run it:     jig run ${id}`)
-    } else {
-      console.log(`  Review it:  jig pending ${id}`)
-      console.log(`  Run it:     jig run ${id}`)
-    }
-  } catch (e: any) {
-    console.error(`\n✗ ${e?.message ?? e}`)
-    process.exit(1)
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Command dispatch
 // ---------------------------------------------------------------------------
@@ -169,7 +133,7 @@ try {
       break
 
     case "run": {
-      // Same rule as new/edit: the instance you deployed, unless you say --local.
+      // Same rule as edit: the instance you deployed, unless you say --local.
       const { resolveAuthoringTarget } = await import("./cli-agent/target.js")
       let runTarget
       try {
@@ -187,15 +151,6 @@ try {
       break
     }
 
-    case "new": {
-      const words = rest.filter((a) => !a.startsWith("--"))
-      const desc = words.join(" ") || await io.ask("What should this jig do?")
-      console.log("")
-      await agentCommand(desc, undefined, rest)
-      process.exit(0)
-      break
-    }
-
     case "edit": {
       const name = rest.find((a) => !a.startsWith("--"))
       if (!name) {
@@ -203,11 +158,10 @@ try {
         process.exit(1)
       }
 
-      // Three ways to change a jig, one command. `--out` exports the live code,
-      // `--file` uploads code you wrote yourself (creating the jig if it does
-      // not exist yet), and with neither the authoring agent does it from an
-      // instruction. These used to be `jig debug pull/push`, which meant the
-      // same job had two names depending on where the jig lived.
+      // One command, two directions: `--out` exports the live code, `--file`
+      // uploads code you wrote (creating the jig if it does not exist yet).
+      // These used to be `jig debug pull/push`, which meant the same job had
+      // two names depending on where the jig lived.
       const outFlag = rest.find((a) => a.startsWith("--out="))
       const fileFlag = rest.find((a) => a.startsWith("--file="))
       const { resolveAuthoringTarget } = await import("./cli-agent/target.js")
@@ -238,10 +192,8 @@ try {
         process.exit(0)
       }
 
-      const instruction = await io.ask("What should change?")
-      console.log("")
-      await agentCommand(instruction, name, rest)
-      process.exit(0)
+      io.emit({ type: "error", code: "usage", message: "Usage: jig edit <name> [--out=<file> | --file=<file>]" })
+      process.exit(1)
       break
     }
 
@@ -409,9 +361,8 @@ try {
       console.log(`  jig setup [handle]     Guided setup: models, alerts, connections (--railway | --local | --force)`)
       console.log(`  jig connect [server]   List servers or connect one`)
       console.log(`  jig run <name>         Run a jig on your deployed instance (--local for here)`)
-      console.log(`  jig new [description]  The instance's authoring agent writes a new jig (--local for here)`)
       console.log(`  jig edit <name>        --file=<f> uploads code you wrote (creates the jig if new; typechecked,`)
-      console.log(`                         pending unless --approve); --out=<f> exports it; no flag asks the agent`)
+      console.log(`                         pending unless --approve); --out=<f> exports the live code`)
       console.log(`  jig types [--out=<d>]  Pull the instance's connection types (.d.ts) into .jig/connections/`)
       console.log(`  jig versions <name>    List versions for a jig (local)`)
       console.log(`  jig restore <name> <v> Restore version <v> as a pending change (local)`)
@@ -427,7 +378,7 @@ try {
       console.log(`  jig pair <code>        Cache a CLI session from a dashboard pairing code`)
       console.log(`  jig unlock [handle]    Sign in to a deployed instance with its password (hidden prompt)`)
       console.log(`  jig debug <sub>        Diagnostics: logs, connections, tool probes (see "jig debug")`)
-      console.log(`\nTarget flags for run/new/edit/pending/types: --handle=<name> | --local`)
+      console.log(`\nTarget flags for run/edit/pending/types: --handle=<name> | --local`)
       break
   }
 } catch (e: any) {
@@ -629,7 +580,7 @@ async function handleRun(name: string | undefined) {
   if (!name) {
     const jigs = listJigs().filter((jig) => jig.activeVersionId != null)
     if (jigs.length === 0) {
-      console.log(`No jigs yet. Create one with "jig new <description>".`)
+      console.log(`No jigs yet. Write one and push it with "jig edit <id> --file=<file>".`)
       return
     }
     console.log("Available jigs:\n")

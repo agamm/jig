@@ -62,9 +62,9 @@ The debug stream includes redacted `runner`, `sdk.llm`, `sdk.agent`, `mcp.tool`,
 
 ## Write or edit a deployed jig from your own editor
 
-`jig new|edit --file=` exist so a deployed jig can be written and edited in
-whatever editor or agent harness you use, rather than only through the
-dashboard's authoring agent.
+`jig edit --file=` exists so a deployed jig can be written and edited in
+whatever editor or agent harness you use. There is no in-server writer; the
+dashboard hands you copy-ready prompts for a coding agent instead.
 
 ```sh
 bun run jig debug connections    # connected state and tool count per connection
@@ -82,9 +82,9 @@ keeps the same human approval gate the dashboard and auto-repair use;
 typechecks the code against its generated connections and runs the jig
 validator; problems come back and are printed, the code still lands as pending,
 and `--approve` only takes effect when the check is clean. It also applies the
-same guards as the authoring agent's own write path: it rejects code importing
-disconnected servers, and refuses while the jig is running or while an authoring
-session holds it.
+same guards as reply-to-email edits and auto-repair: it rejects code importing
+disconnected servers, and refuses while the jig is running or while a repair or
+email edit session holds it.
 
 ### Test a connection before writing code against it
 
@@ -103,8 +103,8 @@ Tools whose annotations do not mark them read-only are refused unless
 that would overflow the inline response are reported as a refusal with the
 reason, not returned as a truncated shape.
 
-When a jig the authoring agent generated is wrong, fix `SKILL.md` too, or the
-next generated jig repeats the defect.
+When a repair or reply-to-email edit gets a jig wrong, fix `SKILL.md` too, or the
+next generated fix repeats the defect.
 
 ## Repair a failing jig
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test"
-import { closeDb, openDb } from "../src/db.js"
+import { closeDb, openDb, upsertAgentSession } from "../src/db.js"
 import {
   approvePending,
   deleteJig,
@@ -15,6 +15,7 @@ import {
   renameJig,
   restoreVersion,
   setActiveVersion,
+  sweepOrphanedDraftJigs,
   writePending,
 } from "../src/services/jig-store.js"
 
@@ -263,5 +264,41 @@ describe("getPending diff", () => {
     expect(pending.diff).toContain("-b")
     expect(pending.diff).toContain("+B")
     expect(pending.diff).toContain("+d")
+  })
+})
+
+describe("sweepOrphanedDraftJigs", () => {
+  function upsertSessionFor(jigId: string) {
+    upsertAgentSession({
+      session_id: "aaaa0003-1234-4234-9234-123456789abc",
+      jig_id: jigId,
+      creation_mode: 0,
+      authoring_intent: "User: Test",
+      conversation_history: JSON.stringify([{ role: "user", content: "Test" }]),
+      authoring_policy: JSON.stringify({ requiresIntegration: false, buildResolutions: [] }),
+      messages: JSON.stringify([{ role: "user", content: "Test" }]),
+      events: JSON.stringify([{ type: "text", content: "Working" }]),
+      status: "waiting",
+      metrics: "{}",
+      created_at: 100,
+      updated_at: 200,
+      pending_ask_tool_call_id: null,
+      pending_ask_question: null,
+      draft_approval: null,
+      last_event_seq: 0,
+    })
+  }
+
+  it("sweeps orphaned draft rows but keeps session-referenced and approved jigs", () => {
+    writePending({ jigId: "orphan_draft", name: "Orphan", code: "// orphan", author: "agent", message: null, prompt: null })
+    upsertSessionFor("held_draft")
+    writePending({ jigId: "held_draft", name: "Held", code: "// held", author: "agent", message: null, prompt: null })
+    writePending({ jigId: "shipped_jig", name: "Shipped", code: "// shipped", author: "agent", message: null, prompt: null })
+    approvePending("shipped_jig")
+
+    expect(sweepOrphanedDraftJigs()).toEqual(["orphan_draft"])
+    expect(getJigRow("orphan_draft")).toBeNull()
+    expect(getJigRow("held_draft")).not.toBeNull()
+    expect(getJigRow("shipped_jig")).not.toBeNull()
   })
 })

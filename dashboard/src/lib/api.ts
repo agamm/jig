@@ -2,7 +2,6 @@ import type {
   AddExampleJigResponse,
   ApiEndpointKey,
   ApiResponse,
-  AgentConversationTurn,
   Connection,
   ConnectionDetail,
   ConnectConnectionResponse,
@@ -30,7 +29,6 @@ import type {
   RunDetail,
   RunStatus,
   ServerLogEntry as SharedServerLogEntry,
-  StartAgentResponse,
   StartRunResponse,
   StepList,
   SystemSettings,
@@ -287,44 +285,6 @@ export function updateSchedule(jigId: string, input: UpdateScheduleRequest): Pro
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
-  })
-}
-
-export function startAgentSession(
-  instruction: string,
-  jigId?: string,
-  history?: AgentConversationTurn[],
-  images?: string[]
-): Promise<StartAgentResponse> {
-  return fetchApi("startAgent", "/api/agent", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ instruction, jigId, history, images }),
-  })
-}
-
-export function sendAgentMessage(
-  sessionId: string,
-  message: string,
-  history?: AgentConversationTurn[],
-  images?: string[]
-): Promise<ApiResponse<"agentMessage">> {
-  return fetchApi("agentMessage", `/api/agent/${sessionId}/message`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, history, images }),
-  })
-}
-
-export function approveAgentDraft(sessionId: string): Promise<ApiResponse<"agentApprove">> {
-  return fetchApi("agentApprove", `/api/agent/${sessionId}/approve`, {
-    method: "POST",
-  })
-}
-
-export function closeAgentSession(sessionId: string): Promise<ApiResponse<"agentClose">> {
-  return fetchApi("agentClose", `/api/agent/${sessionId}/close`, {
-    method: "DELETE",
   })
 }
 

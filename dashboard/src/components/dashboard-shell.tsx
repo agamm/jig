@@ -1,15 +1,13 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useQueryState, parseAsString, parseAsBoolean } from "nuqs";
+import { useQueryState, parseAsString } from "nuqs";
 import { mutate } from "swr";
 import type { Jig } from "@/types/jig";
 import { OnboardingView } from "@/components/onboarding-view";
 import { SetupView } from "@/components/setup-view";
 import { JigList } from "@/components/jig-list";
 import { JigDetailPane } from "@/components/jig-detail-pane";
-import { CreateJigPane } from "@/components/create-jig-pane";
-import { ReviewPane } from "@/components/review-pane";
 import { ConnectionPane } from "@/components/connection-pane";
 import { AgentMailSettings } from "@/components/agentmail-settings";
 import { LogsSettings } from "@/components/logs-settings";
@@ -17,19 +15,17 @@ import { ModelsSettings } from "@/components/models-settings";
 import { SystemSettings } from "@/components/system-settings";
 import { DangerSettings } from "@/components/danger-settings";
 import { BackupSettings } from "@/components/backup-settings";
-import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ModelUpgradeModal } from "@/components/model-upgrade-modal";
 import { ServiceIcon } from "@/components/service-icon";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/resizable";
 import { Button } from "@/components/button";
 import { TextInput } from "@/components/input";
-import { toast } from "@/components/toast";
 import { EmptyState, LoadingState, Notice } from "@/components/state-panel";
 import { isRecommendedConnection, sortConnectionsForDisplay } from "@/lib/connection-catalog";
 import { useConnectionCatalog } from "@/lib/hooks";
 import { useModels, useConnections, useHealth, useOpenRouterCredits } from "@/lib/swr";
 import { APP_VERSION } from "@/lib/version";
-import { addExampleJig, closeAgentSession, createCustomConnection, fetchModelUpgrades } from "@/lib/api";
+import { addExampleJig, createCustomConnection, fetchModelUpgrades } from "@/lib/api";
 import type { Connection, DataStorageHealth, ExampleJig, ModelUpgradeSuggestion } from "@shared/api";
 
 /**
@@ -81,27 +77,17 @@ export function DashboardShell({
 }) {
   const [selectedJig, setSelectedJig] = useQueryState("jig", parseAsString);
   const [selectedConnection, setSelectedConnection] = useQueryState("connection", parseAsString);
-  const [reviewMode, setReviewMode] = useQueryState("review", parseAsBoolean.withDefault(false));
   const jigs = initialJigs;
   const [sidebarSlim, setSidebarSlim, sidebarMounted] = useLocalStorage("jig-sidebar-slim", false);
   const [view, setView] = useQueryState("view", parseAsString);
   const [settingsFocus, setSettingsFocus] = useQueryState("settingsFocus", parseAsString);
   const [settingsTab, setSettingsTab] = useQueryState("tab", parseAsString);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [createInstruction, setCreateInstruction] = useState("");
-  const [createStartToken, setCreateStartToken] = useState(0);
-  const [createResumeSessionId, setCreateResumeSessionId] = useState<string | null>(null);
-  // Draft authoring session id, kept in the URL so a refresh resumes the
-  // create pane instead of losing it (the session itself lives server-side).
-  const [draftSessionId, setDraftSessionId] = useQueryState("draft", parseAsString);
   const [showCustomConnectionForm, setShowCustomConnectionForm] = useState(false);
   const [creatingCustomConnection, setCreatingCustomConnection] = useState(false);
   const [customConnectionName, setCustomConnectionName] = useState("");
   const [customConnectionUrl, setCustomConnectionUrl] = useState("");
   const [customConnectionDescription, setCustomConnectionDescription] = useState("");
   const [customConnectionStatus, setCustomConnectionStatus] = useState<{ tone: "success" | "danger"; message: string } | null>(null);
-  const [draftToDiscard, setDraftToDiscard] = useState<Jig | null>(null);
-  const [discardingDraft, setDiscardingDraft] = useState(false);
   const [modelUpgrades, setModelUpgrades] = useState<ModelUpgradeSuggestion[]>([]);
 
   // Fire-and-forget check for newer-better models in the same family. Runs
@@ -143,7 +129,7 @@ export function DashboardShell({
 
   const currentJig = jigs.find((j) => j.id === selectedJig) ?? null;
   const showOnboarding = !errorMessage && jigs.length === 0 && !loading;
-  const hasDetail = createOpen || draftSessionId || (selectedJig && currentJig) || selectedConnection;
+  const hasDetail = (selectedJig && currentJig) || selectedConnection;
   const collapsed = sidebarMounted ? sidebarSlim : false;
   const {
     availableConnections,
@@ -153,76 +139,20 @@ export function DashboardShell({
   const displayedConnections = sortConnectionsForDisplay(availableConnections);
 
   function openJigDetail(jigId: string) {
-    setCreateOpen(false);
-    setDraftSessionId(null);
     setView(null);
     setSelectedJig(jigId);
-    setReviewMode(null);
     setSelectedConnection(null);
-  }
-
-  function handleJigClick(jig: Jig) {
-    if (jig.underConstruction) {
-      setCreateOpen(false);
-      setDraftSessionId(null);
-      setView(null);
-      setSelectedJig(jig.id);
-      setReviewMode(null);
-      setSelectedConnection(null);
-      setCreateResumeSessionId(jig.underConstruction.sessionId);
-      return;
-    }
-    openJigDetail(jig.id);
   }
 
   function closeDetail() {
     setSelectedJig(null);
-    setReviewMode(null);
     setSelectedConnection(null);
-    setCreateOpen(false);
-    setDraftSessionId(null);
-    setCreateResumeSessionId(null);
-  }
-
-  function openCreatePane(instruction = "", autoStart = false) {
-    setSelectedJig(null);
-    setReviewMode(null);
-    setSelectedConnection(null);
-    setView(null);
-    setCreateOpen(true);
-    setDraftSessionId(null);
-    setCreateResumeSessionId(null);
-    setCreateInstruction(instruction);
-    if (autoStart && instruction.trim()) {
-      setCreateStartToken((prev) => prev + 1);
-    }
   }
 
   async function refreshJigs(openJigId?: string) {
     await mutate("jigs")
     if (openJigId) {
       openJigDetail(openJigId)
-    }
-  }
-
-  async function confirmDiscardUnderConstruction() {
-    const draft = draftToDiscard;
-    const sessionId = draft?.underConstruction?.sessionId;
-    if (!draft || !sessionId || discardingDraft) return;
-
-    setDiscardingDraft(true);
-    try {
-      await closeAgentSession(sessionId);
-      await mutate("jigs", (current: Jig[] | undefined) =>
-        (current ?? []).filter((candidate) => candidate.id !== draft.id),
-      false);
-      if (selectedJig === draft.id) closeDetail();
-      setDraftToDiscard(null);
-      await mutate("jigs");
-    } catch (error: any) {
-      toast.error(error?.message ?? "Failed to discard draft");
-    } finally {
-      setDiscardingDraft(false);
     }
   }
 
@@ -296,7 +226,6 @@ export function DashboardShell({
         )}
         {showOnboarding && (
           <OnboardingView
-            onCreate={() => openCreatePane()}
             onConnectionClick={(name) => {
               setView("connections");
               setSelectedConnection(name);
@@ -319,10 +248,8 @@ export function DashboardShell({
           <JigList
             jigs={jigs}
             selectedJigId={selectedJig}
-            onJigClick={handleJigClick}
+            onJigClick={(jig) => openJigDetail(jig.id)}
             onReorder={(reordered) => mutate("jigs", reordered, false)}
-            onCreate={() => openCreatePane()}
-            onDiscardUnderConstruction={setDraftToDiscard}
           />
         )}
       </div>
@@ -488,39 +415,7 @@ export function DashboardShell({
   );
 
   const detailPane =
-    (createOpen || draftSessionId) && !selectedConnection ? (
-      <CreateJigPane
-        initialInstruction={createInstruction}
-        startToken={createStartToken}
-        resumeSessionId={createOpen ? undefined : draftSessionId}
-        onSessionStarted={(sessionId) => setDraftSessionId(sessionId)}
-        onClose={() => {
-          setCreateOpen(false);
-          setDraftSessionId(null);
-          setCreateResumeSessionId(null);
-        }}
-        onConnectionClick={(name) => {
-          setView("connections");
-          setSelectedConnection(name);
-        }}
-        onCreated={async (jigId) => {
-          await refreshJigs(jigId);
-        }}
-      />
-    ) : selectedJig && currentJig?.underConstruction && !selectedConnection ? (
-      <CreateJigPane
-        key={currentJig.underConstruction.sessionId}
-        resumeSessionId={createResumeSessionId ?? currentJig.underConstruction.sessionId}
-        onClose={closeDetail}
-        onConnectionClick={(name) => {
-          setView("connections");
-          setSelectedConnection(name);
-        }}
-        onCreated={async (jigId) => {
-          await refreshJigs(jigId);
-        }}
-      />
-    ) : selectedJig && currentJig && !reviewMode && !selectedConnection ? (
+    selectedJig && currentJig && !selectedConnection ? (
       <JigDetailPane
         key={currentJig.id}
         jig={currentJig}
@@ -545,23 +440,10 @@ export function DashboardShell({
           openJigDetail(jigId);
         }}
       />
-    ) : selectedJig && currentJig && reviewMode && !selectedConnection ? (
-      <ReviewPane jig={currentJig} onClose={closeDetail} />
     ) : null;
 
   return (
     <>
-    <ConfirmDialog
-      open={draftToDiscard !== null}
-      title="Discard draft?"
-      message={draftToDiscard ? `This will remove ${draftToDiscard.name} from under construction.` : "This will remove the under-construction jig."}
-      confirmLabel="Discard Draft"
-      destructive
-      loading={discardingDraft}
-      onConfirm={confirmDiscardUnderConstruction}
-      onClose={() => !discardingDraft && setDraftToDiscard(null)}
-    />
-
     {modelUpgrades.length > 0 && (
       <ModelUpgradeModal
         suggestions={modelUpgrades}
@@ -800,11 +682,9 @@ export function DashboardShell({
 
         {(!view || view === "jigs") && (
           hasDetail && detailPane ? (
-            // When creating / drafting / editing / reviewing a jig (i.e. a
-            // jig-scoped detail pane, not a connection pane), give it the
-            // full content area — the jig list isn't needed while focused on
-            // a single jig and the close button takes you back. Connection
-            // panes keep the split so the list stays reachable.
+            // A jig detail pane gets the full content area: the list isn't
+            // needed while focused on one jig and close takes you back.
+            // Connection panes keep the split so the list stays reachable.
             selectedConnection ? (
               <ResizablePanelGroup direction="horizontal" className="flex-1">
                 <ResizablePanel defaultSize="52%" minSize="34%">

@@ -42,14 +42,10 @@ bun run jig run <jig-id>
 A push with problems still lands as pending, prints them, and exits 1; `--approve` only takes
 effect when the check is clean.
 
-Or let the instance's authoring agent write it from a sentence:
+Jig has no in-server writer. Fixes without a coding agent happen by replying to the failure
+email (reply-to-edit), and the dashboard offers copy-ready prompts for Claude Code or Codex.
 
-```sh
-bun run jig new "Every weekday at 8am, email me a concise briefing."
-bun run jig edit <jig-id>
-```
-
-`new`, `edit`, `run`, `pending` and `types` act on the deployed instance in `~/.config/jig/remotes/` when one
+`edit`, `run`, `pending` and `types` act on the deployed instance in `~/.config/jig/remotes/` when one
 exists, and on this machine otherwise; `--local` forces this machine and `--handle=<name>`
 chooses between deployed instances. They print the target before starting. An unpaired remote
 is an error rather than a silent fall back to local.

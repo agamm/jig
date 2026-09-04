@@ -70,13 +70,6 @@ const ROUTES: [pattern: string, handler: string][] = [
   ["/api/jigs/#id/restore", "restoreToPending"],
   ["/api/jigs/#id/versions-v2", "listVersionsV2"],
 
-  ["/api/agent", "startAgent"],
-  ["/api/agent/:sessionId", "agentStatus"],
-  ["/api/agent/:sessionId/stream", "agentStream"],
-  ["/api/agent/:sessionId/message", "agentMessage"],
-  ["/api/agent/:sessionId/approve", "agentApprove"],
-  ["/api/agent/:sessionId/close", "agentClose"],
-
   ["/api/runs/active", "activeRun"],
   ["/api/runs/cancel", "cancelRun"],
   ["/api/runs/+id", "getRun"],
@@ -131,8 +124,8 @@ export function matchRoute(pathname: string): MatchedRoute | null {
         break
       }
       if (marker === ":" || marker === "#" || marker === "+") {
-        // An empty segment (`/api/agent//stream`) is not a match — it would
-        // otherwise hand handlers a blank id.
+        // An empty segment (`/api/connections//connect`) is not a match; it
+        // would otherwise hand handlers a blank id.
         if (!actual[i]) { matched = false; break }
         const value = decodeURIComponent(actual[i])
         if (marker === "#" && !isValidJigId(value)) { matched = false; break }

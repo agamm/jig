@@ -1,16 +1,14 @@
 "use client";
 
 import { useState, useMemo, useEffect, useRef } from "react";
-import type { JigStepTool, ScheduleInfo } from "@shared/api";
+import type { ScheduleInfo } from "@shared/api";
 import type { Jig } from "@/types/jig";
 import { ConnectionTag } from "@/components/connection-tag";
 import { HighlightedCode } from "@/components/highlighted-code";
 import { RunSteps, type RunStep } from "@/components/run-steps";
 import { useJigRun } from "@/hooks/use-jig-run";
-import { useAgent } from "@/hooks/use-agent";
-import { AgentInput } from "@/components/agent-input";
-import { AgentPanel } from "@/components/agent-panel";
 import { Button } from "@/components/button";
+import { CopyButton } from "@/components/copy-button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { TextArea } from "@/components/input";
 import { JigToolList } from "@/components/jig-tool-list";
@@ -33,7 +31,8 @@ import { JigStatePanel } from "@/components/jig-state";
 import { SegmentedControl } from "@/components/segmented-control";
 import { LoadingState, Notice } from "@/components/state-panel";
 import { TriggerEditor } from "@/components/trigger-editor";
-import { buildRemovalInstruction, getReviewableToolKeys, sameTool, toolKey } from "@/lib/tool-review";
+import { getReviewableToolKeys, toolKey } from "@/lib/tool-review";
+import { changeJigPrompt } from "@/lib/agent-prompts";
 
 const statusDot = (s: string) =>
   s === "healthy" ? "bg-emerald-400" : s === "attention" ? "bg-amber-400" : "bg-rose-400";
@@ -322,10 +321,8 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [codeCopied, setCodeCopied] = useState(false);
   const [reviewedToolKeys, setReviewedToolKeys] = useState<Set<string>>(new Set());
-  const [queuedRemovalTools, setQueuedRemovalTools] = useState<JigStepTool[]>([]);
   const tools = jig.settings.tools ?? [];
   const toolApproval = useJigToolApproval(tools, jig.settings.permissions, onRefresh);
-  const previousAutoRemovalRef = useRef("");
 
   // Pre-run gate: if the jig imports connections that aren't currently
   // connected, ask before firing off a run — otherwise we'd silently
@@ -344,27 +341,8 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
     return requiredConnections.filter((n: string) => !connectedSet.has(n))
   })();
 
-  // Pending changes for this jig (v12). The agent writes here; user approves
-  // or discards via the banner. Revalidates on agent activity.
+  // Pending version for this jig (email edit, auto-repair, CLI push); usePending polls for it.
   const { data: pending, mutate: revalidatePending } = usePending(jigId);
-
-  const agent = useAgent(async () => {
-    await onRefresh?.();
-    // Revalidate steps + pending after jig data refreshes
-    await revalidateSteps();
-    await revalidatePending();
-  });
-
-  // Revalidate pending when the agent finishes a write_jig_file tool call.
-  // Filtering avoids a refetch on every text/thinking event (10× chattier).
-  const lastWriteEvent = useMemo(() => {
-    for (let i = agent.events.length - 1; i >= 0; i--) {
-      const ev = agent.events[i];
-      if (ev.type === "tool-call" && ev.tool === "write_jig_file" && ev.status === "done") return i;
-    }
-    return -1;
-  }, [agent.events]);
-  useEffect(() => { revalidatePending(); }, [lastWriteEvent, revalidatePending]);
 
   // Fetch derived steps via SWR (cached server-side by code hash)
   const { data: stepsData, isValidating: derivingSteps, error: stepsError, mutate: revalidateSteps } = useJigSteps(jigId);
@@ -423,8 +401,6 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
     () => [...reviewedToolKeys].filter((key) => reviewableToolKeys.has(key)).length,
     [reviewedToolKeys, reviewableToolKeys]
   );
-  const removalInstruction = useMemo(() => buildRemovalInstruction(queuedRemovalTools), [queuedRemovalTools]);
-  const pendingToolKeys = useMemo(() => new Set(queuedRemovalTools.map((tool) => toolKey(tool))), [queuedRemovalTools]);
   const showDeriveFallback = detailTab === "steps" && mode.type === "idle" && !derivingSteps && runSteps.length === 0 && !!deriveError;
   // The "Approve Tools" button is always clickable when review is required —
   // clicking it approves everything at once (no need to click ✓ on each tool).
@@ -437,34 +413,9 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
   };
   useEffect(() => {
     setReviewedToolKeys(new Set());
-    setQueuedRemovalTools([]);
-    previousAutoRemovalRef.current = "";
   }, [toolApproval.signature]);
-  useEffect(() => {
-    previousAutoRemovalRef.current = removalInstruction;
-  }, [removalInstruction]);
 
-  // "Fix" on a failed step: hand the agent everything it needs in one shot.
-  // The authoring agent has no tool to read run history, so the instruction
-  // must carry the step, its tools/connections, and the full error text —
-  // otherwise its first move is to ask the user to paste the error back.
-  const handleFixError = (step: RunStep, errorText: string) => {
-    const toolList = (step.tools ?? []).map((t) => `${t.connection}.${t.name}`);
-    const connections = [...new Set([...(step.connections ?? []), ...(step.tools ?? []).map((t) => t.connection)])];
-    const instruction = [
-      `Step ${step.num} ("${step.name}") of this jig failed${mode.type === "done" && mode.dryRun ? " during a dry run" : ""}. Full error:`,
-      "",
-      errorText,
-      "",
-      toolList.length > 0 ? `That step calls: ${toolList.join(", ")}.` : null,
-      connections.length > 0 ? `Connections involved: ${connections.join(", ")}.` : null,
-      "",
-      "Read the jig, diagnose the root cause, and fix it with the smallest change that resolves the failure while keeping the jig's intent.",
-      "At the fix site, leave a one-line // comment stating what runtime failure it prevents.",
-      "If this is not fixable by editing the jig (provider outage, revoked access, a setting on the provider's side), do not make a speculative change — explain the concrete blocker and what the user has to do.",
-    ].filter((line) => line !== null).join("\n");
-    void (agent.sessionId ? agent.sendMessage(instruction) : agent.startSession(instruction, jigId));
-  };
+  const changePrompt = changeJigPrompt({ origin: window.location.origin, jigId });
 
   const handleRun = (dryRun: boolean) => {
     if (disconnectedRequired.length > 0) {
@@ -570,7 +521,6 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
           <PendingChangesBanner
             jigId={jigId}
             pending={pending}
-            agentStatus={agent.status}
             onApproved={async () => {
               await revalidatePending();
               await onRefresh?.();
@@ -642,7 +592,6 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
                 steps={runSteps}
                 mode={mode}
                 onClear={dismiss}
-                onFixError={handleFixError}
                 emptyAction={showDeriveFallback ? (
                   <div className="mt-3 space-y-3 text-left">
                     <Notice
@@ -686,8 +635,6 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
                 onConnectionClick={onConnectionClick}
                 toolDisplay={toolApproval.reviewRequired ? "expanded" : "collapsed"}
                 reviewedToolKeys={reviewedToolKeys}
-                pendingToolKeys={pendingToolKeys}
-                toolsLocked={agent.isActive}
                 jigId={jig.id}
                 stepModelOverrides={jig.stepModelOverrides}
                 jigBaseModel={jig.modelOverride ?? jig.modelInCode ?? null}
@@ -700,7 +647,6 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
                 }}
                 onApproveTool={toolApproval.reviewRequired ? (tool) => {
                   setReviewedToolKeys((current) => new Set(current).add(toolKey(tool)));
-                  setQueuedRemovalTools((current) => current.filter((candidate) => !sameTool(candidate, tool)));
                 } : undefined}
                 onRequestRemoveTool={toolApproval.reviewRequired ? (tool) => {
                   setReviewedToolKeys((current) => {
@@ -708,9 +654,6 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
                     next.delete(toolKey(tool));
                     return next;
                   });
-                  setQueuedRemovalTools((current) => (
-                    current.some((candidate) => sameTool(candidate, tool)) ? current : [...current, tool]
-                  ));
                 } : undefined}
               />
             )}
@@ -735,7 +678,7 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
                   </div>
                 }
               >
-                Review the expanded tools in each step. Use ✓ to accept a tool and × to flag it for removal.
+                Review the expanded tools in each step. Use ✓ to accept a tool and × to clear it. To drop a tool from the jig, ask your coding agent.
               </Notice>
             )}
             {runStartError && (
@@ -883,25 +826,18 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
         </PaneSection>
       </div>
 
-      {/* Agent activity stream (shown when active) */}
-      <AgentPanel
-        events={agent.events}
-        status={agent.status}
-        requiredConnections={agent.requiredConnections}
-        suggestedConnections={agent.suggestedConnections}
-        unknownConnections={agent.unknownConnections}
-        metrics={agent.metrics}
-        onConnectionClick={onConnectionClick}
-        onRetry={() => agent.sendMessage("Continue — retry the last step.")}
-      />
-
-      {/* Agent input bar */}
-      <div className="border-t border-[#1f1f23] p-3">
-        <AgentInput
-          agent={agent}
-          jigId={jigId}
-          externalValue={removalInstruction || undefined}
-        />
+      {/* Edits happen in the paired checkout; hand the user a prompt for their coding agent. */}
+      <div className="border-t border-[#1f1f23] px-4 py-3">
+        <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-[#555]">Change this jig with your coding agent</p>
+        <div className="flex items-center gap-2">
+          <code className="min-w-0 flex-1 truncate rounded-md border border-[#1f1f23] bg-[#111113] px-3 py-1.5 font-mono text-[10px] text-[#9a9aa3]" title={changePrompt}>
+            {changePrompt}
+          </code>
+          <CopyButton
+            text={changePrompt}
+            toast="Prompt copied. Paste it into Claude Code or Codex in your paired checkout."
+          />
+        </div>
       </div>
     </aside>
   );

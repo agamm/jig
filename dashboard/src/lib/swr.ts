@@ -38,21 +38,6 @@ export function useOpenRouterCatalog() {
   })
 }
 
-/**
- * The editor-slot model id plus whether it accepts image input. `supportsImages`
- * is `undefined` until both the model catalog and the OpenRouter catalog load;
- * callers gate image sends on `=== true` (only send when known-capable).
- */
-export function useEditorImageCapability(): { editorModelId: string | null; supportsImages: boolean | undefined } {
-  const { data: models } = useModels()
-  const { data: catalog } = useOpenRouterCatalog()
-  const editorModelId = models?.editor.id ?? null
-  const supportsImages = editorModelId && catalog
-    ? (catalog.models.find((m) => m.id === editorModelId)?.supportsImages ?? false)
-    : undefined
-  return { editorModelId, supportsImages }
-}
-
 export function useOpenRouterCredits() {
   return useSWR<OpenRouterCredits | null>("openrouter-credits", fetchOpenRouterCredits, {
     refreshInterval: 60_000,
@@ -91,8 +76,8 @@ export function usePending(jigId: string | null, config?: SWRConfiguration<Pendi
     jigId ? `jig/${jigId}/pending` : null,
     () => fetchPending(jigId!),
     {
-      // Pending state changes when the agent writes — caller invalidates this
-      // key on tool-call events. Background refresh as a safety net.
+      // Pending versions arrive out of band (reply-to-email edits, auto-repair,
+      // CLI pushes), so poll rather than wait for a UI event.
       refreshInterval: 5000,
       revalidateOnFocus: true,
       ...config,

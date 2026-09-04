@@ -24,7 +24,6 @@ function formatExampleActionError(error: unknown): string {
 }
 
 export function OnboardingView({
-  onCreate,
   onConnectionClick,
   onExampleAdd,
   onExampleOpen,
@@ -34,7 +33,6 @@ export function OnboardingView({
   existingJigIds = [],
   examplesErrorMessage,
 }: {
-  onCreate?: () => void;
   onConnectionClick?: (name: string) => void;
   onExampleAdd?: (id: string) => Promise<void> | void;
   onExampleOpen?: (id: string) => void;
@@ -85,16 +83,6 @@ export function OnboardingView({
             </div>
           </button>
         ))}
-        <button
-          onClick={onCreate}
-          className="group flex items-center gap-3 rounded-lg border border-dashed border-[#2a2a2e] bg-transparent p-3.5 text-left transition-colors duration-150 hover:border-emerald-500/30 hover:bg-emerald-500/[0.03]"
-        >
-          <span className="flex h-8 w-8 items-center justify-center rounded-md bg-emerald-500/10 text-sm text-emerald-400">&#10024;</span>
-          <div>
-            <p className="text-[13px] font-medium text-[#ededed]">Create your first jig</p>
-            <p className="text-[11px] text-[#555]">Describe a task, we&apos;ll automate it</p>
-          </div>
-        </button>
       </div>
       {examples.length > 0 && (
         <div className="space-y-3">

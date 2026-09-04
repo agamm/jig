@@ -88,7 +88,6 @@ describe("router", () => {
   })
 
   it("rejects empty path segments", () => {
-    expect(matchRoute("/api/agent//stream")).toBeNull()
     expect(matchRoute("/api/connections//connect")).toBeNull()
   })
 
@@ -97,13 +96,5 @@ describe("router", () => {
     expect(r?.handler).toBe("deleteAuthorizedSender")
     expect(r?.params.channel).toBe("email")
     expect(r?.params.senderId).toBe("a/b/c")
-  })
-
-  it("distinguishes agent sub-routes from the status route", () => {
-    expect(matchRoute("/api/agent/s1")?.handler).toBe("agentStatus")
-    expect(matchRoute("/api/agent/s1/stream")?.handler).toBe("agentStream")
-    expect(matchRoute("/api/agent/s1/message")?.handler).toBe("agentMessage")
-    expect(matchRoute("/api/agent/s1/approve")?.handler).toBe("agentApprove")
-    expect(matchRoute("/api/agent/s1/close")?.handler).toBe("agentClose")
   })
 })

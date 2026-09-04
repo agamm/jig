@@ -16,7 +16,6 @@ import {
   dismissUpgrade as dismissModelUpgradeImpl,
 } from "./services/model-upgrade.js"
 import { buildJigResponse, discoverAllJigs } from "./services/jig-api.js"
-import { approveAgentDraft, closeAgentSession, getAgentSessionStatus, listUnderConstructionJigs, pushAgentMessage, startAgentSession, streamAgentSession } from "./services/agent-service.js"
 import { cancelActiveRun, getActiveRunSnapshot, getRunDetail, startJigRun } from "./services/run-api.js"
 import {
   canSendAgentMail,
@@ -243,9 +242,7 @@ export function createApiServer(port: number) {
             const jigs = await Promise.all(
               [...discoverAllJigs().keys()].map((id) => buildJigResponse(id, 10, true))
             )
-            const existingIds = new Set(jigs.map((jig) => jig.id))
-            const drafts = (await listUnderConstructionJigs()).filter((jig) => !existingIds.has(jig.id))
-            return apiJson("listJigs", [...drafts, ...jigs])
+            return apiJson("listJigs", jigs)
           }
           case "listExamples":
             return apiJson("listExamples", listExampleJigs())
@@ -424,32 +421,6 @@ export function createApiServer(port: number) {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
             const body = await req.json().catch(() => ({}))
             return handleUpdateTrigger(route.params.id, body)
-          }
-          case "startAgent": {
-            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
-            const body = await req.json().catch(() => ({}))
-            return apiJson("startAgent", await startAgentSession(body))
-          }
-          case "agentStatus": {
-            const since = parseInt(url.searchParams.get("since") ?? "0")
-            return apiJson("agentStatus", getAgentSessionStatus(route.params.sessionId, since))
-          }
-          case "agentStream": {
-            const lastEventId = parseInt(req.headers.get("last-event-id") ?? url.searchParams.get("since") ?? "0")
-            return streamAgentSession(route.params.sessionId, lastEventId, req.signal)
-          }
-          case "agentMessage": {
-            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
-            const body = await req.json().catch(() => ({}))
-            return apiJson("agentMessage", await pushAgentMessage(route.params.sessionId, body))
-          }
-          case "agentApprove": {
-            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
-            return apiJson("agentApprove", await approveAgentDraft(route.params.sessionId))
-          }
-          case "agentClose": {
-            if (req.method !== "DELETE") return json({ error: "Method not allowed" }, 405)
-            return apiJson("agentClose", await closeAgentSession(route.params.sessionId))
           }
           case "pending": {
             if (req.method === "GET") return handleGetPending(route.params.id)

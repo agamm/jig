@@ -5,13 +5,14 @@ import useSWR from "swr";
 import type { JigStepTool, OpenRouterModelInfo } from "@shared/api";
 import { classifyFailure, fetchOpenRouterCatalog, updateJigStepModel } from "@/lib/api";
 import { toast } from "@/components/toast";
-import { Button } from "@/components/button";
+import { CopyButton } from "@/components/copy-button";
 import { RotatingFrame } from "@/components/rotating-frame";
 import { ServiceIcon } from "@/components/service-icon";
 import { formatElapsed } from "@/lib/format";
 import { Spinner } from "@/components/spinner";
 import { MarkdownOutput } from "@/components/markdown-output";
 import { toolKey } from "@/lib/tool-review";
+import { fixJigPrompt } from "@/lib/agent-prompts";
 
 /** Step with optional live run status */
 export interface RunStep {
@@ -94,13 +95,11 @@ export function RunSteps({
   steps, mode = { type: "idle" }, onClear, emptyAction,
   completedTools = [], activeTools = [], toolReadOnly = {},
   onConnectionClick,
-  onFixError,
   toolDisplay = "collapsed",
   onRequestRemoveTool,
   reviewedToolKeys,
   pendingToolKeys,
   onApproveTool,
-  toolsLocked = false,
   jigId,
   stepModelOverrides,
   jigBaseModel,
@@ -114,16 +113,12 @@ export function RunSteps({
   activeTools?: string[];
   toolReadOnly?: Record<string, boolean>;
   onConnectionClick?: (name: string) => void;
-  /** Hands a failed step and its error text to the authoring agent to diagnose. */
-  onFixError?: (step: RunStep, errorText: string) => void;
   toolDisplay?: "collapsed" | "expanded";
   onRequestRemoveTool?: (tool: JigStepTool) => void;
   reviewedToolKeys?: Set<string>;
   pendingToolKeys?: Set<string>;
   onApproveTool?: (tool: JigStepTool) => void;
-  /** When true, show every tool in a pending/loading state (e.g. while the agent is rewriting the jig). */
-  toolsLocked?: boolean;
-  /** Jig id — required if the step-scoped llm model picker is enabled. */
+  /** Jig id, required for the step-scoped llm model picker and the fix prompt. */
   jigId?: string;
   /** Current per-step overrides keyed by step seq (1-indexed) as string. */
   stepModelOverrides?: Record<string, string>;
@@ -282,7 +277,7 @@ export function RunSteps({
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {step.tools.map((tool) => {
                         const reviewed = reviewedToolKeys?.has(toolKey(tool)) ?? false;
-                        const pending = toolsLocked || (pendingToolKeys?.has(toolKey(tool)) ?? false);
+                        const pending = pendingToolKeys?.has(toolKey(tool)) ?? false;
                         return (
                         <span
                           key={`${tool.connection}:${tool.name}`}
@@ -451,15 +446,14 @@ export function RunSteps({
                                 {target && onConnectionClick && errText && (
                                   <ReauthPrompt errorText={errText} connection={target} onConnectionClick={onConnectionClick} />
                                 )}
-                                {onFixError && errText && (
+                                {jigId && errText && (
                                   <div className="flex justify-end">
-                                    <Button
-                                      onClick={(e) => { e.stopPropagation(); onFixError(step, errText); }}
-                                      variant="subtle"
+                                    <CopyButton
+                                      text={fixJigPrompt({ origin: window.location.origin, jigId, step: step.name, error: errText })}
+                                      label="Copy fix prompt"
+                                      toast="Prompt copied. Paste it into Claude Code or Codex in your paired checkout."
                                       size="xs"
-                                    >
-                                      Fix
-                                    </Button>
+                                    />
                                   </div>
                                 )}
                               </>
@@ -470,7 +464,7 @@ export function RunSteps({
                         <MarkdownOutput markdown={step.output || modeError || ""} />
                       )}
                     </div>
-                    <CopyButton text={step.output || modeError || ""} />
+                    <OutputCopyButton text={step.output || modeError || ""} />
                   </div>
                 </div>
               )}
@@ -626,7 +620,7 @@ function StepModelPicker({
   );
 }
 
-function CopyButton({ text }: { text: string }) {
+function OutputCopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <button

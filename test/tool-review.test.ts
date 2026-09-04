@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { buildRemovalInstruction, getReviewableToolKeys, toolKey } from "../dashboard/src/lib/tool-review"
+import { getReviewableToolKeys, toolKey } from "../dashboard/src/lib/tool-review"
 import { getToolsetSignature } from "../dashboard/src/lib/toolset-signature"
 import { trimGitDiffHeaders } from "../dashboard/src/lib/git-diff"
 
@@ -14,13 +14,6 @@ describe("tool review helpers", () => {
       toolKey(tools[0]),
       toolKey(tools[1]),
     ])
-  })
-
-  it("builds a readable removal instruction for multiple tools", () => {
-    expect(buildRemovalInstruction([
-      { connection: "workspace", name: "gmail_search", readOnly: true },
-      { connection: "workspace", name: "gmail_get", readOnly: true },
-    ])).toBe("Remove gmail_search and gmail_get from this jig and adjust the workflow if needed.")
   })
 
   it("uses a stable signature when the toolset did not change", () => {

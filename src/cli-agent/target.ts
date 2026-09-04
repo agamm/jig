@@ -1,5 +1,5 @@
 /**
- * Which instance should `jig new` / `jig edit` author against?
+ * Which instance should `jig edit` / `jig run` act against?
  *
  * The answer people expect is "the one I deployed", not "a local server you
  * started behind my back". `jig setup` already resolves targets this way, so

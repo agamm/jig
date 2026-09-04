@@ -22,7 +22,7 @@ Jig:          code -> code -> [AI] -> code -> result
 
 ## Architecture
 
-Jig separates authoring from execution: the authoring agent writes a versioned TypeScript `JigDefinition`; the runtime imports the approved version; and the SDK enforces step, model, and typed MCP tool boundaries.
+Jig separates authoring from execution: a coding agent (Claude Code, Codex) writes a versioned TypeScript `JigDefinition` and pushes it over the CLI; the runtime imports the approved version; and the SDK enforces step, model, and typed MCP tool boundaries.
 
 ![Jig technical architecture: authoring and execution planes connected through a versioned store, runtime engine, SDK, typed MCP connections, and model API](docs/jig-architecture.svg)
 
@@ -181,14 +181,13 @@ bun run jig connect composio
 bun run jig types                # the instance's connection types (.d.ts) into .jig/connections/
 bun run jig edit weekly-update --file=weekly-update.ts  # push code you wrote (creates the jig if new; typechecked, pending)
 bun run jig pending weekly-update approve
-bun run jig new "Every Friday at 4pm, draft a weekly update email from my meetings and emails."
-bun run jig edit weekly-update
+bun run jig edit weekly-update --out=weekly-update.ts    # export the live code to change it
 bun run jig run weekly-update --dry-run
 bun run jig run weekly-update
 bun run jig pair <code>          # cache a CLI session for a deployed instance
 bun run jig debug connections    # what a deployed instance has connected
 ```
 
-`new`, `edit`, `run`, `pending` and `types` act on your deployed instance when you have one, and print which
+`edit`, `run`, `pending` and `types` act on your deployed instance when you have one, and print which
 instance they chose before starting. Add `--local` to act on this machine, or
 `--handle=<name>` to choose between deployed instances.

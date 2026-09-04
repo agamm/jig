@@ -1,18 +1,3 @@
-type CreatorPromptInput = {
-  description: string
-  probeResults: string
-  context: {
-    skillMd: string
-    typeDefs: string
-    toolCatalog: string
-    buildHints?: string
-    relevantSchemas: string
-    exampleJig: string
-    serverDescriptions: string
-  }
-  existingCode?: string
-}
-
 type AgentPromptInput = {
   jigId?: string
   skillMd: string
@@ -53,44 +38,6 @@ function agentToolProtocol() {
 - After writing code, always run check_jig. If it reports errors, patch only the narrow issue and check again.
 - Use web_search only for external API docs not already in context.
 - When done, reply with 1-2 short plain text sentences summarizing what changed. No markdown, no code blocks, no bullet points.`
-}
-
-export function buildCreatorJigPrompt({
-  description,
-  probeResults,
-  context,
-  existingCode,
-}: CreatorPromptInput): string {
-  return joinSections([
-    "You are writing a TypeScript jig file that automates workflows.",
-    context.typeDefs,
-    context.skillMd,
-    section("Available Connections", context.serverDescriptions),
-    connectionImportRules(),
-    section("Tool Catalog", context.toolCatalog),
-    section("Build-Time Resolved Runtime Targets", context.buildHints),
-    section("Tool Schemas (exact param names, types, required fields)", context.relevantSchemas),
-    section("Probe Results (real data from the user's connected services)", probeResults),
-    section("Example Jig (for reference)", `\`\`\`typescript\n${context.exampleJig}\n\`\`\``),
-    existingCode ? section("Existing Jig Code (to modify)", `\`\`\`typescript\n${existingCode}\n\`\`\``) : null,
-    existingCode
-      ? section(
-          "Edit Instruction",
-          `${description}\n\nModify the existing jig code according to the instruction. Preserve the existing structure and only change what's needed.`
-        )
-      : section("Task", `Create a new jig that does the following:\n${description}`),
-    context.buildHints
-      ? `## Build-Time Resolution Policy
-Any runtime target resolved above was discovered during jig creation, not during jig execution.
-
-- Hardcode the resolved IDs, actor names, or resource identifiers directly into the generated jig
-- Do NOT emit runtime rediscovery code for those targets
-- Do NOT add back excluded search/meta-tools just because they exist on the connection
-- Keep the jig focused on the selected runtime tools and concrete execution path`
-      : null,
-    `## Prompt Contract
-Follow the **Jig Writing Rules** section in SKILL.md above. They are enforced by the runner and the static validator.`,
-  ])
 }
 
 export function buildAgentJigSystemPrompt({

@@ -17,8 +17,8 @@ Reach for that one when you are producing TypeScript, this one for everything el
 
 ## Ground rules
 
-- **Never hand-edit files under `jigs/`.** They are the authoring pipeline's output. Use the
-  dashboard or `bun run jig new|edit`.
+- **Never hand-edit files under `jigs/`.** SQLite is the source of truth. Write the jig file in
+  your checkout and push it with `bun run jig edit <id> --file=`.
 - **Never commit runtime state**: `.env`, `.jig/`, `jig.db*`, `jig.log`, `runtime/`, `tmp/`.
 - **Never ask the user for an API key you could get from a browser authorization.** Setup is
   built so nobody types a secret at you.
@@ -152,8 +152,8 @@ bun run jig run <jig-id> --dry-run             # prove it without side effects
 bun run jig run <jig-id>                       # trigger it once for real
 ```
 
-The push runs the same check the dashboard's authoring agent must pass (tsc against the
-instance's generated connections, the jig validator, step structure). Problems are printed,
+The push runs the instance's own check (tsc against its generated connections, the jig
+validator, step structure). Problems are printed,
 the code still lands as pending so the diff stays visible, the command exits 1, and
 `--approve` is ignored until the check is clean. Read `.jig/connections/<server>.d.ts` for tool
 names and parameter types instead of guessing them; `edit --file` creates the jig when it does
@@ -168,14 +168,8 @@ bun run jig edit <jig-id> --file=jig.ts --approve  # approve in the same push wh
 ```
 
 Export → edit → upload → `jig run <jig-id>` → `jig debug tail` is the loop. Uploading leaves
-the change pending on purpose, the same human gate the dashboard and auto-repair use.
-
-The alternative is to let the instance's own authoring agent write it from a sentence:
-
-```sh
-bun run jig new "email me a random number, once"
-bun run jig edit <jig-id>                      # asks what should change
-```
+the change pending on purpose, the same human gate reply-to-email edits and auto-repair use.
+There is no in-server writer: you are the author.
 
 **All of these act on the instance you deployed**, not on this machine. They resolve the
 active remote from `~/.config/jig/remotes/`, use the paired session, and print which instance
@@ -201,8 +195,8 @@ proxy like Composio can be authorized while nothing is authorized inside it, whi
 "connected" with zero tools.
 
 **Never drive the dashboard through a browser.** If you find yourself opening Chrome to click
-"New Jig", stop: you cannot authenticate that tab, the password is not yours to type, and every
-button there has a CLI equivalent above. A missing capability is something to report, not
+around the dashboard, stop: you cannot authenticate that tab, the password is not yours to
+type, and every action there has a CLI equivalent above. A missing capability is something to report, not
 something to automate around.
 
 **Never hand-edit files under `jigs/`.** SQLite is the source of truth; a hand edit is

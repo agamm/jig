@@ -30,6 +30,12 @@ describe("router", () => {
     expect(matchRoute("/api/connections/composio")?.handler).toBe("getConnection")
   })
 
+  // Declared before /api/connections/:name for the same reason as the
+  // sub-routes: otherwise "types" would be treated as a connection name.
+  it("matches the connection types route rather than a connection named types", () => {
+    expect(matchRoute("/api/connections/types")?.handler).toBe("connectionTypes")
+  })
+
   it("matches the examples route", () => {
     const r = matchRoute("/api/examples")
     expect(r?.handler).toBe("listExamples")

@@ -166,6 +166,10 @@ export function fetchOpenRouterCredits(): Promise<ApiResponse<"openrouterCredits
   return fetchApi("openrouterCredits", "/api/models/credits")
 }
 
+export function probeMainModel(): Promise<ApiResponse<"modelProbe">> {
+  return fetchApi("modelProbe", "/api/models/probe", { method: "POST" })
+}
+
 export function classifyFailure(error: string): Promise<ApiResponse<"classifyFailure">> {
   return fetchApi("classifyFailure", "/api/classify-failure", {
     method: "POST",

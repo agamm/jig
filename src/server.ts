@@ -34,12 +34,10 @@ import { getSchedule, listAllSchedules, setScheduleEnabled, listAuthorizedSender
 import { startScheduler } from "./scheduler/index.js"
 import { syncSchedules } from "./scheduler/sync.js"
 import {
-  approvePending as approveJigPending,
   getJigRow,
   setModelOverride as storeSetModelOverride,
   setStepModelOverride as storeSetStepModelOverride,
   setJigTimeouts as storeSetJigTimeouts,
-  writePending as storeWritePending,
 } from "./services/jig-store.js"
 import { resetSessionLog } from "./debug/session-log.js"
 import { ApiError, apiJson, json } from "./server/http.js"
@@ -72,6 +70,7 @@ import {
   handleConnectConnection,
   handleGetConnection,
   handleGetConnections,
+  handleGetConnectionTypes,
 } from "./server/handlers/connections.js"
 import {
   handleApprovePending,
@@ -79,6 +78,7 @@ import {
   handleGetPending,
   handleListVersionsV2,
   handleRestoreToPending,
+  handleWriteJigCode,
 } from "./server/handlers/versions.js"
 import { isCancellationError, USER_CANCELLED_MESSAGE } from "./run-cancel.js"
 import { isServiceMode, publicUrl, publicUrlFromRequest } from "./config/runtime.js"
@@ -210,6 +210,12 @@ export function createApiServer(port: number) {
             return apiJson("modelsCatalog", await fetchOpenRouterModels())
           case "openrouterCredits":
             return apiJson("openrouterCredits", await fetchOpenRouterCredits())
+          case "modelProbe": {
+            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+            const { probeModel } = await import("./services/model-probe.js")
+            const { getMainModel } = await import("./config/models.js")
+            return apiJson("modelProbe", await probeModel(getMainModel()))
+          }
           case "classifyFailure": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
             const body = (await req.json().catch(() => ({}))) as { error?: unknown }
@@ -370,51 +376,13 @@ export function createApiServer(port: number) {
             return apiJson("verifyConnection", await verifyConnection(route.params.name))
           }
           case "writeJigCode": {
-            // Direct code write for an existing jig — creates (or replaces) the
-            // pending version. With approve:true, immediately promotes pending
-            // to active. Useful for scripted/CLI-driven edits when going through
-            // the interactive authoring agent would be excessive.
-            //
-            // Safety parity with the agent's toolWriteJigFile path:
-            //   - rejects code that imports disconnected servers (early, with
-            //     a clear error vs an obscure runner import failure)
-            //   - refuses when an authoring session is actively editing this
-            //     jig (would silently clobber its in-progress draft)
-            //   - refuses while the jig is running
+            // Direct code write (CLI / coding agents). Creates the jig if
+            // needed, lands pending, typechecks, approves only when clean.
             if (req.method !== "PUT") return json({ error: "Method not allowed" }, 405)
-            const body = (await req.json().catch(() => ({}))) as {
-              code?: unknown; message?: unknown; approve?: unknown
-            }
-            if (typeof body.code !== "string" || body.code.trim().length === 0) {
-              throw new ApiError(400, "code is required")
-            }
-            ensureJigExists(route.params.id)
-            const { hasActiveRunForJig } = await import("./services/run-store.js")
-            if (hasActiveRunForJig(route.params.id)) {
-              throw new ApiError(409, "Cannot edit while the jig is running")
-            }
-            const { findDisconnectedImports, isJigBeingEdited } = await import("./services/agent-service.js")
-            if (isJigBeingEdited(route.params.id)) {
-              throw new ApiError(409, "An authoring session is currently editing this jig — close that session before scripted edits")
-            }
-            const disconnected = findDisconnectedImports(body.code)
-            if (disconnected.length > 0) {
-              throw new ApiError(400, `Code imports unconnected servers: ${disconnected.join(", ")}. Connect them first via the dashboard.`)
-            }
-            const message = typeof body.message === "string" ? body.message : null
-            const { versionId } = storeWritePending({
-              jigId: route.params.id,
-              code: body.code,
-              author: "cli",
-              message,
-              prompt: null,
-            })
-            let activeVersionId: number | null = null
-            if (body.approve === true) {
-              activeVersionId = approveJigPending(route.params.id).activeVersionId
-            }
+            const body = (await req.json().catch(() => ({}))) as { code?: unknown; message?: unknown; approve?: unknown }
+            const res = await handleWriteJigCode(route.params.id, body)
             broadcastJigsUpdated()
-            return apiJson("writeJigCode", { ok: true as const, pendingVersionId: versionId, activeVersionId })
+            return res
           }
           case "getRun":
             return apiJson("getRun", getRunDetail(parseInt(route.params.id)))
@@ -427,6 +395,8 @@ export function createApiServer(port: number) {
           }
           case "connections":
             return handleGetConnections()
+          case "connectionTypes":
+            return handleGetConnectionTypes()
           case "createCustomConnection": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
             const body = await req.json().catch(() => ({}))

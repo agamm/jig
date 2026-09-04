@@ -138,39 +138,53 @@ output at all means exactly that: check `pwd` before believing the command is br
 
 ## Create and run a jig
 
-Coding agents are the main way jigs get written, so this is a first-class CLI path, not a
-fallback. Writing the workflow code itself is a different skill: read `SKILL.md` in the repo
-root, completely, before you write or edit any jig.
+Coding agents are the main way jigs get written, so writing the file yourself and pushing it
+is the first-class CLI path. Writing the workflow code itself is a different skill: read
+`SKILL.md` in the repo root, completely, before you write or edit any jig.
 
 ```sh
-bun run jig new "email me a random number, once"
-bun run jig pending <jig-id>            # read the diff it proposes
-bun run jig pending <jig-id> approve    # or: discard
-bun run jig run <jig-id> --dry-run      # prove it without side effects
-bun run jig run <jig-id>                # trigger it once for real
+bun run jig types                              # the instance's connection types, into .jig/connections/
+# write <jig-id>.ts per SKILL.md, importing from "@jig/connections/<server>.js"
+bun run jig edit <jig-id> --file=<jig-id>.ts   # create it: typechecked on the instance, lands PENDING
+bun run jig pending <jig-id>                   # read the diff (works against the remote too)
+bun run jig pending <jig-id> approve           # or: discard, or push with --approve
+bun run jig run <jig-id> --dry-run             # prove it without side effects
+bun run jig run <jig-id>                       # trigger it once for real
 ```
 
-**`jig new` authors on the instance you deployed**, not on this machine. It resolves the active
-remote from `~/.config/jig/remotes/` and posts to its authoring agent over the paired session,
-and it prints which instance it chose before it starts. Add `--local` when you mean this
-machine, or `--handle=<name>` to pick between several instances.
+The push runs the same check the dashboard's authoring agent must pass (tsc against the
+instance's generated connections, the jig validator, step structure). Problems are printed,
+the code still lands as pending so the diff stays visible, the command exits 1, and
+`--approve` is ignored until the check is clean. Read `.jig/connections/<server>.d.ts` for tool
+names and parameter types instead of guessing them; `edit --file` creates the jig when it does
+not exist and updates it otherwise, so there is one push command.
 
-If the remote has no cached session it refuses rather than quietly authoring locally, because
-a jig on the wrong instance is a mistake you notice much later. Pair it first: see "Connecting
-the CLI to a hosted instance" above.
-
-To change a jig in your own editor rather than by instruction, `jig edit` does that too:
+To change an existing jig the same way:
 
 ```sh
 bun run jig edit <jig-id> --out=jig.ts             # export the live code
 bun run jig edit <jig-id> --file=jig.ts            # upload it as PENDING
-bun run jig edit <jig-id> --file=jig.ts --approve  # skip the review gate
+bun run jig edit <jig-id> --file=jig.ts --approve  # approve in the same push when the check is clean
 ```
 
-Export → edit → upload → `jig run <jig-id>` → `jig debug tail` is the loop. Uploading leaves the
-change pending on purpose, the same human gate the dashboard and auto-repair use; `--approve`
-opts out of it. All of these follow the same targeting rule as `jig new`: your deployed instance
-unless you pass `--local`.
+Export → edit → upload → `jig run <jig-id>` → `jig debug tail` is the loop. Uploading leaves
+the change pending on purpose, the same human gate the dashboard and auto-repair use.
+
+The alternative is to let the instance's own authoring agent write it from a sentence:
+
+```sh
+bun run jig new "email me a random number, once"
+bun run jig edit <jig-id>                      # asks what should change
+```
+
+**All of these act on the instance you deployed**, not on this machine. They resolve the
+active remote from `~/.config/jig/remotes/`, use the paired session, and print which instance
+they chose before starting. Add `--local` when you mean this machine, or `--handle=<name>` to
+pick between several instances.
+
+If the remote has no cached session they refuse rather than quietly acting locally, because a
+jig on the wrong instance is a mistake you notice much later. Pair it first: see "Connecting
+the CLI to a hosted instance" above.
 
 `jig debug` is diagnostics only:
 

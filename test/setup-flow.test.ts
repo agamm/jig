@@ -37,6 +37,7 @@ function makeBackend(overrides: Partial<SetupBackend> = {}): SetupBackend {
   ]
   return {
     openRouterCredits: async () => ({ ok: true, balance: 12.5 }),
+    probeMainModel: async () => ({ ok: true as const, model: "test/main" }),
     setOpenRouterKey: async () => {},
     startOpenRouterOAuth: async () => ({ authorizationUrl: "https://openrouter.ai/auth?code_challenge=abc&code_challenge_method=S256" }),
     agentMailStatus: async () => ({ hasKey: true, owner: "owner@example.com", address: "jig@agentmail.to", canSend: true, webhookReady: true }),
@@ -308,5 +309,48 @@ describe("parseSetupArgs", () => {
     // setup would silently pick an instance kind for the user.
     const bare = parseSetupArgs([])
     expect({ railway: bare.railway, local: bare.local }).toEqual({ railway: false, local: false })
+  })
+})
+
+describe("main model probe", () => {
+  const refused = {
+    ok: false as const,
+    model: "meta/muse-spark-1.3",
+    error: "This model requires you to complete the following before use: 18+ age confirmation. Confirm at https://openrouter.ai/settings/preferences",
+    fixUrl: "https://openrouter.ai/settings/preferences",
+  }
+
+  it("fails the OpenRouter step with a fix when the key works but the main model refuses", async () => {
+    // A key with credits used to pass setup and then 403 inside jig new.
+    const { io, events } = makeIO()
+    await expect(runSetupFlow(io, makeBackend({ probeMainModel: async () => refused }))).rejects.toThrow(/18\+ age confirmation/)
+
+    const failed = events.find((e) => e.type === "step-failed") as Extract<SetupEvent, { type: "step-failed" }>
+    expect(failed.id).toBe("openrouter")
+    expect(failed.fix).toEqual({ label: "Fix on OpenRouter", url: "https://openrouter.ai/settings/preferences", settings: "models" })
+    expect(events.some((e) => e.type === "step-begin" && e.id === "agentmail")).toBe(false)
+  })
+
+  it("names the model in the verified summary when it answers", async () => {
+    const { io, events } = makeIO({ confirm: [true] })
+    await runSetupFlow(io, makeBackend())
+    const verified = events.find((e) => e.type === "verified" && e.id === "openrouter") as Extract<SetupEvent, { type: "verified" }>
+    expect(verified.summary).toMatch(/test\/main answers/)
+  })
+
+  it("summarizeSetup reports the refusal with its fix, and stays quiet about the model when there is no key", async () => {
+    const refusedState = await summarizeSetup(makeBackend({ probeMainModel: async () => refused }))
+    const step = refusedState.find((s) => s.id === "openrouter")!
+    expect(step.satisfied).toBe(false)
+    expect(step.detail).toMatch(/18\+ age confirmation/)
+    expect(step.fix?.url).toBe("https://openrouter.ai/settings/preferences")
+
+    let probes = 0
+    const noKey = await summarizeSetup(makeBackend({
+      openRouterCredits: async () => ({ ok: false, error: "no key" }),
+      probeMainModel: async () => { probes++; return { ok: true as const, model: "x" } },
+    }))
+    expect(probes).toBe(0)
+    expect(noKey.find((s) => s.id === "openrouter")!.fix).toBeUndefined()
   })
 })

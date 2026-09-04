@@ -19,8 +19,8 @@
  * already satisfied skips its own dialogue, so pre-seeding needs no second code
  * path inside the wizard.
  */
-import { runSetupFlow, summarizeSetup, type SetupBackend, type SetupEvent, type SetupIO } from "../../shared/setup-flow.js"
-import type { Connection, OpenRouterCredits, VerifyConnectionResponse } from "../../shared/api.js"
+import { runSetupFlow, summarizeSetup, type SetupBackend, type SetupEvent, type SetupIO, type SetupFix } from "../../shared/setup-flow.js"
+import type { Connection, ModelProbe, OpenRouterCredits, VerifyConnectionResponse } from "../../shared/api.js"
 import { promptHiddenPassword } from "../cli-remote/unlock.js"
 
 export interface SetupArgs {
@@ -64,6 +64,17 @@ const interactive = () => Boolean(process.stdin.isTTY)
 // Renderer
 // ---------------------------------------------------------------------------
 
+// Where the dashboard's model picker lives, once runSetup knows the dashboard URL.
+let settingsUrl: string | undefined
+
+/** The lines a failed step prints under its message when it knows what would fix it. */
+function fixLines(fix: SetupFix): string[] {
+  const lines: string[] = []
+  if (fix.url) lines.push(`Fix: ${fix.label}: ${fix.url}`)
+  if (fix.settings === "models") lines.push(`Or change the main model: ${settingsUrl ?? "dashboard Settings > Models"}`)
+  return lines
+}
+
 function renderEvent(event: SetupEvent): void {
   switch (event.type) {
     case "plan":
@@ -102,6 +113,7 @@ function renderEvent(event: SetupEvent): void {
       break
     case "step-failed":
       console.log(`  ✗ ${event.message}`)
+      if (event.fix) for (const line of fixLines(event.fix)) console.log(`    ${line}`)
       if (event.skippable) console.log(`    (optional, continuing)`)
       break
     case "step-skipped":
@@ -206,6 +218,8 @@ export function makeHttpBackend(base: string, cookie?: string): SetupBackend {
       if (!credits) return { ok: false, error: "No usable OpenRouter key on this instance." }
       return { ok: true, balance: credits.remaining }
     },
+
+    probeMainModel: () => call<ModelProbe>("/api/models/probe", { method: "POST" }),
 
     startOpenRouterOAuth: () =>
       call<{ authorizationUrl: string; callbackUrl: string }>("/api/openrouter/oauth/start", { method: "POST" }),
@@ -360,6 +374,7 @@ export async function runSetup(argv: string[], ensureLocalServer: () => Promise<
     }
   }
 
+  settingsUrl = dashboardUrl ? `${dashboardUrl}/?view=settings&tab=models` : undefined
   const backend = makeHttpBackend(base, cookie)
   const io = makeIO(args)
 
@@ -389,6 +404,7 @@ export async function runSetup(argv: string[], ensureLocalServer: () => Promise<
       console.log("Already set up. Nothing to do.\n")
       for (const s of state) {
         console.log(`  ${s.satisfied ? "\u2713" : "\u25CB"} ${s.id}: ${s.detail}`)
+        if (!s.satisfied && s.fix) for (const line of fixLines(s.fix)) console.log(`      ${line}`)
       }
       const optional = state.filter((s) => !s.required && !s.satisfied)
       if (optional.length > 0) {

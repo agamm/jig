@@ -1036,10 +1036,23 @@ function normalizeToolResult(result: {
     if (textParts.length === 1) {
       return parseToolText(textParts[0])
     }
-    if (textParts.length > 1) return textParts
+    if (textParts.length > 1) return pickStructuredParts(textParts)
   }
 
   return result.content
+}
+
+/**
+ * Several text parts: servers append plain-text trailers to a JSON payload
+ * (Composio adds a "connect a custom MCP" hint after every search result), so
+ * a single structured part is the result, several are returned together, and
+ * only when none parses do callers get the raw strings.
+ */
+function pickStructuredParts(textParts: string[]): unknown {
+  const structured = textParts.map(parseToolText).filter((part) => typeof part === "object" && part !== null)
+  if (structured.length === 1) return structured[0]
+  if (structured.length > 1) return structured
+  return textParts
 }
 
 async function validateRequiredToolArguments(

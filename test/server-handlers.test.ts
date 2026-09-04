@@ -13,6 +13,7 @@ import {
   handleGetPending,
   handleListVersionsV2,
   handleRestoreToPending,
+  handleWriteJigCode,
 } from "../src/server/handlers/versions.js"
 import { handleConnectConnection, handleGetConnection, handleGetConnections } from "../src/server/handlers/connections.js"
 import { handleHealth, handleOAuthCallback } from "../src/server/handlers/auth.js"
@@ -265,5 +266,57 @@ describe("admin handlers", () => {
     // The instance must still serve requests without a restart.
     setSetting("post-reset", { works: true })
     expect(getSetting<{ works: boolean }>("post-reset")).toEqual({ works: true })
+  })
+})
+
+describe("handleWriteJigCode", () => {
+  const NEW_ID = "written-case"
+  afterEach(() => { try { deleteJig(NEW_ID) } catch {} })
+
+  const written = (marker: string) => `
+import { jig } from "@jig/sdk"
+
+export default jig("${NEW_ID}", { trigger: { type: "manual" } }, async (ctx) => {
+  await ctx.step("s", [], async () => { ctx.output("${marker}") })
+})
+`
+
+  it("creates a jig that did not exist, as pending, with a clean check", async () => {
+    const res = await body(await handleWriteJigCode(NEW_ID, { code: written("first") }))
+    expect(res).toMatchObject({ ok: true, created: true, activeVersionId: null, check: [] })
+    expect(getActiveCode(NEW_ID)).toBeNull()
+    expect((await body(handleGetPending(NEW_ID))).code).toContain("first")
+  })
+
+  it("approves in the same write when asked and the check is clean", async () => {
+    const res = await body(await handleWriteJigCode(NEW_ID, { code: written("live"), approve: true }))
+    expect(res.created).toBe(true)
+    expect(typeof res.activeVersionId).toBe("number")
+    expect(getActiveCode(NEW_ID)).toContain("live")
+  })
+
+  it("keeps broken code pending, reports the problems, and refuses to approve it", async () => {
+    // A type error the agent's own check_jig would have caught.
+    const broken = written("bad").replace("ctx.output(\"bad\")", "const n: number = \"bad\"; ctx.output(n)")
+    const res = await body(await handleWriteJigCode(NEW_ID, { code: broken, approve: true }))
+    expect(res.check.length).toBeGreaterThan(0)
+    expect(res.check.some((line: string) => line.startsWith("TSC"))).toBe(true)
+    expect(res.activeVersionId).toBeNull()
+    expect(getActiveCode(NEW_ID)).toBeNull()
+    expect((await body(handleGetPending(NEW_ID))).code).toContain("bad")
+  })
+
+  it("reports created:false and replaces pending on a second write", async () => {
+    seedJig(NEW_ID, written("v1"))
+    const first = await body(await handleWriteJigCode(NEW_ID, { code: written("v2") }))
+    const second = await body(await handleWriteJigCode(NEW_ID, { code: written("v3") }))
+    expect(first.created).toBe(false)
+    expect(second.pendingVersionId).not.toBe(first.pendingVersionId)
+    expect((await body(handleGetPending(NEW_ID))).code).toContain("v3")
+    expect(getActiveCode(NEW_ID)).toContain("v1")
+  })
+
+  it("rejects an empty body", async () => {
+    await expect(handleWriteJigCode(NEW_ID, { code: "  " })).rejects.toMatchObject({ status: 400 })
   })
 })

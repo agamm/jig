@@ -8,44 +8,37 @@
  *
  * ## How discovery works
  *
- * 1. Identify connected toolkits. We sweep a broad battery of use-case queries
- *    through COMPOSIO_SEARCH_TOOLS; its `toolkit_connection_statuses[]` reports
- *    an accurate `has_active_connection` per surfaced toolkit. We keep the ones
- *    that are connected.
- * 2. For each connected toolkit, call COMPOSIO_SEARCH_TOOLS again ("<toolkit>
- *    actions") to enumerate its tool slugs + inline schemas.
- * 3. Fetch full schemas for tools that weren't returned inline
- *    (COMPOSIO_GET_TOOL_SCHEMAS).
+ * 1. Candidates. Two sources, unioned: the "User has manually connected the
+ *    apps: ..." line Composio embeds in the COMPOSIO_SEARCH_TOOLS description
+ *    (undocumented, but the one place the account's connections are stated
+ *    outright), and a sweep of PROBE_QUERIES through COMPOSIO_SEARCH_TOOLS,
+ *    whose `toolkit_connection_statuses[]` reports `has_active_connection` for
+ *    every toolkit a query touches.
+ * 2. Confirmation. One COMPOSIO_MANAGE_CONNECTIONS call with `action: "list"`
+ *    over the candidates. Only toolkits already reported connected go in: the
+ *    schema says `list` has no side effects, but an unconnected toolkit comes
+ *    back "initiated", so it is a check, never a sweep over guesses. It also
+ *    accepts unknown slugs silently, so it cannot validate names.
+ * 3. Enumeration. Per connected toolkit, COMPOSIO_SEARCH_TOOLS "<toolkit>
+ *    actions" with the default strategy and again with `tool_search` (each
+ *    query returns only a handful of tools, and the two strategies overlap
+ *    partially), then COMPOSIO_GET_TOOL_SCHEMAS for slugs without an inline
+ *    schema.
  *
- * ## Why a use-case sweep instead of an endpoint?
+ * There is no list-all primitive on the OAuth MCP path: the session toolkit
+ * endpoints and `preload.tools: "all"` need an API key, which jig does not
+ * use. ComposioHQ/composio#3118 (a COMPOSIO_LIST_CONNECTED_TOOLKITS meta-tool)
+ * was closed in May 2026 without one.
  *
- * Discovery used to read the session root endpoint
- * (`GET /api/v3/tool_router/session/{id}` with the sandbox `x-session-access-key`)
- * for `config.auth_configs`. Composio locked that down — it now returns
- * `401 "Session access key is not accepted on this endpoint"`, and every other
- * enumeration a pure MCP client can reach is gone too:
- * - the workbench session key is rejected on all standard `/api/v3/*` endpoints
- * - the python SDK needs a `COMPOSIO_API_KEY` the sandbox doesn't expose
- * - jig's OAuth token is MCP-scoped and rejected as an API key
- * - `COMPOSIO_MANAGE_CONNECTIONS` can report status but requires named toolkit
- *   candidates (an empty list is rejected)
- *
- * COMPOSIO_SEARCH_TOOLS is the one meta-tool that returns accurate connection
- * status, but only for toolkits a query touches — so we sweep PROBE_QUERIES
- * across common categories. A connected toolkit outside every category won't be
- * found; add a matching use-case to PROBE_QUERIES and re-run `jig connect
- * composio` if a niche service is missed.
- *
- * Composio feature request filed (ComposioHQ/composio#3118) to add a proper
- * COMPOSIO_LIST_CONNECTED_TOOLKITS meta-tool.
+ * Failure policy: a response without the fields discovery reads is an error,
+ * not an empty account. Returning [] on a format change is how this module
+ * once reported "authorized, no apps connected" for a working connection.
  *
  * To refresh tools after connecting new services: `jig connect composio`
- *
- * Created: 2026-04-05
  */
 import type { Tool } from "@modelcontextprotocol/sdk/types.js"
 import type { McpConnection } from "../client.js"
-import { callTool } from "../client.js"
+import { callTool, isRetryableServerError } from "../client.js"
 import { firstLineSummary } from "../../text.js"
 
 /**
@@ -102,17 +95,39 @@ function slugBelongsTo(slug: string, toolkits: Set<string>): boolean {
   return false
 }
 
+/** Attempts and pauses for a call Composio's gateway answered with a transient upstream error. */
+const UPSTREAM_RETRY_DELAYS_MS = [1_000, 3_000]
+
+async function withUpstreamRetry<T>(label: string, delays: number[], run: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await run()
+    } catch (error) {
+      if (attempt >= delays.length || !isRetryableServerError(error)) throw error
+      console.log(`[composio] ${label} hit a transient upstream error, retrying`)
+      await Bun.sleep(delays[attempt])
+    }
+  }
+}
+
 /**
  * Run COMPOSIO_SEARCH_TOOLS for a batch of use cases (max 7 per call) and
- * return its `data`. Throws on a hard API failure rather than letting the
- * caller mistake it for "nothing connected" — the silent degradation that made
- * discovery report 0 tools after composio changed its session API.
+ * return its `data`. Throws on a hard API failure or a response without the
+ * fields discovery reads, rather than letting the caller mistake either for
+ * "nothing connected".
  */
-async function searchTools(connection: McpConnection, useCases: string[]): Promise<any> {
-  const result = await callTool(connection, "COMPOSIO_SEARCH_TOOLS", {
-    queries: useCases.map(use_case => ({ use_case })),
-    session: { generate_id: true },
-  }) as any
+async function searchTools(
+  connection: McpConnection,
+  useCases: string[],
+  options: { strategy?: "auto" | "tool_search"; retryDelaysMs?: number[] } = {},
+): Promise<any> {
+  const result = await withUpstreamRetry("COMPOSIO_SEARCH_TOOLS", options.retryDelaysMs ?? UPSTREAM_RETRY_DELAYS_MS, () =>
+    callTool(connection, "COMPOSIO_SEARCH_TOOLS", {
+      queries: useCases.map(use_case => ({ use_case })),
+      session: { generate_id: true },
+      ...(options.strategy ? { search_strategy: options.strategy } : {}),
+    }),
+  ) as any
   const data = result?.data ?? result
   if (data?.error || data?.success === false) {
     const detail = typeof data.error === "string" ? data.error : data?.error?.message ?? "unknown error"
@@ -120,36 +135,97 @@ async function searchTools(connection: McpConnection, useCases: string[]): Promi
       `Composio tool discovery failed: ${detail}. The composio API may have changed — see src/mcp/discover/composio.ts.`,
     )
   }
+  if (!Array.isArray(data?.results)) {
+    const shape = Array.isArray(data) ? "an array of text parts" : `keys ${Object.keys(data ?? {}).join(", ") || "(none)"}`
+    throw new Error(
+      `Composio tool discovery failed: COMPOSIO_SEARCH_TOOLS returned no results array (got ${shape}). The response format may have changed; see src/mcp/discover/composio.ts.`,
+    )
+  }
   return data
 }
 
-export async function discover(connection: McpConnection): Promise<Tool[]> {
+/** Toolkit slugs from the "connected the apps: a, b, c" line in the SEARCH_TOOLS description, if Composio included one. */
+export function connectedAppsHint(metaTools: Tool[]): Set<string> {
+  const description = metaTools.find(t => t.name === "COMPOSIO_SEARCH_TOOLS")?.description ?? ""
+  const match = description.match(/connected the apps:\s*([^\n.]+)/i)
+  const slugs = (match?.[1] ?? "").split(",").map(s => s.trim().toLowerCase()).filter(s => /^[a-z0-9_]+$/.test(s))
+  return new Set(slugs)
+}
+
+/**
+ * Which of `candidates` have an active account, per COMPOSIO_MANAGE_CONNECTIONS
+ * `action: "list"`. Returns null when the call or its shape fails, so the
+ * caller can fall back to the search-reported set instead of losing discovery
+ * over a confirmation step.
+ */
+async function confirmConnected(connection: McpConnection, candidates: string[], retryDelaysMs?: number[]): Promise<Set<string> | null> {
+  try {
+    const result = await withUpstreamRetry("COMPOSIO_MANAGE_CONNECTIONS", retryDelaysMs ?? UPSTREAM_RETRY_DELAYS_MS, () =>
+      callTool(connection, "COMPOSIO_MANAGE_CONNECTIONS", {
+        toolkits: candidates.map(name => ({ name, action: "list" })),
+      }),
+    ) as any
+    const results = result?.data?.results ?? result?.results
+    if (!results || typeof results !== "object") return null
+    const active = new Set<string>()
+    for (const [slug, entry] of Object.entries<any>(results)) {
+      if (entry?.status === "active" && Array.isArray(entry?.accounts) && entry.accounts.length > 0) active.add(slug.toLowerCase())
+    }
+    return active
+  } catch (error: any) {
+    console.warn(`[composio] Could not confirm connections via COMPOSIO_MANAGE_CONNECTIONS: ${error?.message ?? error}`)
+    return null
+  }
+}
+
+export async function discover(
+  connection: McpConnection,
+  options: { metaTools?: Tool[]; retryDelaysMs?: number[] } = {},
+): Promise<Tool[]> {
+  const retry = options.retryDelaysMs
   const allSchemas: Record<string, any> = {}
   const allSlugs = new Set<string>()
-  const connected = new Set<string>()
-
-  // Collect tool slugs + inline schemas from a SEARCH_TOOLS response. Filtering
-  // to connected toolkits happens later (a single pass), since the full set of
-  // connected toolkits isn't known until the whole sweep finishes.
   const sweeps: any[] = []
   const collect = (data: any) => {
     Object.assign(allSchemas, data?.tool_schemas ?? {})
     sweeps.push(data)
   }
 
-  // 1. Identify connected toolkits by sweeping a broad battery of use cases.
-  //    SEARCH_TOOLS reports `toolkit_connection_statuses[].has_active_connection`
-  //    for every toolkit a query surfaces — accurate to the live session.
+  // 1. Candidates: Composio's own hint plus whatever the use-case sweep reports.
+  const seeded = connectedAppsHint(options.metaTools ?? [])
+  if (seeded.size > 0) console.log(`[composio] Composio lists as connected: ${[...seeded].join(", ")}`)
+
+  const reported = new Set<string>()
+  let statusesSeen = 0
   for (const batch of chunk(PROBE_QUERIES, 7)) {
-    const data = await searchTools(connection, batch)
+    const data = await searchTools(connection, batch, { retryDelaysMs: retry })
     collect(data)
     for (const status of data?.toolkit_connection_statuses ?? []) {
-      if (status?.has_active_connection && status?.toolkit) {
-        connected.add(String(status.toolkit).toLowerCase())
-      }
+      statusesSeen++
+      if (status?.has_active_connection && status?.toolkit) reported.add(String(status.toolkit).toLowerCase())
     }
   }
+  // Two dozen use cases touching no toolkit at all means the status field
+  // moved, not that nothing is connected.
+  if (statusesSeen === 0) {
+    throw new Error(
+      "Composio tool discovery failed: no toolkit_connection_statuses in any COMPOSIO_SEARCH_TOOLS response. The response format may have changed; see src/mcp/discover/composio.ts.",
+    )
+  }
 
+  const candidates = [...new Set([...seeded, ...reported])]
+  if (candidates.length === 0) {
+    console.log("[composio] No connected toolkits found. Connect a service in the Composio dashboard, then refresh.")
+    return []
+  }
+
+  // 2. Confirm with the account list; fall back to the reported set if that fails.
+  const confirmed = await confirmConnected(connection, candidates, retry)
+  const connected = confirmed ?? new Set(candidates)
+  if (confirmed) {
+    const dropped = candidates.filter(c => !confirmed.has(c))
+    if (dropped.length > 0) console.log(`[composio] Not active per account list, skipping: ${dropped.join(", ")}`)
+  }
   if (connected.size === 0) {
     console.log("[composio] No connected toolkits found. Connect a service in the Composio dashboard, then refresh.")
     return []
@@ -157,12 +233,14 @@ export async function discover(connection: McpConnection): Promise<Tool[]> {
   const connectedToolkits = [...connected]
   console.log(`[composio] Connected: ${connectedToolkits.join(", ")}`)
 
-  // 2. Search each connected toolkit directly for a fuller tool set.
+  // 3. Enumerate each connected toolkit with both search strategies.
   for (const batch of chunk(connectedToolkits, 7)) {
-    collect(await searchTools(connection, batch.map(tk => `${tk} actions`)))
+    const queries = batch.map(tk => `${tk} actions`)
+    collect(await searchTools(connection, queries, { retryDelaysMs: retry }))
+    collect(await searchTools(connection, queries, { strategy: "tool_search", retryDelaysMs: retry }))
   }
 
-  // Harvest every tool slug from both phases that belongs to a connected
+  // Harvest every tool slug from all phases that belongs to a connected
   // toolkit (drops meta-tools and cross-toolkit related results).
   for (const data of sweeps) {
     for (const r of data?.results ?? []) {
@@ -173,10 +251,9 @@ export async function discover(connection: McpConnection): Promise<Tool[]> {
     }
   }
 
-  // 3. Build tools from schemas, collect slugs that need fetching
+  // 4. Build tools from inline schemas, collect slugs that need fetching.
   const tools: Tool[] = []
   const needSchemas: string[] = []
-
   for (const slug of allSlugs) {
     const schema = allSchemas[slug]
     if (schema?.input_schema) {
@@ -190,12 +267,12 @@ export async function discover(connection: McpConnection): Promise<Tool[]> {
     }
   }
 
-  // 4. Fetch missing schemas via the MCP connection
+  // 5. Fetch missing schemas via the MCP connection.
   if (needSchemas.length > 0) {
     try {
-      const result = await callTool(connection, "COMPOSIO_GET_TOOL_SCHEMAS", {
-        tool_slugs: needSchemas,
-      }) as any
+      const result = await withUpstreamRetry("COMPOSIO_GET_TOOL_SCHEMAS", retry ?? UPSTREAM_RETRY_DELAYS_MS, () =>
+        callTool(connection, "COMPOSIO_GET_TOOL_SCHEMAS", { tool_slugs: needSchemas }),
+      ) as any
       const fetched = result?.data?.tool_schemas ?? result?.tool_schemas ?? {}
       let fetchedCount = 0
       for (const slug of needSchemas) {

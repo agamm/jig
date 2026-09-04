@@ -38,3 +38,21 @@ the platform-ID-without-domain state at the HTTP boundary and callback builder.
 **What happened:** `examples/weekly-update.ts` read a `templates/` file that does not exist in the repo, and two examples imported the `workspace` connection, disabled in `servers/default.json` since 2026-06-15. `addExampleJig` writes an example straight to active with no review gate, so both would have installed a jig that could never run. The test that covered examples asserted the broken tool names, so it stayed green.
 
 **Rule:** Run `validateJigFile` and `validateTsFile` (the same checks the runtime uses) over every example after touching one. Assert the RULE (connection is enabled in the registry, output is inside a step), never the current spelling of one example, or the test pins the bug in place.
+
+## One Job, One Command Name
+
+**What happened:** Adding the file-push path I gave it two spellings, `jig new <id> --file=` and `jig edit <id> --file=`, both calling the same function. The repo had already collapsed `debug pull/push` into `edit --out/--file` for exactly this reason, and the user asked for no redundant CLI commands.
+
+**Rule:** Before adding a command or flag, check whether an existing one can absorb the behavior (here: `edit --file` creates when the jig does not exist). Two names for one job cost docs, tests and agent confusion; one name with one extra sentence in the help text does not.
+
+## A Helper Named Like a Query Can Still Write
+
+**What happened:** "Read-only" probe scripts called `discoverTools(connection)` to list Composio's meta-tools. That helper also writes `SCHEMAS_DIR/<server>.json`, so the probes overwrote the real connection schema with the 7 meta-tools and the dashboard read the wrong tool count until the connect flow rewrote it.
+
+**Rule:** Before calling a repo helper from a probe or test, read its body for filesystem, DB or network writes, not just its name and return type. Call the underlying primitive (`client.listTools()`) when only the read is wanted.
+
+## "No Side Effects" From a Third Party Is a Claim, Not a Fact
+
+**What happened:** Composio's schema says `MANAGE_CONNECTIONS action:"list"` has no side effects. Listing toolkits that were not connected returned `status: "initiated"`, which may have created pending auth requests in the user's account.
+
+**Rule:** Probe a third-party "read" first with inputs known to be in the positive state, and only widen once the negative case is understood. Design code paths so such calls only ever receive inputs already known to be positive (here: only toolkits search already reported connected).

@@ -22,6 +22,16 @@ describe("unwrapComposioResult", () => {
     expect(result).toEqual({ messages: [{ id: "a" }, { id: "b" }] })
   })
 
+  it("picks the envelope out of a multi-part text array", async () => {
+    // A response with a JSON part plus a trailer reaches here as an array when
+    // more than one part is structured; the envelope is the one carrying data.
+    const raw = envelope({ successful: true, data: { messages: [{ id: "a" }] } })
+    const result = await unwrapComposioResult([JSON.stringify(raw), "No exact fit? Connect a custom MCP."])
+    expect(result).toEqual({ messages: [{ id: "a" }] })
+    const objects = await unwrapComposioResult([{ note: "trailer" }, raw])
+    expect(objects).toEqual({ messages: [{ id: "a" }] })
+  })
+
   it("falls back to response.data_preview when there is no spill marker", async () => {
     const raw = envelope({ successful: true, data_preview: { messages: [{ id: "a" }] } })
     const result = await unwrapComposioResult(raw)

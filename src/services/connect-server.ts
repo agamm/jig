@@ -208,7 +208,7 @@ async function runConnectToCompletion(
 
     if (rawConfig.proxy?.connectDiscovery) {
       const { discover } = await import(join(PROJECT_ROOT, rawConfig.proxy.connectDiscovery))
-      tools = await discover(connection)
+      tools = await discover(connection, { metaTools: tools })
     }
 
     await ensureAnnotations(tools, { signal })

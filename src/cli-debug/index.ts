@@ -21,7 +21,7 @@ import {listRemotes, resolveActiveRemote, type RemoteManifest} from "../cli-remo
 import { readLocalLogHead, readLocalLogs } from "./local.js"
 import { parseToolArgs } from "./eval-args.js"
 import { DB_PATH } from "../config/paths.js"
-import type { ApiResponse, JigData, ServerLogEntry, ServerLogsResponse, StartRunResponse, RunDetail, ToolEvalResponse } from "../../shared/api.js"
+import type { JigData, ServerLogEntry, ServerLogsResponse, StartRunResponse, RunDetail, ToolEvalResponse } from "../../shared/api.js"
 
 const COOKIE_NAME = "jig-admin"
 const POLL_MS = 750
@@ -357,52 +357,6 @@ async function evalCmd(args: string[]): Promise<void> {
   console.log("")
   console.log("preview (redacted, truncated):")
   console.log(res.preview)
-}
-
-export async function pushRemoteJig(args: string[], remote: RemoteManifest): Promise<void> {
-  const jigId = positional(args)
-  const file = stringFlag(args, "--file")
-  if (!jigId || !file) {
-    console.error("Usage: jig edit <jigId> --file=<path> [--message=<msg>] [--approve]")
-    process.exit(1)
-  }
-  const cookie = sessionCookieOrExit(remote)
-
-  let code: string
-  try {
-    code = await Bun.file(file).text()
-  } catch {
-    console.error(`Cannot read ${file}`)
-    process.exit(1)
-  }
-  if (!code.trim()) {
-    console.error(`${file} is empty. Refusing to push a blank jig.`)
-    process.exit(1)
-  }
-
-  const approve = args.includes("--approve")
-  const message = stringFlag(args, "--message") ?? `Pushed from ${file}`
-  let res: ApiResponse<"writeJigCode">
-  try {
-    // The server applies the same guards as the authoring agent's write path:
-    // disconnected imports, jig currently running, live authoring session.
-    res = await sendJson<ApiResponse<"writeJigCode">>(
-      "PUT",
-      `${remote.public_url}/api/jigs/${encodeURIComponent(jigId)}/code`,
-      cookie,
-      { code, message, approve },
-    )
-  } catch (e: any) {
-    console.error(`Push failed: ${e.message}`)
-    process.exit(1)
-  }
-
-  if (approve) {
-    console.log(`Pushed ${jigId} to ${remote.handle} as v${res.activeVersionId} (active).`)
-    return
-  }
-  console.log(`Pushed ${jigId} to ${remote.handle} as pending v${res.pendingVersionId}.`)
-  console.log(`Approve it in the dashboard, or re-push with --approve.`)
 }
 
 // ---------------------------------------------------------------------------

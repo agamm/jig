@@ -50,6 +50,38 @@ describe("callTool result normalization", () => {
     expect(result).toEqual([{ id: 1, name: "example" }])
   })
 
+  it("keeps the JSON part when a plain-text trailer accompanies it", async () => {
+    // Composio appends a "connect a custom MCP" hint as a second text part; the
+    // old behavior returned both strings raw, and discovery read 0 toolkits.
+    const result = await callTool({
+      client: {
+        callTool: async () => ({
+          content: [
+            { type: "text", text: JSON.stringify({ data: { results: [{ index: 1 }], toolkit_connection_statuses: [] } }) },
+            { type: "text", text: "No exact fit? Any HTTP or SSE endpoint can be connected as a custom MCP." },
+          ],
+        }),
+      },
+      transport: {} as any,
+      serverName: "test",
+      config: {} as any,
+    } as any, "demo-tool", {})
+
+    expect(result).toEqual({ data: { results: [{ index: 1 }], toolkit_connection_statuses: [] } })
+  })
+
+  it("returns every structured part when several parse, and raw strings when none do", async () => {
+    const make = (texts: string[]) => callTool({
+      client: { callTool: async () => ({ content: texts.map((text) => ({ type: "text", text })) }) },
+      transport: {} as any,
+      serverName: "test",
+      config: {} as any,
+    } as any, "demo-tool", {})
+
+    expect(await make(["{\"a\":1}", "{\"b\":2}"])).toEqual([{ a: 1 }, { b: 2 }])
+    expect(await make(["first prose", "second prose"])).toEqual(["first prose", "second prose"])
+  })
+
   it("rejects missing required tool parameters before the MCP call", async () => {
     await expect(callTool({
       client: {

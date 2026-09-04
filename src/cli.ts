@@ -204,10 +204,10 @@ try {
       }
 
       // Three ways to change a jig, one command. `--out` exports the live code,
-      // `--file` uploads code you wrote yourself, and with neither the authoring
-      // agent does it from an instruction. These used to be `jig debug
-      // pull/push`, which meant the same job had two names depending on where
-      // the jig lived.
+      // `--file` uploads code you wrote yourself (creating the jig if it does
+      // not exist yet), and with neither the authoring agent does it from an
+      // instruction. These used to be `jig debug pull/push`, which meant the
+      // same job had two names depending on where the jig lived.
       const outFlag = rest.find((a) => a.startsWith("--out="))
       const fileFlag = rest.find((a) => a.startsWith("--file="))
       const { resolveAuthoringTarget } = await import("./cli-agent/target.js")
@@ -219,30 +219,21 @@ try {
         process.exit(1)
       }
 
-      if (outFlag || fileFlag) {
+      if (fileFlag) {
+        const { pushJigFile } = await import("./cli-agent/push.js")
+        process.exit(await pushJigFile(name, rest, API_BASE))
+      }
+      if (outFlag) {
         if (editTarget.remote) {
-          const { pullRemoteJig, pushRemoteJig } = await import("./cli-debug/index.js")
-          if (outFlag) await pullRemoteJig(rest, editTarget.manifest)
-          else await pushRemoteJig(rest, editTarget.manifest)
+          const { pullRemoteJig } = await import("./cli-debug/index.js")
+          await pullRemoteJig(rest, editTarget.manifest)
         } else {
-          const { getActiveCode, writePending, approvePending } = await import("./services/jig-store.js")
-          if (outFlag) {
-            const code = getActiveCode(name)
-            if (!code) { console.error(`No active code for ${name}.`); process.exit(1) }
-            const dest = outFlag.slice("--out=".length)
-            await Bun.write(dest, code)
-            console.log(`Wrote ${name} to ${dest}.`)
-          } else {
-            const code = await Bun.file(fileFlag!.slice("--file=".length)).text()
-            const note = rest.find((a) => a.startsWith("--message="))?.slice("--message=".length)
-            writePending({ jigId: name, code, author: "cli", message: note || "edited from a file" })
-            if (rest.includes("--approve")) {
-              approvePending(name)
-              console.log(`✓ ${name} updated and active.`)
-            } else {
-              console.log(`✓ ${name} written as PENDING. Review: jig pending ${name}`)
-            }
-          }
+          const { getActiveCode } = await import("./services/jig-store.js")
+          const code = getActiveCode(name)
+          if (!code) { console.error(`No active code for ${name}.`); process.exit(1) }
+          const dest = outFlag.slice("--out=".length)
+          await Bun.write(dest, code)
+          console.log(`Wrote ${name} to ${dest}.`)
         }
         process.exit(0)
       }
@@ -296,29 +287,16 @@ try {
     }
 
     case "pending": {
-      const [name, action] = rest
+      const [name, action] = rest.filter((a) => !a.startsWith("--"))
       if (!name) { io.emit({ type: "error", code: "usage", message: "Usage: jig pending <name> [approve|discard]" }); process.exit(1) }
-      const { getPending, approvePending, discardPending } = await import("./services/jig-store.js")
-      const pending = getPending(name)
-      if (!pending) { console.log(`No pending changes for ${name}.`); break }
+      const { pendingCommand } = await import("./cli-agent/push.js")
+      process.exit(await pendingCommand(name, action, rest, API_BASE))
+      break
+    }
 
-      if (action === "approve") {
-        approvePending(name)
-        console.log(`Approved pending changes for ${name} (now active).`)
-        process.exit(0)
-        break
-      }
-      if (action === "discard") {
-        discardPending(name)
-        console.log(`Discarded pending changes for ${name}.`)
-        process.exit(0)
-        break
-      }
-      // Default: show diff
-      console.log(`Pending changes for ${name}: +${pending.addedLines} −${pending.removedLines} lines\n`)
-      console.log(pending.diff)
-      console.log(`\nRun 'jig pending ${name} approve' to apply, or 'jig pending ${name} discard' to drop.`)
-      process.exit(0)
+    case "types": {
+      const { pullTypes } = await import("./cli-agent/push.js")
+      process.exit(await pullTypes(rest, API_BASE))
       break
     }
 
@@ -431,10 +409,12 @@ try {
       console.log(`  jig setup [handle]     Guided setup: models, alerts, connections (--railway | --local | --force)`)
       console.log(`  jig connect [server]   List servers or connect one`)
       console.log(`  jig run <name>         Run a jig on your deployed instance (--local for here)`)
-      console.log(`  jig new [description]  AI generates a new jig (on your deployed instance; --local for here)`)
-      console.log(`  jig edit <name>        AI modifies a jig; --out=<f> exports code, --file=<f> uploads it`)
-      console.log(`  jig versions <name>    List versions for a jig`)
-      console.log(`  jig restore <name> <v> Restore version <v> as a pending change`)
+      console.log(`  jig new [description]  The instance's authoring agent writes a new jig (--local for here)`)
+      console.log(`  jig edit <name>        --file=<f> uploads code you wrote (creates the jig if new; typechecked,`)
+      console.log(`                         pending unless --approve); --out=<f> exports it; no flag asks the agent`)
+      console.log(`  jig types [--out=<d>]  Pull the instance's connection types (.d.ts) into .jig/connections/`)
+      console.log(`  jig versions <name>    List versions for a jig (local)`)
+      console.log(`  jig restore <name> <v> Restore version <v> as a pending change (local)`)
       console.log(`  jig pending <name>     Show pending diff; append 'approve' or 'discard'`)
       console.log(`  jig backup             Write a .zip of jigs, connections and settings`)
       console.log(`  jig backup restore <f> Restore from a backup .zip (--dry-run to preview)`)
@@ -447,7 +427,7 @@ try {
       console.log(`  jig pair <code>        Cache a CLI session from a dashboard pairing code`)
       console.log(`  jig unlock [handle]    Sign in to a deployed instance with its password (hidden prompt)`)
       console.log(`  jig debug <sub>        Diagnostics: logs, connections, tool probes (see "jig debug")`)
-      console.log(`\nTarget flags for run/new/edit: --handle=<name> | --local`)
+      console.log(`\nTarget flags for run/new/edit/pending/types: --handle=<name> | --local`)
       break
   }
 } catch (e: any) {

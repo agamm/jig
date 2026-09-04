@@ -1,10 +1,10 @@
 /**
  * Drive an authoring-agent session over HTTP and render it to a terminal.
  *
- * Shared by `jig new` / `jig edit` (local server) and `jig debug new` (a
- * deployed instance, with a paired session cookie). The two differ only in base
- * URL and headers, and keeping one loop means a hosted instance cannot quietly
- * grow a different authoring experience from a local one.
+ * Shared by `jig new` / `jig edit` against a local server or a deployed
+ * instance (paired session cookie). The two differ only in base URL and
+ * headers, and keeping one loop means a hosted instance cannot quietly grow a
+ * different authoring experience from a local one.
  */
 
 export interface AgentSessionOptions {

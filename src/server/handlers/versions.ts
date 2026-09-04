@@ -15,9 +15,12 @@ import {
   getVersion as getJigVersion,
   listHistoryVersions as listJigHistoryVersions,
   restoreVersion as restoreToPendingVersion,
+  writePending as storeWritePending,
   type JigVersion as JigVersionStoreRow,
 } from "../../services/jig-store.js"
 import { hasActiveRunForJig } from "../../services/run-store.js"
+import { materializePendingVersion } from "../../services/jig-runtime.js"
+import { checkJigFile } from "../../services/jig-checker.js"
 
 function jigVersionToRecord(v: JigVersionStoreRow) {
   return {
@@ -33,6 +36,46 @@ function jigVersionToRecord(v: JigVersionStoreRow) {
 
 function ensureJigStoreRow(jigId: string): void {
   if (!getJigRow(jigId)) throw new ApiError(404, `Jig not found: ${jigId}`)
+}
+
+/**
+ * Direct code write, the path a coding agent uses when it wrote the jig itself.
+ * Creates the jig when it does not exist yet, stores the code as the pending
+ * version, checks it the way draft approval does (tsc, validator, step
+ * structure), and promotes it only when asked AND the check is clean. Drafts
+ * may be wrong; the active version may not.
+ */
+export async function handleWriteJigCode(
+  jigId: string,
+  body: { code?: unknown; message?: unknown; approve?: unknown },
+): Promise<Response> {
+  if (typeof body.code !== "string" || body.code.trim().length === 0) throw new ApiError(400, "code is required")
+  if (hasActiveRunForJig(jigId)) throw new ApiError(409, "Cannot edit while the jig is running")
+  const { approvePendingByJig, findDisconnectedImports, isJigBeingEdited } = await import("../../services/agent-service.js")
+  if (isJigBeingEdited(jigId)) {
+    throw new ApiError(409, "An authoring session is currently editing this jig; close that session before scripted edits")
+  }
+  const disconnected = findDisconnectedImports(body.code)
+  if (disconnected.length > 0) {
+    throw new ApiError(400, `Code imports unconnected servers: ${disconnected.join(", ")}. Connect them first via the dashboard.`)
+  }
+
+  const created = !getJigRow(jigId)
+  const message = typeof body.message === "string" ? body.message : null
+  const { versionId } = storeWritePending({ jigId, code: body.code, author: "cli", message, prompt: null })
+
+  // The checker needs a real file: tsc builds a program from a path and the
+  // validator imports the module. Same recipe as prepareDraftApproval.
+  const materialized = await materializePendingVersion(jigId)
+  const result = materialized ? await checkJigFile(materialized.path) : "Could not materialize the pending version for checking"
+  const check = result === "ok" ? [] : result.split("\n")
+
+  let activeVersionId: number | null = null
+  if (body.approve === true && check.length === 0) {
+    await approvePendingByJig(jigId)
+    activeVersionId = getJigRow(jigId)?.active_version_id ?? null
+  }
+  return apiJson("writeJigCode", { ok: true as const, created, pendingVersionId: versionId, activeVersionId, check })
 }
 
 export function handleGetPending(jigId: string): Response {

@@ -680,6 +680,30 @@ export interface OpenRouterCredits {
   fetchedAt: number
 }
 
+/** One minimal completion against the configured main model: does it answer for this account? */
+export type ModelProbe =
+  | { ok: true; model: string }
+  | { ok: false; model: string; error: string; fixUrl?: string }
+
+/**
+ * Outcome of a direct code write. The code always lands as the pending version;
+ * `check` lists typecheck / validator problems (empty when clean) and approval
+ * only happens when it was requested AND `check` is empty.
+ */
+export interface WriteJigCodeResponse {
+  ok: true
+  /** True when this write created the jig rather than editing an existing one. */
+  created: boolean
+  pendingVersionId: number
+  activeVersionId: number | null
+  check: string[]
+}
+
+/** The generated `.d.ts` per connected server, keyed by file name (e.g. "composio.d.ts"). */
+export interface ConnectionTypesResponse {
+  files: Record<string, string>
+}
+
 export interface ApiContract<Request, Response> {
   request: Request
   response: Response
@@ -743,6 +767,7 @@ export interface ApiContracts {
   models: ApiContract<ModelOverrideInput | void, ModelCatalog>
   modelsCatalog: ApiContract<void, OpenRouterCatalogResponse>
   openrouterCredits: ApiContract<void, OpenRouterCredits | null>
+  modelProbe: ApiContract<void, ModelProbe>
   startOpenRouterOAuth: ApiContract<void, OpenRouterOAuthStart>
   createPairingCode: ApiContract<void, PairingCode>
   claimPairingCode: ApiContract<{ code: string }, PairingClaim>
@@ -759,7 +784,7 @@ export interface ApiContracts {
   getJig: ApiContract<void, JigData>
   deleteJig: ApiContract<void, DeleteJigResponse>
   runJig: ApiContract<{ dryRun: boolean }, StartRunResponse>
-  writeJigCode: ApiContract<{ code: string; message?: string; approve?: boolean }, { ok: true; pendingVersionId: number; activeVersionId: number | null }>
+  writeJigCode: ApiContract<{ code: string; message?: string; approve?: boolean }, WriteJigCodeResponse>
   updateJigModel: ApiContract<{ model: string | null }, { ok: true; jigId: string; model: string | null }>
   updateJigTimeouts: ApiContract<{ runTimeoutMs?: number | null; toolTimeoutMs?: number | null }, { ok: true; jigId: string; runTimeoutMs: number | null; toolTimeoutMs: number | null }>
   updateJigStepModel: ApiContract<{ seq: number; model: string | null }, { ok: true; jigId: string; seq: number; model: string | null }>
@@ -767,6 +792,7 @@ export interface ApiContracts {
   activeRun: ApiContract<void, RunStatus>
   cancelRun: ApiContract<{ jigId?: string }, CancelRunResponse>
   connections: ApiContract<void, Connection[]>
+  connectionTypes: ApiContract<void, ConnectionTypesResponse>
   createCustomConnection: ApiContract<{ name: string; url: string; description?: string }, CreateCustomConnectionResponse>
   getConnection: ApiContract<void, ConnectionDetail>
   connectConnection: ApiContract<{ credentials?: Record<string, string> }, ConnectConnectionResponse>

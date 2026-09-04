@@ -36,6 +36,7 @@ const ROUTES: [pattern: string, handler: string][] = [
   ["/api/models", "models"],
   ["/api/models/catalog", "modelsCatalog"],
   ["/api/models/credits", "openrouterCredits"],
+  ["/api/models/probe", "modelProbe"],
   ["/api/models/upgrades", "modelUpgrades"],
   ["/api/models/upgrades/apply", "applyModelUpgrade"],
   ["/api/models/upgrades/dismiss", "dismissModelUpgrade"],
@@ -51,6 +52,7 @@ const ROUTES: [pattern: string, handler: string][] = [
   ["/api/connections/:name/disconnect", "disconnectConnection"],
   ["/api/connections/:name/eval", "evalTool"],
   ["/api/connections/:name/verify", "verifyConnection"],
+  ["/api/connections/types", "connectionTypes"],
   ["/api/connections/:name", "getConnection"],
 
   ["/api/jigs/#id", "getJig"],

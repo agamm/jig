@@ -60,25 +60,31 @@ bun run jig debug tail [handle]
 
 The debug stream includes redacted `runner`, `sdk.llm`, `sdk.agent`, `mcp.tool`, `authoring.agent`, `authoring.discovery`, `repair`, `scheduler`, connection, webhook, and Composio events.
 
-## Edit a deployed jig from your own editor
+## Write or edit a deployed jig from your own editor
 
-`pull` and `push` exist so a deployed jig can be edited in whatever editor or
-agent harness you use, rather than only through the dashboard's authoring agent.
+`jig new|edit --file=` exist so a deployed jig can be written and edited in
+whatever editor or agent harness you use, rather than only through the
+dashboard's authoring agent.
 
 ```sh
 bun run jig debug connections    # connected state and tool count per connection
 bun run jig debug ls [handle]
-bun run jig edit <jig-id> --out=/tmp/<jig-id>.ts
+bun run jig types                # the instance's connection types, into .jig/connections/
+bun run jig edit <jig-id> --out=/tmp/<jig-id>.ts      # export an existing jig (skip for a new one)
 # edit the file
-bun run jig edit <jig-id> --file=/tmp/<jig-id>.ts --message="what changed"
+bun run jig edit <jig-id> --file=/tmp/<jig-id>.ts --message="what changed"   # creates the jig if new
 bun run jig run <jig-id> --dry-run
 ```
 
-`push` leaves the change **pending** unless you pass `--approve`, so the default
-keeps the same human approval gate the dashboard and auto-repair use. Approve or
-discard from the dashboard. The server applies the same guards as the authoring
-agent's own write path: it rejects code importing disconnected servers, and
-refuses while the jig is running or while an authoring session holds it.
+A push leaves the change **pending** unless you pass `--approve`, so the default
+keeps the same human approval gate the dashboard and auto-repair use;
+`jig pending <jig-id> approve|discard` closes it from the CLI. The server
+typechecks the code against its generated connections and runs the jig
+validator; problems come back and are printed, the code still lands as pending,
+and `--approve` only takes effect when the check is clean. It also applies the
+same guards as the authoring agent's own write path: it rejects code importing
+disconnected servers, and refuses while the jig is running or while an authoring
+session holds it.
 
 ### Test a connection before writing code against it
 
@@ -97,13 +103,12 @@ Tools whose annotations do not mark them read-only are refused unless
 that would overflow the inline response are reported as a refusal with the
 reason, not returned as a truncated shape.
 
-A hand-written push is a repair, not a design change. When the jig is wrong
-because the authoring agent generated it wrong, fix `SKILL.md` too, or the next
-generated jig repeats the defect.
+When a jig the authoring agent generated is wrong, fix `SKILL.md` too, or the
+next generated jig repeats the defect.
 
 ## Repair a failing jig
 
-1. Reproduce with `debug run ... --dry-run` when the failure can be observed without writes.
+1. Reproduce with `jig run <jig-id> --dry-run` when the failure can be observed without writes.
 2. Identify the first failing step and its exact tool/model error.
 3. Separate code defects from external blockers such as revoked access, provider outages, or missing connections.
 4. Make the smallest change that preserves the jig's trigger, recipients, tools, step order, and output shape.

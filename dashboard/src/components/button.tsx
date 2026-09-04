@@ -2,7 +2,7 @@
 
 import type { ButtonHTMLAttributes, ReactNode } from "react"
 
-function buttonClasses({
+export function buttonClasses({
   variant,
   size,
 }: {

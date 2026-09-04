@@ -24,15 +24,32 @@ The dashboard opens on a loopback URL. Authorize OpenRouter when it asks (browse
 
 ### Author a jig
 
+Write the jig yourself, then push it. The instance typechecks it against its connections and
+holds it as pending until approved:
+
 ```sh
-bun run jig connect
-bun run jig new "Every weekday at 8am, email me a concise briefing."
-bun run jig edit <jig-id>
+bun run jig connect                          # connect services first
+bun run jig types                            # the instance's connection types, into .jig/connections/
+# write <jig-id>.ts following SKILL.md; import from "@jig/connections/<server>.js"
+bun run jig edit <jig-id> --file=<jig-id>.ts # create it (pending, typechecked)
+bun run jig pending <jig-id> approve         # or push with --approve
 bun run jig run <jig-id> --dry-run
 bun run jig run <jig-id>
 ```
 
-`new`, `edit` and `run` act on the deployed instance in `~/.config/jig/remotes/` when one
+`edit --file` creates the jig when it does not exist and updates it otherwise;
+`bun run jig edit <jig-id> --out=<file>` exports the live code first when you are changing one.
+A push with problems still lands as pending, prints them, and exits 1; `--approve` only takes
+effect when the check is clean.
+
+Or let the instance's authoring agent write it from a sentence:
+
+```sh
+bun run jig new "Every weekday at 8am, email me a concise briefing."
+bun run jig edit <jig-id>
+```
+
+`new`, `edit`, `run`, `pending` and `types` act on the deployed instance in `~/.config/jig/remotes/` when one
 exists, and on this machine otherwise; `--local` forces this machine and `--handle=<name>`
 chooses between deployed instances. They print the target before starting. An unpaired remote
 is an error rather than a silent fall back to local.
@@ -70,13 +87,11 @@ bun run jig run <jig-id> --dry-run
 bun run jig debug tail [handle]
 ```
 
-To edit a deployed jig outside the dashboard (pushes land pending unless `--approve`):
+To see what a deployed instance has:
 
 ```sh
 bun run jig debug connections    # what is connected, and how many tools each has
 bun run jig debug ls [handle]
-bun run jig edit <jig-id> --out=/tmp/<jig-id>.ts
-bun run jig edit <jig-id> --file=/tmp/<jig-id>.ts --message="what changed"
 ```
 
 To see what a connection's tool really returns before writing unwrap code:

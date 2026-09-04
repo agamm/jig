@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { mutate } from "swr";
-import { Button } from "@/components/button";
+import { Button, buttonClasses } from "@/components/button";
 import { TextInput, secretFieldProps } from "@/components/input";
 import { PaneHeader } from "@/components/pane-header";
 import { ServiceIcon } from "@/components/service-icon";
@@ -18,6 +18,7 @@ import {
   fetchConnections,
   fetchHealth,
   fetchOpenRouterCredits,
+  probeMainModel,
   saveAgentMailSettings,
   sendAgentMailTest,
   setupAgentMail,
@@ -31,6 +32,7 @@ import {
   summarizeSetup,
   type SetupBackend,
   type SetupEvent,
+  type SetupFix,
   type SetupIO,
   type SetupStepId,
 } from "@shared/setup-flow";
@@ -54,6 +56,8 @@ type StepState = {
   authUrl?: string;
   /** The browser refused to open the tab, so the link is the only way through. */
   blocked?: boolean;
+  /** What to click when the step failed for a reason setup cannot fix itself. */
+  fix?: SetupFix;
 };
 
 type Prompt = {
@@ -113,6 +117,7 @@ function readOnlyBackend(): SetupBackend {
       const s = await fetchAgentMailSettings();
       return { hasKey: s.hasKey, owner: s.owner, address: s.address, canSend: s.canSend, webhookReady: s.webhookReady };
     },
+    probeMainModel: () => probeMainModel(),
     listConnections: () => fetchConnections(),
     startOpenRouterOAuth: unused,
     setOpenRouterKey: unused,
@@ -187,7 +192,7 @@ export function SetupView() {
       state.reduce(
         (acc, s) => ({
           ...acc,
-          [s.id]: { status: s.satisfied ? "ready" : s.required ? "failed" : "unknown", detail: s.detail },
+          [s.id]: { status: s.satisfied ? "ready" : s.required ? "failed" : "unknown", detail: s.detail, fix: s.fix },
         }),
         {} as Record<SetupStepId, StepState>,
       ),
@@ -289,6 +294,7 @@ export function SetupView() {
       },
       provisionAgentMailInbox: () => setupAgentMail(),
       sendAgentMailTest: () => sendAgentMailTest(),
+      probeMainModel: () => probeMainModel(),
       listConnections: () => fetchConnections(),
       connect: (name) => connectConnection(name) as ReturnType<SetupBackend["connect"]>,
       verify: (name) => verifyConnection(name),
@@ -298,7 +304,7 @@ export function SetupView() {
       switch (event.type) {
         case "step-begin":
           currentStep.current = event.id;
-          patch(event.id, { status: "checking", detail: undefined, authUrl: undefined, blocked: false });
+          patch(event.id, { status: "checking", detail: undefined, authUrl: undefined, blocked: false, fix: undefined });
           break;
         case "step-satisfied":
           patch(event.id, { status: "ready", detail: event.detail });
@@ -323,7 +329,7 @@ export function SetupView() {
           if (!readyAtRunStart.has(event.id)) queueApprovalHighlight(event.id);
           break;
         case "step-failed":
-          patch(event.id, { status: "failed", detail: event.message });
+          patch(event.id, { status: "failed", detail: event.message, fix: event.fix });
           // Also held at page level: the status refresh that runs when the flow
           // ends rewrites every card from the server's view, which would erase
           // the one thing explaining what just went wrong.
@@ -361,7 +367,7 @@ export function SetupView() {
   const requiredBlocked = SETUP_STEPS.filter((s) => s.required && steps[s.id].status !== "ready");
 
   return (
-    <div className="flex h-full flex-col overflow-y-auto">
+    <div className="pane-glow flex h-full flex-col overflow-y-auto">
       <PaneHeader
         title="Setup"
         badge={`${readyCount} of ${SETUP_STEPS.length} ready`}
@@ -477,6 +483,21 @@ export function SetupView() {
                       state.detail
                     )}
                   </p>
+                ) : null}
+
+                {state.fix && state.status === "failed" ? (
+                  <div className="mt-2 flex flex-wrap items-center gap-2 pl-[30px]">
+                    {state.fix.url ? (
+                      <a className={buttonClasses({ variant: "success", size: "sm" })} href={state.fix.url} target="_blank" rel="noreferrer">
+                        {state.fix.label} ↗
+                      </a>
+                    ) : null}
+                    {state.fix.settings === "models" ? (
+                      <a className={buttonClasses({ variant: "subtle", size: "sm" })} href="/?view=settings&tab=models">
+                        Change main model
+                      </a>
+                    ) : null}
+                  </div>
                 ) : null}
 
                 {state.authUrl && (state.status === "waiting" || state.status === "checking") ? (

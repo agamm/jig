@@ -3,9 +3,9 @@
  * remote-server entry point. Connect/disconnect themselves live in
  * services/connect-server.ts; this module is the read + create surface.
  */
-import { existsSync, readFileSync } from "fs"
+import { existsSync, readdirSync, readFileSync } from "fs"
 import { join } from "path"
-import { SCHEMAS_DIR } from "../../config/paths.js"
+import { SCHEMAS_DIR, TYPES_DIR } from "../../config/paths.js"
 import { ApiError, apiJson, json } from "../http.js"
 import { createCustomRemoteServer, loadCustomServerConfigs, loadServerConfigs } from "../../mcp/config.js"
 import { getConnectionStatus } from "../../services/connection-status.js"
@@ -47,6 +47,17 @@ export async function handleGetConnections(): Promise<Response> {
     })
   )
   return apiJson("connections", connections)
+}
+
+/** The generated `.d.ts` per connected server, so a jig can be typed and written away from the instance. */
+export function handleGetConnectionTypes(): Response {
+  const files: Record<string, string> = {}
+  if (existsSync(TYPES_DIR)) {
+    for (const name of readdirSync(TYPES_DIR).sort()) {
+      if (name.endsWith(".d.ts")) files[name] = readFileSync(join(TYPES_DIR, name), "utf-8")
+    }
+  }
+  return apiJson("connectionTypes", { files })
 }
 
 export async function handleGetConnection(name: string): Promise<Response> {

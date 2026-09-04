@@ -848,17 +848,15 @@ deterministic code, the easier it is to compile the agentic parts later.
 
 ## Check Tool Schemas Before Writing Jigs
 
-Before calling any tool directly in code, read its schema from `.jig/schemas/`
-to understand required params, types, and enum values. MCP tools will reject
-calls with missing required fields.
+Before calling any tool directly in code, read its declaration in
+`.jig/connections/<server>.d.ts` to learn the required params, types, and enum
+values. MCP tools reject calls with missing required fields. On a local instance
+the files are already there; for a deployed instance `bun run jig types` pulls
+them into `.jig/connections/`.
 
 ```bash
-# Quick way to check a tool's schema
-cat .jig/schemas/workspace.json | bun -e "
-  const tools = JSON.parse(await Bun.stdin.text())
-  const t = tools.find(t => t.name === 'gmail_createDraft')
-  console.log(JSON.stringify(t.inputSchema, null, 2))
-"
+bun run jig types                                  # deployed instance -> .jig/connections/
+grep -n "gmail_send_email" -A 12 .jig/connections/composio.d.ts
 ```
 
 Common mistakes:

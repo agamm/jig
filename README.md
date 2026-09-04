@@ -178,6 +178,9 @@ bun run jig start
 bun run jig update
 bun run jig connect
 bun run jig connect composio
+bun run jig types                # the instance's connection types (.d.ts) into .jig/connections/
+bun run jig edit weekly-update --file=weekly-update.ts  # push code you wrote (creates the jig if new; typechecked, pending)
+bun run jig pending weekly-update approve
 bun run jig new "Every Friday at 4pm, draft a weekly update email from my meetings and emails."
 bun run jig edit weekly-update
 bun run jig run weekly-update --dry-run
@@ -186,6 +189,6 @@ bun run jig pair <code>          # cache a CLI session for a deployed instance
 bun run jig debug connections    # what a deployed instance has connected
 ```
 
-`new`, `edit` and `run` act on your deployed instance when you have one, and print which
+`new`, `edit`, `run`, `pending` and `types` act on your deployed instance when you have one, and print which
 instance they chose before starting. Add `--local` to act on this machine, or
 `--handle=<name>` to choose between deployed instances.

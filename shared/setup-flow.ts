@@ -24,7 +24,7 @@
  * already satisfied before doing anything, so re-running setup after a failure
  * picks up where it stopped rather than redoing work or duplicating state.
  */
-import type { Connection, VerifyConnectionResponse } from "./api"
+import type { Connection, ModelProbe, VerifyConnectionResponse } from "./api"
 
 export type SetupStepId = "openrouter" | "agentmail" | "composio"
 
@@ -62,11 +62,30 @@ export type SetupEvent =
   | { type: "waiting"; id: SetupStepId; detail: string }
   | { type: "verifying"; id: SetupStepId; detail: string }
   | { type: "verified"; id: SetupStepId; summary: string; level: "probe" | "handshake" | "asserted" }
-  | { type: "step-failed"; id: SetupStepId; message: string; skippable: boolean }
+  | { type: "step-failed"; id: SetupStepId; message: string; skippable: boolean; fix?: SetupFix }
   | { type: "step-skipped"; id: SetupStepId; reason: string }
   | { type: "recommendations"; apps: typeof COMPOSIO_RECOMMENDED_APPS; dashboardUrl?: string }
   | { type: "complete"; verified: SetupStepId[]; skipped: SetupStepId[] }
   | { type: "error"; code: string; message: string }
+
+/**
+ * What to click when a step fails for a reason setup cannot fix itself. `url`
+ * is the provider page the error named; `settings` is the dashboard tab that
+ * offers the alternative. Renderers turn it into a link or a printed line.
+ */
+export interface SetupFix {
+  label: string
+  url?: string
+  settings?: "models"
+}
+
+/** A step failure that carries its fix, so `runSetupFlow` can forward it. */
+export class SetupStepError extends Error {
+  constructor(message: string, readonly fix?: SetupFix) {
+    super(message)
+    this.name = "SetupStepError"
+  }
+}
 
 export interface SetupIO {
   /** Free-text answer (e.g. an email address). */
@@ -90,6 +109,8 @@ export interface SetupIO {
 export interface SetupBackend {
   /** Credit balance doubles as the OpenRouter proof: a valid key with no credits still fails every model call. */
   openRouterCredits(): Promise<{ ok: boolean; balance?: number; error?: string }>
+  /** The key alone proves nothing about the model jigs call: age gates and retired models fail here with a working key. */
+  probeMainModel(): Promise<ModelProbe>
   setOpenRouterKey(key: string): Promise<void>
   /** Stage an OpenRouter PKCE authorization; the key arrives at the callback, not here. */
   startOpenRouterOAuth(): Promise<{ authorizationUrl: string }>
@@ -147,6 +168,7 @@ export interface SetupStepState {
   required: boolean
   satisfied: boolean
   detail: string
+  fix?: SetupFix
 }
 
 /**
@@ -165,11 +187,20 @@ export async function summarizeSetup(backend: SetupBackend): Promise<SetupStepSt
     backend.listConnections().catch(() => [] as Connection[]),
   ])
 
+  const probe = credits.ok
+    ? await backend.probeMainModel().catch((e: any) => ({ ok: false as const, model: "main model", error: `Could not check the main model: ${e?.message ?? e}` }))
+    : null
+
   const composio = connections.find((c) => c.name === "composio")
-  const byId: Record<SetupStepId, { satisfied: boolean; detail: string }> = {
+  const byId: Record<SetupStepId, { satisfied: boolean; detail: string; fix?: SetupFix }> = {
     openrouter: {
-      satisfied: credits.ok,
-      detail: credits.ok ? describeBalance((credits as { balance?: number }).balance) : ((credits as { error?: string }).error ?? "No usable key yet."),
+      satisfied: credits.ok && probe?.ok === true,
+      detail: !credits.ok
+        ? ((credits as { error?: string }).error ?? "No usable key yet.")
+        : probe?.ok
+          ? `${describeBalance((credits as { balance?: number }).balance)}, ${probe.model} answers`
+          : (probe?.error ?? "The main model did not answer."),
+      ...(probe && !probe.ok ? { fix: modelFix(probe) } : {}),
     },
     agentmail: {
       satisfied: Boolean(mail?.canSend && mail.owner),
@@ -217,7 +248,8 @@ export async function runSetupFlow(
       else skipped.push(step.id)
     } catch (error: any) {
       const message = error?.message ?? String(error)
-      io.emit({ type: "step-failed", id: step.id, message, skippable: !step.required })
+      const fix = error instanceof SetupStepError ? error.fix : undefined
+      io.emit({ type: "step-failed", id: step.id, message, skippable: !step.required, ...(fix ? { fix } : {}) })
       if (step.required) {
         io.emit({ type: "error", code: "required-step-failed", message: `${step.title} is required. Fix the above and re-run setup.` })
         throw error
@@ -260,20 +292,33 @@ async function runStep(
  */
 async function runOpenRouterStep(io: SetupIO, backend: SetupBackend, options: SetupOptions): Promise<StepOutcome> {
   const existing = await backend.openRouterCredits()
+  let balance = existing.balance
   if (existing.ok) {
     io.emit({ type: "step-satisfied", id: "openrouter", detail: describeBalance(existing.balance) })
-    io.emit({ type: "verified", id: "openrouter", summary: `openrouter: ${describeBalance(existing.balance)}`, level: "probe" })
-    return "verified"
+  } else {
+    io.emit({ type: "instruction", message: "Jig needs an OpenRouter account for model calls. Authorize it in the browser; no key to copy." })
+    const { authorizationUrl } = await backend.startOpenRouterOAuth()
+    const opened = await io.openUrl(authorizationUrl)
+    io.emit({ type: "open-url", url: authorizationUrl, purpose: "authorize OpenRouter", opened })
+    balance = (await waitForOpenRouterKey(io, backend, options)).balance
   }
 
-  io.emit({ type: "instruction", message: "Jig needs an OpenRouter account for model calls. Authorize it in the browser; no key to copy." })
-  const { authorizationUrl } = await backend.startOpenRouterOAuth()
-  const opened = await io.openUrl(authorizationUrl)
-  io.emit({ type: "open-url", url: authorizationUrl, purpose: "authorize OpenRouter", opened })
-
-  const check = await waitForOpenRouterKey(io, backend, options)
-  io.emit({ type: "verified", id: "openrouter", summary: `openrouter: ${describeBalance(check.balance)}`, level: "probe" })
+  // A key with credits still fails every jig when the main model refuses the
+  // account (age confirmation, region, a retired id), so prove the model too.
+  io.emit({ type: "verifying", id: "openrouter", detail: "checking the main model answers" })
+  const probe = await backend.probeMainModel()
+  if (!probe.ok) throw new SetupStepError(probe.error, modelFix(probe))
+  io.emit({ type: "verified", id: "openrouter", summary: `openrouter: ${describeBalance(balance)}, ${probe.model} answers`, level: "probe" })
   return "verified"
+}
+
+/** The provider page the error named, plus the dashboard tab where a different model can be picked. */
+function modelFix(probe: { ok: false; fixUrl?: string }): SetupFix {
+  return {
+    label: probe.fixUrl ? "Fix on OpenRouter" : "Change the main model",
+    ...(probe.fixUrl ? { url: probe.fixUrl } : {}),
+    settings: "models",
+  }
 }
 
 /**

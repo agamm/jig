@@ -42,6 +42,7 @@ export class ComposioSpillError extends Error {
 const SPILL_PATH_RE = /^\/mnt\/files\/[A-Za-z0-9_./-]+\.json$/
 
 export async function unwrapComposioResult(raw: any): Promise<any> {
+  if (Array.isArray(raw)) raw = pickEnvelope(raw)
   const top = raw?.data ?? {}
   const execResult = top?.results?.[0] ?? {}
   const response = execResult?.response
@@ -67,6 +68,21 @@ export async function unwrapComposioResult(raw: any): Promise<any> {
   if (response?.data_preview !== undefined) return response.data_preview
   if (response !== undefined) return response
   return raw
+}
+
+/**
+ * callTool hands over an array when a response carried several text parts.
+ * The envelope is the part with `data`; anything else is a trailer.
+ */
+function pickEnvelope(parts: any[]): any {
+  for (const part of parts) {
+    let candidate = part
+    if (typeof part === "string") {
+      try { candidate = JSON.parse(part) } catch { continue }
+    }
+    if (candidate && typeof candidate === "object" && "data" in candidate) return candidate
+  }
+  return parts
 }
 
 function pickSpillPath(info: any): string | null {

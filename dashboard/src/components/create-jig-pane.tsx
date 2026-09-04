@@ -173,7 +173,7 @@ export function CreateJigPane({
 
   return (
     <aside
-      className="flex h-full w-full flex-col bg-[#0e0e10] overflow-hidden"
+      className="pane-glow flex h-full w-full flex-col bg-[#0e0e10] overflow-hidden"
     >
       <ConfirmDialog
         open={confirmDiscardOpen}

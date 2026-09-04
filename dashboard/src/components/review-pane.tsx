@@ -24,7 +24,7 @@ export function ReviewPane({ jig, onClose }: {
 
   return (
     <aside
-      className="flex h-full w-full flex-col bg-[#0e0e10] overflow-hidden"
+      className="pane-glow flex h-full w-full flex-col bg-[#0e0e10] overflow-hidden"
     >
       <DraftBanner title="Draft not compiled yet" detail="Edit the draft, then continue in the agent flow." />
 

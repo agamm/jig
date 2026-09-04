@@ -321,7 +321,7 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
 
   return (
     <aside
-      className={`flex flex-col bg-[#0e0e10] overflow-hidden ${standalone ? "w-full max-w-2xl mx-auto border-x border-[#1f1f23]" : "h-full w-full"}`}
+      className={`pane-glow flex flex-col bg-[#0e0e10] overflow-hidden ${standalone ? "w-full max-w-2xl mx-auto border-x border-[#1f1f23]" : "h-full w-full"}`}
     >
       <PaneHeader
         title={

@@ -44,6 +44,12 @@ body {
   color: var(--foreground);
 }
 
+/* Soft light from the top edge of every pane so pages read as lit, not flat. */
+.pane-glow {
+  background-image: radial-gradient(60% 240px at 50% 0, rgba(255, 255, 255, 0.055), transparent);
+  background-repeat: no-repeat;
+}
+
 button,
 a,
 input,

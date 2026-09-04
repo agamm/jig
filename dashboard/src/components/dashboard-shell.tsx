@@ -252,7 +252,7 @@ export function DashboardShell({
   }
 
   const jigsPane = (
-    <main className="flex h-full flex-1 flex-col overflow-hidden">
+    <main className="pane-glow flex h-full flex-1 flex-col overflow-hidden">
       <div className="flex h-11 shrink-0 items-center justify-between border-b border-[#1f1f23] px-4">
         <div className="flex items-center gap-4">
           <span className="text-[13px] font-medium text-[#ededed]">Your Jigs</span>
@@ -330,7 +330,7 @@ export function DashboardShell({
   );
 
   const connectionsMain = (
-    <main className="flex flex-col flex-1 overflow-hidden h-full">
+    <main className="pane-glow flex flex-col flex-1 overflow-hidden h-full">
       <div className="flex h-11 shrink-0 items-center justify-between border-b border-[#1f1f23] px-4">
         <span className="text-[13px] font-medium text-[#ededed]">Connections</span>
       </div>
@@ -705,7 +705,7 @@ export function DashboardShell({
               ? settingsTab
               : "models";
           return (
-            <main className="flex flex-col flex-1 overflow-hidden">
+            <main className="pane-glow flex flex-col flex-1 overflow-hidden">
               <div className="flex h-11 shrink-0 items-center justify-between border-b border-[#1f1f23] px-4">
                 <span className="text-[13px] font-medium text-[#ededed]">Settings</span>
               </div>
@@ -783,7 +783,7 @@ export function DashboardShell({
         })()}
 
         {view === "logs" && (
-          <main className="flex flex-col flex-1 overflow-hidden">
+          <main className="pane-glow flex flex-col flex-1 overflow-hidden">
             <div className="flex h-11 shrink-0 items-center justify-between border-b border-[#1f1f23] px-4">
               <div className="flex flex-col">
                 <span className="text-[13px] font-medium text-[#ededed]">Server Logs</span>

@@ -3,6 +3,8 @@
  *
  * Subcommands:
  *   - login [handle]            Cache an admin session cookie for the remote.
+ *   - connections [name]        What is connected on the remote and how many
+ *                               tools it exposes; --refresh re-runs discovery.
  *   - run <jigId> [handle]      Trigger a run, stream debug logs, exit on finish.
  *   - tail [handle]             Stream debug logs continuously (Ctrl-C to stop).
  *   - ls [handle]               List the jigs on the remote.
@@ -46,6 +48,7 @@ export async function runDebug(args: string[]): Promise<void> {
   const rest = args.slice(1)
 
   if (sub === "login") return loginCmd(rest)
+  if (sub === "connections") return connectionsCmd(rest)
   if (sub === "run") return runCmd(rest)
   if (sub === "tail") return tailCmd(rest)
   if (sub === "ls") return lsCmd(rest)
@@ -55,6 +58,7 @@ export async function runDebug(args: string[]): Promise<void> {
 
   console.log("Usage:")
   console.log("  jig debug login [handle]          Cache admin session cookie")
+  console.log("  jig debug connections [name]      What is connected, and how many tools")
   console.log("  jig debug run <jigId> [handle]    Trigger a run and stream debug logs")
   console.log("  jig debug tail [handle]           Stream debug logs (Ctrl-C to stop)")
   console.log("  jig debug ls [handle]             List jigs on the remote")
@@ -115,6 +119,91 @@ async function loginCmd(args: string[]): Promise<void> {
   }
   setSessionCookie(remote.handle, cookie)
   console.log(`Logged in to ${remote.handle} (${remote.public_url}). Session cached for 30 days.`)
+}
+
+// ---------------------------------------------------------------------------
+// connections
+// ---------------------------------------------------------------------------
+
+/**
+ * What is actually connected on a deployed instance.
+ *
+ * Exists because there was no way to ask. Agents were extracting the session
+ * cookie out of the remote manifest with python and curling /api/connections by
+ * hand, and then, having no easy way to check, stating connection facts they had
+ * inferred. "Connected" is two questions for a proxy like Composio: the
+ * connection can be authorized while nothing is authorized INSIDE it, which is
+ * why the tool count is printed and not just a tick.
+ */
+async function connectionsCmd(args: string[]): Promise<void> {
+  const positionals = args.filter((a) => !a.startsWith("--"))
+  const name = positionals[0]
+  const { remote, cookie } = resolveAuthedRemoteOrExit(positionals[1])
+  const headers = { Cookie: `${COOKIE_NAME}=${cookie}` }
+
+  if (name && args.includes("--refresh")) {
+    console.log(`Reconnecting ${name} on ${remote.handle} and re-running discovery...`)
+    const res = await fetch(`${remote.public_url}/api/connections/${encodeURIComponent(name)}/connect`, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    })
+    const body = (await res.json().catch(() => ({}))) as {
+      ok?: boolean
+      toolCount?: number
+      tools?: string[]
+      authorizationUrl?: string
+      error?: string
+      missingCredentials?: string[]
+    }
+    if (body.authorizationUrl) {
+      console.log(`\nNeeds authorization. Open this and re-run:\n  ${body.authorizationUrl}`)
+      return
+    }
+    if (!res.ok || body.ok === false) {
+      console.error(`✗ ${body.error ?? `HTTP ${res.status}`}${body.missingCredentials?.length ? ` (missing: ${body.missingCredentials.join(", ")})` : ""}`)
+      process.exit(1)
+    }
+    console.log(`✓ ${name}: ${body.toolCount ?? body.tools?.length ?? 0} tools discovered.`)
+    return
+  }
+
+  const res = await fetch(`${remote.public_url}/api/connections`, { headers })
+  if (!res.ok) {
+    console.error(`Could not read connections: HTTP ${res.status}`)
+    process.exit(1)
+  }
+  const connections = (await res.json()) as {
+    name: string
+    connected: boolean
+    toolCount: number
+    description: string
+    proxyVia?: string
+    status?: { state?: string } | null
+  }[]
+
+  const shown = name ? connections.filter((c) => c.name === name) : connections
+  if (shown.length === 0) {
+    console.error(name ? `No connection named "${name}" on ${remote.handle}.` : `No connections on ${remote.handle}.`)
+    process.exit(1)
+  }
+
+  console.log(`${remote.handle} (${remote.public_url})\n`)
+  for (const c of shown) {
+    const mark = c.connected ? "✓" : "○"
+    // A proxy connection with zero tools is authorized but useless, and it is
+    // the case most likely to be mistaken for working.
+    const tools = c.connected
+      ? c.toolCount > 0
+        ? `${c.toolCount} tools`
+        : c.proxyVia
+          ? "0 tools: authorized, but no apps connected inside it"
+          : "0 tools: nothing discovered"
+      : "not connected"
+    const health = c.status?.state && c.status.state !== "ok" ? `  [${c.status.state}]` : ""
+    console.log(`  ${mark} ${c.name.padEnd(14)} ${tools}${health}`)
+  }
+  if (!name) console.log(`\nRe-run discovery for one: jig debug connections <name> --refresh`)
 }
 
 // ---------------------------------------------------------------------------

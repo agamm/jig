@@ -180,8 +180,17 @@ export async function summarizeSetup(backend: SetupBackend): Promise<SetupStepSt
           : "No AgentMail key yet.",
     },
     composio: {
-      satisfied: Boolean(composio?.connected),
-      detail: composio?.connected ? "connected" : composio ? "Not connected." : "Not in this instance's registry.",
+      // Authorized with nothing inside it is the state most easily mistaken for
+      // working: the connection is green, every jig that needs Gmail still
+      // fails. A proxy with no tools is not a satisfied step.
+      satisfied: Boolean(composio?.connected && composio.toolCount > 0),
+      detail: !composio
+        ? "Not in this instance's registry."
+        : !composio.connected
+          ? "Not connected."
+          : composio.toolCount > 0
+            ? `connected, ${composio.toolCount} tools`
+            : "Authorized, but no apps connected inside it yet, so it has 0 tools.",
     },
   }
 

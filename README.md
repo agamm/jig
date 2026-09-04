@@ -176,11 +176,15 @@ Two skills, split by what you are doing:
 bun run jig setup
 bun run jig start
 bun run jig update
-bun run jig new "email me a random number, once"
 bun run jig connect
 bun run jig connect composio
 bun run jig new "Every Friday at 4pm, draft a weekly update email from my meetings and emails."
 bun run jig edit weekly-update
-bun run jig run weekly-update
 bun run jig run weekly-update --dry-run
+bun run jig run weekly-update
+bun run jig pair <code>          # cache a CLI session for a deployed instance
+bun run jig debug connections    # what a deployed instance has connected
 ```
+
+`new`, `edit` and `run` act on your deployed instance when you have one, and print which
+instance they chose before starting. Add `--local` to act on this machine instead.

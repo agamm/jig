@@ -9,4 +9,4 @@ Start with [`llms.txt`](llms.txt). It routes each task to the smallest authorita
 
 Never commit credentials, personal data, runtime databases, generated connection files, logs, or deployment state. The ignored `.env`, `.jig/`, `jigs/`, `jig.db*`, `jig.log`, `runtime/`, and `tmp/` paths are local or instance data, not source.
 
-Author workflows through the dashboard or `bun run jig new|edit`. SQLite is the only source of truth for jig code — nothing reads jig source off disk.
+Author workflows through the dashboard or `bun run jig new|edit`, which act on your deployed instance when you have one and take `--local` for this machine. SQLite is the only source of truth for jig code; nothing reads jig source off disk.

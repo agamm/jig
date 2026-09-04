@@ -43,6 +43,8 @@ Interpret the checks:
 For remote debug access, avoid putting the password in shell history:
 
 ```sh
+bun run jig pair <code>          # code from the dashboard's Setup page; no password involved
+# Or sign in with the instance password, kept out of shell history:
 read -s JIG_PASSWORD && export JIG_PASSWORD
 bun run jig debug login [handle]
 unset JIG_PASSWORD
@@ -64,6 +66,7 @@ The debug stream includes redacted `runner`, `sdk.llm`, `sdk.agent`, `mcp.tool`,
 agent harness you use, rather than only through the dashboard's authoring agent.
 
 ```sh
+bun run jig debug connections    # connected state and tool count per connection
 bun run jig debug ls [handle]
 bun run jig edit <jig-id> --out=/tmp/<jig-id>.ts
 # edit the file

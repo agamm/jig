@@ -32,6 +32,10 @@ bun run jig run <jig-id> --dry-run
 bun run jig run <jig-id>
 ```
 
+`new`, `edit` and `run` act on the deployed instance in `~/.config/jig/remotes/` when one
+exists, and on this machine otherwise; `--local` forces this machine. They print the target
+before starting. An unpaired remote is an error rather than a silent fall back to local.
+
 Every jig exports `jig(name, options, handler)` from `@jig/sdk`. Every logical unit of work belongs in a flat `ctx.step()` block. Direct code is preferred over `llm()`, and `llm()` is preferred over `agent()`. Connection tools must appear in the jig-level and current-step allowlists. Use `ctx.output()` for observable results.
 
 The approved jig version in SQLite is authoritative — there is no jig source on disk. `jig run` and the dashboard both execute that version.
@@ -56,6 +60,8 @@ bun run jig deploy --update
 
 ```sh
 bun run jig doctor [handle]
+bun run jig pair <code>          # code from the dashboard's Setup page; no password involved
+# Or sign in with the instance password, kept out of shell history:
 read -s JIG_PASSWORD && export JIG_PASSWORD
 bun run jig debug login [handle]
 unset JIG_PASSWORD
@@ -66,6 +72,7 @@ bun run jig debug tail [handle]
 To edit a deployed jig outside the dashboard (pushes land pending unless `--approve`):
 
 ```sh
+bun run jig debug connections    # what is connected, and how many tools each has
 bun run jig debug ls [handle]
 bun run jig edit <jig-id> --out=/tmp/<jig-id>.ts
 bun run jig edit <jig-id> --file=/tmp/<jig-id>.ts --message="what changed"

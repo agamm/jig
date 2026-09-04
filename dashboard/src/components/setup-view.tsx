@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import confetti from "canvas-confetti";
 import { mutate } from "swr";
 import { Button, buttonClasses } from "@/components/button";
 import { TextInput, secretFieldProps } from "@/components/input";
@@ -9,6 +10,7 @@ import { ServiceIcon } from "@/components/service-icon";
 import { ShimmerText } from "@/components/shimmer-text";
 import { Spinner } from "@/components/spinner";
 import { Notice } from "@/components/state-panel";
+import { toast } from "@/components/toast";
 import {
   completeOnboarding,
   createPairingCode,
@@ -338,9 +340,16 @@ export function SetupView() {
         case "step-skipped":
           patch(event.id, { status: "skipped", detail: event.reason });
           break;
-        case "complete":
+        case "complete": {
           setFinished({ verified: event.verified, skipped: event.skipped });
+          // Celebrate once: when this run turned the last required step green,
+          // not on a re-check of an instance that was already done.
+          const required = SETUP_STEPS.filter((s) => s.required).map((s) => s.id);
+          const allReady = required.every((id) => event.verified.includes(id) || readyAtRunStart.has(id));
+          const finishedNow = required.some((id) => event.verified.includes(id) && !readyAtRunStart.has(id));
+          if (allReady && finishedNow) celebrate();
           break;
+        }
         case "error":
           setError(event.message);
           break;
@@ -588,11 +597,24 @@ function Section({ label, children }: { label: string; children: ReactNode }) {
  */
 const FIRST_JIG_PROMPT = "create a jig that sends me hello world via email";
 
+/** A short burst, then the first-jig card into view once the status refresh has mounted it. */
+function celebrate() {
+  void confetti({
+    particleCount: 140,
+    spread: 75,
+    startVelocity: 38,
+    origin: { y: 0.6 },
+    colors: ["#10b981", "#34d399", "#60a5fa", "#ededed"],
+    disableForReducedMotion: true,
+  });
+  setTimeout(() => document.getElementById("first-jig")?.scrollIntoView({ behavior: "smooth", block: "center" }), 500);
+}
+
 function FirstJig() {
   const [copied, setCopied] = useState(false);
 
   return (
-    <section className="rounded-xl border border-emerald-500/25 bg-emerald-500/[0.05] p-5 shadow-[0_0_0_1px_rgba(16,185,129,0.04)]">
+    <section id="first-jig" className="rounded-xl border border-emerald-500/25 bg-emerald-500/[0.05] p-5 shadow-[0_0_0_1px_rgba(16,185,129,0.04)]">
       <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-emerald-300/80">Ready</span>
       <h3 className="mt-1.5 text-[17px] font-semibold tracking-[-0.01em] text-[#ededed]">Everything is connected. Try it.</h3>
       <p className="mt-1.5 max-w-[62ch] text-[12px] leading-relaxed text-[var(--text-dim)]">
@@ -607,7 +629,10 @@ function FirstJig() {
           size="sm"
           onClick={() => {
             void navigator.clipboard.writeText(FIRST_JIG_PROMPT).then(
-              () => setCopied(true),
+              () => {
+                setCopied(true);
+                toast.success("Prompt copied. Open Jigs, start a new jig, and paste it.");
+              },
               () => setCopied(false),
             );
           }}
@@ -658,9 +683,18 @@ function CliPairing() {
   // a terminal or an agent whose working directory we do not control. `bun run
   // jig` needs the clone, and one directory above it matches the `jig` FOLDER
   // instead of the script and exits silently. This form needs no clone at all.
-  const command = code
-    ? `bunx --bun github:agamm/jig pair ${code} --url=${typeof window === "undefined" ? "" : window.location.origin}`
-    : "";
+  const commandFor = (pairingCode: string) =>
+    `bunx --bun github:agamm/jig pair ${pairingCode} --url=${typeof window === "undefined" ? "" : window.location.origin}`;
+  const command = code ? commandFor(code) : "";
+
+  const copy = (text: string) =>
+    navigator.clipboard.writeText(text).then(
+      () => {
+        setCopied(true);
+        toast.success("Command copied. Paste it into your terminal or to your coding agent.");
+      },
+      () => setErr("Could not write to the clipboard. Select the text and copy it."),
+    );
 
   const generate = async () => {
     setBusy(true);
@@ -670,6 +704,16 @@ function CliPairing() {
     try {
       const res = await createPairingCode();
       setCode(res.code);
+      // Copy straight away so the click that generated it is the only click
+      // needed. Browsers may refuse a clipboard write this long after the
+      // gesture; then the Copy button below is the fallback, not an error.
+      await navigator.clipboard.writeText(commandFor(res.code)).then(
+        () => {
+          setCopied(true);
+          toast.success("Command copied. Paste it into your terminal or to your coding agent.");
+        },
+        () => toast.info("Command ready. Press Copy to put it on the clipboard."),
+      );
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -707,15 +751,7 @@ function CliPairing() {
           <code className="flex-1 truncate rounded-md border border-[#1f1f23] bg-[#111113] px-3 py-2 font-mono text-[11px] text-[#ededed]">
             {command}
           </code>
-          <Button
-            size="sm"
-            onClick={() => {
-              void navigator.clipboard.writeText(command).then(
-                () => setCopied(true),
-                () => setErr("Could not write to the clipboard. Select the text and copy it."),
-              );
-            }}
-          >
+          <Button size="sm" onClick={() => void copy(command)}>
             {copied ? "Copied" : "Copy"}
           </Button>
         </div>

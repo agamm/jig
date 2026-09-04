@@ -176,10 +176,6 @@ function renderCallbackPage(input: {
         var n = document.getElementById("countdown-n");
         var fill = document.getElementById("countdown-fill");
         var label = document.querySelector(".countdown-label");
-        if (fill) {
-          fill.style.transition = "width ${AUTO_CLOSE_S}s linear";
-          requestAnimationFrame(function () { fill.style.width = "0%"; });
-        }
         var timer = setInterval(function () {
           left -= 1;
           if (n) n.textContent = String(Math.max(0, left));
@@ -292,6 +288,13 @@ function renderCallbackPage(input: {
         border-radius: 999px;
         background: var(--accent);
         box-shadow: 0 0 8px var(--accent-soft);
+        /* A keyframe animation, not a JS-set transition: the transition could
+           race the first style pass and never run, leaving no bar at all. */
+        animation: countdown-drain ${AUTO_CLOSE_S}s linear forwards;
+      }
+      @keyframes countdown-drain {
+        from { width: 100%; }
+        to { width: 0%; }
       }
       .countdown-label {
         font-size: 11px;
@@ -305,7 +308,7 @@ function renderCallbackPage(input: {
         font-variant-numeric: tabular-nums;
       }
       @media (prefers-reduced-motion: reduce) {
-        .countdown-fill { transition: none !important; }
+        .countdown-fill { animation: none; }
       }
       .actions {
         display: flex;

@@ -1,5 +1,18 @@
 # Lessons
 
+## A Mode Signal Does Not Guarantee Every Mode Attribute Exists
+
+**What happened:** Service-mode detection was correctly broadened to activate
+from Railway's environment ID before a public domain exists. MCP OAuth still
+assumed `isServiceMode()` guaranteed `publicUrl()`, so the Setup page's Composio
+button failed before it could produce an authorization URL. A later fix covered
+OpenRouter's separate callback builder but not the sibling MCP path.
+
+**Rule:** When broadening a mode predicate, audit every caller for attributes it
+implicitly treated as guaranteed by that predicate. For hosted callback URLs,
+pass the validated request origin through every OAuth implementation and test
+the platform-ID-without-domain state at the HTTP boundary and callback builder.
+
 ## SQLite Migrations: Never Insert, Always Append
 
 **What happened:** Added `authorized_senders` as migration v3 in one commit. In the next commit, inserted `credentials` as the new v3 and bumped `authorized_senders` to v4. DBs that already migrated to v3 skipped the new `credentials` migration because `user_version` was already past it.

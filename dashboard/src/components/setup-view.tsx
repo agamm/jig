@@ -76,6 +76,8 @@ const STEP_BLURB: Record<SetupStepId, string> = {
   composio: "One authorization for Gmail, Calendar, Slack, Telegram and a long tail of other apps.",
 };
 
+const APPROVAL_HIGHLIGHT_MS = 1_800;
+
 function statusPill(state: StepState) {
   const map: Record<StepState["status"], { label: string; className: string }> = {
     unknown: { label: "not checked", className: "border-[#2a2a2e] text-[var(--text-dim)]" },
@@ -130,12 +132,44 @@ export function SetupView() {
   const [promptValue, setPromptValue] = useState("");
   const [finished, setFinished] = useState<{ verified: SetupStepId[]; skipped: SetupStepId[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [approvedSteps, setApprovedSteps] = useState<Set<SetupStepId>>(() => new Set());
   const promptRef = useRef<Prompt | null>(null);
   const currentStep = useRef<SetupStepId | null>(null);
+  const pendingApprovalHighlights = useRef<Set<SetupStepId>>(new Set());
+  const approvalHighlightTimers = useRef<Map<SetupStepId, ReturnType<typeof setTimeout>>>(new Map());
 
   const patch = useCallback((id: SetupStepId, next: Partial<StepState>) => {
     setSteps((prev) => ({ ...prev, [id]: { ...prev[id], ...next } }));
   }, []);
+
+  const revealApprovalHighlights = useCallback(() => {
+    if (document.visibilityState !== "visible" || !document.hasFocus()) return;
+    const ids = [...pendingApprovalHighlights.current];
+    if (ids.length === 0) return;
+    pendingApprovalHighlights.current.clear();
+    setApprovedSteps((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) next.add(id);
+      return next;
+    });
+    for (const id of ids) {
+      const existing = approvalHighlightTimers.current.get(id);
+      if (existing) clearTimeout(existing);
+      approvalHighlightTimers.current.set(id, setTimeout(() => {
+        approvalHighlightTimers.current.delete(id);
+        setApprovedSteps((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }, APPROVAL_HIGHLIGHT_MS));
+    }
+  }, []);
+
+  const queueApprovalHighlight = useCallback((id: SetupStepId) => {
+    pendingApprovalHighlights.current.add(id);
+    revealApprovalHighlights();
+  }, [revealApprovalHighlights]);
 
   /**
    * Passive read, so the page shows where you stand before you press anything.
@@ -163,6 +197,18 @@ export function SetupView() {
   useEffect(() => {
     void refreshStatus();
   }, [refreshStatus]);
+
+  useEffect(() => {
+    const revealOnReturn = () => revealApprovalHighlights();
+    window.addEventListener("focus", revealOnReturn);
+    document.addEventListener("visibilitychange", revealOnReturn);
+    return () => {
+      window.removeEventListener("focus", revealOnReturn);
+      document.removeEventListener("visibilitychange", revealOnReturn);
+      for (const timer of approvalHighlightTimers.current.values()) clearTimeout(timer);
+      approvalHighlightTimers.current.clear();
+    };
+  }, [revealApprovalHighlights]);
 
   function askVia(stepId: SetupStepId, question: string, secret: boolean): Promise<string> {
     return new Promise<string>((resolve, reject) => {
@@ -192,6 +238,9 @@ export function SetupView() {
   }
 
   async function run(only?: SetupStepId[]) {
+    const readyAtRunStart = new Set(
+      SETUP_STEPS.filter((step) => steps[step.id].status === "ready").map((step) => step.id),
+    );
     setRunning(only ?? "all");
     setError(null);
     setFinished(null);
@@ -267,6 +316,11 @@ export function SetupView() {
           break;
         case "verified":
           patch(event.id, { status: "ready", detail: event.summary });
+          // Existing ready steps also emit `verified` during a re-check. Only a
+          // newly satisfied step is something the user just added. If OAuth is
+          // finishing in another tab, hold the confirmation until this page
+          // has focus again so the green fade is actually seen.
+          if (!readyAtRunStart.has(event.id)) queueApprovalHighlight(event.id);
           break;
         case "step-failed":
           patch(event.id, { status: "failed", detail: event.message });
@@ -352,7 +406,7 @@ export function SetupView() {
                 // line and drops the explanation, because nobody needs to be
                 // told what OpenRouter is for once it is connected. Anything
                 // still outstanding keeps the full card and the blurb.
-                className={`rounded-xl border transition-colors ${done ? "px-4 py-2.5" : "p-4"} ${
+                className={`rounded-xl border transition-colors ${approvedSteps.has(step.id) ? "setup-step-approved" : ""} ${done ? "px-4 py-2.5" : "p-4"} ${
                   done ? "border-[#1f1f23] bg-[#0b0b0d]" : "border-[#1f1f23] bg-[#0d0d0f]"
                 }`}
               >

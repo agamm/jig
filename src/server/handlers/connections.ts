@@ -6,10 +6,11 @@
 import { existsSync, readFileSync } from "fs"
 import { join } from "path"
 import { SCHEMAS_DIR } from "../../config/paths.js"
-import { ApiError, apiJson } from "../http.js"
+import { ApiError, apiJson, json } from "../http.js"
 import { createCustomRemoteServer, loadCustomServerConfigs, loadServerConfigs } from "../../mcp/config.js"
 import { getConnectionStatus } from "../../services/connection-status.js"
-import { isConnectInProgress } from "../../services/connect-server.js"
+import { connectConfiguredServer, isConnectInProgress } from "../../services/connect-server.js"
+import { publicUrlFromRequest } from "../../config/runtime.js"
 import { getActiveCode as getJigActiveCode } from "../../services/jig-store.js"
 import { discoverAllJigs } from "../../services/jig-api.js"
 import { extractConnections } from "../../domain/jig-source.js"
@@ -96,6 +97,28 @@ export async function handleGetConnection(name: string): Promise<Response> {
     tools,
     usedBy,
   })
+}
+
+/**
+ * Start a connection from the dashboard.
+ *
+ * The external request origin has to travel with the detached OAuth attempt:
+ * hosted platforms can identify service mode before they publish a domain env
+ * var, while the forwarded host still proves where the callback can land.
+ */
+export async function handleConnectConnection(
+  req: Request,
+  name: string,
+  connect: typeof connectConfiguredServer = connectConfiguredServer,
+): Promise<Response> {
+  if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+  const body = await req.json().catch(() => ({})) as { credentials?: Record<string, string> }
+  const result = await connect(name, {
+    credentials: body.credentials,
+    signal: req.signal,
+    requestOrigin: publicUrlFromRequest(req),
+  })
+  return apiJson("connectConnection", result)
 }
 
 export async function handleCreateCustomConnection(body: any): Promise<Response> {

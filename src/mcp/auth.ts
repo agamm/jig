@@ -12,10 +12,17 @@ type OAuthTokens = NonNullable<Awaited<ReturnType<OAuthClientProvider["tokens"]>
 const SERVICE_CALLBACK_PATH = "/api/oauth/callback"
 
 /** Derive the OAuth redirect URL jig is listening on. */
-export function oauthRedirectUrl(): string {
+export function oauthRedirectUrl(requestOrigin?: string): string {
   if (isServiceMode()) {
-    const base = publicUrl()
-    if (!base) throw new Error("Service mode detected but publicUrl() returned undefined")
+    // The request origin is the address the user demonstrably reached. Railway
+    // can set its service-mode vars before RAILWAY_PUBLIC_DOMAIN exists, so the
+    // platform environment alone is not enough to build a callback URL.
+    const base = publicUrl() ?? requestOrigin
+    if (!base) {
+      throw new Error(
+        "Could not work out a public URL for this instance, so the service has nowhere to redirect back to. Set JIG_PUBLIC_URL to the address you reach the dashboard at, then try again."
+      )
+    }
     return `${base}${SERVICE_CALLBACK_PATH}`
   }
   // Local: route through the always-running API server's callback, NOT an
@@ -403,7 +410,11 @@ export class JigOAuthProvider implements OAuthClientProvider {
    * failure would still pop a browser tab and leak a pendingProvidersByState
    * entry that could hijack the next dashboard connect's callback.
    */
-  constructor(private serverName: string, private interactive: boolean = true) {}
+  constructor(
+    private serverName: string,
+    private interactive: boolean = true,
+    private requestOrigin?: string,
+  ) {}
 
   /** The server this provider authorizes — used by the callback handler for the success page. */
   get server(): string {
@@ -411,12 +422,12 @@ export class JigOAuthProvider implements OAuthClientProvider {
   }
 
   get redirectUrl(): string {
-    return oauthRedirectUrl()
+    return oauthRedirectUrl(this.requestOrigin)
   }
 
   get clientMetadata(): OAuthClientMetadata {
     return {
-      redirect_uris: [oauthRedirectUrl()],
+      redirect_uris: [oauthRedirectUrl(this.requestOrigin)],
       token_endpoint_auth_method: "none",
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
@@ -436,7 +447,7 @@ export class JigOAuthProvider implements OAuthClientProvider {
       // authorize request with "redirect URI provided was invalid". Returning
       // undefined drops it so the SDK re-runs dynamic client registration with
       // the current redirect URL and saveClientInformation overwrites the row.
-      const current = oauthRedirectUrl()
+      const current = oauthRedirectUrl(this.requestOrigin)
       const registered = (info as { redirect_uris?: string[] }).redirect_uris
       if (Array.isArray(registered) && registered.length > 0 && !registered.includes(current)) {
         console.log(`[jig][oauth] ${this.serverName}: stored client redirect_uris ${JSON.stringify(registered)} don't include ${current} — re-registering`)

@@ -1,3 +1,25 @@
+# Setup OAuth refocus feedback and Composio callback regression (2026-09-03)
+
+- [x] Carry the dashboard request origin into MCP OAuth callback URL resolution.
+- [x] Add regression tests for the HTTP handoff and service mode without a platform domain.
+- [x] Highlight a newly approved setup row with a one-shot green fade on page refocus.
+- [x] Verify focused tests, typechecks/build, diff hygiene, and tracked-source privacy.
+
+## Review
+
+- Commit history traced the failure to `2abce493`: service mode intentionally
+  became active from Railway IDs before a public domain exists, while MCP OAuth
+  still assumed `publicUrl()` was guaranteed. The fix preserves early service
+  mode and carries the validated forwarded origin through the HTTP handler,
+  detached connect, MCP client, and OAuth provider.
+- Newly satisfied setup rows queue a green confirmation and reveal it only when
+  the document is visible and focused; already-ready rechecks do not animate.
+  Reduced-motion users get a static green confirmation instead of a fade.
+- Focused suite: 54 passed. Full suite: 720 passed. Root and dashboard
+  typechecks passed. Dashboard production build passed. `git diff --check` and
+  the changed-source privacy/secret scan passed. Interactive visual QA was not
+  available because no in-app or extension browser was connected.
+
 # Onboarding: a two-minute, agent-driven install
 
 ## Review fixes (2026-09-03)

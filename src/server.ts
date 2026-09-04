@@ -27,7 +27,7 @@ import {
   setupAgentMail,
 } from "./services/agentmail.js"
 import { handleInboundEmail } from "./services/email-inbound.js"
-import { connectConfiguredServer, disconnectConfiguredServer } from "./services/connect-server.js"
+import { disconnectConfiguredServer } from "./services/connect-server.js"
 import { addExampleJig, listExampleJigs } from "./services/example-jigs.js"
 import { handleWebhook } from "./scheduler/webhooks.js"
 import { getSchedule, listAllSchedules, setScheduleEnabled, listAuthorizedSenders, addAuthorizedSender, removeAuthorizedSender, listToolPermissions, setToolPermission, type ToolPermissionPolicy } from "./db.js"
@@ -69,6 +69,7 @@ import {
 } from "./server/handlers/admin.js"
 import {
   handleCreateCustomConnection,
+  handleConnectConnection,
   handleGetConnection,
   handleGetConnections,
 } from "./server/handlers/connections.js"
@@ -434,9 +435,7 @@ export function createApiServer(port: number) {
           case "getConnection":
             return handleGetConnection(route.params.name)
           case "connectConnection": {
-            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
-            const body = await req.json().catch(() => ({})) as { credentials?: Record<string, string> }
-            return apiJson("connectConnection", await connectConfiguredServer(route.params.name, { credentials: body?.credentials, signal: req.signal }))
+            return handleConnectConnection(req, route.params.name)
           }
           case "disconnectConnection": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)

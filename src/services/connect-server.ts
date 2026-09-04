@@ -47,7 +47,7 @@ export function isConnectInProgress(serverName: string): boolean {
 
 export async function connectConfiguredServer(
   serverName: string,
-  input: { credentials?: Record<string, string>; signal?: AbortSignal } = {}
+  input: { credentials?: Record<string, string>; signal?: AbortSignal; requestOrigin?: string } = {}
 ): Promise<ConnectServerResult> {
   const configs = await loadServerConfigs()
   const rawConfig = configs[serverName]
@@ -98,7 +98,7 @@ export async function connectConfiguredServer(
   if (!detached) {
     const oauthController = new AbortController()
     const oauthTimeout = setTimeout(() => oauthController.abort(), 10 * 60_000)
-    detached = runConnectToCompletion(serverName, rawConfig, config, oauthController.signal)
+    detached = runConnectToCompletion(serverName, rawConfig, config, oauthController.signal, input.requestOrigin)
       .catch((err) => {
         lastConnectError = err?.message ?? String(err)
         console.error(`[connection] ${serverName} failed:`, lastConnectError)
@@ -199,9 +199,10 @@ async function runConnectToCompletion(
   rawConfig: Awaited<ReturnType<typeof loadServerConfigs>>[string],
   config: Awaited<ReturnType<typeof getServerConfig>>,
   signal?: AbortSignal,
+  requestOrigin?: string,
 ): Promise<ConnectServerSuccess> {
   // Explicit connect flow — a human is driving it, so browser re-auth is OK.
-  const connection = await connectServer(serverName, config, { signal, interactive: true })
+  const connection = await connectServer(serverName, config, { signal, interactive: true, requestOrigin })
   try {
     let tools = await discoverTools(connection, { signal })
 

@@ -68,6 +68,26 @@ describe("JigOAuthProvider SQLite storage", () => {
     expect(await provider.clientInformation()).toBeUndefined()
   })
 
+  it("uses the dashboard request origin for hosted OAuth when the platform domain is missing", () => {
+    const keys = ["JIG_PUBLIC_URL", "RAILWAY_ENVIRONMENT_ID", "RAILWAY_PROJECT_ID", "RAILWAY_PUBLIC_DOMAIN"] as const
+    const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]))
+    for (const key of keys) delete process.env[key]
+    process.env.RAILWAY_ENVIRONMENT_ID = "env_test"
+
+    try {
+      const provider = new JigOAuthProvider("composio", true, "https://jig-example.up.railway.app")
+      const callback = "https://jig-example.up.railway.app/api/oauth/callback"
+      expect(provider.redirectUrl).toBe(callback)
+      expect(provider.clientMetadata.redirect_uris).toEqual([callback])
+    } finally {
+      for (const key of keys) {
+        const value = previous[key]
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+    }
+  })
+
   it("round-trips the PKCE code verifier", async () => {
     const provider = new JigOAuthProvider("composio")
     const verifier = "random-pkce-verifier-string-xyz123"

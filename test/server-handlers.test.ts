@@ -14,7 +14,7 @@ import {
   handleListVersionsV2,
   handleRestoreToPending,
 } from "../src/server/handlers/versions.js"
-import { handleGetConnection, handleGetConnections } from "../src/server/handlers/connections.js"
+import { handleConnectConnection, handleGetConnection, handleGetConnections } from "../src/server/handlers/connections.js"
 import { handleHealth, handleOAuthCallback } from "../src/server/handlers/auth.js"
 import { getActiveCode, deleteJig, writePending } from "../src/services/jig-store.js"
 import { seedJig } from "./_fixtures.js"
@@ -114,6 +114,32 @@ describe("version handlers", () => {
 })
 
 describe("connection handlers", () => {
+  it("passes the dashboard's forwarded origin into a hosted OAuth connect", async () => {
+    const received: { name: string; requestOrigin?: string; credentials?: Record<string, string> }[] = []
+    const req = new Request("http://127.0.0.1:4173/api/connections/composio/connect", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-forwarded-host": "jig-example.up.railway.app",
+        "x-forwarded-proto": "https",
+      },
+      body: JSON.stringify({ credentials: { account: "example" } }),
+    })
+
+    const res = await handleConnectConnection(req, "composio", async (name, input) => {
+      if (!input) throw new Error("Expected connection options")
+      received.push({ name, requestOrigin: input.requestOrigin, credentials: input.credentials })
+      return { ok: true, server: name, toolCount: 0, tools: [] }
+    })
+
+    expect(res.status).toBe(200)
+    expect(received).toEqual([{
+      name: "composio",
+      requestOrigin: "https://jig-example.up.railway.app",
+      credentials: { account: "example" },
+    }])
+  })
+
   it("reports the fixture servers as connected with their tool counts", async () => {
     const connections = await body(await handleGetConnections())
     const byName = Object.fromEntries(connections.map((c: any) => [c.name, c]))

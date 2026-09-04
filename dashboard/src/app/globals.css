@@ -247,11 +247,36 @@ a:focus-visible {
   filter: drop-shadow(0 0 6px rgba(110, 190, 255, 0.22));
   animation: text-shimmer 2.4s linear infinite;
 }
+
+/* One-shot confirmation when an authorization completed in another tab. */
+@keyframes setup-step-approved {
+  0% {
+    border-color: rgba(52, 211, 153, 0.7);
+    background-color: rgba(16, 185, 129, 0.16);
+    box-shadow: inset 0 0 0 1px rgba(52, 211, 153, 0.16), 0 0 22px rgba(16, 185, 129, 0.12);
+  }
+  100% {
+    border-color: var(--border);
+    background-color: #0b0b0d;
+    box-shadow: inset 0 0 0 1px rgba(52, 211, 153, 0), 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+.setup-step-approved {
+  animation: setup-step-approved 1.8s ease-out both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .text-shimmer {
     animation: none;
     -webkit-text-fill-color: var(--text-muted);
     color: var(--text-muted);
+  }
+  .setup-step-approved {
+    animation: none;
+    transition: none;
+    border-color: rgba(52, 211, 153, 0.55);
+    background-color: rgba(16, 185, 129, 0.1);
+    box-shadow: inset 0 0 0 1px rgba(52, 211, 153, 0.12);
   }
 }
 

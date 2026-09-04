@@ -94,7 +94,7 @@ async function connectClient(
 export async function connectServer(
   name: string,
   config: ServerConfig & { type: "stdio" | "remote" },
-  options: { signal?: AbortSignal; interactive?: boolean } = {}
+  options: { signal?: AbortSignal; interactive?: boolean; requestOrigin?: string } = {}
 ): Promise<McpConnection> {
   throwIfAborted(options.signal)
   const client = new Client({ name: "jig", version: "0.1.0" })
@@ -162,10 +162,10 @@ async function connectWithHeaders(
 async function connectWithOAuth(
   name: string,
   config: ServerConfig & { type: "remote" },
-  options: { signal?: AbortSignal; interactive?: boolean } = {}
+  options: { signal?: AbortSignal; interactive?: boolean; requestOrigin?: string } = {}
 ): Promise<McpConnection> {
   throwIfAborted(options.signal)
-  const authProvider = new JigOAuthProvider(name, options.interactive ?? false)
+  const authProvider = new JigOAuthProvider(name, options.interactive ?? false, options.requestOrigin)
   const url = new URL(config.url)
   const client = new Client({ name: "jig", version: "0.1.0" })
   const transport = new StreamableHTTPClientTransport(url, {

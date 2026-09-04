@@ -18,6 +18,7 @@ export function fixJigPrompt({ origin, jigId, step, error }: { origin: string; j
   return `In my Jig checkout paired to ${origin}, the jig "${jigId}" failed at step "${step}" with: ${error.trim()}. ${editTail(jigId, "fix it")}`
 }
 
-export function newJigPrompt({ origin }: { origin: string }) {
-  return `In my Jig checkout paired to ${origin}, create a jig "<id>": <what it should do>. Run \`bun run jig types\`, read SKILL.md, write <id>.ts, push it with \`bun run jig edit <id> --file=<id>.ts\`, then run \`bun run jig run <id> --dry-run\`. ${PAIRING_HINT}`
+/** Placeholders by default; pass `id` and `description` for a prompt the agent can run as-is. */
+export function newJigPrompt({ origin, id = "<id>", description = "<what it should do>" }: { origin: string; id?: string; description?: string }) {
+  return `In my Jig checkout paired to ${origin}, create a jig "${id}": ${description}. Run \`bun run jig types\`, read SKILL.md, write ${id}.ts, push it with \`bun run jig edit ${id} --file=${id}.ts\`, then run \`bun run jig run ${id} --dry-run\`. ${PAIRING_HINT}`
 }

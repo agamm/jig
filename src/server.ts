@@ -27,7 +27,7 @@ import {
 } from "./services/agentmail.js"
 import { handleInboundEmail } from "./services/email-inbound.js"
 import { disconnectConfiguredServer } from "./services/connect-server.js"
-import { addExampleJig, listExampleJigs } from "./services/example-jigs.js"
+import { listExampleJigs } from "./services/example-jigs.js"
 import { handleWebhook } from "./scheduler/webhooks.js"
 import { getSchedule, listAllSchedules, setScheduleEnabled, listAuthorizedSenders, addAuthorizedSender, removeAuthorizedSender, listToolPermissions, setToolPermission, type ToolPermissionPolicy } from "./db.js"
 import { startScheduler } from "./scheduler/index.js"
@@ -246,21 +246,6 @@ export function createApiServer(port: number) {
           }
           case "listExamples":
             return apiJson("listExamples", listExampleJigs())
-          case "addExample": {
-            if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
-            try {
-              const jigId = await addExampleJig(route.params.id)
-              return apiJson("addExample", { ok: true, jigId })
-            } catch (error: any) {
-              if (error?.message?.startsWith("Jig already exists:")) {
-                throw new ApiError(409, error.message)
-              }
-              if (error?.message?.startsWith("Example jig not found:") || error?.message === "Invalid example jig id") {
-                throw new ApiError(404, error.message)
-              }
-              throw error
-            }
-          }
           case "getJig": {
             if (req.method === "DELETE") return handleDeleteJig(route.params.id)
             ensureJigExists(route.params.id)

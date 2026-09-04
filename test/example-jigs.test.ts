@@ -12,7 +12,10 @@ describe("example jig catalog", () => {
     const ids = examples.map((example) => example.id)
 
     for (const id of EXAMPLE_IDS) expect(ids).toContain(id)
-    expect(examples.every((example) => example.steps.length > 0)).toBe(true)
+    for (const example of examples) {
+      expect(example.prompt.length).toBeGreaterThan(0)
+      expect(example.prompt).toContain(`Trigger: ${example.trigger}`)
+    }
     expect(examples.every((example) => example.trigger.length > 0)).toBe(true)
     expect(examples.every((example) => example.connections.length > 0)).toBe(true)
     expect(read("weekly-update")).not.toContain("params:")

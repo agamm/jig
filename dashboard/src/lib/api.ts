@@ -1,5 +1,4 @@
 import type {
-  AddExampleJigResponse,
   ApiEndpointKey,
   ApiResponse,
   Connection,
@@ -107,10 +106,6 @@ export function unlock(password: string): Promise<ApiResponse<"unlock">> {
 
 export function fetchExamples(): Promise<ExampleJig[]> {
   return fetchApi("listExamples", "/api/examples")
-}
-
-export function addExampleJig(id: string): Promise<AddExampleJigResponse> {
-  return fetchApi("addExample", `/api/examples/${encodeURIComponent(id)}/add`, { method: "POST" })
 }
 
 export function fetchJig(jigId: string): Promise<JigData> {

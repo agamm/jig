@@ -12,6 +12,7 @@ import { ShimmerText } from "@/components/shimmer-text";
 import { Spinner } from "@/components/spinner";
 import { Notice } from "@/components/state-panel";
 import { toast } from "@/components/toast";
+import { newJigPrompt } from "@/lib/agent-prompts";
 import {
   completeOnboarding,
   createPairingCode,
@@ -596,7 +597,7 @@ function Section({ label, children }: { label: string; children: ReactNode }) {
  * the model, the mailbox and the runner in one go, and the proof arrives in
  * your inbox rather than as another status pill.
  */
-const FIRST_JIG_PROMPT = "create a jig that sends me hello world via email";
+const FIRST_JIG = { id: "hello-world-email", description: "send me hello world via email" };
 
 /** A short burst, then the first-jig card into view once the status refresh has mounted it. */
 function celebrate() {
@@ -612,20 +613,22 @@ function celebrate() {
 }
 
 function FirstJig() {
+  const prompt = newJigPrompt({ origin: window.location.origin, ...FIRST_JIG });
   return (
     <section id="first-jig" className="rounded-xl border border-emerald-500/25 bg-emerald-500/[0.05] p-5 shadow-[0_0_0_1px_rgba(16,185,129,0.04)]">
       <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-emerald-300/80">Ready</span>
       <h3 className="mt-1.5 text-[17px] font-semibold tracking-[-0.01em] text-[#ededed]">Everything is connected. Try it.</h3>
       <p className="mt-1.5 max-w-[62ch] text-[12px] leading-relaxed text-[var(--text-dim)]">
-        Give this to your coding agent in the checkout paired below, then approve the version it pushes. It runs a
-        model call, sends real mail through your inbox, and lands in your inbox as proof the whole path works.
+        Paste this into Claude Code or Codex in the checkout paired below. It names this instance and the push
+        command, so the agent needs nothing else. Approve the version it pushes: it runs a model call, sends real
+        mail through your inbox, and lands there as proof the whole path works.
       </p>
       <div className="mt-3 flex items-center gap-2">
         <code className="flex-1 truncate rounded-md border border-[#1f1f23] bg-[#111113] px-3 py-2 font-mono text-[11px] text-[#ededed]">
-          {FIRST_JIG_PROMPT}
+          {prompt}
         </code>
         <CopyButton
-          text={FIRST_JIG_PROMPT}
+          text={prompt}
           toast="Prompt copied. Paste it into Claude Code or Codex in your paired checkout."
         />
         <a

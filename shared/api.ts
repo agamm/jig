@@ -207,7 +207,7 @@ export interface ExampleJig {
   trigger: string
   description: string
   connections: string[]
-  steps: JigStep[]
+  prompt: string
 }
 
 export type ConnectConnectionResponse =
@@ -450,11 +450,6 @@ export interface ResetLocalStateResponse {
   ok: true
   deletedJigs: string[]
   disconnectedConnections?: string[]
-}
-
-export interface AddExampleJigResponse {
-  ok: true
-  jigId: string
 }
 
 export interface DeleteJigResponse {
@@ -745,7 +740,6 @@ export interface ApiContracts {
   evalTool: ApiContract<ToolEvalRequest, ToolEvalResponse>
   verifyConnection: ApiContract<void, VerifyConnectionResponse>
   listExamples: ApiContract<void, ExampleJig[]>
-  addExample: ApiContract<void, AddExampleJigResponse>
   getJig: ApiContract<void, JigData>
   deleteJig: ApiContract<void, DeleteJigResponse>
   runJig: ApiContract<{ dryRun: boolean }, StartRunResponse>

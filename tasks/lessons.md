@@ -37,7 +37,7 @@ the platform-ID-without-domain state at the HTTP boundary and callback builder.
 
 **What happened:** `examples/weekly-update.ts` read a `templates/` file that does not exist in the repo, and two examples imported the `workspace` connection, disabled in `servers/default.json` since 2026-06-15. `addExampleJig` writes an example straight to active with no review gate, so both would have installed a jig that could never run. The test that covered examples asserted the broken tool names, so it stayed green.
 
-**Rule:** Run `validateJigFile` and `validateTsFile` (the same checks the runtime uses) over every example after touching one. Assert the RULE (connection is enabled in the registry, output is inside a step), never the current spelling of one example, or the test pins the bug in place.
+**Rule:** Run `validateJigFile` and `validateTsFile` (the same checks the runtime uses) over every example after touching one. Assert the RULE (connection is enabled in the registry, output is inside a step), never the current spelling of one example, or the test pins the bug in place. Examples are no longer installed (the dashboard lists them as prompts to copy), but the files remain the reference jig fed to the headless loop, so the rule still applies.
 
 ## One Job, One Command Name
 

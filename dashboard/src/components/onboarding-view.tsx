@@ -1,9 +1,7 @@
-import { useState } from "react";
 import type { Connection, ExampleJig } from "@shared/api";
-import { Button } from "@/components/button";
+import { CopyButton } from "@/components/copy-button";
 import { ServiceIcon } from "@/components/service-icon";
 import { ConnectionTag } from "@/components/connection-tag";
-import { RunSteps } from "@/components/run-steps";
 import { Notice } from "@/components/state-panel";
 import { isRecommendedConnection, sortConnectionsForDisplay } from "@/lib/connection-catalog";
 
@@ -15,38 +13,20 @@ function prettifyConnectionName(name: string): string {
   return name.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-function formatExampleActionError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  if (message === "Unknown API route") {
-    return "The running Jig API is older than this dashboard build. Restart `jig start` and try adding the example again.";
-  }
-  return message || "Failed to add example jig.";
-}
-
 export function OnboardingView({
   onConnectionClick,
-  onExampleAdd,
-  onExampleOpen,
   connectedCount = 0,
   connections = [],
   examples = [],
-  existingJigIds = [],
   examplesErrorMessage,
 }: {
   onConnectionClick?: (name: string) => void;
-  onExampleAdd?: (id: string) => Promise<void> | void;
-  onExampleOpen?: (id: string) => void;
   connectedCount?: number;
   connections?: Connection[];
   examples?: ExampleJig[];
-  existingJigIds?: string[];
   examplesErrorMessage?: string;
 }) {
-  const [expandedExampleId, setExpandedExampleId] = useState<string | null>(null);
-  const [addingExampleId, setAddingExampleId] = useState<string | null>(null);
-  const [exampleStatus, setExampleStatus] = useState<string | null>(null);
   const cards = pickConnectionCards(connections);
-  const existing = new Set(existingJigIds);
 
   return (
     <div className="mx-auto max-w-xl space-y-6 pt-8" style={{ animation: "fade-up 0.3s ease" }}>
@@ -88,87 +68,38 @@ export function OnboardingView({
         <div className="space-y-3">
           <div className="text-center">
             <h3 className="text-[12px] font-medium uppercase tracking-wider text-[#888]">Example Jigs</h3>
-            <p className="mt-1 text-[11px] text-[#555]">These live in the repo&apos;s <code className="text-[#888]">examples/</code> directory, so reset leaves them intact.</p>
+            <p className="mt-1 text-[11px] text-[#555]">Starter prompts for your coding agent. Copy one into Claude Code or Codex in your paired checkout.</p>
           </div>
           {examplesErrorMessage ? (
             <Notice tone="warning" title="Couldn’t load examples">
               {examplesErrorMessage}
             </Notice>
           ) : null}
-          {exampleStatus && (
-            <Notice tone={exampleStatus.startsWith("Added ") ? "success" : "warning"}>
-              {exampleStatus}
-            </Notice>
-          )}
           <div className="space-y-3">
-            {examples.map((example) => {
-              const expanded = expandedExampleId === example.id;
-              const exists = existing.has(example.id);
-              const adding = addingExampleId === example.id;
-              return (
-                <div
-                  key={example.id}
-                  className="rounded-lg border border-[#1f1f23] bg-[#111113] p-4"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-[13px] font-medium text-[#ededed]">{example.name}</p>
-                      <p className="mt-1 text-[11px] leading-relaxed text-[#666]">{example.description}</p>
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        <span className="rounded-full border border-[#1f1f23] bg-[#0d0d0f] px-2 py-0.5 text-[10px] font-mono text-[#888]">
-                          {example.trigger}
-                        </span>
-                        {example.connections.map((connection) => (
-                          <ConnectionTag key={`${example.id}:${connection}`} name={connection} />
-                        ))}
-                      </div>
-                    </div>
-                    <div className="shrink-0 flex items-center gap-2">
-                      <Button
-                        onClick={() => {
-                          setExpandedExampleId(expanded ? null : example.id);
-                        }}
-                        variant="subtle"
-                        size="sm"
-                      >
-                        {expanded ? "Hide Steps" : "View Steps"}
-                      </Button>
-                      <Button
-                        onClick={async () => {
-                          setExampleStatus(null);
-                          if (exists) {
-                            onExampleOpen?.(example.id);
-                            return;
-                          }
-                          try {
-                            setAddingExampleId(example.id);
-                            await onExampleAdd?.(example.id);
-                            setExampleStatus(`Added ${example.name}.`);
-                          } catch (error: unknown) {
-                            setExampleStatus(formatExampleActionError(error));
-                          } finally {
-                            setAddingExampleId(null);
-                          }
-                        }}
-                        disabled={adding}
-                        variant={exists ? "subtle" : "successOutline"}
-                        size="sm"
-                      >
-                        {adding ? "Adding…" : exists ? "Open" : "Add Example"}
-                      </Button>
+            {examples.map((example) => (
+              <div key={example.id} className="rounded-lg border border-[#1f1f23] bg-[#111113] p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[13px] font-medium text-[#ededed]">{example.name}</p>
+                    <p className="mt-1 text-[11px] leading-relaxed text-[#666]">{example.description}</p>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <span className="rounded-full border border-[#1f1f23] bg-[#0d0d0f] px-2 py-0.5 text-[10px] font-mono text-[#888]">
+                        {example.trigger}
+                      </span>
+                      {example.connections.map((connection) => (
+                        <ConnectionTag key={`${example.id}:${connection}`} name={connection} />
+                      ))}
                     </div>
                   </div>
-                  {expanded && (
-                    <div className="mt-3">
-                      <RunSteps
-                        steps={example.steps}
-                        mode={{ type: "idle" }}
-                      />
-                    </div>
-                  )}
+                  <CopyButton
+                    className="shrink-0"
+                    text={example.prompt}
+                    label="Copy prompt"
+                    toast="Prompt copied. Paste it into Claude Code or Codex in your paired checkout."
+                  />
                 </div>
-              );
-            })}
+              </div>
+            ))}
           </div>
         </div>
       )}

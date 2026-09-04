@@ -44,7 +44,6 @@ const ROUTES: [pattern: string, handler: string][] = [
 
   ["/api/jigs", "listJigs"],
   ["/api/examples", "listExamples"],
-  ["/api/examples/:id/add", "addExample"],
 
   ["/api/connections", "connections"],
   ["/api/connections/custom", "createCustomConnection"],

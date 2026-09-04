@@ -62,7 +62,7 @@ export function DangerSettings({ onReset }: { onReset?: () => Promise<void> | vo
       <ConfirmDialog
         open={confirmResetOpen}
         title="Start from scratch?"
-        message="This will delete all local jig files, clear the local SQLite database, and disconnect saved connections on this machine. Example jigs in examples/ are kept. The app will return to onboarding."
+        message="This will delete all local jig files, clear the local SQLite database, and disconnect saved connections on this machine. The app will return to onboarding."
         confirmLabel="Delete Everything"
         destructive
         loading={resetting}
@@ -115,8 +115,7 @@ export function DangerSettings({ onReset }: { onReset?: () => Promise<void> | vo
         <div>
           <p className="text-[13px] text-rose-100">Start from scratch</p>
           <p className="mt-1 text-[11px] leading-relaxed text-rose-100/60">
-            Deletes all local jigs, clears saved connection auth on this machine, and returns the dashboard to onboarding. Example jigs in{" "}
-            <code className="text-rose-100/80">examples/</code> are preserved.
+            Deletes all local jigs, clears saved connection auth on this machine, and returns the dashboard to onboarding.
           </p>
         </div>
         <div className="flex items-center gap-2">

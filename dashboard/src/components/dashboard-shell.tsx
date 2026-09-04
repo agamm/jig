@@ -25,7 +25,7 @@ import { isRecommendedConnection, sortConnectionsForDisplay } from "@/lib/connec
 import { useConnectionCatalog } from "@/lib/hooks";
 import { useModels, useConnections, useHealth, useOpenRouterCredits } from "@/lib/swr";
 import { APP_VERSION } from "@/lib/version";
-import { addExampleJig, createCustomConnection, fetchModelUpgrades } from "@/lib/api";
+import { createCustomConnection, fetchModelUpgrades } from "@/lib/api";
 import type { Connection, DataStorageHealth, ExampleJig, ModelUpgradeSuggestion } from "@shared/api";
 
 /**
@@ -230,17 +230,9 @@ export function DashboardShell({
               setView("connections");
               setSelectedConnection(name);
             }}
-            onExampleAdd={async (id) => {
-              const result = await addExampleJig(id);
-              await refreshJigs(result.jigId);
-            }}
-            onExampleOpen={(id) => {
-              openJigDetail(id);
-            }}
             connectedCount={connectedCount}
             connections={availableConnections}
             examples={examples}
-            existingJigIds={jigs.map((jig) => jig.id)}
             examplesErrorMessage={examplesErrorMessage}
           />
         )}
@@ -653,7 +645,6 @@ export function DashboardShell({
                         closeDetail();
                         setView(null);
                         await mutate("jigs", [], false);
-                        await mutate("examples");
                         await mutate("connections");
                       }}
                     />

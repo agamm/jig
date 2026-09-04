@@ -41,12 +41,6 @@ describe("router", () => {
     expect(r?.handler).toBe("listExamples")
   })
 
-  it("matches the add-example route", () => {
-    const r = matchRoute("/api/examples/weekly-update/add")
-    expect(r?.handler).toBe("addExample")
-    expect(r?.params.id).toBe("weekly-update")
-  })
-
   it("matches the agentmail settings routes", () => {
     expect(matchRoute("/api/settings/agentmail")?.handler).toBe("agentMailSettings")
     expect(matchRoute("/api/settings/agentmail/setup")?.handler).toBe("agentMailSetup")

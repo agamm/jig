@@ -2,9 +2,6 @@ import { existsSync, readFileSync, readdirSync } from "fs"
 import type { ExampleJig } from "../../shared/api.js"
 import { EXAMPLES_DIR } from "../config/paths.js"
 import { prettifyId, extractConnections, extractTrigger } from "../domain/jig-source.js"
-import { parseStepsFromSource } from "../derive-steps.js"
-import { isValidJigId } from "../domain/jig-id.js"
-import { approvePending, getJigRow, writePending } from "./jig-store.js"
 
 function extractDescription(code: string, fallback: string): string {
   const summaryMatch = code.match(/^\s*\/\/\s*(.+)$/m)
@@ -22,6 +19,31 @@ function extractDescription(code: string, fallback: string): string {
   return fallback
 }
 
+/** Consecutive non-empty `//` lines opening the file: the summary, then the "Uses ..." sentence. */
+function headerComments(code: string): string[] {
+  const lines: string[] = []
+  for (const line of code.split("\n")) {
+    const text = line.match(/^\s*\/\/\s*(.*)$/)?.[1].trim()
+    if (!text) break
+    lines.push(text)
+  }
+  return lines
+}
+
+/** Exactly one trailing period, whether or not the source line had one. */
+function sentence(text: string): string {
+  return `${text.replace(/[.\s]+$/, "")}.`
+}
+
+/** A copy-ready brief for a coding agent: what the jig does, when it runs, what it connects to. */
+function buildPrompt(example: Omit<ExampleJig, "prompt">, uses: string | undefined): string {
+  const parts = [`Create a jig "${example.id}": ${sentence(example.description)}`]
+  if (uses) parts.push(sentence(uses))
+  parts.push(`Trigger: ${example.trigger}.`)
+  if (example.connections.length > 0) parts.push(`Connections: ${example.connections.join(", ")}.`)
+  return parts.join(" ")
+}
+
 export function listExampleJigs(): ExampleJig[] {
   if (!existsSync(EXAMPLES_DIR)) return []
 
@@ -33,30 +55,13 @@ export function listExampleJigs(): ExampleJig[] {
       const filePath = `${EXAMPLES_DIR}/${id}.ts`
       const code = readFileSync(filePath, "utf-8")
       const name = prettifyId(id)
-      return {
+      const example = {
         id,
         name,
         trigger: extractTrigger(code) || "Manual",
         description: extractDescription(code, `${name} example jig.`),
         connections: extractConnections(code),
-        steps: parseStepsFromSource(code),
       }
+      return { ...example, prompt: buildPrompt(example, headerComments(code)[1]) }
     })
-}
-
-export function readExampleJigSource(id: string): string {
-  if (!isValidJigId(id)) throw new Error("Invalid example jig id")
-  const filePath = `${EXAMPLES_DIR}/${id}.ts`
-  if (!existsSync(filePath)) throw new Error(`Example jig not found: ${id}`)
-  return readFileSync(filePath, "utf-8")
-}
-
-export async function addExampleJig(id: string): Promise<string> {
-  const code = readExampleJigSource(id)
-  if (getJigRow(id)) throw new Error(`Jig already exists: ${id}`)
-  // Install the example as an immediately-active version. No pending — the user
-  // explicitly chose to add a curated example, no review gate needed.
-  writePending({ jigId: id, code, author: "cli", message: "imported from examples" })
-  approvePending(id)
-  return id
 }

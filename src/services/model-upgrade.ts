@@ -1,12 +1,12 @@
 /**
  * Computes "equivalent but better" model upgrade suggestions for the user's
- * main / editor / fast slots, and applies them on approval.
+ * main / fast slots, and applies them on approval.
  *
  * Matching rule: a NEWER model from one of the foundational labs, at no more
  * than +20% of the current model's blended price (cross-provider allowed, the
  * best model in your price band often isn't the same family). Free-tier models
- * are never upgraded to paid ones silently. The agentic main/editor slots also
- * require `supportsTools` so the agent loop keeps working.
+ * are never upgraded to paid ones silently. The agentic main slot also
+ * requires `supportsTools` so the agent loop keeps working.
  *
  * Dismissals are persisted in a single settings row so a suggestion the user
  * said "no" to once doesn't keep nagging them on every dashboard open.
@@ -21,7 +21,6 @@ import {
 } from "../../shared/api.js"
 import { getSetting, setSetting } from "../db.js"
 import {
-  getEditorModel,
   getFastModel,
   getMainModel,
   setModelOverrides,
@@ -47,7 +46,6 @@ type DismissedMap = Partial<Record<ModelSlot, string[]>>
 function getSlotModel(slot: ModelSlot): string {
   switch (slot) {
     case "main": return getMainModel()
-    case "editor": return getEditorModel()
     case "fast": return getFastModel()
   }
 }
@@ -150,8 +148,8 @@ export function pickBest(
     // Provenance gate, see FOUNDATIONAL_PROVIDERS.
     if (!isFoundationalProvider(m.id)) return false
     if (isPrereleaseBuild(m.id)) return false
-    // Agentic slots run tool-calling loops — a non-tool model would break them.
-    if ((slot === "main" || slot === "editor") && !m.supportsTools) return false
+    // The main slot runs tool-calling loops; a non-tool model would break them.
+    if (slot === "main" && !m.supportsTools) return false
     // Never cross the free/paid line in either direction. Upward is a surprise
     // bill; downward looks like a saving but free tiers are rate-limited, which
     // an unattended cron jig experiences as random failure rather than thrift.
@@ -199,7 +197,6 @@ async function countRefsForAllSlots(
 ): Promise<Record<ModelSlot, SlotCounts>> {
   const counts: Record<ModelSlot, SlotCounts> = {
     main: { override: 0, step: 0, code: 0 },
-    editor: { override: 0, step: 0, code: 0 },
     fast: { override: 0, step: 0, code: 0 },
   }
   const summaries = listJigs()
@@ -232,7 +229,6 @@ export async function computeUpgradeSuggestions(): Promise<ModelUpgradesResponse
   // for slots that actually have a suggestion — cheaper when nothing's new.
   const currentBySlot: Record<ModelSlot, string> = {
     main: getSlotModel("main"),
-    editor: getSlotModel("editor"),
     fast: getSlotModel("fast"),
   }
 

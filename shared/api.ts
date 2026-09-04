@@ -258,11 +258,9 @@ export interface ModelInfo {
 
 export interface ModelCatalog {
   main: ModelInfo
-  editor: ModelInfo
   fast: ModelInfo
   defaults?: {
     main: ModelInfo
-    editor: ModelInfo
     fast: ModelInfo
   }
 }
@@ -340,12 +338,11 @@ export interface DataStorageHealth {
   action?: string
 }
 
-export const MODEL_SLOTS = ["main", "editor", "fast"] as const
+export const MODEL_SLOTS = ["main", "fast"] as const
 export type ModelSlot = (typeof MODEL_SLOTS)[number]
 
 export interface ModelOverrideInput {
   main?: string
-  editor?: string
   fast?: string
 }
 

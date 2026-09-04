@@ -40,7 +40,7 @@ const SORT_LABELS: Record<SortKey, string> = {
   recency: "Newest",
 };
 
-const SLOT_ORDER: ModelSlot[] = ["main", "editor", "fast"];
+const SLOT_ORDER: ModelSlot[] = ["main", "fast"];
 const PRICE_CEILING_USD_PER_M = 5;
 const FAST_PRICE_CEILING_USD_PER_M = 1;
 
@@ -48,10 +48,6 @@ export const SLOT_META: Record<ModelSlot, { label: string; hint: string }> = {
   main: {
     label: "Main",
     hint: `Most popular agentic workflow models — tool-calling required, under $${PRICE_CEILING_USD_PER_M}/M blended.`,
-  },
-  editor: {
-    label: "Editor",
-    hint: `Most popular coding models — tool-calling + reasoning preferred, under $${PRICE_CEILING_USD_PER_M}/M blended.`,
   },
   fast: {
     label: "Fast",
@@ -90,7 +86,6 @@ function isNitro(id: string): boolean {
 // Role scoring — purely from API-provided fields
 //
 // Main:   from a foundational lab, must call tools, blended price < $5, not free.
-// Editor: same hard filter; reasoning-capable heavily preferred as tiebreaker.
 // Fast:   blended price < $1; :nitro variants get a strong boost.
 // Release date (`createdAt`) orders what is left, so newer generations rise.
 //
@@ -125,15 +120,6 @@ function scoreMain(m: OpenRouterModelInfo): number {
   return baseScore(m);
 }
 
-function scoreEditor(m: OpenRouterModelInfo): number {
-  if (!m.supportsTools) return -Infinity;
-  if (m.blendedPriceUsdPerM <= 0) return -Infinity;
-  if (m.blendedPriceUsdPerM >= PRICE_CEILING_USD_PER_M) return -Infinity;
-  let s = baseScore(m);
-  if (m.supportsReasoning) s += 5_000;
-  return s;
-}
-
 function scoreFast(m: OpenRouterModelInfo): number {
   if (m.blendedPriceUsdPerM <= 0) return -Infinity;
   if (m.blendedPriceUsdPerM >= FAST_PRICE_CEILING_USD_PER_M) return -Infinity;
@@ -144,7 +130,6 @@ function scoreFast(m: OpenRouterModelInfo): number {
 
 const SCORERS: Record<ModelSlot, (m: OpenRouterModelInfo) => number> = {
   main: scoreMain,
-  editor: scoreEditor,
   fast: scoreFast,
 };
 
@@ -228,7 +213,7 @@ export function ModelsSettings({ autofocusSlot }: { autofocusSlot?: ModelSlot } 
   const { data: current, isLoading: modelsLoading } = useModels();
   const [catalog, setCatalog] = useState<OpenRouterCatalogResponse | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
-  const [draft, setDraft] = useState<Record<ModelSlot, string>>({ main: "", editor: "", fast: "" });
+  const [draft, setDraft] = useState<Record<ModelSlot, string>>({ main: "", fast: "" });
   const [activeSlot, setActiveSlot] = useState<ModelSlot>(autofocusSlot ?? "main");
   const [browseOpen, setBrowseOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -265,7 +250,7 @@ export function ModelsSettings({ autofocusSlot }: { autofocusSlot?: ModelSlot } 
 
   useEffect(() => {
     if (!current) return;
-    setDraft({ main: current.main.id, editor: current.editor.id, fast: current.fast.id });
+    setDraft({ main: current.main.id, fast: current.fast.id });
   }, [current]);
 
   useEffect(() => {
@@ -325,7 +310,7 @@ export function ModelsSettings({ autofocusSlot }: { autofocusSlot?: ModelSlot } 
 
   function resetToCurrent() {
     if (!current) return;
-    setDraft({ main: current.main.id, editor: current.editor.id, fast: current.fast.id });
+    setDraft({ main: current.main.id, fast: current.fast.id });
     setStatus(null);
   }
 
@@ -333,7 +318,6 @@ export function ModelsSettings({ autofocusSlot }: { autofocusSlot?: ModelSlot } 
     if (!current?.defaults) return;
     setDraft({
       main: current.defaults.main.id,
-      editor: current.defaults.editor.id,
       fast: current.defaults.fast.id,
     });
     setStatus(null);
@@ -495,7 +479,6 @@ export function ModelsSettings({ autofocusSlot }: { autofocusSlot?: ModelSlot } 
                         draft={draft}
                         savedIds={{
                           main: current.main.id,
-                          editor: current.editor.id,
                           fast: current.fast.id,
                         }}
                         activeSlot={activeSlot}

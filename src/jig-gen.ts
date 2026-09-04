@@ -6,7 +6,7 @@ import { join } from "path"
 import { existsSync, readFileSync } from "fs"
 import ts from "typescript"
 import { llm } from "./sdk/llm.js"
-import { getEditorModel } from "./config/models.js"
+import { getMainModel } from "./config/models.js"
 import { getServerConfig, loadServerConfigs } from "./mcp/config.js"
 import { EXAMPLES_DIR, PROJECT_ROOT, SCHEMAS_DIR } from "./config/paths.js"
 import { getImportedServers } from "./domain/source-analysis.js"
@@ -305,7 +305,6 @@ async function planJig(
     .join("\n")
 
   const result = await llm<{ servers: string[]; unknownServers: string[]; name: string; needsIntegration: boolean }>(
-    // Authoring-time planning uses the editor model, not the runtime main model.
     `Plan a workflow automation.
 
 ## Available servers (use ONLY these key names)
@@ -334,7 +333,7 @@ Important:
 - Never silently substitute a related-but-wrong server for a capability it does not actually have (respect each server's Hints about what its tools can and cannot see). If the workflow needs a data source or capability that NO listed server provides — e.g. it needs upcoming calendar events and no calendar-capable server is available — name that capability in "unknownServers" so the gap is surfaced to the user instead of quietly covered by the closest available tool
 - Servers whose Hints say they support authoring-time discovery (e.g. apify Store Actors) can cover many public-web/data tasks via discovery. When you select such a server, do NOT also put that data source in "unknownServers" — discovery resolves the concrete Actor next. Only use unknownServers for gaps no selected server can cover even via discovery`,
     {},
-    { schema: { servers: ["string"], unknownServers: ["string"], name: "string", needsIntegration: "boolean" }, model: getEditorModel() }
+    { schema: { servers: ["string"], unknownServers: ["string"], name: "string", needsIntegration: "boolean" }, model: getMainModel() }
   )
 
   const validServers = (result.servers || []).filter(s => s in serverConfigs)
@@ -431,7 +430,7 @@ Start by including ALL tools from the relevant servers. Then remove only tools t
 
 Return "tools": an array of tool name strings.`,
     {},
-    { schema: { tools: ["string"] }, model: getEditorModel() }
+    { schema: { tools: ["string"] }, model: getMainModel() }
   )
 
   const excludedTools = buildResolutions.flatMap((resolution) => resolution.excludeTools ?? [])

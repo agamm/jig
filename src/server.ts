@@ -192,10 +192,10 @@ export function createApiServer(port: number) {
           case "models": {
             if (req.method === "PUT") {
               const body = (await req.json().catch(() => ({}))) as {
-                main?: unknown; editor?: unknown; fast?: unknown
+                main?: unknown; fast?: unknown
               }
-              const patch: { main?: string; editor?: string; fast?: string } = {}
-              for (const k of ["main", "editor", "fast"] as const) {
+              const patch: { main?: string; fast?: string } = {}
+              for (const k of ["main", "fast"] as const) {
                 const v = body[k]
                 if (v === undefined) continue
                 if (typeof v !== "string") throw new ApiError(400, `${k} must be a string`)

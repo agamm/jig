@@ -629,7 +629,7 @@ export function DashboardShell({
                   {tab === "models" && (
                     <ModelsSettings
                       autofocusSlot={
-                        settingsFocus === "main" || settingsFocus === "editor" || settingsFocus === "fast"
+                        settingsFocus === "main" || settingsFocus === "fast"
                           ? settingsFocus
                           : undefined
                       }

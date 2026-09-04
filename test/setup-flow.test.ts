@@ -354,3 +354,24 @@ describe("main model probe", () => {
     expect(noKey.find((s) => s.id === "openrouter")!.fix).toBeUndefined()
   })
 })
+
+describe("transient model probe failures", () => {
+  const hiccup = { ok: false as const, model: "vendor/x", error: "Acme: upstream timeout", transient: true }
+
+  it("does not stop setup, and says the check was deferred", async () => {
+    const { io, events } = makeIO({ confirm: [true] })
+    const result = await runSetupFlow(io, makeBackend({ probeMainModel: async () => hiccup }))
+    expect(result.verified).toContain("openrouter")
+    const verified = events.find((e) => e.type === "verified" && e.id === "openrouter") as Extract<SetupEvent, { type: "verified" }>
+    expect(verified.summary).toMatch(/model check deferred/)
+    expect(events.some((e) => e.type === "step-failed")).toBe(false)
+  })
+
+  it("summarizeSetup keeps the step satisfied with no fix to click", async () => {
+    const state = await summarizeSetup(makeBackend({ probeMainModel: async () => hiccup }))
+    const step = state.find((s) => s.id === "openrouter")!
+    expect(step.satisfied).toBe(true)
+    expect(step.detail).toMatch(/deferred/)
+    expect(step.fix).toBeUndefined()
+  })
+})

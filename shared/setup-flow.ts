@@ -188,19 +188,21 @@ export async function summarizeSetup(backend: SetupBackend): Promise<SetupStepSt
   ])
 
   const probe = credits.ok
-    ? await backend.probeMainModel().catch((e: any) => ({ ok: false as const, model: "main model", error: `Could not check the main model: ${e?.message ?? e}` }))
+    ? await backend.probeMainModel().catch((e: any): ModelProbe => ({ ok: false, model: "main model", error: `Could not check the main model: ${e?.message ?? e}` }))
     : null
 
   const composio = connections.find((c) => c.name === "composio")
   const byId: Record<SetupStepId, { satisfied: boolean; detail: string; fix?: SetupFix }> = {
     openrouter: {
-      satisfied: credits.ok && probe?.ok === true,
+      satisfied: credits.ok && (probe?.ok === true || probe?.transient === true),
       detail: !credits.ok
         ? ((credits as { error?: string }).error ?? "No usable key yet.")
         : probe?.ok
           ? `${describeBalance((credits as { balance?: number }).balance)}, ${probe.model} answers`
-          : (probe?.error ?? "The main model did not answer."),
-      ...(probe && !probe.ok ? { fix: modelFix(probe) } : {}),
+          : probe?.transient
+            ? `${describeBalance((credits as { balance?: number }).balance)}; model check deferred, provider unavailable: ${probe.error}`
+            : (probe?.error ?? "The main model did not answer."),
+      ...(probe && !probe.ok && !probe.transient ? { fix: modelFix(probe) } : {}),
     },
     agentmail: {
       satisfied: Boolean(mail?.canSend && mail.owner),
@@ -307,7 +309,13 @@ async function runOpenRouterStep(io: SetupIO, backend: SetupBackend, options: Se
   // account (age confirmation, region, a retired id), so prove the model too.
   io.emit({ type: "verifying", id: "openrouter", detail: "checking the main model answers" })
   const probe = await backend.probeMainModel()
-  if (!probe.ok) throw new SetupStepError(probe.error, modelFix(probe))
+  if (!probe.ok && !probe.transient) throw new SetupStepError(probe.error, modelFix(probe))
+  if (!probe.ok) {
+    // An upstream hiccup is not the account's fault; say so and move on rather than stopping setup.
+    io.emit({ type: "instruction", message: `The model's provider was unavailable when checked (${probe.error}). The key and balance are fine; re-check later.` })
+    io.emit({ type: "verified", id: "openrouter", summary: `openrouter: ${describeBalance(balance)}, model check deferred`, level: "probe" })
+    return "verified"
+  }
   io.emit({ type: "verified", id: "openrouter", summary: `openrouter: ${describeBalance(balance)}, ${probe.model} answers`, level: "probe" })
   return "verified"
 }

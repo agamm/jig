@@ -738,7 +738,8 @@ export interface OpenRouterCredits {
 /** One minimal completion against the configured main model: does it answer for this account? */
 export type ModelProbe =
   | { ok: true; model: string }
-  | { ok: false; model: string; error: string; fixUrl?: string }
+  /** `transient`: a provider or network hiccup, not an account or model gate; setup notes it and continues. */
+  | { ok: false; model: string; error: string; fixUrl?: string; transient?: boolean }
 
 /**
  * Outcome of a direct code write. The code always lands as the pending version;

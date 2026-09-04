@@ -31,7 +31,7 @@ export interface RemoteManifest {
   /**
    * Signed admin session cookie (`jig-admin` value) from POST /api/unlock.
    * Issued by the remote's session.ts; HMAC-signed; default 30-day TTL.
-   * Populated by `jig debug login`; used by `jig debug run` / `jig debug tail`
+   * Populated by `jig pair` or `jig unlock`; used by every command that talks to the remote
    * to authenticate against admin-only endpoints.
    */
   session_cookie?: string

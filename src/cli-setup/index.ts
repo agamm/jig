@@ -256,68 +256,6 @@ export function makeHttpBackend(base: string, cookie?: string): SetupBackend {
 // Entry point
 // ---------------------------------------------------------------------------
 
-/**
- * Make sure we can actually talk to a hosted instance as its admin.
- *
- * The manifest `jig deploy` writes has no session cookie: the password is set
- * later, in the browser. Without this, `jig setup` on a fresh hosted instance
- * 401s on every step and the fix was a separate `jig debug login` that the user
- * had to be told to run by hand. Do it here instead, and the same code re-logs
- * in when a 30-day cookie expires.
- *
- * Returns the cookie to use, or undefined when the caller should proceed without
- * one (local instances are not gated).
- */
-async function ensureRemoteSession(
-  base: string,
-  handle: string,
-  existing: string | undefined,
-): Promise<string | undefined> {
-  const authed = async (cookie?: string) => {
-    // An admin-gated endpoint. 401 means the cookie is missing or stale; 423
-    // means the instance restarted and is locked, which the same password fixes,
-    // so both lead to the prompt rather than to two different dead ends.
-    const res = await fetch(`${base}/api/models/credits`, {
-      headers: cookie ? { Cookie: `jig-admin=${cookie}` } : {},
-    }).catch(() => null)
-    if (!res) return true // unreachable is a different problem, reported later
-    return res.status !== 401 && res.status !== 423
-  }
-
-  if (existing && (await authed(existing))) return existing
-
-  const password = process.env.JIG_PASSWORD ?? (interactive() ? await promptHiddenPassword("  Instance password") : null)
-  if (!password) {
-    console.error(
-      `This instance needs an admin session and there is no terminal to ask for the password.\n` +
-        `  Set JIG_PASSWORD and re-run, or run \`jig debug login ${handle}\` from a terminal first.`,
-    )
-    process.exit(1)
-  }
-
-  const res = await fetch(`${base}/api/unlock`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password }),
-  })
-  if (!res.ok) {
-    console.error(`Could not sign in to ${handle}: ${res.status} ${await res.text().catch(() => "")}`)
-    process.exit(1)
-  }
-  const setCookie = res.headers.get("set-cookie") ?? ""
-  const cookie = setCookie.split(/,\s*(?=[^;]+?=)/)
-    .map((part) => part.match(/(?:^|; )jig-admin=([^;]+)/)?.[1])
-    .find(Boolean)
-  if (!cookie) {
-    console.error("Signed in but the server returned no session cookie.")
-    process.exit(1)
-  }
-
-  const { setSessionCookie } = await import("../cli-remote/manifest.js")
-  setSessionCookie(handle, cookie)
-  console.log(`  Signed in to ${handle}. Session cached for 30 days.\n`)
-  return cookie
-}
 
 /** Hosted or local, asked once, defaulting to hosted. */
 async function askHosted(): Promise<boolean> {
@@ -403,7 +341,15 @@ export async function runSetup(argv: string[], ensureLocalServer: () => Promise<
       base = remote.public_url
       dashboardUrl = base
       console.log(`Setting up ${remote.handle} (${base}).\n`)
-      cookie = await ensureRemoteSession(base, remote.handle, remote.session_cookie)
+      const { ensureSession } = await import("../cli-remote/unlock.js")
+      cookie = (await ensureSession(remote)) ?? undefined
+      if (!cookie) {
+        console.error(
+          `This instance needs an admin session and there is no terminal to ask for the password.\n` +
+            `  Set JIG_PASSWORD and re-run, or run \`jig unlock ${remote.handle}\` from a terminal first.`,
+        )
+        process.exit(1)
+      }
     } else {
       base = await ensureLocalServer()
       // `jig setup` boots the API server but not Next, so the dashboard may not

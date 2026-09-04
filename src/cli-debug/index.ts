@@ -2,7 +2,6 @@
  * `jig debug` — talk to a deployed jig from the CLI for debugging.
  *
  * Subcommands:
- *   - login [handle]            Cache an admin session cookie for the remote.
  *   - connections [name]        What is connected on the remote and how many
  *                               tools it exposes; --refresh re-runs discovery.
  *   - run <jigId> [handle]      Trigger a run, stream debug logs, exit on finish.
@@ -27,7 +26,7 @@
  * This is how Claude (or you) can see exactly what an agent / tool did on
  * the remote box.
  */
-import { listRemotes, resolveActiveRemote, setSessionCookie, type RemoteManifest } from "../cli-remote/manifest.js"
+import {listRemotes, resolveActiveRemote, type RemoteManifest} from "../cli-remote/manifest.js"
 import { readLocalLogHead, readLocalLogs } from "./local.js"
 import { parseToolArgs } from "./eval-args.js"
 import { DB_PATH } from "../config/paths.js"
@@ -47,14 +46,12 @@ export async function runDebug(args: string[]): Promise<void> {
   const sub = args[0]
   const rest = args.slice(1)
 
-  if (sub === "login") return loginCmd(rest)
   if (sub === "connections") return connectionsCmd(rest)
   if (sub === "tail") return tailCmd(rest)
   if (sub === "ls") return lsCmd(rest)
   if (sub === "eval") return evalCmd(rest)
 
   console.log("Usage:")
-  console.log("  jig debug login [handle]          Cache admin session cookie")
   console.log("  jig debug connections [name]      What is connected, and how many tools")
   console.log("  jig debug tail [handle]           Stream debug logs (Ctrl-C to stop)")
   console.log("  jig debug ls [handle]             List jigs on the remote")
@@ -86,34 +83,6 @@ export async function runDebug(args: string[]): Promise<void> {
 // login
 // ---------------------------------------------------------------------------
 
-async function loginCmd(args: string[]): Promise<void> {
-  const handle = positional(args)
-  const remote = resolveRemoteOrExit(handle)
-  const password = readPassword(args)
-  if (!password) {
-    console.error("Password required. Pass --password=<pw> or set JIG_PASSWORD env var.")
-    process.exit(1)
-  }
-
-  const res = await fetch(`${remote.public_url}/api/unlock`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password }),
-  })
-  if (!res.ok) {
-    const body = await res.text().catch(() => "")
-    console.error(`Unlock failed: ${res.status} ${body}`)
-    process.exit(1)
-  }
-  const setCookie = res.headers.get("set-cookie") ?? ""
-  const cookie = extractCookie(setCookie, COOKIE_NAME)
-  if (!cookie) {
-    console.error("Unlock succeeded but no session cookie returned. Server too old?")
-    process.exit(1)
-  }
-  setSessionCookie(remote.handle, cookie)
-  console.log(`Logged in to ${remote.handle} (${remote.public_url}). Session cached for 30 days.`)
-}
 
 // ---------------------------------------------------------------------------
 // connections
@@ -471,7 +440,7 @@ async function fetchLogHead(remote: RemoteManifest, cookie: string): Promise<num
 
 async function getJson<T>(remote: RemoteManifest, cookie: string, path: string): Promise<T> {
   const res = await fetch(`${remote.public_url}${path}`, { headers: authHeaders(cookie), cache: "no-store" })
-  if (res.status === 401) throw new Error(`Unauthorized. Re-run "jig debug login ${remote.handle}"`)
+  if (res.status === 401) throw new Error(`Unauthorized. Re-run "jig unlock ${remote.handle}"`)
   if (!res.ok) throw new Error(`GET ${path} → ${res.status}`)
   return (await res.json()) as T
 }
@@ -577,15 +546,12 @@ function numericFlag(args: string[], name: string): number | undefined {
   return Number.isFinite(value) ? Math.max(0, value) : undefined
 }
 
-function readPassword(args: string[]): string | undefined {
-  return stringFlag(args, "--password") ?? process.env.JIG_PASSWORD
-}
 
-/** Every admin-gated subcommand needs both; the cookie comes from `debug login`. */
+/** Every admin-gated subcommand needs both; the cookie comes from `jig unlock` or `jig pair`. */
 function resolveAuthedRemoteOrExit(handle: string | undefined): { remote: RemoteManifest; cookie: string } {
   const remote = resolveRemoteOrExit(handle)
   if (!remote.session_cookie) {
-    console.error(`No session cookie cached. Run "jig debug login ${remote.handle}" first.`)
+    console.error(`No session cookie cached. Run "jig unlock ${remote.handle}" first.`)
     process.exit(1)
   }
   return { remote, cookie: remote.session_cookie }
@@ -608,13 +574,6 @@ function resolveRemoteOrExit(handle: string | undefined): RemoteManifest {
   }
 }
 
-function extractCookie(setCookie: string, name: string): string | null {
-  for (const part of setCookie.split(/,\s*(?=[^;]+?=)/)) {
-    const m = part.match(new RegExp(`(?:^|; )${name}=([^;]+)`))
-    if (m) return m[1]
-  }
-  return null
-}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms))

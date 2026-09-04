@@ -353,7 +353,7 @@ try {
 
     case "unlock": {
       const { resolveActiveRemote, listRemotes } = await import("./cli-remote/manifest.js")
-      const { ensureUnlocked } = await import("./cli-remote/unlock.js")
+      const { ensureSession } = await import("./cli-remote/unlock.js")
       const handle = rest.find((a) => !a.startsWith("--"))
       const passwordFlag = rest.find((a) => a.startsWith("--password="))?.slice("--password=".length)
       if (listRemotes().length === 0) {
@@ -362,8 +362,11 @@ try {
         break
       }
       const remote = resolveActiveRemote(handle)
-      const ok = await ensureUnlocked(remote, { password: passwordFlag })
-      if (!ok) process.exitCode = 1
+      const cookie = await ensureSession(remote, { password: passwordFlag })
+      if (!cookie) {
+        console.error("No password given and no terminal to ask on. Pass --password=<pw> or set JIG_PASSWORD.")
+        process.exitCode = 1
+      }
       break
     }
 
@@ -442,7 +445,7 @@ try {
       console.log(`  jig update <handle>    Move a deployed instance to the latest release tag`)
       console.log(`  jig doctor [handle]    Health-check deployed instances`)
       console.log(`  jig pair <code>        Cache a CLI session from a dashboard pairing code`)
-      console.log(`  jig unlock [handle]    Unlock a deployed instance after a restart (hidden prompt)`)
+      console.log(`  jig unlock [handle]    Sign in to a deployed instance with its password (hidden prompt)`)
       console.log(`  jig debug <sub>        Diagnostics: logs, connections, tool probes (see "jig debug")`)
       break
   }

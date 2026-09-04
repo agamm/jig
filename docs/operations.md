@@ -46,7 +46,7 @@ For remote debug access, avoid putting the password in shell history:
 bun run jig pair <code>          # code from the dashboard's Setup page; no password involved
 # Or sign in with the instance password, kept out of shell history:
 read -s JIG_PASSWORD && export JIG_PASSWORD
-bun run jig debug login [handle]
+bun run jig unlock [handle]
 unset JIG_PASSWORD
 ```
 

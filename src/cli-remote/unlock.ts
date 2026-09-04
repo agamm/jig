@@ -94,6 +94,37 @@ export async function unlockRemote(publicUrl: string, password: string): Promise
 }
 
 /**
+ * Make sure the CLI holds a session that this instance accepts, signing in if
+ * not. Distinct from `ensureUnlocked`: an instance can be unlocked while this
+ * machine has no cookie for it, or a stale one, and both look like 401s on
+ * every command. 423 is folded in because the same password fixes it.
+ *
+ * Returns the cookie to use, or null when nobody could supply a password.
+ */
+export async function ensureSession(
+  remote: RemoteManifest,
+  opts?: { password?: string },
+): Promise<string | null> {
+  const probe = async (cookie?: string) => {
+    const res = await fetch(`${remote.public_url}/api/models/credits`, {
+      headers: cookie ? { Cookie: `${COOKIE_NAME}=${cookie}` } : {},
+    }).catch(() => null)
+    if (!res) return true // unreachable is a different problem, reported by the caller
+    return res.status !== 401 && res.status !== 423
+  }
+  if (remote.session_cookie && (await probe(remote.session_cookie))) return remote.session_cookie
+
+  const password = opts?.password ?? process.env.JIG_PASSWORD ?? (await promptHiddenPassword("  Instance password"))
+  if (!password) return null
+
+  const cookie = await unlockRemote(remote.public_url, password)
+  if (!cookie) throw new Error("Signed in but the server returned no session cookie.")
+  setSessionCookie(remote.handle, cookie)
+  console.log(`  Signed in to ${remote.handle}. Session cached for 30 days.`)
+  return cookie
+}
+
+/**
  * Unlock a remote, prompting if needed. Returns true when the instance ends up
  * unlocked. Safe to call from a deploy: never blocks on a non-TTY, and treats
  * an already-unlocked instance as success.

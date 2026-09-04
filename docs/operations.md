@@ -51,8 +51,8 @@ unset JIG_PASSWORD
 Then:
 
 ```sh
-bun run jig debug run <jig-id> [handle] --dry-run
-bun run jig debug run <jig-id> [handle]
+bun run jig run <jig-id> --dry-run
+bun run jig run <jig-id>
 bun run jig debug tail [handle]
 ```
 
@@ -65,10 +65,10 @@ agent harness you use, rather than only through the dashboard's authoring agent.
 
 ```sh
 bun run jig debug ls [handle]
-bun run jig debug pull <jig-id> --out=/tmp/<jig-id>.ts
+bun run jig edit <jig-id> --out=/tmp/<jig-id>.ts
 # edit the file
-bun run jig debug push <jig-id> /tmp/<jig-id>.ts --message="what changed"
-bun run jig debug run <jig-id> --dry-run
+bun run jig edit <jig-id> --file=/tmp/<jig-id>.ts --message="what changed"
+bun run jig run <jig-id> --dry-run
 ```
 
 `push` leaves the change **pending** unless you pass `--approve`, so the default

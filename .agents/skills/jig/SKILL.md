@@ -159,20 +159,32 @@ If the remote has no cached session it refuses rather than quietly authoring loc
 a jig on the wrong instance is a mistake you notice much later. Pair it first: see "Connecting
 the CLI to a hosted instance" above.
 
-Once a jig exists on a remote, the rest of the loop is `jig debug`:
+To change a jig in your own editor rather than by instruction, `jig edit` does that too:
 
 ```sh
-bun run jig debug ls                          # what is on the remote
-bun run jig debug pull <jig-id> --out=jig.ts  # its live code
-bun run jig debug push <jig-id> jig.ts        # upload as PENDING
-bun run jig debug push <jig-id> jig.ts --approve   # skip the review gate
-bun run jig debug run <jig-id>                # trigger once, stream the logs
-bun run jig debug tail                        # keep watching
+bun run jig edit <jig-id> --out=jig.ts             # export the live code
+bun run jig edit <jig-id> --file=jig.ts            # upload it as PENDING
+bun run jig edit <jig-id> --file=jig.ts --approve  # skip the review gate
 ```
 
-`pull` → edit → `push` → `run` → `tail` is the supported loop for changing a deployed jig from
-your own editor. `push` leaves the change pending on purpose, the same human gate the dashboard
-and auto-repair use; `--approve` opts out of it.
+Export → edit → upload → `jig run <jig-id>` → `jig debug tail` is the loop. Uploading leaves the
+change pending on purpose, the same human gate the dashboard and auto-repair use; `--approve`
+opts out of it. All of these follow the same targeting rule as `jig new`: your deployed instance
+unless you pass `--local`.
+
+`jig debug` is diagnostics only:
+
+```sh
+bun run jig debug connections            # what is connected, and how many tools
+bun run jig debug connections <name> --refresh   # reconnect and rediscover
+bun run jig debug ls                     # what is on the remote
+bun run jig debug tail                   # stream logs
+bun run jig debug eval <server> <tool>   # call one tool, see its real shape
+```
+
+**Ask before you assert.** `jig debug connections` is how you find out what is connected; a
+proxy like Composio can be authorized while nothing is authorized inside it, which reads as
+"connected" with zero tools.
 
 **Never drive the dashboard through a browser.** If you find yourself opening Chrome to click
 "New Jig", stop: you cannot authenticate that tab, the password is not yours to type, and every

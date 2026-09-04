@@ -59,7 +59,7 @@ bun run jig doctor [handle]
 read -s JIG_PASSWORD && export JIG_PASSWORD
 bun run jig debug login [handle]
 unset JIG_PASSWORD
-bun run jig debug run <jig-id> [handle] --dry-run
+bun run jig run <jig-id> --dry-run
 bun run jig debug tail [handle]
 ```
 
@@ -67,8 +67,8 @@ To edit a deployed jig outside the dashboard (pushes land pending unless `--appr
 
 ```sh
 bun run jig debug ls [handle]
-bun run jig debug pull <jig-id> --out=/tmp/<jig-id>.ts
-bun run jig debug push <jig-id> /tmp/<jig-id>.ts --message="what changed"
+bun run jig edit <jig-id> --out=/tmp/<jig-id>.ts
+bun run jig edit <jig-id> --file=/tmp/<jig-id>.ts --message="what changed"
 ```
 
 To see what a connection's tool really returns before writing unwrap code:

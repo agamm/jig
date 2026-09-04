@@ -49,21 +49,15 @@ export async function runDebug(args: string[]): Promise<void> {
 
   if (sub === "login") return loginCmd(rest)
   if (sub === "connections") return connectionsCmd(rest)
-  if (sub === "run") return runCmd(rest)
   if (sub === "tail") return tailCmd(rest)
   if (sub === "ls") return lsCmd(rest)
-  if (sub === "pull") return pullCmd(rest)
-  if (sub === "push") return pushCmd(rest)
   if (sub === "eval") return evalCmd(rest)
 
   console.log("Usage:")
   console.log("  jig debug login [handle]          Cache admin session cookie")
   console.log("  jig debug connections [name]      What is connected, and how many tools")
-  console.log("  jig debug run <jigId> [handle]    Trigger a run and stream debug logs")
   console.log("  jig debug tail [handle]           Stream debug logs (Ctrl-C to stop)")
   console.log("  jig debug ls [handle]             List jigs on the remote")
-  console.log("  jig debug pull <jigId> [handle]   Print a jig's live code")
-  console.log("  jig debug push <jigId> <file>     Upload code as a pending version")
   console.log("  jig debug eval <server> <tool>    Call one tool and print its real response shape")
   console.log("")
   console.log("Editing a deployed jig:")
@@ -210,7 +204,7 @@ async function connectionsCmd(args: string[]): Promise<void> {
 // run
 // ---------------------------------------------------------------------------
 
-async function runCmd(args: string[]): Promise<void> {
+export async function runRemoteJig(args: string[]): Promise<void> {
   const positionals = args.filter((a) => !a.startsWith("--"))
   const jigId = positionals[0]
   if (!jigId) {
@@ -343,7 +337,7 @@ async function lsCmd(args: string[]): Promise<void> {
   }
 }
 
-async function pullCmd(args: string[]): Promise<void> {
+export async function pullRemoteJig(args: string[]): Promise<void> {
   const positionals = args.filter((a) => !a.startsWith("--"))
   const jigId = positionals[0]
   if (!jigId) {
@@ -412,7 +406,7 @@ async function evalCmd(args: string[]): Promise<void> {
   console.log(res.preview)
 }
 
-async function pushCmd(args: string[]): Promise<void> {
+export async function pushRemoteJig(args: string[]): Promise<void> {
   const positionals = args.filter((a) => !a.startsWith("--"))
   const [jigId, file] = positionals
   if (!jigId || !file) {

@@ -186,6 +186,7 @@ bun run jig run weekly-update --dry-run
 bun run jig run weekly-update
 bun run jig pair <code>          # cache a CLI session for a deployed instance
 bun run jig debug connections    # what a deployed instance has connected
+bun run jig debug audit          # what is failing, since when, and the next command to heal it
 ```
 
 `edit`, `run`, `pending` and `types` act on your deployed instance when you have one, and print which

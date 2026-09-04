@@ -18,10 +18,12 @@ export interface JigStep {
 export interface JigRunStep {
   label: string
   time: string
+  status: LiveStepStatus
   cost?: string
   tag?: string
   healed?: boolean
   output?: string
+  error?: string
 }
 
 export interface JigRun {
@@ -541,6 +543,113 @@ export interface ServerLogsResponse {
   entries: ServerLogEntry[]
 }
 
+// ---------------------------------------------------------------------------
+// Audit (GET /api/audit): what is failing, since when, and what to do next.
+// Built from runs, run_steps, schedules, jig_versions and the durable
+// failure-incident and connection-status settings rows; never the logs table.
+// ---------------------------------------------------------------------------
+
+export interface AuditFailingStep {
+  seq: number
+  label: string
+  error: string | null
+  connections: string[]
+}
+
+export interface AuditRunStep {
+  seq: number
+  label: string
+  status: LiveStepStatus
+  durationMs: number | null
+}
+
+export interface AuditRun {
+  id: number
+  startedAt: string
+  finishedAt: string | null
+  durationMs: number | null
+  status: "running" | "success" | "fail"
+  error: string | null
+  /** The first step that failed, when one did. */
+  failingStep: AuditFailingStep | null
+  steps: AuditRunStep[]
+}
+
+export interface AuditLastFailure {
+  runId: number
+  at: string
+  /** The failing step's error when there is one, else the run's rollup error. */
+  error: string
+  step: AuditFailingStep | null
+}
+
+export interface AuditPending {
+  versionId: number
+  author: string
+  message: string | null
+  createdAt: string
+  /** Written by an auto-repair session rather than a person or an outside agent. */
+  likelyRepair: boolean
+}
+
+export interface AuditJig {
+  id: string
+  name: string
+  /** The schedule row's trigger type, or "manual" when the jig has no schedule row. */
+  trigger: "cron" | "webhook" | "calendar" | "email" | "manual"
+  cronExpr: string | null
+  timezone: string | null
+  enabled: boolean
+  nextRunAt: string | null
+  lastRunAt: string | null
+  scheduleError: string | null
+  /** A run is in flight right now. */
+  running: boolean
+  /** 0 when the latest finished run succeeded. */
+  consecutiveFailures: number
+  failingSince: string | null
+  lastFailureAt: string | null
+  /** Failure emails sent for the current incident. */
+  alertsSent: number
+  /** Latest finished run when it failed, whether or not it falls inside `since`. */
+  lastFailure: AuditLastFailure | null
+  /** Runs started at or after `since`, newest first, capped at truncated.runsPerJig. */
+  runs: AuditRun[]
+  pending: AuditPending | null
+  /** Connections the active code imports (plus composio for calendar triggers). */
+  connections: string[]
+  /** Declared connections whose last observed state is not ok. */
+  unhealthyConnections: string[]
+}
+
+export interface AuditConnection {
+  name: string
+  state: ConnectionStatusState
+  detail: string | null
+  at: string
+}
+
+export interface AuditReport {
+  generatedAt: string
+  since: string
+  instance: {
+    version: string
+    mode: "service" | "local"
+    scheduler: SchedulerHealth
+  }
+  /** Configured connections whose last observed state is not ok. */
+  connections: AuditConnection[]
+  scheduler: {
+    problems: { jigId: string; error: string }[]
+    disabled: string[]
+    /** Enabled cron schedules whose due time is well past; a snapshot heuristic. */
+    overdue: { jigId: string; nextRunAt: string }[]
+  }
+  /** Failing jigs first, then by id. */
+  jigs: AuditJig[]
+  truncated: { runsPerJig: number }
+}
+
 export interface SchedulerHealth {
   running: boolean
   /** ISO timestamp of the last completed scheduler loop, null before first tick. */
@@ -765,6 +874,7 @@ export interface ApiContracts {
   resetLocalState: ApiContract<void, ResetLocalStateResponse>
   backupRestore: ApiContract<void, BackupRestoreResponse>
   serverLogs: ApiContract<void, ServerLogsResponse>
+  audit: ApiContract<void, AuditReport>
   clearServerLogs: ApiContract<void, OkResponse>
 }
 

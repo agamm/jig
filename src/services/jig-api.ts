@@ -29,10 +29,12 @@ function formatRuns(runs: ReturnType<typeof getJigRuns>): JigRun[] {
     steps: r.steps.map((s) => ({
       label: s.label,
       time: s.duration_ms ? formatDuration(s.duration_ms) : "—",
+      status: s.status,
       cost: undefined,
       tag: undefined,
       healed: s.status === "healed",
       output: s.output ?? undefined,
+      error: s.error ?? undefined,
     })),
   }))
 }

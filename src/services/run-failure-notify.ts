@@ -2,7 +2,7 @@ import { getRun, getSetting, setSetting } from "../db.js"
 import { isCancellationMessage } from "../run-cancel.js"
 import { publicUrl } from "../config/runtime.js"
 import { formatFailureBody, notify } from "./notify.js"
-import { maybeStartAutoRepair } from "./run-repair.js"
+import { maybeStartAutoRepair, summarizeFailureStreak } from "./run-repair.js"
 
 // ---------------------------------------------------------------------------
 // Failure-incident throttling
@@ -22,7 +22,7 @@ import { maybeStartAutoRepair } from "./run-repair.js"
 const INCIDENT_KEY_PREFIX = "failure_incident."
 const SUMMARY_INTERVAL_MS = 24 * 60 * 60 * 1000
 
-type FailureIncident = {
+export type FailureIncident = {
   firstFailedAt: number
   lastFailedAt: number
   /** Total failures since the incident started. */
@@ -38,14 +38,15 @@ function incidentKey(jigId: string): string {
   return `${INCIDENT_KEY_PREFIX}${jigId}`
 }
 
-function readIncident(jigId: string): FailureIncident | null {
+/** The open incident for a jig, or null once a real run has succeeded. Read by the audit report too. */
+export function readFailureIncident(jigId: string): FailureIncident | null {
   const raw = getSetting<Partial<FailureIncident>>(incidentKey(jigId))
   if (!raw || typeof raw !== "object" || typeof raw.failCount !== "number") return null
   return raw as FailureIncident
 }
 
 export function clearFailureIncident(jigId: string): void {
-  if (readIncident(jigId)) setSetting(incidentKey(jigId), null)
+  if (readFailureIncident(jigId)) setSetting(incidentKey(jigId), null)
 }
 
 function dashboardJigUrl(jigId: string): string {
@@ -77,7 +78,7 @@ export async function maybeNotifyRunFailure(
   if (isCancellationMessage(run.error) || isCancellationMessage(run.output)) return false
 
   const now = (deps.now ?? Date.now)()
-  const incident = readIncident(jigId)
+  const incident = readFailureIncident(jigId)
   const doNotify = deps.notify ?? notify
 
   // Same chokepoint covers auto-repair: every real failure is a candidate,
@@ -91,7 +92,9 @@ export async function maybeNotifyRunFailure(
       title: `Jig "${jigId}" failed`,
       body: formatFailureBody({
         jigId,
+        runId,
         error: run.error,
+        failedStep: summarizeFailureStreak([run]).failedStep,
         startedAt: run.started_at,
         durationMs: run.duration_ms,
       }),

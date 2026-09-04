@@ -20,8 +20,9 @@
 import {listRemotes, resolveActiveRemote, type RemoteManifest} from "../cli-remote/manifest.js"
 import { readLocalLogHead, readLocalLogs } from "./local.js"
 import { parseToolArgs } from "./eval-args.js"
+import { renderAuditReport } from "./audit-render.js"
 import { DB_PATH } from "../config/paths.js"
-import type { JigData, ServerLogEntry, ServerLogsResponse, StartRunResponse, RunDetail, ToolEvalResponse } from "../../shared/api.js"
+import type { AuditReport, JigData, ServerLogEntry, ServerLogsResponse, StartRunResponse, RunDetail, ToolEvalResponse } from "../../shared/api.js"
 
 const COOKIE_NAME = "jig-admin"
 const POLL_MS = 750
@@ -40,13 +41,20 @@ export async function runDebug(args: string[]): Promise<void> {
   if (sub === "connections") return connectionsCmd(rest)
   if (sub === "tail") return tailCmd(rest)
   if (sub === "ls") return lsCmd(rest)
+  if (sub === "audit") return auditCmd(rest)
   if (sub === "eval") return evalCmd(rest)
 
   console.log("Usage:")
   console.log("  jig debug connections [name]      What is connected, and how many tools")
   console.log("  jig debug tail [handle]           Stream debug logs (Ctrl-C to stop)")
   console.log("  jig debug ls [handle]             List jigs on the remote")
+  console.log("  jig debug audit [handle]          What is failing, since when, and the next command to heal it")
   console.log("  jig debug eval <server> <tool>    Call one tool and print its real response shape")
+  console.log("")
+  console.log("Auditing:")
+  console.log("  --since=<24h|30m|7d|ISO>  audit: window for the runs listed (default 24h)")
+  console.log("  --jig=<id>             audit: one jig only")
+  console.log("  --json                 audit: print the report as JSON instead of text")
   console.log("")
   console.log("Testing a connection:")
   console.log("  --args=<json>          eval: tool arguments, e.g. --args='{\"max_results\":3}'")
@@ -289,6 +297,29 @@ async function lsCmd(args: string[]): Promise<void> {
     const health = last ? `${last.status} ${last.date}` : "(never run)"
     console.log(`${jig.id.padEnd(26)} ${jig.trigger.padEnd(14)} ${health}`)
   }
+}
+
+// ---------------------------------------------------------------------------
+// audit
+// ---------------------------------------------------------------------------
+
+/**
+ * What is failing on the remote, since when, and what to do about it. Written
+ * for a scheduled coding agent: every failing jig ends with the exact command
+ * that starts the fix, and --json is the same report verbatim.
+ */
+async function auditCmd(args: string[]): Promise<void> {
+  const { remote, cookie } = resolveAuthedRemoteOrExit(positional(args))
+  const since = stringFlag(args, "--since") ?? "24h"
+  const jig = stringFlag(args, "--jig")
+  const query = new URLSearchParams({ since })
+  if (jig) query.set("jig", jig)
+  const report = await getJson<AuditReport>(remote, cookie, `/api/audit?${query}`)
+  if (args.includes("--json")) {
+    console.log(JSON.stringify(report, null, 2))
+    return
+  }
+  console.log(renderAuditReport(report, { handle: remote.handle, url: remote.public_url, since }))
 }
 
 export async function pullRemoteJig(args: string[], remote: RemoteManifest): Promise<void> {

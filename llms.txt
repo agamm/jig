@@ -81,7 +81,11 @@ bun run jig unlock [handle]
 unset JIG_PASSWORD
 bun run jig run <jig-id> --dry-run
 bun run jig debug tail [handle]
+bun run jig debug audit [handle]  # what is failing, since when, and the next command (--json for the raw report)
 ```
+
+The heal loop: `jig debug audit` names the failing step and error, `jig edit <jig-id> --out=<jig-id>.ts`
+pulls the code, fix it, `jig edit <jig-id> --file=<jig-id>.ts` pushes it as pending, `jig run <jig-id> --dry-run` proves it.
 
 To see what a deployed instance has:
 

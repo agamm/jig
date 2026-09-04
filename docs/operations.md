@@ -108,6 +108,8 @@ next generated fix repeats the defect.
 
 ## Repair a failing jig
 
+Start with `bun run jig debug audit [handle]`: it lists every failing jig with its consecutive-failure count, the failing step and error, any pending fix already waiting, unhealthy connections, and the exact next command. `--jig=<id>` narrows it, `--json` returns the raw report.
+
 1. Reproduce with `jig run <jig-id> --dry-run` when the failure can be observed without writes.
 2. Identify the first failing step and its exact tool/model error.
 3. Separate code defects from external blockers such as revoked access, provider outages, or missing connections.

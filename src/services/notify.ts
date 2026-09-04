@@ -65,12 +65,17 @@ export async function notify(opts: {
 
 export function formatFailureBody(opts: {
   jigId: string
+  runId?: number
   error: string | null
+  /** Label of the step that failed, when the run got that far. */
+  failedStep?: string
   startedAt: string | null
   durationMs: number | null
   dashboardBaseUrl?: string
 }): string {
   const lines: string[] = []
+  if (opts.runId != null) lines.push(`Run: #${opts.runId}`)
+  if (opts.failedStep) lines.push(`Failed step: ${opts.failedStep}`)
   if (opts.error) lines.push(`Error: ${opts.error}`)
   if (opts.startedAt) lines.push(`Started: ${opts.startedAt}`)
   if (opts.durationMs != null) {

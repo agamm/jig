@@ -43,7 +43,7 @@ export interface RepairDeps {
  * repair session id when an attempt started, or null with the skip reason logged.
  */
 export async function maybeStartAutoRepair(jigId: string, runId: number, deps: RepairDeps = {}): Promise<string | null> {
-  const latest = latestFailureStreak((deps.getJigRuns ?? getJigRuns)(jigId, STREAK_MAX + 2))
+  const latest = summarizeFailureStreak((deps.getJigRuns ?? getJigRuns)(jigId, STREAK_MAX + 2))
 
   let reason: string | null = null
   if (latest.streak < STREAK_MIN) return null // ordinary single failure — not our business
@@ -72,9 +72,17 @@ export async function maybeStartAutoRepair(jigId: string, runId: number, deps: R
   return null
 }
 
+export interface FailureStreak {
+  streak: number
+  error: string
+  failedStep?: string
+}
+
 /** Consecutive-failure streak of the finished runs, plus the sharpest error
- * text of the latest one (the failing step's error beats the run rollup). */
-function latestFailureStreak(runs: (RunRow & { steps: StepRow[] })[]): { streak: number; error: string; failedStep?: string } {
+ * text of the latest one (the failing step's error beats the run rollup).
+ * Shared with the audit report and the failure email so all three name the
+ * same step and error. */
+export function summarizeFailureStreak(runs: (RunRow & { steps: StepRow[] })[]): FailureStreak {
   const finished = runs.filter((r) => r.status !== "running")
   let streak = 0
   while (streak < finished.length && finished[streak].status === "fail") streak++
@@ -87,10 +95,15 @@ function latestFailureStreak(runs: (RunRow & { steps: StepRow[] })[]): { streak:
   }
 }
 
-function buildRepairInstruction(jigId: string, f: { streak: number; error: string; failedStep?: string }): string {
+/** Opening words of every repair instruction; the audit recognises a repair session's pending version by them. */
+export function repairInstructionPrefix(jigId: string): string {
+  return `The jig "${jigId}" has failed`
+}
+
+function buildRepairInstruction(jigId: string, f: FailureStreak): string {
   const excerpt = f.error.length > ERROR_EXCERPT_CHARS ? `${f.error.slice(0, ERROR_EXCERPT_CHARS)}…` : f.error
   return [
-    `The jig "${jigId}" has failed ${f.streak} runs in a row. Latest failure${f.failedStep ? ` at step "${f.failedStep}"` : ""}:`,
+    `${repairInstructionPrefix(jigId)} ${f.streak} runs in a row. Latest failure${f.failedStep ? ` at step "${f.failedStep}"` : ""}:`,
     "",
     excerpt,
     "",

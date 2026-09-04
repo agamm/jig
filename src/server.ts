@@ -80,6 +80,7 @@ import { isPasswordSet } from "./crypto/password.js"
 import { checkAccess, requireAdminAccess } from "./auth/lock-middleware.js"
 import { announceSetupCode } from "./auth/setup-code.js"
 import { clearLogs, getLogs } from "./server/log-buffer.js"
+import { buildAuditReport, parseSince } from "./services/audit.js"
 import packageJson from "../package.json"
 
 const PACKAGE_VERSION: string = packageJson.version
@@ -548,6 +549,23 @@ export function createApiServer(port: number) {
             if (req.method !== "GET") return json({ error: "Method not allowed" }, 405)
             const since = parseInt(url.searchParams.get("since") ?? "0")
             return apiJson("serverLogs", { entries: getLogs(Number.isFinite(since) ? since : 0) })
+          }
+          case "audit": {
+            // Same defence in depth as serverLogs: the report names every jig,
+            // its errors and its connections.
+            const denied = requireAdminAccess(req)
+            if (denied) return denied
+            if (req.method !== "GET") return json({ error: "Method not allowed" }, 405)
+            let since: Date
+            try {
+              since = parseSince(url.searchParams.get("since") ?? undefined)
+            } catch (e: any) {
+              throw new ApiError(400, e.message)
+            }
+            const jigId = url.searchParams.get("jig") ?? undefined
+            const report = await buildAuditReport({ since, jigId })
+            if (jigId && report.jigs.length === 0) throw new ApiError(404, `No active jig: ${jigId}`)
+            return apiJson("audit", report)
           }
           case "webhook": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)

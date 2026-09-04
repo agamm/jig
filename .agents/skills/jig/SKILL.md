@@ -186,6 +186,7 @@ the CLI to a hosted instance" above.
 bun run jig debug connections            # what is connected, and how many tools
 bun run jig debug connections <name> --refresh   # reconnect and rediscover
 bun run jig debug ls                     # what is on the remote
+bun run jig debug audit                  # what is failing, since when, and the next command (--json, --since=, --jig=)
 bun run jig debug tail                   # stream logs
 bun run jig debug eval <server> <tool>   # call one tool, see its real shape
 ```

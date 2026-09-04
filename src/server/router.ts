@@ -86,6 +86,7 @@ const ROUTES: [pattern: string, handler: string][] = [
   ["/api/email/inbound", "emailInbound"],
   ["/api/permissions", "toolPermissions"],
   ["/api/logs", "serverLogs"],
+  ["/api/audit", "audit"],
 
   ["/api/webhooks/#jigId", "webhook"],
 ]

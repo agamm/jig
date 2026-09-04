@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs"
  * changes were stashed and then orphaned, vanishing from the working tree.
  * Reproduced against a real repo before fixing.
  */
-describe("stash lookup after an update", () => {
+describe("jig update", () => {
   it("matches the label inside git's subject line, not against the whole thing", () => {
     for (const file of ["src/cli.ts", "src/cli-remote/update.ts"]) {
       const source = readFileSync(file, "utf-8")
@@ -16,6 +16,15 @@ describe("stash lookup after an update", () => {
       expect({ file, comparesForEquality: equality }).toEqual({ file, comparesForEquality: false })
       expect(source).toMatch(/\.find\(\(\[, (?:msg|message)\]\) => (?:msg|message)\.includes\(/)
     }
+  })
+
+  it("pulls from the remote it resolved, not a hardcoded upstream", () => {
+    // It printed "Updating from origin" and then ran `git pull upstream main`,
+    // which fatals in any clone without a fork remote: everyone who followed
+    // the README. Reproduced against a real clone before fixing.
+    const source = readFileSync("src/cli.ts", "utf-8")
+    expect(source).toMatch(/runInherited\(\["git", "pull", source, "main", "--rebase"\]/)
+    expect(source).not.toMatch(/"git", "pull", "upstream", "main"/)
   })
 
   it("is the shape git actually produces", () => {

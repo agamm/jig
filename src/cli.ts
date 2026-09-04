@@ -234,7 +234,8 @@ try {
             console.log(`Wrote ${name} to ${dest}.`)
           } else {
             const code = await Bun.file(fileFlag!.slice("--file=".length)).text()
-            writePending({ jigId: name, code, author: "cli", message: "edited from a file" })
+            const note = rest.find((a) => a.startsWith("--message="))?.slice("--message=".length)
+            writePending({ jigId: name, code, author: "cli", message: note || "edited from a file" })
             if (rest.includes("--approve")) {
               approvePending(name)
               console.log(`✓ ${name} updated and active.`)
@@ -452,7 +453,7 @@ try {
 
 
 // ---------------------------------------------------------------------------
-// update — pull latest from upstream, reinstall deps
+// update: pull latest code and agent skills, reinstall deps
 // ---------------------------------------------------------------------------
 
 async function update(): Promise<boolean> {
@@ -473,13 +474,13 @@ async function update(): Promise<boolean> {
   // A fork has `upstream`; a plain clone of the repo has only `origin`, and
   // refusing to update that one was wrong: "no upstream remote" is the normal
   // case for everyone who followed the README.
-  const hasUpstream = async (name: string): Promise<boolean> => {
+  const hasRemote = async (name: string): Promise<boolean> => {
     const check = Bun.spawn(["git", "remote", "get-url", name], { cwd: PROJECT_ROOT, stdout: "pipe", stderr: "pipe" })
     await check.exited
     return check.exitCode === 0
   }
-  const source = (await hasUpstream("upstream")) ? "upstream" : "origin"
-  if (!(await hasUpstream(source))) {
+  const source = (await hasRemote("upstream")) ? "upstream" : "origin"
+  if (!(await hasRemote(source))) {
     console.error("This checkout has no git remote to update from.")
     return false
   }
@@ -523,8 +524,8 @@ async function update(): Promise<boolean> {
   }
 
   // Pull with rebase
-  console.log("  Pulling upstream main...")
-  const pullCode = await runInherited(["git", "pull", "upstream", "main", "--rebase"], PROJECT_ROOT)
+  console.log(`  Pulling ${source} main...`)
+  const pullCode = await runInherited(["git", "pull", source, "main", "--rebase"], PROJECT_ROOT)
 
   if (pullCode !== 0) {
     console.error("\nPull failed. Resolve conflicts and try again.")

@@ -16,7 +16,7 @@ export interface AuthoringTarget {
   remote: boolean
 }
 
-export function parseTargetArgs(argv: string[]): { local: boolean; handle?: string } {
+function parseTargetArgs(argv: string[]): { local: boolean; handle?: string } {
   return {
     local: argv.includes("--local"),
     handle: argv.find((a) => a.startsWith("--handle="))?.slice("--handle=".length),

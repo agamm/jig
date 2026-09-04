@@ -335,14 +335,9 @@ export async function runDeploy(targetArg?: string): Promise<void> {
     process.exit(1)
   }
 
-  // Step 4a: make sure a service exists.
-  //
-  // Older Railway CLIs created one during `init`, and this script assumed that
-  // for so long that the assumption outlived it: as of 5.45 `init` makes the
-  // project and nothing else. The link below then failed, the volume had no
-  // service to attach to, and deploy died at the volume step needing a manual
-  // repair. getStatus() returns null exactly when the project has no service
-  // instance, so it doubles as the version check.
+  // Step 4a: `railway init` stopped creating a service in CLI 5.45, and the
+  // volume below needs one. getStatus() is null exactly when there is none, so
+  // it doubles as the version check.
   if (!(await getStatus())) {
     console.log(`  Creating service "${slug}"...`)
     const addCode = await railwayInteractive(["add", "--service", slug])

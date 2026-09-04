@@ -311,11 +311,9 @@ function describeBalance(balance: number | undefined): string {
  * sending mail to the owner, which proves the key, the inbox, AND that the owner
  * address is real; a key check alone proves none of that.
  *
- * Optional, reluctantly. AgentMail publishes no authorization server (no
- * `/.well-known/oauth-authorization-server`, no authorize endpoint), so its key
- * can only be created in a console and pasted. Requiring it would put a paste
- * back in the middle of the default path, so instead the step offers itself and
- * says plainly what staying without it costs.
+ * Required, and the only step that cannot be a browser authorization: AgentMail
+ * publishes no authorization server, so its key is created in a console and
+ * pasted. The step walks the user through that rather than skipping it.
  */
 async function runAgentMailStep(io: SetupIO, backend: SetupBackend, options: SetupOptions): Promise<StepOutcome> {
   let status = await backend.agentMailStatus()

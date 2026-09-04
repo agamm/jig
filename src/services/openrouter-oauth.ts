@@ -123,8 +123,3 @@ export async function completeOpenRouterOAuth(code: string): Promise<{ ok: true 
   invalidateOpenRouterCredits()
   return { ok: true }
 }
-
-/** Test seam: drop any staged authorization. */
-export function resetOpenRouterOAuth(): void {
-  pending = null
-}

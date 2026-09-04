@@ -56,3 +56,21 @@ the platform-ID-without-domain state at the HTTP boundary and callback builder.
 **What happened:** Composio's schema says `MANAGE_CONNECTIONS action:"list"` has no side effects. Listing toolkits that were not connected returned `status: "initiated"`, which may have created pending auth requests in the user's account.
 
 **Rule:** Probe a third-party "read" first with inputs known to be in the positive state, and only widen once the negative case is understood. Design code paths so such calls only ever receive inputs already known to be positive (here: only toolkits search already reported connected).
+
+## A Helper Named Like A Query Can Still Write
+
+**What happened:** "Read-only" probe scripts called `discoverTools(connection)` to list Composio's meta-tools. That helper also writes `SCHEMAS_DIR/<server>.json` as a side effect, so the probes overwrote the connection's real schema with the meta-tool list.
+
+**Rule:** Before calling any helper from a probe, read its body for writes (files, DB, network mutations). If the function you want is "list", but the helper you found also caches to disk, call the underlying client method instead.
+
+## Worktree Agents Must Verify Their Base Commit
+
+**What happened:** Four parallel worktrees were created two commits behind the commit the tasks named as their base. Each agent noticed and fast-forwarded, but only because the prompt stated the base hash.
+
+**Rule:** Always state the base commit hash in a worktree agent's prompt and ask it to confirm `git rev-parse HEAD` matches before editing; merge by cherry-pick so history stays linear.
+
+## One Job, One CLI Command
+
+**What happened:** `jig new <id> --file=` was added next to `jig edit <id> --file=` for creation. They were the same code path with two names, the exact duplication the repo had removed once before (`debug pull/push`).
+
+**Rule:** Before adding a command or flag, check whether an existing one already covers the job; make it create-if-missing rather than adding a second verb.

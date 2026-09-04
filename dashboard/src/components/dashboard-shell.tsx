@@ -149,12 +149,6 @@ export function DashboardShell({
     setSelectedConnection(null);
   }
 
-  async function refreshJigs(openJigId?: string) {
-    await mutate("jigs")
-    if (openJigId) {
-      openJigDetail(openJigId)
-    }
-  }
 
   async function handleCreateCustomConnection() {
     if (creatingCustomConnection) return;

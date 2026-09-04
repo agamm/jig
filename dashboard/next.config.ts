@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { fileURLToPath } from "node:url";
 
 // Applied to every HTML response. Minimal hardening:
 // - frame-ancestors 'none' blocks clickjacking (modern replacement for X-Frame-Options)
@@ -18,6 +19,9 @@ const SECURITY_HEADERS = [
 ]
 
 const nextConfig: NextConfig = {
+  // Imports reach the repo root (shared/, package.json), so that is the root; saying so also stops
+  // Next guessing between bun.lock here and the pnpm files in this directory.
+  turbopack: { root: fileURLToPath(new URL("..", import.meta.url)) },
   experimental: {
     externalDir: true,
   },

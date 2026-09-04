@@ -240,8 +240,8 @@ export async function startServer(options?: { port?: number }) {
     console.log(`  jig api:       http://localhost:${apiPort} (internal)\n`)
   }
 
-  // 4. Open browser on local only
-  if (!service) {
+  // 4. Open browser on local only, and only when a person is at this terminal.
+  if (!service && process.stdout.isTTY) {
     setTimeout(async () => {
       try {
         const open = (await import("open")).default

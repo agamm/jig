@@ -1,0 +1,7 @@
+# pnpm 10+ will not run a dependency's build script unless it is listed here,
+# and pnpm 11 fails the whole install when one is unlisted. sharp's script only
+# selects its prebuilt binary. Both spellings so pnpm 10 and 11 read it.
+allowBuilds:
+  sharp: true
+onlyBuiltDependencies:
+  - sharp

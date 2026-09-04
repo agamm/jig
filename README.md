@@ -78,11 +78,12 @@ export default jig("weekly-client-update", {
 git clone https://github.com/agamm/jig.git
 cd jig
 bun install
-bun run jig setup          # offers to provision a hosted instance; --local for this machine
+bun run jig setup          # provisions a hosted instance and walks the setup steps
 ```
 
 `jig setup` defaults to hosted, because a jig that only runs while your laptop is open is not
-automation. Add `--local` to set up this machine instead, then `bun run jig start`.
+automation. For this machine instead: `bun run jig start`, then finish the steps on the
+dashboard's Setup page (or run `bun run jig setup --local` in a second terminal).
 
 **With a coding agent:** this repo ships a skill covering install, setup, Railway deploys and updates, so Claude Code or Codex can do the whole thing. Paste:
 

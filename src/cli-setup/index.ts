@@ -174,6 +174,8 @@ function makeIO(args: SetupArgs): SetupIO {
     },
 
     openUrl: async (url: string) => {
+      // No terminal means no person here to see a tab; print the link instead.
+      if (!interactive()) return false
       try {
         const { default: open } = await import("open")
         await open(url)
@@ -369,7 +371,7 @@ export async function runSetup(argv: string[], ensureLocalServer: () => Promise<
       // `jig setup` boots the API server but not Next, so the dashboard may not
       // be up. Offering a URL that answers {"error":"Unknown API route"} is
       // worse than admitting there is nowhere to send them.
-      dashboardUrl = await probeDashboard(`http://localhost:${process.env.JIG_DASHBOARD_PORT ?? "3141"}`)
+      dashboardUrl = await probeDashboard(`http://localhost:${process.env.JIG_DASHBOARD_PORT ?? process.env.PORT ?? "3141"}`)
       console.log(`Setting up your local instance (${base}).\n`)
     }
   }

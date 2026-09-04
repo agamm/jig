@@ -22,12 +22,15 @@ export type JigOptions = {
   trigger: JigTrigger
   tools?: JigTool<any, any>[]
   /**
-   * Default LLM model for this jig's `llm()` and `agent()` calls. Lower
-   * precedence than per-step or per-call overrides, and lower than the
-   * dashboard's runtime override. Falls back to the global default if unset.
-   * Format: OpenRouter model id, e.g. "anthropic/claude-haiku-4.5".
+   * Default model for this jig's `llm()` and `agent()` calls (OpenRouter id).
+   * `ctx.step(..., { model })` and `llm(..., { model })` win above it; unset
+   * falls back to the global main model.
    */
   model?: string
+  /** Whole-run watchdog in ms. Omit for the global default (30 minutes). */
+  runTimeoutMs?: number
+  /** Ceiling per MCP tool call in ms. Omit for the global default (5 minutes). */
+  toolTimeoutMs?: number
 }
 
 export type JigDefinition = {
@@ -59,24 +62,18 @@ export async function run(
     silent?: boolean
     recorder?: RunRecorder
     signal?: AbortSignal
-    modelOverride?: string | null
-    stepModelOverrides?: Record<string, string>
-    toolTimeoutMs?: number | null
     jigId?: string
   }
 ): Promise<Context> {
   const ctx = new Context(params, {
     signal: options?.signal,
-    toolTimeoutMs: options?.toolTimeoutMs,
+    toolTimeoutMs: definition.options.toolTimeoutMs,
     jigId: options?.jigId,
   })
   if (options?.silent) ctx.setSink(() => {})
   if (options?.recorder) ctx.setRecorder(options.recorder)
-  // Precedence (low → high inside ctx, with per-call/step overrides above):
-  //   global default ← jig code ← dashboard override
-  // Step model is pushed/popped inside ctx.step; per-call passes options.model.
-  ctx.setBaseModel(options?.modelOverride ?? definition.options.model ?? null)
-  if (options?.stepModelOverrides) ctx.setStepModelOverrides(options.stepModelOverrides)
+  // Model precedence, high to low: llm({ model }) > ctx.step({ model }) > jig({ model }) > global main model.
+  ctx.setBaseModel(definition.options.model ?? null)
   return runContext.run(ctx, async () => {
     try {
       await definition.handler(ctx)

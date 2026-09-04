@@ -101,11 +101,7 @@ CREATE TABLE IF NOT EXISTS jigs (
   active_version_id INTEGER REFERENCES jig_versions(id),
   pending_version_id INTEGER REFERENCES jig_versions(id),
   created_at INTEGER NOT NULL,
-  archived_at INTEGER,
-  model_override TEXT,
-  step_model_overrides TEXT,
-  run_timeout_ms INTEGER,
-  tool_timeout_ms INTEGER
+  archived_at INTEGER
 );
 CREATE TABLE IF NOT EXISTS jig_versions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -265,11 +261,12 @@ CREATE TABLE IF NOT EXISTS jig_inboxes (
 const BASELINE_VERSION = 20
 
 /**
- * Schema changes made after the baseline. APPEND ONLY — `PRAGMA user_version`
+ * Schema changes made after the baseline. APPEND ONLY: `PRAGMA user_version`
  * is an index into this list, so inserting or reordering makes existing
- * databases skip migrations they never ran.
+ * databases skip migrations they never ran. An entry is SQL, or a function
+ * when the migration has to look at the data first.
  */
-const MIGRATIONS: string[] = [
+const MIGRATIONS: (string | ((db: Database) => void))[] = [
   // v21: drop the draft-file pointer the pre-store authoring flow used. Draft
   // code lives in jig_versions now, so this column was written and hydrated but
   // never read. (draft_approval stays — it is the live approval payload the
@@ -312,6 +309,40 @@ const MIGRATIONS: string[] = [
     address TEXT NOT NULL,
     created_at INTEGER NOT NULL
   );`,
+  // v24: per-jig model and timeouts moved into the jig source, as
+  // jig(name, { model, runTimeoutMs, toolTimeoutMs }) and ctx.step(..., { model }).
+  // Name every jig that had dashboard values so they can be re-declared in
+  // code, then drop the columns.
+  (db) => {
+    const rows = db.prepare(
+      `SELECT id, model_override, step_model_overrides, run_timeout_ms, tool_timeout_ms FROM jigs
+       WHERE model_override IS NOT NULL OR step_model_overrides IS NOT NULL
+          OR run_timeout_ms IS NOT NULL OR tool_timeout_ms IS NOT NULL`,
+    ).all() as {
+      id: string
+      model_override: string | null
+      step_model_overrides: string | null
+      run_timeout_ms: number | null
+      tool_timeout_ms: number | null
+    }[]
+    for (const row of rows) {
+      const options = [
+        row.model_override ? `model: ${JSON.stringify(row.model_override)}` : null,
+        row.run_timeout_ms ? `runTimeoutMs: ${row.run_timeout_ms}` : null,
+        row.tool_timeout_ms ? `toolTimeoutMs: ${row.tool_timeout_ms}` : null,
+      ].filter(Boolean)
+      const steps = row.step_model_overrides
+        ? `; per-step models ${row.step_model_overrides} go on ctx.step(label, tools, fn, { model })`
+        : ""
+      console.error(
+        `[migrate] ${row.id} had dashboard overrides; set them in code: ` +
+        `jig("${row.id}", { ...${options.length ? `, ${options.join(", ")}` : ""} }, ...)${steps}`,
+      )
+    }
+    for (const column of ["model_override", "step_model_overrides", "run_timeout_ms", "tool_timeout_ms"]) {
+      db.exec(`ALTER TABLE jigs DROP COLUMN ${column}`)
+    }
+  },
 ]
 
 // ---------------------------------------------------------------------------
@@ -350,7 +381,9 @@ export function runMigrations(db: Database, dbPath = DB_PATH) {
     // auto-rolls back. No partial state.
     db.exec("BEGIN")
     try {
-      db.exec(MIGRATIONS[i])
+      const migration = MIGRATIONS[i]
+      if (typeof migration === "function") migration(db)
+      else db.exec(migration)
       db.exec(`PRAGMA user_version = ${BASELINE_VERSION + i + 1}`)
       db.exec("COMMIT")
     } catch (e: any) {

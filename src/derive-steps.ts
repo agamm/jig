@@ -4,7 +4,8 @@
  */
 import type { CachedStep, CachedStepTool } from "./db.js"
 import { getConnectionImportBindings } from "./domain/source-analysis.js"
-import { DEFAULT_MAIN_MODEL } from "./config/models.js"
+import { extractJigModel, readObjectLiteral } from "./domain/jig-source.js"
+import { getMainModel } from "./config/models.js"
 
 function parseConnectionImports(code: string): Map<string, string> {
   return new Map(getConnectionImportBindings(code).map((binding) => [binding.localName, binding.serverName]))
@@ -65,9 +66,34 @@ function resolveToolsBlock(block: string, connections: Map<string, string>, tool
   return tools
 }
 
+/**
+ * The `model` in a step's fourth argument, `ctx.step(label, tools, async () => {...}, { model })`.
+ * `from` points just past `async`; the callback body is brace-matched first so
+ * an `llm(..., { model })` call inside it is not mistaken for the step option.
+ */
+function parseStepModelOption(code: string, from: number): string | null {
+  // Arrow callbacks only: `async function () {` has its brace before any `=>`.
+  const arrow = code.indexOf("=>", from)
+  const brace = code.indexOf("{", from)
+  if (arrow === -1 || brace === -1 || brace < arrow) return null
+  let bodyStart = arrow + 2
+  while (bodyStart < code.length && /\s/.test(code[bodyStart])) bodyStart++
+  const body = readObjectLiteral(code, bodyStart)
+  if (!body) return null
+  const afterBody = bodyStart + body.length
+  const comma = /^\s*,/.exec(code.slice(afterBody))
+  if (!comma) return null
+  const options = readObjectLiteral(code, afterBody + comma[0].length)
+  const match = options?.match(/\bmodel\s*:\s*["'`]([^"'`]+)["'`]/)
+  return match?.[1]?.trim() || null
+}
+
 export function parseStepsFromSource(code: string): CachedStep[] {
   const connections = parseConnectionImports(code)
   const toolVars = parseToolArrayVars(code, connections)
+  // Chip labels follow the runtime precedence: call > step > jig > global main model.
+  const jigModel = extractJigModel(code) ?? getMainModel()
+  const shortLabel = (id: string) => id.split("/").pop() ?? id
 
   // Match both: ctx.step("label", [inline], async  AND  ctx.step("label", varRef, async
   const stepRegex = /ctx\.step\(\s*["'`]([^"'`]+)["'`]\s*,\s*(\[[^\]]*\]|\w+)\s*,\s*async/g
@@ -90,18 +116,14 @@ export function parseStepsFromSource(code: string): CachedStep[] {
     const bodyStart = match.index! + match[0].length
     const bodyEnd = matches[i + 1]?.index ?? code.length
     const body = code.slice(bodyStart, bodyEnd)
-    // Derived, not spelled out: this label tells the user which model a step
-    // will use, so a hardcoded copy starts lying the day the default changes.
-    const defaultModel = DEFAULT_MAIN_MODEL.split("/").pop()!
+    const stepModel = parseStepModelOption(code, bodyStart) ?? jigModel
     if (/\bllm\s*[<(]/.test(body)) {
       const modelMatch = body.match(/\bllm\s*(?:<[^>]*>)?\s*\([^)]*\{[^}]*model\s*:\s*["']([^"']+)["']/)
-      const model = modelMatch?.[1]?.split("/").pop() ?? defaultModel
-      tools.push({ connection: "llm", name: `llm(${model})`, readOnly: true })
+      tools.push({ connection: "llm", name: `llm(${shortLabel(modelMatch?.[1] ?? stepModel)})`, readOnly: true })
     }
     if (/\bagent\s*[<(]/.test(body)) {
       const modelMatch = body.match(/\bagent\s*(?:<[^>]*>)?\s*\([^)]*\{[^}]*model\s*:\s*["']([^"']+)["']/)
-      const model = modelMatch?.[1]?.split("/").pop() ?? defaultModel
-      tools.push({ connection: "llm", name: `agent(${model})`, readOnly: true })
+      tools.push({ connection: "llm", name: `agent(${shortLabel(modelMatch?.[1] ?? stepModel)})`, readOnly: true })
     }
 
     const stepConnections = [...new Set(tools.map(t => t.connection))]
@@ -115,6 +137,8 @@ export async function deriveSteps(jigId: string, code: string): Promise<CachedSt
   const { getStepCache, setStepCache } = await import("./db.js")
   const hasher = new Bun.CryptoHasher("sha256")
   hasher.update(code)
+  // Chip labels fall back to the global main model, so a new default must miss the cache.
+  hasher.update(getMainModel())
   const codeHash = hasher.digest("hex")
 
   const cached = getStepCache(jigId, codeHash)

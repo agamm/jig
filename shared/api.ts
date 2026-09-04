@@ -119,16 +119,8 @@ export interface JigData {
     tools?: JigTool[]
     permissions: ToolPermission[]
   }
-  /** Dashboard model override (OpenRouter id). null = use jig code / global default. */
-  modelOverride?: string | null
   /** Model the jig's source code declares as default (via `jig(id, {model:"..."}, ...)`). */
   modelInCode?: string | null
-  /** Dashboard per-step model overrides keyed by step seq (1-indexed) as a string. */
-  stepModelOverrides?: Record<string, string>
-  /** Per-jig run watchdog override in ms; null = global default. */
-  runTimeoutMs?: number | null
-  /** Per-jig MCP tool-call timeout override in ms; null = global default. */
-  toolTimeoutMs?: number | null
   costMonth?: string
   costLifetime?: string
   /** Cross-run state the jig has stored via ctx.memory. */
@@ -297,11 +289,7 @@ export interface ModelUpgradeSuggestion {
   suggested: OpenRouterModelInfo
   // Human-readable reason: "newer • 38% cheaper"
   reason: string
-  // Counts of jigs that explicitly reference the *current* model id. Override
-  // and step counts are auto-updatable on approval; code refs need a manual
-  // source edit and are surfaced read-only.
-  overrideRefCount: number
-  stepRefCount: number
+  // Jigs whose source pins the *current* model id; they need a manual edit.
   codeRefCount: number
 }
 
@@ -313,14 +301,12 @@ export interface ModelUpgradesResponse {
 export interface ApplyModelUpgradeRequest {
   slot: ModelSlot
   modelId: string
-  updateJigs: boolean
 }
 
 export interface ApplyModelUpgradeResponse {
   ok: true
   slot: ModelSlot
   modelId: string
-  jigsUpdated: number
 }
 
 export interface DismissModelUpgradeRequest {
@@ -744,9 +730,6 @@ export interface ApiContracts {
   deleteJig: ApiContract<void, DeleteJigResponse>
   runJig: ApiContract<{ dryRun: boolean }, StartRunResponse>
   writeJigCode: ApiContract<{ code: string; message?: string; approve?: boolean }, WriteJigCodeResponse>
-  updateJigModel: ApiContract<{ model: string | null }, { ok: true; jigId: string; model: string | null }>
-  updateJigTimeouts: ApiContract<{ runTimeoutMs?: number | null; toolTimeoutMs?: number | null }, { ok: true; jigId: string; runTimeoutMs: number | null; toolTimeoutMs: number | null }>
-  updateJigStepModel: ApiContract<{ seq: number; model: string | null }, { ok: true; jigId: string; seq: number; model: string | null }>
   getRun: ApiContract<void, RunDetail>
   activeRun: ApiContract<void, RunStatus>
   cancelRun: ApiContract<{ jigId?: string }, CancelRunResponse>

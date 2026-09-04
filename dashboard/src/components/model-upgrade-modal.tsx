@@ -60,23 +60,13 @@ function SuggestionCard({
   s: ModelUpgradeSuggestion
   onActioned: (slot: ModelSlot) => void
 }) {
-  const autoUpdatable = s.overrideRefCount + s.stepRefCount
-  const [updateJigs, setUpdateJigs] = useState(autoUpdatable > 0)
   const [working, setWorking] = useState<"approve" | "dismiss" | null>(null)
 
   async function handleApprove() {
     setWorking("approve")
     try {
-      const res = await applyModelUpgrade({
-        slot: s.slot,
-        modelId: s.suggested.id,
-        updateJigs,
-      })
-      toast.success(
-        res.jigsUpdated > 0
-          ? `${SLOT_META[s.slot].label} → ${s.suggested.id} (${res.jigsUpdated} jig${res.jigsUpdated === 1 ? "" : "s"} updated)`
-          : `${SLOT_META[s.slot].label} → ${s.suggested.id}`,
-      )
+      await applyModelUpgrade({ slot: s.slot, modelId: s.suggested.id })
+      toast.success(`${SLOT_META[s.slot].label} → ${s.suggested.id}`)
       void mutate("/api/models")
       void mutate("/api/jigs")
       onActioned(s.slot)
@@ -137,27 +127,9 @@ function SuggestionCard({
         </div>
       </div>
 
-      {(autoUpdatable > 0 || s.codeRefCount > 0) && (
+      {s.codeRefCount > 0 && (
         <div className="mt-2.5 rounded border border-[var(--border)] bg-[var(--surface-muted)] px-2.5 py-1.5 text-[10px] text-[var(--text-muted)]">
-          {autoUpdatable > 0 && (
-            <label className="flex cursor-pointer items-start gap-2">
-              <input
-                type="checkbox"
-                checked={updateJigs}
-                onChange={(e) => setUpdateJigs(e.target.checked)}
-                disabled={working !== null}
-                className="mt-0.5"
-              />
-              <span>
-                Also update {autoUpdatable} jig{autoUpdatable === 1 ? "" : "s"} that override this model
-              </span>
-            </label>
-          )}
-          {s.codeRefCount > 0 && (
-            <div className={autoUpdatable > 0 ? "mt-1 pl-6" : ""}>
-              {s.codeRefCount} jig{s.codeRefCount === 1 ? "" : "s"} hardcode this model in source — edit manually
-            </div>
-          )}
+          {s.codeRefCount} jig{s.codeRefCount === 1 ? "" : "s"} set this model in source. Edit the jig to move them too.
         </div>
       )}
 

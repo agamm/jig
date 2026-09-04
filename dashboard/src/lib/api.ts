@@ -191,33 +191,6 @@ export function dismissModelUpgrade(input: DismissModelUpgradeRequest): Promise<
   })
 }
 
-export function updateJigModel(jigId: string, model: string | null): Promise<ApiResponse<"updateJigModel">> {
-  return fetchApi("updateJigModel", `/api/jigs/${encodeURIComponent(jigId)}/model`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model }),
-  })
-}
-
-export function updateJigTimeouts(
-  jigId: string,
-  timeouts: { runTimeoutMs?: number | null; toolTimeoutMs?: number | null },
-): Promise<ApiResponse<"updateJigTimeouts">> {
-  return fetchApi("updateJigTimeouts", `/api/jigs/${encodeURIComponent(jigId)}/timeouts`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(timeouts),
-  })
-}
-
-export function updateJigStepModel(jigId: string, seq: number, model: string | null): Promise<ApiResponse<"updateJigStepModel">> {
-  return fetchApi("updateJigStepModel", `/api/jigs/${encodeURIComponent(jigId)}/step-model`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ seq, model }),
-  })
-}
-
 export function fetchConnections(): Promise<Connection[]> {
   return fetchApi("connections", "/api/connections")
 }

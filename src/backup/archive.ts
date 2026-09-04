@@ -27,10 +27,6 @@ export interface BackupJig {
   /** Active version's code. History is deliberately not carried, see index.ts. */
   code: string
   createdAt: number
-  modelOverride: string | null
-  stepModelOverrides: Record<string, string>
-  runTimeoutMs: number | null
-  toolTimeoutMs: number | null
 }
 
 /**

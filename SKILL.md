@@ -38,6 +38,11 @@ const myJig = jig("my-jig", {
 export default myJig
 ```
 
+Options: `trigger` (required, see rule 8), `tools`, and three optional runtime settings that
+only exist in the source: `model` (OpenRouter id, the default for every `llm()`/`agent()` in
+the jig), `runTimeoutMs` (whole-run watchdog, default 30 minutes) and `toolTimeoutMs`
+(ceiling per MCP tool call, default 5 minutes). See rule 12b for precedence.
+
 If a jig does not need user-supplied inputs, omit `params` entirely. Do not add placeholder
 or speculative params just because a jig could theoretically be configurable.
 
@@ -81,10 +86,13 @@ There is no `"any"`: providers run these in strict mode and reject it with a 400
 *after* the model has generated the answer, so the work is done and discarded.
 Describe the real shape instead.
 
-### `agent(prompt, tools)`
+Other options: `model` (OpenRouter id for this one call; wins over the step and
+jig models, see rule 12b) and `maxTokens` (default 4096).
+
+### `agent(prompt, tools, options?)`
 
 LLM with bounded tool calling. The agent decides which tools to call, how many
-times, and in what order — but only from the tools you give it.
+times, and in what order, but only from the tools you give it.
 
 ```typescript
 const data = await agent(
@@ -92,6 +100,8 @@ const data = await agent(
   [granola.query_granola_meetings, workspace.gmail_search, workspace.gmail_get]
 )
 ```
+
+Options match `llm()`: `schema`, `model` (this call only) and `maxTokens`.
 
 This is the "bigger hatch" — use it when the task requires judgment about
 *how* to gather or process data. The agent might search, read results, search
@@ -589,6 +599,29 @@ const compactEvents = (Array.isArray(events) ? events : (events as any).items ??
     start: event.start.dateTime,
   }))
 const classification = await llm("Classify these events as professional or personal", { events: compactEvents })
+```
+
+### 12b. Model and timeouts live in the jig source
+
+There is no dashboard setting for these. The file is the only place they are set, so a CLI run and a dashboard run behave the same.
+
+- `jig(name, { trigger, tools, model?, runTimeoutMs?, toolTimeoutMs? }, handler)`: the jig-wide default model (OpenRouter id), the whole-run watchdog, and the ceiling per MCP tool call.
+- `ctx.step(label, tools, fn, { model })`: the model for that step only.
+- `llm(prompt, data, { model })` and `agent(prompt, tools, { model })`: the model for that one call.
+- Precedence, high to low: call > step > jig > global main model (Settings > Models).
+- Defaults when omitted: the global main model, `runTimeoutMs` 30 minutes, `toolTimeoutMs` 5 minutes. Only set one when the jig needs something different; do not restate a default.
+
+```typescript
+const myJig = jig("my-jig", {
+  trigger: { type: "cron", cron: "0 8 * * 1" },
+  tools: [workspace.gmail_search],
+  model: "vendor/strong-model",     // every llm()/agent() here, unless a step or call says otherwise
+  toolTimeoutMs: 15 * 60_000,       // one tool in this jig legitimately runs longer than 5 minutes
+}, async (ctx) => {
+  await ctx.step("Triage", [workspace.gmail_search], async () => {
+    // ...
+  }, { model: "vendor/cheap-model" })  // this step only
+})
 ```
 
 ### 13. Code format

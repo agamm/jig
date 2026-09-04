@@ -576,14 +576,14 @@ export async function callTool(
   await validateRequiredToolArguments(connection, toolName, normalizedParams)
 
   const signal = options?.signal ?? runContext.getStore()?.signal
-  // Per-jig override (dashboard) wins over the global env default.
+  // jig(name, { toolTimeoutMs }) wins over the global env default.
   const jigToolTimeout = runContext.getStore()?.toolTimeoutMs
   const hasJigOverride = typeof jigToolTimeout === "number" && jigToolTimeout > 0
   const toolTimeoutMs = hasJigOverride ? jigToolTimeout : MCP_TOOL_TIMEOUT_MS
   // The SDK only consults maxTotalTimeout when progress notifications arrive;
   // a server that never streams progress dies at the inactivity `timeout`. So
-  // a per-jig override must set the inactivity window too, or raising the
-  // dashboard "Tool" timeout would be a no-op for non-streaming servers.
+  // a per-jig override must set the inactivity window too, or raising
+  // toolTimeoutMs would be a no-op for non-streaming servers.
   const toolInactivityMs = hasJigOverride ? toolTimeoutMs : Math.min(120_000, toolTimeoutMs)
   const startedAt = Date.now()
   logSessionEvent({

@@ -23,11 +23,13 @@ export interface TriggerParseResult {
   error?: string
 }
 
-function extractTriggerObject(code: string): string | null {
-  const match = /trigger\s*:/.exec(code)
-  if (!match) return null
-
-  let i = match.index + match[0].length
+/**
+ * The `{...}` literal that starts at the first non-space character at or after
+ * `from`, with nested braces and quoted strings honoured. Null when the text
+ * there is not an object literal or it never closes.
+ */
+export function readObjectLiteral(code: string, from: number): string | null {
+  let i = from
   while (i < code.length && /\s/.test(code[i])) i++
   if (code[i] !== "{") return null
 
@@ -61,6 +63,25 @@ function extractTriggerObject(code: string): string | null {
   }
 
   return null
+}
+
+function extractTriggerObject(code: string): string | null {
+  const match = /trigger\s*:/.exec(code)
+  if (!match) return null
+  return readObjectLiteral(code, match.index + match[0].length)
+}
+
+/**
+ * Model declared at the jig level, `jig("id", { ..., model: "x" }, ...)`.
+ * Walks the whole options literal, so a `model` key that follows the nested
+ * trigger object is found and one inside the handler is not.
+ */
+export function extractJigModel(code: string): string | null {
+  const call = /\bjig\s*\(\s*["'`][^"'`]+["'`]\s*,/.exec(code)
+  if (!call) return null
+  const options = readObjectLiteral(code, call.index + call[0].length)
+  const match = options?.match(/\bmodel\s*:\s*["'`]([^"'`]+)["'`]/)
+  return match?.[1]?.trim() || null
 }
 
 export function extractTriggerConfig(code: string): TriggerParseResult {

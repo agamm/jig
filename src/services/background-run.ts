@@ -28,9 +28,9 @@ export async function startBackgroundRun(jigId: string, params?: Record<string, 
     return false
   }
 
-  const { jigPath, jigRow } = prepared
+  const { jigPath } = prepared
   const runId = insertRun(jigId, params)
-  startTrackedRun(runId, jigId, false, jigRow.run_timeout_ms ?? undefined)
+  startTrackedRun(runId, jigId, false)
   markScheduleTriggered(jigId, Math.floor(Date.now() / 1000))
 
   try {
@@ -40,7 +40,6 @@ export async function startBackgroundRun(jigId: string, params?: Record<string, 
       jigPath,
       params,
       logPrefix: "scheduler",
-      toolTimeoutMs: jigRow.tool_timeout_ms ?? null,
     })
   } catch (e: any) {
     setScheduleError(jigId, e?.message ?? String(e))

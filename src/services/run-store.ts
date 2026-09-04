@@ -49,6 +49,33 @@ function clearRunTimeout(runId: number): void {
   runTimeouts.delete(runId)
 }
 
+function armRunTimeout(runId: number, jigId: string, controller: AbortController, timeoutMs: number, elapsedMs = 0): void {
+  runTimeouts.set(runId, setTimeout(() => {
+    // If the run already finished, finishTrackedRun has cleared this timer's
+    // bookkeeping. Bail so we don't relabel a completed run as timed-out at
+    // the exact boundary (JS is single-threaded; an in-progress
+    // finishTrackedRun can't interleave with this callback).
+    if (!runs.has(runId)) return
+    const message = `Run timed out after ${Math.round(timeoutMs / 60_000)} minutes`
+    timedOutRuns.set(runId, message)
+    console.error(`[runner] ${jigId} run ${runId}: ${message}, aborting`)
+    controller.abort()
+  }, Math.max(0, timeoutMs - elapsedMs)))
+}
+
+/**
+ * Swap the default watchdog for the jig's own `runTimeoutMs`. The jig file is
+ * imported after startTrackedRun, so the runner calls this once it has the
+ * definition; the budget still counts from the run's start.
+ */
+export function rearmRunTimeout(runId: number, timeoutMs: number): void {
+  const run = runs.get(runId)
+  const controller = activeAborts.get(runId)
+  if (!run || !controller || !(timeoutMs > 0)) return
+  clearRunTimeout(runId)
+  armRunTimeout(runId, run.jigId, controller, timeoutMs, Date.now() - run.startedAt)
+}
+
 function isDryRunLimitedOutput(output?: string): boolean {
   return typeof output === "string" && output.includes("[dry-run]")
 }
@@ -71,24 +98,11 @@ export function getSignalForRun(runId: number): AbortSignal | undefined {
   return activeAborts.get(runId)?.signal
 }
 
-export function startTrackedRun(runId: number, jigId: string, dryRun: boolean, timeoutMs?: number): void {
+export function startTrackedRun(runId: number, jigId: string, dryRun: boolean): void {
   activeRuns.set(jigId, runId)
   const controller = new AbortController()
   activeAborts.set(runId, controller)
-  const runTimeoutMs = typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0
-    ? timeoutMs
-    : RUN_TIMEOUT_MS
-  runTimeouts.set(runId, setTimeout(() => {
-    // If the run already finished, finishTrackedRun has cleared this timer's
-    // bookkeeping — bail so we don't relabel a completed run as timed-out at
-    // the exact boundary (JS is single-threaded; an in-progress
-    // finishTrackedRun can't interleave with this callback).
-    if (!runs.has(runId)) return
-    const message = `Run timed out after ${Math.round(runTimeoutMs / 60_000)} minutes`
-    timedOutRuns.set(runId, message)
-    console.error(`[runner] ${jigId} run ${runId}: ${message} — aborting`)
-    controller.abort()
-  }, runTimeoutMs))
+  armRunTimeout(runId, jigId, controller, RUN_TIMEOUT_MS)
   runs.set(runId, {
     runId,
     jigId,

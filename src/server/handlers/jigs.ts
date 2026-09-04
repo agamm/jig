@@ -7,12 +7,7 @@ import { ApiError, apiJson } from "../http.js"
 import { cronToText, replaceTriggerInSource, textToTrigger, textToTriggerLLM, triggerToSource } from "../../domain/triggers.js"
 import { syncSchedules } from "../../scheduler/sync.js"
 import { deriveSteps } from "../../derive-steps.js"
-import {
-  applyEffectiveModelToSteps,
-  discoverAllJigs,
-  extractModelInCode,
-  getEffectiveModelContext,
-} from "../../services/jig-api.js"
+import { discoverAllJigs } from "../../services/jig-api.js"
 import {
   approvePending as approveJigPending,
   deleteJig as storeDeleteJig,
@@ -30,12 +25,7 @@ export async function handleGetSteps(id: string): Promise<Response> {
   ensureJigExists(id)
   const code = getJigActiveCode(id)
   if (!code) throw new ApiError(404, "Jig has no active version")
-  const raw = await deriveSteps(id, code)
-  // Relabel llm/agent chips against the live override chain — same rewrite
-  // buildJigResponse does, so the chip on the steps tab reflects the
-  // dashboard's per-step picks without needing the user to edit code.
-  const { jigEffectiveModel, stepOverrides } = getEffectiveModelContext(id, extractModelInCode(code))
-  const steps = applyEffectiveModelToSteps(raw as any, stepOverrides, jigEffectiveModel)
+  const steps = await deriveSteps(id, code)
   return apiJson("getSteps", { steps })
 }
 

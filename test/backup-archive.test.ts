@@ -12,7 +12,7 @@ const str = (b: Uint8Array) => new TextDecoder().decode(b)
 
 const snapshot = (over: Partial<BackupSnapshot> = {}): BackupSnapshot => ({
   jigs: [
-    { id: "daily-digest", name: "Daily Digest", code: "export default jig('daily-digest')", createdAt: 1_700_000_000_000, modelOverride: null, stepModelOverrides: {}, runTimeoutMs: null, toolTimeoutMs: null },
+    { id: "daily-digest", name: "Daily Digest", code: "export default jig('daily-digest')", createdAt: 1_700_000_000_000 },
   ],
   schedules: [{ jigId: "daily-digest", enabled: true, triggerType: "cron", cronExpr: "0 9 * * *", timezone: "America/Chicago", missedStrategy: "catch-up" }],
   credentials: [{ key: "composio:api_key", value: "v1.ENCRYPTED", server: "composio", encrypted: true }],

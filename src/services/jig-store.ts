@@ -25,14 +25,6 @@ export interface JigRow {
   pending_version_id: number | null
   created_at: number
   archived_at: number | null
-  /** Dashboard-set model override (OpenRouter id); null = inherit jig code / global default. */
-  model_override: string | null
-  /** JSON object of per-step model overrides, keyed by step seq (1-indexed). */
-  step_model_overrides: string | null
-  /** Per-jig run watchdog override in ms; null = global JIG_RUN_TIMEOUT_MS default. */
-  run_timeout_ms: number | null
-  /** Per-jig MCP tool-call timeout override in ms; null = global JIG_MCP_TOOL_TIMEOUT_MS default. */
-  tool_timeout_ms: number | null
 }
 
 export interface JigVersionRow {
@@ -412,63 +404,4 @@ export function importVersion(args: {
 
 export function setActiveVersion(jigId: string, versionId: number): void {
   openDb().prepare(`UPDATE jigs SET active_version_id = ? WHERE id = ?`).run(versionId, jigId)
-}
-
-/**
- * Set or clear the per-jig model override. Pass null to clear so the jig
- * falls back to its code-declared model (or the global default).
- */
-export function setModelOverride(jigId: string, model: string | null): void {
-  const value = typeof model === "string" && model.trim().length > 0 ? model.trim() : null
-  openDb().prepare(`UPDATE jigs SET model_override = ? WHERE id = ?`).run(value, jigId)
-}
-
-/**
- * Set or clear a per-jig timeout override (ms). Pass null for a field to clear
- * it so the jig falls back to the global env default. A non-positive or
- * non-finite value is treated as clear.
- */
-export function setJigTimeouts(
-  jigId: string,
-  timeouts: { runTimeoutMs?: number | null; toolTimeoutMs?: number | null },
-): void {
-  const norm = (v: number | null | undefined): number | null =>
-    typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.round(v) : null
-  const sets: string[] = []
-  const args: (number | null)[] = []
-  if ("runTimeoutMs" in timeouts) { sets.push("run_timeout_ms = ?"); args.push(norm(timeouts.runTimeoutMs)) }
-  if ("toolTimeoutMs" in timeouts) { sets.push("tool_timeout_ms = ?"); args.push(norm(timeouts.toolTimeoutMs)) }
-  if (sets.length === 0) return
-  openDb().prepare(`UPDATE jigs SET ${sets.join(", ")} WHERE id = ?`).run(...args, jigId)
-}
-
-/** Parse the JSON blob into a {seq: model} map. Returns {} for null/invalid JSON. */
-export function getStepModelOverrides(jigId: string): Record<string, string> {
-  const row = openDb().prepare(`SELECT step_model_overrides FROM jigs WHERE id = ?`).get(jigId) as { step_model_overrides: string | null } | undefined
-  if (!row?.step_model_overrides) return {}
-  try {
-    const parsed = JSON.parse(row.step_model_overrides)
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {}
-    const out: Record<string, string> = {}
-    for (const [k, v] of Object.entries(parsed)) {
-      if (typeof v === "string" && v.trim().length > 0) out[k] = v.trim()
-    }
-    return out
-  } catch {
-    return {}
-  }
-}
-
-/**
- * Set or clear a single step's model override. Reads, mutates, writes — keeps
- * the JSON object small (one row per jig, only modified entries persist).
- */
-export function setStepModelOverride(jigId: string, seq: number, model: string | null): void {
-  const current = getStepModelOverrides(jigId)
-  const key = String(seq)
-  const value = typeof model === "string" && model.trim().length > 0 ? model.trim() : null
-  if (value) current[key] = value
-  else delete current[key]
-  const json = Object.keys(current).length > 0 ? JSON.stringify(current) : null
-  openDb().prepare(`UPDATE jigs SET step_model_overrides = ? WHERE id = ?`).run(json, jigId)
 }

@@ -56,11 +56,8 @@ export interface ExecuteRunOptions {
   jigPath: string
   params?: Record<string, unknown>
   dryRun?: boolean
-  /** Log tag for mirrored step/error lines — "run" or "scheduler". */
+  /** Log tag for mirrored step/error lines: "run" or "scheduler". */
   logPrefix: string
-  modelOverride?: string | null
-  stepModelOverrides?: Record<string, string>
-  toolTimeoutMs?: number | null
 }
 
 /**
@@ -95,10 +92,8 @@ export async function executeRun(options: ExecuteRunOptions): Promise<{ skipped:
       dryRun,
       silent: true,
       signal: getSignalForRun(runId),
-      modelOverride: options.modelOverride ?? null,
-      stepModelOverrides: options.stepModelOverrides ?? {},
-      toolTimeoutMs: options.toolTimeoutMs ?? null,
       jigId,
+      runId,
     })
 
     if (result.skipped && !dryRun) {

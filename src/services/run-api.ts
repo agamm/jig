@@ -4,7 +4,6 @@ import { formatDuration } from "../utils.js"
 import { ApiError } from "../server/http.js"
 import { abortRunForJig, getActiveRunStatusForJig, getRunStatus, hasActiveRunForJig, startTrackedRun } from "./run-store.js"
 import { executeRun, prepareRun } from "./run-core.js"
-import { getStepModelOverrides } from "./jig-store.js"
 
 export async function startJigRun(id: string, body: any): Promise<StartRunResponse> {
   const prepared = await prepareRun(id)
@@ -19,24 +18,20 @@ export async function startJigRun(id: string, body: any): Promise<StartRunRespon
   }
   if (hasActiveRunForJig(id)) throw new ApiError(409, `A run is already in progress for ${id}`)
 
-  const { jigPath, jigRow } = prepared
+  const { jigPath } = prepared
   const dryRun = body?.dryRun === true
   const runId = dryRun ? -Date.now() : insertRun(id)
-  startTrackedRun(runId, id, dryRun, jigRow.run_timeout_ms ?? undefined)
+  startTrackedRun(runId, id, dryRun)
 
-  const modelOverride = jigRow.model_override ?? null
-  console.log(`[run] ${id} started (runId=${runId}${dryRun ? ", dryRun" : ""}${modelOverride ? `, model=${modelOverride}` : ""})`)
+  console.log(`[run] ${id} started (runId=${runId}${dryRun ? ", dryRun" : ""})`)
 
-  // Fire and forget — the dashboard follows progress over the run-status API.
+  // Fire and forget: the dashboard follows progress over the run-status API.
   void executeRun({
     jigId: id,
     runId,
     jigPath,
     dryRun,
     logPrefix: "run",
-    modelOverride,
-    stepModelOverrides: getStepModelOverrides(id),
-    toolTimeoutMs: jigRow.tool_timeout_ms ?? null,
   }).catch(() => {})
 
   return { runId, jigId: id, dryRun }

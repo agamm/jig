@@ -38,9 +38,6 @@ import {
   importVersion,
   listJigs,
   setActiveVersion,
-  setJigTimeouts,
-  setModelOverride,
-  setStepModelOverride,
 } from "../services/jig-store.js"
 import type { BackupSnapshot } from "./archive.js"
 
@@ -73,22 +70,7 @@ export function collectSnapshot(): BackupSnapshot {
     // A jig with no active version has nothing to restore; skip rather than
     // write an entry whose code file would be missing.
     if (!row || code == null) return []
-    let stepModelOverrides: Record<string, string> = {}
-    try {
-      stepModelOverrides = row.step_model_overrides ? JSON.parse(row.step_model_overrides) : {}
-    } catch {
-      stepModelOverrides = {}
-    }
-    return [{
-      id: row.id,
-      name: row.name,
-      code,
-      createdAt: row.created_at,
-      modelOverride: row.model_override ?? null,
-      stepModelOverrides,
-      runTimeoutMs: row.run_timeout_ms ?? null,
-      toolTimeoutMs: row.tool_timeout_ms ?? null,
-    }]
+    return [{ id: row.id, name: row.name, code, createdAt: row.created_at }]
   })
 
   const schemas: Record<string, string> = {}
@@ -230,11 +212,6 @@ export function applyRestore(
         createdAt: jig.createdAt,
       })
       setActiveVersion(jig.id, versionId)
-    }
-    setModelOverride(jig.id, jig.modelOverride)
-    setJigTimeouts(jig.id, { runTimeoutMs: jig.runTimeoutMs, toolTimeoutMs: jig.toolTimeoutMs })
-    for (const [seq, model] of Object.entries(jig.stepModelOverrides)) {
-      setStepModelOverride(jig.id, Number(seq), model)
     }
   }
 

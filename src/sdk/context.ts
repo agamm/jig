@@ -61,14 +61,11 @@ export class Context {
   /** Label of the current block-scoped step (null between steps). */
   private _currentStepLabel: string | null = null
 
-  /** Base model for this run (jig code or dashboard override). null = use global default. */
+  /** Base model for this run, from `jig(name, { model })`. null = use global default. */
   private _baseModel: string | null = null
 
-  /** Stack of step-scoped model overrides — top of stack wins inside a step. */
+  /** Stack of step-scoped model overrides: top of stack wins inside a step. */
   private _stepModelStack: (string | null)[] = []
-
-  /** Dashboard-set per-step model overrides keyed by step seq (1-indexed). */
-  private _stepModelOverrides: Record<string, string> = {}
 
   get inAgent() { return this._inAgent }
   enterAgent() { this._inAgent = true }
@@ -90,11 +87,6 @@ export class Context {
   /** Set the run-level default model (called once at run start from sdk/jig.ts). */
   setBaseModel(model: string | null): void {
     this._baseModel = model ?? null
-  }
-
-  /** Install dashboard-set per-step overrides. Called once at run start. */
-  setStepModelOverrides(map: Record<string, string>): void {
-    this._stepModelOverrides = { ...map }
   }
 
   /** Returns true only if a step is active and the tool is in its allowed list. */
@@ -204,7 +196,7 @@ export class Context {
 
   get signal(): AbortSignal | undefined { return this._signal }
 
-  /** Per-jig MCP tool-call timeout override (ms); null/undefined = global default. */
+  /** Per-jig MCP tool-call timeout (ms) from `jig(name, { toolTimeoutMs })`; unset = global default. */
   get toolTimeoutMs(): number | null | undefined { return this._toolTimeoutMs }
 
   /** Attach a recorder for step-level tracking (used by API server). */
@@ -243,18 +235,10 @@ export class Context {
     }
     this._recorder?.onStepStart(this._stepSeq, label)
 
-    // Precedence for this step's default model (high → low):
-    //   per-call options on llm()/agent()  ← still wins above whatever we push
-    //   dashboard step override (this._stepModelOverrides[seq])
-    //   code-declared step option (options.model)
-    //   jig-level base (already in _baseModel)
-    // We resolve the step's pushed value once at entry; the per-call layer
-    // is handled by llm()/agent() reading runContext.getStore()?.currentModel.
-    const codeStepModel = typeof options?.model === "string" && options.model.trim().length > 0
+    // Pushed once at entry; llm()/agent() read currentModel unless given their own model.
+    const stepModel = typeof options?.model === "string" && options.model.trim().length > 0
       ? options.model.trim()
       : null
-    const dashboardStepModel = this._stepModelOverrides[String(this._stepSeq)] ?? null
-    const stepModel = dashboardStepModel ?? codeStepModel
     const pushedModel = stepModel !== null
     if (pushedModel) this._stepModelStack.push(stepModel)
 

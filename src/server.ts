@@ -32,12 +32,6 @@ import { handleWebhook } from "./scheduler/webhooks.js"
 import { getSchedule, listAllSchedules, setScheduleEnabled, listAuthorizedSenders, addAuthorizedSender, removeAuthorizedSender, listToolPermissions, setToolPermission, type ToolPermissionPolicy } from "./db.js"
 import { startScheduler } from "./scheduler/index.js"
 import { syncSchedules } from "./scheduler/sync.js"
-import {
-  getJigRow,
-  setModelOverride as storeSetModelOverride,
-  setStepModelOverride as storeSetStepModelOverride,
-  setJigTimeouts as storeSetJigTimeouts,
-} from "./services/jig-store.js"
 import { resetSessionLog } from "./debug/session-log.js"
 import { ApiError, apiJson, json } from "./server/http.js"
 import {
@@ -229,7 +223,7 @@ export function createApiServer(port: number) {
             const body = (await req.json().catch(() => ({}))) as Record<string, unknown>
             return apiJson(
               "applyModelUpgrade",
-              applyModelUpgradeImpl(parseSlot(body.slot), parseModelId(body.modelId), body.updateJigs === true),
+              applyModelUpgradeImpl(parseSlot(body.slot), parseModelId(body.modelId)),
             )
           }
           case "dismissModelUpgrade": {
@@ -255,74 +249,6 @@ export function createApiServer(port: number) {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
             const body = await req.json().catch(() => ({}))
             return apiJson("runJig", await startJigRun(route.params.id, body))
-          }
-          case "updateJigStepModel": {
-            // PATCH /api/jigs/<id>/step-model — set or clear a single step's
-            // model override. Step seq is 1-indexed (matches what the runner
-            // reports to onStepStart and what /api/jigs/<id>/steps returns).
-            if (req.method !== "PATCH") return json({ error: "Method not allowed" }, 405)
-            const body = (await req.json().catch(() => ({}))) as { seq?: unknown; model?: unknown }
-            ensureJigExists(route.params.id)
-            const seq = typeof body.seq === "number" && Number.isInteger(body.seq) && body.seq > 0 ? body.seq : NaN
-            if (!Number.isFinite(seq)) throw new ApiError(400, "seq must be a positive integer")
-            let next: string | null = null
-            if (body.model === null || body.model === undefined) {
-              next = null
-            } else if (typeof body.model === "string") {
-              next = body.model.trim() || null
-            } else {
-              throw new ApiError(400, "model must be a string or null")
-            }
-            storeSetStepModelOverride(route.params.id, seq, next)
-            broadcastJigsUpdated()
-            return apiJson("updateJigStepModel", { ok: true as const, jigId: route.params.id, seq, model: next })
-          }
-          case "updateJigModel": {
-            // PATCH /api/jigs/<id>/model — dashboard sets or clears the per-jig
-            // model override. Pass {model: null} to clear and fall back to the
-            // jig's code-declared model (or global default).
-            if (req.method !== "PATCH") return json({ error: "Method not allowed" }, 405)
-            const body = (await req.json().catch(() => ({}))) as { model?: unknown }
-            ensureJigExists(route.params.id)
-            let next: string | null = null
-            if (body.model === null || body.model === undefined) {
-              next = null
-            } else if (typeof body.model === "string") {
-              next = body.model.trim() || null
-            } else {
-              throw new ApiError(400, "model must be a string or null")
-            }
-            storeSetModelOverride(route.params.id, next)
-            broadcastJigsUpdated()
-            return apiJson("updateJigModel", { ok: true as const, jigId: route.params.id, model: next })
-          }
-          case "updateJigTimeouts": {
-            // PATCH /api/jigs/<id>/timeouts — set or clear per-jig run/tool
-            // timeout overrides (ms). Omit a field to leave it; pass null or a
-            // non-positive value to clear it back to the global default.
-            if (req.method !== "PATCH") return json({ error: "Method not allowed" }, 405)
-            ensureJigExists(route.params.id)
-            const body = (await req.json().catch(() => ({}))) as { runTimeoutMs?: unknown; toolTimeoutMs?: unknown }
-            const parse = (v: unknown): number | null | undefined => {
-              if (v === undefined) return undefined
-              if (v === null) return null
-              if (typeof v !== "number" || !Number.isFinite(v)) throw new ApiError(400, "timeout must be a positive number, null, or omitted")
-              return v > 0 ? v : null
-            }
-            const runTimeoutMs = parse(body.runTimeoutMs)
-            const toolTimeoutMs = parse(body.toolTimeoutMs)
-            storeSetJigTimeouts(route.params.id, {
-              ...(runTimeoutMs !== undefined ? { runTimeoutMs } : {}),
-              ...(toolTimeoutMs !== undefined ? { toolTimeoutMs } : {}),
-            })
-            broadcastJigsUpdated()
-            const updated = getJigRow(route.params.id)
-            return apiJson("updateJigTimeouts", {
-              ok: true as const,
-              jigId: route.params.id,
-              runTimeoutMs: updated?.run_timeout_ms ?? null,
-              toolTimeoutMs: updated?.tool_timeout_ms ?? null,
-            })
           }
           case "evalTool": {
             // Invoke one tool against the live connection and report what it

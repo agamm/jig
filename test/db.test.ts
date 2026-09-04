@@ -348,6 +348,10 @@ describe("schema/migration convergence", () => {
    */
   const BASELINE_DELTA = `
     ALTER TABLE agent_sessions ADD COLUMN draft_file_path TEXT;
+    ALTER TABLE jigs ADD COLUMN model_override TEXT;
+    ALTER TABLE jigs ADD COLUMN step_model_overrides TEXT;
+    ALTER TABLE jigs ADD COLUMN run_timeout_ms INTEGER;
+    ALTER TABLE jigs ADD COLUMN tool_timeout_ms INTEGER;
   `
   const BASELINE_VERSION = 20
 
@@ -394,6 +398,42 @@ describe("schema/migration convergence", () => {
     const ancient = openDb(":memory:")
     ancient.exec(`PRAGMA user_version = 7`)
     expect(() => runMigrations(ancient)).toThrow(/predates the v20 baseline/)
+    closeDb()
+  })
+
+  it("v24 names each jig that had dashboard overrides, then drops the columns", () => {
+    closeDb()
+    const db = openDb(":memory:")
+    // A v23 database: the override columns exist and one jig used them.
+    db.exec(`
+      ALTER TABLE jigs ADD COLUMN model_override TEXT;
+      ALTER TABLE jigs ADD COLUMN step_model_overrides TEXT;
+      ALTER TABLE jigs ADD COLUMN run_timeout_ms INTEGER;
+      ALTER TABLE jigs ADD COLUMN tool_timeout_ms INTEGER;
+      INSERT INTO jigs (id, name, created_at, model_override, tool_timeout_ms)
+        VALUES ('weekly-update', 'Weekly Update', 1, 'vendor/x', 900000);
+      INSERT INTO jigs (id, name, created_at) VALUES ('untouched', 'Untouched', 1);
+      PRAGMA user_version = 23;
+    `)
+
+    const warnings: string[] = []
+    const realError = console.error
+    console.error = (...args: unknown[]) => { warnings.push(args.map(String).join(" ")) }
+    try {
+      runMigrations(db)
+    } finally {
+      console.error = realError
+    }
+
+    expect(warnings).toEqual([
+      '[migrate] weekly-update had dashboard overrides; set them in code: jig("weekly-update", { ..., model: "vendor/x", toolTimeoutMs: 900000 }, ...)',
+    ])
+    const columns = (db.prepare(`PRAGMA table_info("jigs")`).all() as { name: string }[]).map((c) => c.name)
+    expect(columns).not.toContain("model_override")
+    expect(columns).not.toContain("step_model_overrides")
+    expect(columns).not.toContain("run_timeout_ms")
+    expect(columns).not.toContain("tool_timeout_ms")
+    expect((db.prepare("PRAGMA user_version").get() as any).user_version).toBe(24)
     closeDb()
   })
 })

@@ -26,13 +26,7 @@ import {
   setModelOverrides,
 } from "../config/models.js"
 import { fetchModelPerf, fetchOpenRouterModels } from "./openrouter-catalog.js"
-import {
-  getJigRow,
-  getStepModelOverrides,
-  listJigs,
-  setModelOverride,
-  setStepModelOverride,
-} from "./jig-store.js"
+import { listJigs } from "./jig-store.js"
 import { introspectJig } from "./introspect-jig.js"
 
 const DISMISSED_KEY = "modelUpgrades"
@@ -185,36 +179,25 @@ function reasonString(current: OpenRouterModelInfo, suggested: OpenRouterModelIn
   return parts.join(" • ")
 }
 
-type SlotCounts = { override: number; step: number; code: number }
-
 /**
- * Scan all jigs once, returning per-slot reference counts keyed by the
- * current model id of each slot. Single jig pass + parallel introspection
- * — avoids the original 3×listJigs × N×introspect blowup.
+ * Scan all jigs once, returning per slot how many pin that slot's current
+ * model id in source. Single jig pass + parallel introspection, avoiding the
+ * original 3×listJigs × N×introspect blowup.
  */
-async function countRefsForAllSlots(
+async function countCodeRefsForAllSlots(
   currentBySlot: Record<ModelSlot, string>,
-): Promise<Record<ModelSlot, SlotCounts>> {
-  const counts: Record<ModelSlot, SlotCounts> = {
-    main: { override: 0, step: 0, code: 0 },
-    fast: { override: 0, step: 0, code: 0 },
-  }
+): Promise<Record<ModelSlot, number>> {
+  const counts: Record<ModelSlot, number> = { main: 0, fast: 0 }
   const summaries = listJigs()
-  // Source parsing is the slow part — fan out, swallow per-jig failures so
+  // Source parsing is the slow part: fan out, swallow per-jig failures so
   // one broken jig doesn't blank the whole count.
   const introspections = await Promise.all(
     summaries.map((s) => introspectJig(s.id, { includeSteps: false }).catch(() => null)),
   )
-  for (let i = 0; i < summaries.length; i++) {
-    const s = summaries[i]
-    const row = getJigRow(s.id)
-    const steps = getStepModelOverrides(s.id)
-    const inCode = introspections[i]?.modelInCode ?? null
+  for (const introspection of introspections) {
+    const inCode = introspection?.modelInCode ?? null
     for (const slot of MODEL_SLOTS) {
-      const target = currentBySlot[slot]
-      if (row?.model_override === target) counts[slot].override++
-      if (Object.values(steps).some((m) => m === target)) counts[slot].step++
-      if (inCode === target) counts[slot].code++
+      if (inCode === currentBySlot[slot]) counts[slot]++
     }
   }
   return counts
@@ -242,7 +225,7 @@ export async function computeUpgradeSuggestions(): Promise<ModelUpgradesResponse
   }
   if (picks.length === 0) return { suggestions: [], fetchedAt }
 
-  const counts = await countRefsForAllSlots(currentBySlot)
+  const codeRefs = await countCodeRefsForAllSlots(currentBySlot)
 
   // Enrich only the models actually shown (current + suggested per pick) with
   // latency/throughput — these aren't in the bulk /models list. Dedup by id so
@@ -263,46 +246,15 @@ export async function computeUpgradeSuggestions(): Promise<ModelUpgradesResponse
     current: withPerf(current),
     suggested: withPerf(suggested),
     reason: reasonString(current, suggested),
-    overrideRefCount: counts[slot].override,
-    stepRefCount: counts[slot].step,
-    codeRefCount: counts[slot].code,
+    codeRefCount: codeRefs[slot],
   }))
 
   return { suggestions, fetchedAt }
 }
 
-export function applyUpgrade(
-  slot: ModelSlot,
-  modelId: string,
-  updateJigs: boolean,
-): ApplyModelUpgradeResponse {
-  const previousId = getSlotModel(slot)
+export function applyUpgrade(slot: ModelSlot, modelId: string): ApplyModelUpgradeResponse {
   setModelOverrides({ [slot]: modelId })
-
-  let jigsUpdated = 0
-  if (updateJigs && previousId !== modelId) {
-    for (const s of listJigs()) {
-      let touched = false
-      const row = getJigRow(s.id)
-      if (row?.model_override === previousId) {
-        setModelOverride(s.id, modelId)
-        touched = true
-      }
-      const steps = getStepModelOverrides(s.id)
-      for (const [seqStr, m] of Object.entries(steps)) {
-        if (m === previousId) {
-          const seq = Number(seqStr)
-          if (Number.isInteger(seq) && seq > 0) {
-            setStepModelOverride(s.id, seq, modelId)
-            touched = true
-          }
-        }
-      }
-      if (touched) jigsUpdated++
-    }
-  }
-
-  return { ok: true, slot, modelId, jigsUpdated }
+  return { ok: true, slot, modelId }
 }
 
 export function dismissUpgrade(slot: ModelSlot, modelId: string): void {

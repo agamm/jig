@@ -14,6 +14,7 @@ import { checkStepStructure } from "./services/jig-checker.js"
 import { hasConsoleLogCall } from "./domain/source-analysis.js"
 import { isCancellationMessage, USER_CANCELLED_MESSAGE } from "./run-cancel.js"
 import { materializeJigWithRuntimeImports } from "./domain/runtime-imports.js"
+import { rearmRunTimeout } from "./services/run-store.js"
 
 // --- Runner ---
 export interface RunResult {
@@ -30,7 +31,8 @@ export interface RunResult {
  * @param jigPath  Absolute path to the jig .ts file
  * @param params   Runtime inputs passed through to ctx.params
  * @param onEvent  Callback for every run event — progress, steps, errors, completion
- * @param options  dryRun: stub tool calls; silent: suppress console output
+ * @param options  dryRun: stub tool calls; silent: suppress console output;
+ *                 runId: tracked run whose watchdog follows the jig's runTimeoutMs
  */
 export async function runJig(
   jigPath: string,
@@ -40,10 +42,8 @@ export async function runJig(
     dryRun?: boolean
     silent?: boolean
     signal?: AbortSignal
-    modelOverride?: string | null
-    stepModelOverrides?: Record<string, string>
-    toolTimeoutMs?: number | null
     jigId?: string
+    runId?: number
   }
 ): Promise<RunResult> {
   const { dryRun, silent } = options ?? {}
@@ -56,10 +56,8 @@ export async function runJig(
       dryRun: dryRun ?? false,
       silent: silent ?? false,
       signal,
-      modelOverride: options?.modelOverride ?? null,
-      stepModelOverrides: options?.stepModelOverrides ?? {},
-      toolTimeoutMs: options?.toolTimeoutMs ?? null,
       jigId: options?.jigId,
+      runId: options?.runId,
     })
   )
 }
@@ -72,10 +70,8 @@ async function _runJig(
     dryRun: boolean
     silent: boolean
     signal?: AbortSignal
-    modelOverride: string | null
-    stepModelOverrides: Record<string, string>
-    toolTimeoutMs: number | null
     jigId?: string
+    runId?: number
   }
 ): Promise<RunResult> {
   const { dryRun, silent, signal } = opts
@@ -172,20 +168,19 @@ async function _runJig(
       }
     }
 
+    // 4. The watchdog was armed with the global default before the file was
+    // imported; now that the definition is known, honour its own budget.
+    if (opts.runId != null && typeof def.options?.runTimeoutMs === "number") {
+      rearmRunTimeout(opts.runId, def.options.runTimeoutMs)
+    }
+
     // --- Run ---
-    log("executing-handler", {
-      jigName: def.name,
-      modelOverride: opts.modelOverride,
-      stepModelOverrides: opts.stepModelOverrides,
-    })
+    log("executing-handler", { jigName: def.name, model: def.options?.model ?? null })
     const { run } = await import("./sdk/jig.js")
     const ctx = await run(def, params, {
       ...(silent && { silent: true }),
       recorder,
       signal,
-      modelOverride: opts.modelOverride,
-      stepModelOverrides: opts.stepModelOverrides,
-      toolTimeoutMs: opts.toolTimeoutMs,
       jigId: opts.jigId,
     })
 

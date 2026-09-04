@@ -1,5 +1,5 @@
 import type { JigTool, ToolPermission } from "../../shared/api.js"
-import { extractConnections, extractTrigger } from "../domain/jig-source.js"
+import { extractConnections, extractJigModel, extractTrigger } from "../domain/jig-source.js"
 import { getToolPermission } from "../db.js"
 import { getActiveCode } from "./jig-store.js"
 import { materializeActiveVersion } from "./jig-runtime.js"
@@ -45,7 +45,7 @@ export async function introspectJig(
   let trigger = code ? extractTrigger(code) : ""
   let tools: JigTool[] = []
   let steps: import("../../shared/api.js").JigStep[] = []
-  let modelInCode: string | null = null
+  let modelInCode: string | null = code ? extractJigModel(code) : null
 
   if (filePath) {
     try {
@@ -58,9 +58,10 @@ export async function introspectJig(
           readOnly: tool._readOnly === true,
         })))
       }
-      if (typeof def?.options?.model === "string" && def.options.model.trim().length > 0) {
-        modelInCode = def.options.model.trim()
-      }
+      // The live definition outranks the source scan once the import worked.
+      modelInCode = typeof def?.options?.model === "string" && def.options.model.trim().length > 0
+        ? def.options.model.trim()
+        : null
     } catch {
       trigger = extractTrigger(code)
     }

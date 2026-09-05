@@ -97,12 +97,15 @@ async function confirm(question: string, defaultYes = true, opts: { destructive?
   return ans.toLowerCase().startsWith("y")
 }
 
-/** Volume at /data by API first; the CLI's prompt-driven command only as a fallback at a terminal. */
-async function attachDataVolume(status: RailwayStatus | null): Promise<void> {
+/**
+ * Volume at /data by API first; the CLI's prompt-driven command only as a
+ * fallback at a terminal. Returns the volume id when the API created it, which
+ * is proof of creation independent of the CLI's listing.
+ */
+async function attachDataVolume(status: RailwayStatus | null): Promise<string | null> {
   if (status) {
     try {
-      await createVolume({ projectId: status.projectId, environmentId: status.environmentId, serviceId: status.serviceId, mountPath: "/data" })
-      return
+      return await createVolume({ projectId: status.projectId, environmentId: status.environmentId, serviceId: status.serviceId, mountPath: "/data" })
     } catch (error) {
       console.log(`  (volume via API failed: ${(error as Error)?.message ?? error}; trying the CLI)`)
     }
@@ -114,6 +117,21 @@ async function attachDataVolume(status: RailwayStatus | null): Promise<void> {
     : ["volume", "add", "--mount-path", "/data"]
   const code = await railwayInteractive(volArgs)
   if (code !== 0) console.log("  (volume attach reported non-zero; verifying...)")
+  return null
+}
+
+/** The CLI's volume list lags a fresh create by a few seconds; ask a few times before believing "none". */
+async function waitForVolumeAt(mountPath: string, attempts = 6): Promise<Awaited<ReturnType<typeof listVolumes>>> {
+  let last: Awaited<ReturnType<typeof listVolumes>> = []
+  for (let i = 0; i < attempts; i++) {
+    last = await listVolumes().catch((error) => {
+      console.error(`\nCould not verify the volume: ${(error as Error)?.message ?? error}`)
+      return [] as Awaited<ReturnType<typeof listVolumes>>
+    })
+    if (last.some((v) => v.mountPath === mountPath)) return last
+    await new Promise((r) => setTimeout(r, 5000))
+  }
+  return last
 }
 
 async function ensureRailwayLogin(): Promise<void> {
@@ -442,20 +460,21 @@ export async function runDeploy(targetArg?: string, options: DeployOptions = {})
     status = await getStatus()
     if (!status) await new Promise((r) => setTimeout(r, 2000))
   }
+  let createdVolumeId: string | null = null
   try {
-    await attachDataVolume(status)
+    createdVolumeId = await attachDataVolume(status)
   } catch (error) {
     console.error(`\n${(error as Error)?.message ?? error}`)
     process.exit(1)
   }
   // Authoritative check — a missing volume silently wipes SQLite on every
   // redeploy. Better to fail the deploy here than let onboarding evaporate
-  // later.
-  const volumesAfter = await listVolumes().catch((error) => {
-    console.error(`\nCould not verify the volume: ${(error as Error)?.message ?? error}`)
-    return [] as Awaited<ReturnType<typeof listVolumes>>
-  })
-  if (!volumesAfter.some((v) => v.mountPath === "/data")) {
+  // later. An id from the API already proves creation; the listing is then
+  // only confirmation and may lag.
+  const volumesAfter = await waitForVolumeAt("/data", createdVolumeId ? 6 : 3)
+  if (!volumesAfter.some((v) => v.mountPath === "/data") && createdVolumeId) {
+    console.log(`  Volume ${createdVolumeId} created at /data (the listing has not caught up yet).`)
+  } else if (!volumesAfter.some((v) => v.mountPath === "/data")) {
     console.error("")
     console.error("Volume attach did NOT create a volume at /data.")
     console.error("Without it, every redeploy wipes SQLite (password, OAuth tokens, jigs).")
@@ -465,8 +484,9 @@ export async function runDeploy(targetArg?: string, options: DeployOptions = {})
     console.error("")
     console.error("Attach it manually in the Railway dashboard, then run `jig deploy --attach-volume`.")
     process.exit(1)
+  } else {
+    console.log(`  ✓ Volume attached at /data.`)
   }
-  console.log(`  ✓ Volume attached at /data.`)
 
   // Step 6: public URL. API first (no prompt), the CLI as fallback.
   console.log("\nGenerating a public domain...")

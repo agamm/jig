@@ -69,7 +69,7 @@ export async function runPair(argv: string[]): Promise<void> {
     })
   }
   setSessionCookie(derivedHandle, token)
-  console.log(`\u2713 Paired with ${derivedHandle} (${url}).`)
+  console.log(`\u2705 Paired with ${derivedHandle} (${url}).`)
   console.log(`  Session cached for 30 days in ~/.config/jig/remotes/${derivedHandle}.json.`)
   console.log(`  \`jig setup\`, \`jig update\` and \`jig debug\` now work against this instance.`)
 }

@@ -65,7 +65,7 @@ export function UnlockGate({ children }: { children: ReactNode }) {
   if (health.mode === "service" && (health.locked || !health.authenticated)) {
     return <PasswordForm mode="unlock" onDone={refresh} />;
   }
-  if (!health.onboarding_complete) return <SetupView onComplete={refresh} />;
+  if (!health.onboarding_complete) return <SetupView />;
   return <>{children}</>;
 }
 

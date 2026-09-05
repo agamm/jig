@@ -64,6 +64,11 @@ export function claimPairingCode(code: string): boolean {
   return true
 }
 
+/** A CLI paired through another door (the deploy-time setup code); the Setup page should still say so. */
+export function markPairingClaimed(): void {
+  claimedAt = Date.now()
+}
+
 /** For the page that minted the code: has a CLI redeemed it yet? */
 export function getPairingStatus(): { outstanding: boolean; claimed: boolean } {
   const live = pending !== null && Date.now() <= pending.expiresAt

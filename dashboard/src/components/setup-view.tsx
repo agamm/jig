@@ -135,7 +135,7 @@ function readOnlyBackend(): SetupBackend {
   };
 }
 
-export function SetupView({ onComplete }: { onComplete?: () => void | Promise<void> } = {}) {
+export function SetupView() {
   const [steps, setSteps] = useState<Record<SetupStepId, StepState>>(INITIAL);
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [running, setRunning] = useState<SetupStepId[] | "all" | null>(null);
@@ -143,7 +143,6 @@ export function SetupView({ onComplete }: { onComplete?: () => void | Promise<vo
   const [promptValue, setPromptValue] = useState("");
   const [finished, setFinished] = useState<{ verified: SetupStepId[]; skipped: SetupStepId[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [recommendations, setRecommendations] = useState<Extract<SetupEvent, { type: "recommendations" }> | null>(null);
   const [approvedSteps, setApprovedSteps] = useState<Set<SetupStepId>>(() => new Set());
   const promptRef = useRef<Prompt | null>(null);
   const currentStep = useRef<SetupStepId | null>(null);
@@ -263,7 +262,6 @@ export function SetupView({ onComplete }: { onComplete?: () => void | Promise<vo
     setRunning(only ?? "all");
     setError(null);
     setFinished(null);
-    setRecommendations(null);
 
     const io: SetupIO = {
       canPrompt: () => true, // a form is a prompt anyone can answer
@@ -363,9 +361,6 @@ export function SetupView({ onComplete }: { onComplete?: () => void | Promise<vo
         case "step-skipped":
           patch(event.id, { status: "skipped", detail: event.reason });
           break;
-        case "recommendations":
-          setRecommendations(event);
-          break;
         case "complete": {
           setFinished({ verified: event.verified, skipped: event.skipped });
           // Celebrate once: when this run turned the last step green (optional
@@ -384,16 +379,14 @@ export function SetupView({ onComplete }: { onComplete?: () => void | Promise<vo
       }
     }
 
-    let setupCompleted = false;
     try {
       const result = await runSetupFlow(io, backend, { dashboardUrl: window.location.origin, ...(only ? { only } : {}) });
       const requiredReady = SETUP_STEPS
         .filter((step) => step.required)
         .every((step) => readyAtRunStart.has(step.id) || result.verified.includes(step.id));
-      if (requiredReady) {
-        await completeOnboarding();
-        setupCompleted = true;
-      }
+      // Marks the gate satisfied for the next load; the page itself stays put so
+      // optional steps (Composio) can still be added. Open Jigs is the way out.
+      if (requiredReady) await completeOnboarding();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -402,7 +395,6 @@ export function SetupView({ onComplete }: { onComplete?: () => void | Promise<vo
       setRunning(null);
       await refreshStatus();
       await mutate("connections");
-      if (setupCompleted) await onComplete?.();
     }
   }
 
@@ -615,17 +607,6 @@ export function SetupView({ onComplete }: { onComplete?: () => void | Promise<vo
           })}
         </Section>
 
-        {recommendations ? (
-          <Notice tone="neutral" title="Worth adding next">
-            {recommendations.apps.map((app) => `${app.name}: ${app.why}`).join(" · ")}
-            {recommendations.dashboardUrl ? (
-              <a className="ml-1 underline" href={recommendations.dashboardUrl} target="_blank" rel="noreferrer">
-                Manage apps ↗
-              </a>
-            ) : null}
-          </Notice>
-        ) : null}
-
         <Section label="This instance">
           <InstancePanel health={health} />
         </Section>
@@ -715,6 +696,14 @@ function CliPairing() {
   const [paired, setPaired] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  // A CLI may already have paired another way (the deploy-time setup code), so
+  // ask once on load rather than only after a code is minted here.
+  useEffect(() => {
+    fetchPairingStatus()
+      .then((status) => { if (status?.claimed) setPaired(true); })
+      .catch(() => {});
+  }, []);
+
   // The CLI redeems the code out of band, so the only way this page learns it
   // worked is to ask. Poll only while a code is outstanding.
   useEffect(() => {
@@ -779,7 +768,7 @@ function CliPairing() {
 
       {paired ? (
         <p className="mt-3 flex items-center gap-2 text-[12px] text-emerald-300">
-          <span aria-hidden>✓</span> CLI connected. That code is spent; generate a new one for another machine.
+          <span aria-hidden>✓</span> CLI connected. Generate a new code to pair another machine.
         </p>
       ) : null}
 

@@ -175,12 +175,15 @@ export function createApiServer(port: number) {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
             const body = (await req.json().catch(() => ({}))) as { code?: unknown }
             const code = typeof body.code === "string" ? body.code : ""
-            const { claimPairingCode } = await import("./auth/pairing.js")
+            const { claimPairingCode, markPairingClaimed } = await import("./auth/pairing.js")
             const { claimSetupCodePairing } = await import("./auth/setup-code.js")
             // A dashboard-minted code, or the retired first-boot setup code held by the machine that deployed.
-            if (!code || !(claimPairingCode(code) || claimSetupCodePairing(code))) {
+            const viaPairingCode = Boolean(code) && claimPairingCode(code)
+            const viaSetupCode = !viaPairingCode && Boolean(code) && claimSetupCodePairing(code)
+            if (!viaPairingCode && !viaSetupCode) {
               return json({ error: "That pairing code is not valid, already used, or expired." }, 401)
             }
+            if (viaSetupCode) markPairingClaimed()
             const { issueToken } = await import("./auth/session.js")
             return apiJson("claimPairingCode", { token: issueToken() })
           }

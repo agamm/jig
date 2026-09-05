@@ -1,6 +1,6 @@
 {
   "name": "dashboard",
-  "version": "0.1.138",
+  "version": "0.1.139",
   "private": true,
   "packageManager": "pnpm@10.15.1",
   "scripts": {

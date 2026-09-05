@@ -206,8 +206,8 @@ function renderCallbackPage(input: {
         --surface: #111113;
         --border: #1f1f23;
         --text: #ededed;
-        --muted: #888;
-        --soft: #555;
+        --muted: #8b8b91;
+        --soft: #5f5f66;
         --accent: ${accent};
         --accent-soft: ${accentSoft};
       }
@@ -225,53 +225,53 @@ function renderCallbackPage(input: {
         padding: 24px;
       }
       .card {
-        width: min(100%, 560px);
-        background: rgba(17,17,19,0.94);
+        width: min(100%, 520px);
+        background: #0d0d0f;
         border: 1px solid var(--border);
-        border-radius: 24px;
-        padding: 28px;
-        box-shadow: 0 24px 64px rgba(0,0,0,0.45);
+        border-radius: 12px;
+        padding: 20px 22px;
+        box-shadow: 0 16px 48px rgba(0,0,0,0.4);
       }
       .badge {
         display: inline-flex;
         align-items: center;
-        gap: 8px;
+        gap: 6px;
         border-radius: 999px;
-        padding: 7px 12px;
-        font-size: 12px;
-        font-weight: 600;
-        letter-spacing: 0.04em;
+        padding: 2px 8px;
+        font-size: 10px;
+        font-weight: 500;
+        letter-spacing: 0.14em;
         text-transform: uppercase;
         color: var(--accent);
         background: var(--accent-soft);
         border: 1px solid rgba(255,255,255,0.06);
       }
       .dot {
-        width: 8px;
-        height: 8px;
+        width: 6px;
+        height: 6px;
         border-radius: 999px;
         background: var(--accent);
-        box-shadow: 0 0 0 6px var(--accent-soft);
       }
       h1 {
-        margin: 18px 0 10px;
-        font-size: clamp(28px, 5vw, 42px);
-        line-height: 1.05;
-        letter-spacing: -0.03em;
+        margin: 12px 0 6px;
+        font-size: 17px;
+        font-weight: 600;
+        line-height: 1.3;
+        letter-spacing: -0.01em;
       }
       p {
         margin: 0;
-        font-size: 16px;
+        font-size: 12px;
         line-height: 1.6;
         color: var(--muted);
       }
       .detail {
-        margin-top: 10px;
+        margin-top: 8px;
         color: var(--soft);
-        font-size: 13px;
+        font-size: 12px;
       }
       .countdown {
-        margin-top: 22px;
+        margin-top: 18px;
         display: flex;
         flex-direction: column;
         gap: 10px;
@@ -313,33 +313,37 @@ function renderCallbackPage(input: {
       .actions {
         display: flex;
         flex-wrap: wrap;
-        gap: 12px;
-        margin-top: 24px;
+        gap: 8px;
+        margin-top: 16px;
       }
       .btn {
         appearance: none;
+        display: inline-flex;
+        align-items: center;
         border: 1px solid var(--border);
-        border-radius: 12px;
-        padding: 12px 16px;
+        border-radius: 6px;
+        padding: 6px 12px;
         text-decoration: none;
-        font-size: 14px;
-        font-weight: 600;
-        transition: transform 120ms ease, border-color 120ms ease, background 120ms ease, color 120ms ease;
+        font-size: 12px;
+        font-weight: 500;
+        transition: border-color 150ms ease, background 150ms ease, color 150ms ease;
       }
-      .btn:hover { transform: translateY(-1px); }
+      .btn:active { transform: translateY(1px); }
       .btn-primary {
-        background: linear-gradient(180deg, #10b981 0%, #059669 100%);
-        border-color: rgba(16,185,129,0.42);
+        background: #059669;
+        border-color: rgba(16,185,129,0.4);
         color: white;
       }
+      .btn-primary:hover { background: #10b981; }
       .btn-secondary {
-        background: #17171a;
-        color: var(--text);
+        background: #111113;
+        color: #b7b7bd;
       }
+      .btn-secondary:hover { border-color: #2a2a2e; background: #1a1a1d; color: var(--text); }
       .footer {
-        margin-top: 18px;
+        margin-top: 14px;
         color: var(--soft);
-        font-size: 12px;
+        font-size: 11px;
       }
     </style>
   </head>

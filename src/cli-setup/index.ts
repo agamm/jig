@@ -21,6 +21,7 @@
  */
 import { runSetupFlow, summarizeSetup, type SetupBackend, type SetupEvent, type SetupIO, type SetupFix } from "../../shared/setup-flow.js"
 import type { Connection, ModelProbe, OpenRouterCredits, VerifyConnectionResponse } from "../../shared/api.js"
+import type { RemoteManifest } from "../cli-remote/manifest.js"
 import { promptHiddenPassword } from "../cli-remote/unlock.js"
 
 export interface SetupArgs {
@@ -38,6 +39,8 @@ export interface SetupArgs {
   railway: boolean
   /** Set up a local instance instead of a hosted one. */
   local: boolean
+  /** Railway workspace ID or name for a fresh deploy. */
+  workspace?: string
   /** Walk every step even when the instance already reports itself ready. */
   force: boolean
 }
@@ -49,6 +52,7 @@ Guided setup for model access, failure alerts, and optional app connections.
 
 Options:
   --railway              Provision and set up a hosted Railway instance
+  --workspace=<name>     Railway workspace (ID or name) for that instance
   --local                Set up this checkout's local instance
   --url=<url>            Set up an instance at an explicit URL
   --force                Re-check every setup step
@@ -61,7 +65,7 @@ Options:
 }
 
 export function parseSetupArgs(argv: string[]): SetupArgs {
-  const valueFlags = ["url", "openrouter-key", "agentmail-key", "owner"]
+  const valueFlags = ["url", "openrouter-key", "agentmail-key", "owner", "workspace"]
   const booleanFlags = new Set(["--skip-optional", "--yes", "-y", "--railway", "--local", "--force"])
   for (const arg of argv) {
     if (!arg.startsWith("-")) continue
@@ -89,6 +93,7 @@ export function parseSetupArgs(argv: string[]): SetupArgs {
     railway: argv.includes("--railway"),
     local: argv.includes("--local"),
     force: argv.includes("--force"),
+    workspace: flag("workspace"),
   }
 }
 
@@ -330,6 +335,35 @@ async function askHosted(): Promise<boolean> {
   return !answer.trim() || answer.trim().toLowerCase().startsWith("y")
 }
 
+/**
+ * A freshly deployed instance has no password yet, and the machine that
+ * deployed it holds the setup code. Tell the person exactly what to do, wait
+ * for the password to exist, and let ensureSession pair with that code. No
+ * session yet, no setup code, or an already-claimed instance: nothing to wait for.
+ */
+async function waitForClaim(remote: RemoteManifest, timeoutMs = 15 * 60_000): Promise<void> {
+  if (remote.session_cookie || !remote.setup_code) return
+  const claimed = async () => {
+    const res = await fetch(`${remote.public_url}/api/health`, { cache: "no-store" }).catch(() => null)
+    const health = (await res?.json().catch(() => null)) as { password_set?: boolean } | null
+    return health?.password_set === true
+  }
+  if (await claimed()) return
+  console.log(`  Claim the instance first: open ${remote.public_url}`)
+  console.log(`  Enter setup code ${remote.setup_code} and choose a password.`)
+  console.log(`  Waiting for that to happen (this machine pairs itself afterwards)...`)
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 4000))
+    if (await claimed()) {
+      console.log("  Claimed.")
+      return
+    }
+  }
+  console.error("  Timed out waiting for the password to be set. Re-run setup once it is.")
+  process.exit(1)
+}
+
 /** A dashboard answers with HTML. The bare API server answers with a JSON 404. */
 async function probeDashboard(url: string): Promise<string | undefined> {
   try {
@@ -392,7 +426,7 @@ export async function runSetup(argv: string[], ensureLocalServer: () => Promise<
         // set up against. It is interactive on purpose: it creates billed cloud
         // resources under whichever Railway account is active.
         const { runDeploy } = await import("../cli-deploy/index.js")
-        await runDeploy()
+        await runDeploy(undefined, { yes: args.assumeYes || !interactive(), workspace: args.workspace })
         console.log("")
       }
     }
@@ -402,6 +436,7 @@ export async function runSetup(argv: string[], ensureLocalServer: () => Promise<
       base = remote.public_url
       dashboardUrl = base
       console.log(`Setting up ${remote.handle} (${base}).\n`)
+      await waitForClaim(remote)
       const { ensureSession } = await import("../cli-remote/unlock.js")
       cookie = (await ensureSession(remote)) ?? undefined
       if (!cookie) {

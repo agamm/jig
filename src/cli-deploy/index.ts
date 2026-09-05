@@ -6,22 +6,29 @@
  *
  * Flow:
  *   1. Detect `railway` binary; offer `bun install -g @railway/cli`.
- *   2. `railway login` (opens browser) if not already logged in.
- *   3. Prompt for a project slug.
- *   4. `railway init --name <slug>`, then `railway add --service <slug>` when
- *      the CLI did not create one (5.45+ does not).
- *   5. `railway volume add <slug>-data --mount-path /data`.
- *   6. `railway up --detach` — uploads local repo, Railway builds + runs.
- *   7. `railway domain` → public URL.
- *   8. Wait for /api/health to respond.
- *   9. Save manifest at ~/.config/jig/remotes/<slug>.json.
+ *   2. `railway login` (opens browser) if not already logged in; confirm the account.
+ *   3. Pick a project slug (defaults to a random one).
+ *   4. `railway init --name <slug> [-w <workspace>]`, then create the service
+ *      from the published image with the setup code and timezone as variables.
+ *   5. Mount a volume at /data (GraphQL, no prompt).
+ *   6. Generate a public domain and wait for /api/health.
+ *   7. Save manifest at ~/.config/jig/remotes/<slug>.json, setup code included.
  *
- * Post-wizard: user opens the URL, sets a password, adds the OpenRouter key
- * and connects services from the dashboard.
+ * Nothing is built here: the image comes from ghcr.io (see image.ts), so a
+ * deploy is pull plus boot. With `--yes`, or without a terminal, every prompt
+ * takes its default and destructive confirmations answer no, so a coding
+ * agent can run it end to end.
+ *
+ * Post-wizard: the user opens the URL, enters the setup code, chooses a
+ * password; `jig setup <handle>` then pairs itself and continues.
  */
 import { createInterface } from "node:readline/promises"
+import { readFileSync } from "node:fs"
 import { deleteRemote, getRemote, saveRemote, type RemoteManifest } from "../cli-remote/manifest.js"
 import {
+  addImageService,
+  createServiceDomain,
+  createVolume,
   deleteProject,
   findProjectsByName,
   getPublicUrl,
@@ -35,10 +42,34 @@ import {
   listProjects,
   listVolumes,
   railwayInteractive,
+  setServiceImage,
+  setServiceVariables,
+  type RailwayStatus,
 } from "./railway-cli.js"
-import { writeDeployDefaults } from "../config/timezone.js"
+import { detectRuntimeTimeZone, writeDeployDefaults } from "../config/timezone.js"
+import { mintSetupCode } from "../auth/setup-code.js"
+import { resolveDeployImage } from "./image.js"
+import { PROJECT_ROOT } from "../config/paths.js"
+
+export interface DeployOptions {
+  /** Take every default and skip confirmations; destructive ones answer no. */
+  yes?: boolean
+  /** Railway workspace ID or name for `railway init -w`. */
+  workspace?: string
+}
+
+// Set per run by runDeploy. Without a terminal there is nobody to ask, so
+// prompts take defaults instead of hanging on stdin.
+let assumeYes = false
+const hasTerminal = () => Boolean(process.stdin.isTTY && process.stdout.isTTY)
+const nonInteractive = () => assumeYes || !hasTerminal()
 
 async function prompt(question: string, defaultValue?: string): Promise<string> {
+  if (nonInteractive()) {
+    if (defaultValue === undefined) throw new Error(`"${question}" needs a terminal to answer and has no default.`)
+    console.log(`${question}: ${defaultValue}`)
+    return defaultValue
+  }
   const rl = createInterface({ input: process.stdin, output: process.stdout })
   const suffix = defaultValue ? ` [${defaultValue}]` : ""
   const answer = (await rl.question(`${question}${suffix}: `)).trim()
@@ -46,11 +77,43 @@ async function prompt(question: string, defaultValue?: string): Promise<string> 
   return answer || (defaultValue ?? "")
 }
 
-async function confirm(question: string, defaultYes = true): Promise<boolean> {
+/**
+ * `destructive` confirmations (deleting projects, replacing a manifest) never
+ * auto-accept: with --yes or no terminal they answer no and the caller stops
+ * with instructions. Everything else follows --yes, or its default when there
+ * is simply no terminal.
+ */
+async function confirm(question: string, defaultYes = true, opts: { destructive?: boolean } = {}): Promise<boolean> {
+  if (assumeYes) return !opts.destructive
+  if (!hasTerminal()) {
+    console.log(`${question} (no terminal; taking ${opts.destructive ? "no" : defaultYes ? "yes" : "no"})`)
+    return opts.destructive ? false : defaultYes
+  }
   const suffix = defaultYes ? " [Y/n]" : " [y/N]"
-  const ans = await prompt(`${question}${suffix}`)
+  const rl = createInterface({ input: process.stdin, output: process.stdout })
+  const ans = (await rl.question(`${question}${suffix} `)).trim()
+  rl.close()
   if (!ans) return defaultYes
   return ans.toLowerCase().startsWith("y")
+}
+
+/** Volume at /data by API first; the CLI's prompt-driven command only as a fallback at a terminal. */
+async function attachDataVolume(status: RailwayStatus | null): Promise<void> {
+  if (status) {
+    try {
+      await createVolume({ projectId: status.projectId, environmentId: status.environmentId, serviceId: status.serviceId, mountPath: "/data" })
+      return
+    } catch (error) {
+      console.log(`  (volume via API failed: ${(error as Error)?.message ?? error}; trying the CLI)`)
+    }
+  }
+  if (!hasTerminal()) throw new Error("Could not create the /data volume without a terminal.")
+  console.log("  Enter any name when prompted.")
+  const volArgs = status
+    ? ["volume", "-s", status.serviceId, "-e", status.environmentId, "add", "--mount-path", "/data"]
+    : ["volume", "add", "--mount-path", "/data"]
+  const code = await railwayInteractive(volArgs)
+  if (code !== 0) console.log("  (volume attach reported non-zero; verifying...)")
 }
 
 async function ensureRailwayLogin(): Promise<void> {
@@ -97,7 +160,10 @@ export async function runDeployArgs(args: string[]): Promise<void> {
     return
   }
   const target = args.find((a) => !a.startsWith("--"))
-  await runDeploy(target)
+  await runDeploy(target, {
+    yes: args.includes("--yes") || args.includes("-y"),
+    workspace: args.find((a) => a.startsWith("--workspace="))?.slice("--workspace=".length),
+  })
 }
 
 /**
@@ -134,15 +200,11 @@ async function runAttachVolume(): Promise<void> {
   }
   console.log(`  Linked to: ${status.projectName} / ${status.serviceId.slice(0, 8)}`)
   console.log("  No volume at /data — attaching now.\n")
-  console.log("Attaching /data volume (enter any name when prompted)...")
-  const code = await railwayInteractive([
-    "volume",
-    "-s", status.serviceId,
-    "-e", status.environmentId,
-    "add", "--mount-path", "/data",
-  ])
-  if (code !== 0) {
-    console.error("\nrailway volume add failed — see output above.")
+  console.log("Attaching /data volume...")
+  try {
+    await attachDataVolume(status)
+  } catch (error) {
+    console.error(`\n${(error as Error)?.message ?? error}`)
     process.exit(1)
   }
   if (!(await hasVolumeAtPath("/data").catch(() => false))) {
@@ -246,11 +308,12 @@ async function runUpdateInPlace(): Promise<void> {
   console.log("\n  ✓ Redeploy complete.")
 }
 
-export async function runDeploy(targetArg?: string): Promise<void> {
+export async function runDeploy(targetArg?: string, options: DeployOptions = {}): Promise<void> {
   if (targetArg && targetArg !== "railway") {
     console.error(`Unknown target "${targetArg}". Only "railway" is supported in v1.`)
     process.exit(1)
   }
+  assumeYes = Boolean(options.yes)
 
   console.log("jig deploy — provision a Railway-hosted instance.\n")
 
@@ -270,9 +333,10 @@ export async function runDeploy(targetArg?: string): Promise<void> {
   console.log(`Railway login: ${railwayIdentity ?? "identity unavailable"}`)
   const useScope = await confirm("Use this account and choose its workspace for the new project?", false)
   if (!useScope) {
-    console.error("Cancelled. Run `railway logout`, sign into the intended account, then re-run `jig deploy`.")
+    console.error("Cancelled. Re-run with --yes to deploy under this account, or `railway logout`, sign into the intended one, and re-run.")
     process.exit(1)
   }
+  if (options.workspace) console.log(`Workspace: ${options.workspace}`)
 
   // Step 3: project name
   const defaultSlug = slugify(`jig-${Date.now().toString(36).slice(-4)}`)
@@ -283,7 +347,7 @@ export async function runDeploy(targetArg?: string): Promise<void> {
     console.log(
       `\nA local remote named "${slug}" already exists (${existingManifest.public_url || "no url"}).`,
     )
-    const overwrite = await confirm("Remove it and redeploy from scratch?", true)
+    const overwrite = await confirm("Remove it and redeploy from scratch?", true, { destructive: true })
     if (!overwrite) {
       console.error("Aborted. Pick a different project name and re-run `jig deploy`.")
       process.exit(1)
@@ -304,7 +368,7 @@ export async function runDeploy(targetArg?: string): Promise<void> {
         `\nFound ${existing.length} existing Railway project(s) named "${slug}":`,
       )
       for (const p of existing) console.log(`  - ${p.id}`)
-      const doDelete = await confirm("Delete them and continue?", true)
+      const doDelete = await confirm("Delete them and continue?", true, { destructive: true })
       if (!doDelete) {
         console.error("Aborted. Pick a different project name and re-run `jig deploy`.")
         process.exit(1)
@@ -337,42 +401,52 @@ export async function runDeploy(targetArg?: string): Promise<void> {
 
   // Step 4: init
   console.log(`\nCreating Railway project "${slug}"...`)
-  const initCode = await railwayInteractive(["init", "--name", slug])
+  const initArgs = ["init", "--name", slug, ...(options.workspace ? ["-w", options.workspace] : [])]
+  const initCode = await railwayInteractive(initArgs)
   if (initCode !== 0) {
     console.error("railway init failed.")
     process.exit(1)
   }
 
-  // Step 4a: `railway init` stopped creating a service in CLI 5.45, and the
-  // volume below needs one. getStatus() is null exactly when there is none, so
-  // it doubles as the version check.
-  if (!(await getStatus())) {
+  // Step 4a: the service, from the published image. The setup code and the
+  // timezone ride along as variables so they are there before the first boot.
+  const setupCode = mintSetupCode()
+  const timezone = detectRuntimeTimeZone()
+  const { image, pinned } = await resolveDeployImage(PACKAGE_VERSION)
+  console.log(`  Image: ${image}${pinned ? "" : " (this checkout's release is not published yet, using latest)"}`)
+  const variables = { JIG_SETUP_CODE: setupCode, JIG_TIMEZONE: timezone }
+  if (await getStatus()) {
+    // An older CLI created a service during init; point it at the image instead of adding a second one.
+    const existing = (await getStatus())!
+    await setServiceVariables(existing.serviceId, variables)
+    await setServiceImage({ serviceId: existing.serviceId, environmentId: existing.environmentId, image })
+  } else {
     console.log(`  Creating service "${slug}"...`)
-    const addCode = await railwayInteractive(["add", "--service", slug])
+    const addCode = await addImageService(slug, image, variables)
     if (addCode !== 0) {
-      console.error(`Could not create a service in "${slug}". Add one in the Railway dashboard and re-run \`jig deploy --update\`.`)
+      console.error(`Could not create a service in "${slug}". Add one in the Railway dashboard and re-run \`jig deploy\`.`)
       process.exit(1)
     }
   }
 
-  // Step 4b: link the newly-created service so subsequent volume/up calls
-  // target it without interactive prompts.
+  // Step 4b: link the service so later CLI calls target it without prompts.
   console.log(`  Linking cwd to service "${slug}"...`)
   await linkService(slug).catch(() => {
     console.log(`  (service link non-zero; continuing — may already be linked)`)
   })
 
-  // Step 5: volume. `-s`/`-e` are parent-level flags on `railway volume`,
-  // not on the `add` subcommand; order is `volume -s <svc> -e <env> add ...`.
-  console.log("\nAttaching /data volume (enter any name when prompted)...")
-  const preVolStatus = await getStatus()
-  const volArgs = preVolStatus
-    ? ["volume", "-s", preVolStatus.serviceId, "-e", preVolStatus.environmentId, "add", "--mount-path", "/data"]
-    : ["volume", "add", "--mount-path", "/data"]
-  if (!preVolStatus) console.log("  (no status yet; relying on the linked cwd)")
-  const volumeCode = await railwayInteractive(volArgs)
-  if (volumeCode !== 0) {
-    console.log("  (volume attach reported non-zero; verifying...)")
+  // Step 5: volume. Attaching one restarts the service, which is fine this early.
+  console.log("\nAttaching /data volume...")
+  let status: RailwayStatus | null = null
+  for (let i = 0; i < 5 && !status; i++) {
+    status = await getStatus()
+    if (!status) await new Promise((r) => setTimeout(r, 2000))
+  }
+  try {
+    await attachDataVolume(status)
+  } catch (error) {
+    console.error(`\n${(error as Error)?.message ?? error}`)
+    process.exit(1)
   }
   // Authoritative check — a missing volume silently wipes SQLite on every
   // redeploy. Better to fail the deploy here than let onboarding evaporate
@@ -384,58 +458,49 @@ export async function runDeploy(targetArg?: string): Promise<void> {
   if (!volumesAfter.some((v) => v.mountPath === "/data")) {
     console.error("")
     console.error("Volume attach did NOT create a volume at /data.")
-    console.error("Without it, every `jig deploy --update` wipes SQLite (password, OAuth tokens, jigs).")
+    console.error("Without it, every redeploy wipes SQLite (password, OAuth tokens, jigs).")
     console.error("Existing volumes on this project:")
     if (volumesAfter.length === 0) console.error("  (none)")
     else for (const v of volumesAfter) console.error(`  - ${v.name} @ ${v.mountPath || "?"} (${v.id})`)
     console.error("")
-    console.error("Attach it manually in the Railway dashboard, then run `jig deploy --update`.")
+    console.error("Attach it manually in the Railway dashboard, then run `jig deploy --attach-volume`.")
     process.exit(1)
   }
   console.log(`  ✓ Volume attached at /data.`)
 
-  // Step 6: deploy. `--ci` streams build logs then exits with the build
-  // result code — we get live progress AND a clean finish signal.
-  const defaults = await writeDeployDefaults()
-  console.log(`\nScheduler timezone default: ${defaults.timezone} (saved to SQLite on first boot)`)
-  console.log("\nUploading and deploying (Nixpacks; streams build logs, first build ~2 min)...")
-  const upCode = await railwayInteractive(["up", "--ci"])
-  if (upCode !== 0) {
-    console.error("railway up failed during build.")
-    process.exit(1)
-  }
-
-  // Step 7: resolve public URL + (best-effort) IDs. status may lag briefly
-  // after `up` returns — retry a few times before giving up.
-  let status = null
-  for (let i = 0; i < 5; i++) {
-    status = await getStatus()
-    if (status) break
-    await new Promise((r) => setTimeout(r, 2000))
-  }
+  // Step 6: public URL. API first (no prompt), the CLI as fallback.
   console.log("\nGenerating a public domain...")
-  await railwayInteractive(["domain"]).catch(() => -1)
-  const publicUrl = await getPublicUrl()
+  let publicUrl: string | null = null
+  if (status) {
+    publicUrl = await createServiceDomain({ environmentId: status.environmentId, serviceId: status.serviceId })
+      .then((domain) => `https://${domain}`)
+      .catch(() => null)
+  }
+  if (!publicUrl) {
+    await railwayInteractive(["domain"]).catch(() => -1)
+    publicUrl = await getPublicUrl()
+  }
   if (!publicUrl) {
     console.error("Couldn't determine the public URL. Run `railway domain` manually, then re-run `jig deploy`.")
     process.exit(1)
   }
 
-  // Step 8: wait for first health
-  console.log(`\nWaiting for ${publicUrl}/api/health to respond (building may take a few minutes)...`)
+  // Step 7: wait for first health
+  console.log(`\nWaiting for ${publicUrl}/api/health to respond (pulling the image and booting, usually under a minute)...`)
   const healthy = await waitForFirstHealth(publicUrl)
   if (!healthy) {
     console.log("Deploy didn't become healthy within 5 minutes. Check Railway logs — you can run `railway logs`.")
     console.log(`Continuing anyway. Your instance may still come up. Dashboard: ${publicUrl}`)
   }
 
-  // Step 9: save manifest. Railway IDs are optional — without them, `jig
-  // update` falls back to cwd-based linking (run from this checkout).
+  // Step 8: save manifest. Railway IDs are what `jig update` needs to switch the image.
   const manifest: RemoteManifest = {
     handle: slug,
     target: "railway",
     public_url: publicUrl,
     created_at: new Date().toISOString(),
+    image,
+    setup_code: setupCode,
     railway: status
       ? {
           project_id: status.projectId,
@@ -448,8 +513,18 @@ export async function runDeploy(targetArg?: string): Promise<void> {
   saveRemote(manifest)
 
   console.log(`\n  ✓ Deployed.\n`)
-  console.log(`  Dashboard:  ${publicUrl}`)
-  console.log(`  Manifest:   ~/.config/jig/remotes/${slug}.json`)
-  console.log(`  Next:       open the URL, set a password, add your OpenRouter API key, connect services.`)
-  console.log(`  Later:      run \`jig update\` to advance to the next release.`)
+  console.log(`  Dashboard:   ${publicUrl}`)
+  console.log(`  Setup code:  ${setupCode}`)
+  console.log(`  Manifest:    ~/.config/jig/remotes/${slug}.json`)
+  console.log(`  Next:        open the dashboard, enter the setup code, choose a password.`)
+  console.log(`               Then \`jig setup ${slug}\` pairs this machine by itself and walks the rest.`)
+  console.log(`  Later:       \`jig update ${slug}\` moves it to the next release image.`)
 }
+
+const PACKAGE_VERSION: string = (() => {
+  try {
+    return (JSON.parse(readFileSync(`${PROJECT_ROOT}/package.json`, "utf-8")) as { version?: string }).version ?? "0.0.0"
+  } catch {
+    return "0.0.0"
+  }
+})()

@@ -44,6 +44,9 @@ function readDeployDefaultTimeZone(): string | null {
 }
 
 function defaultSystemTimeZone(): string {
+  // Image deploys cannot ship the generated file, so the deployer passes a variable instead.
+  const fromEnv = process.env.JIG_TIMEZONE
+  if (isValidTimeZone(fromEnv)) return fromEnv.trim()
   return readDeployDefaultTimeZone() ?? detectRuntimeTimeZone()
 }
 

@@ -71,7 +71,7 @@ and run history across redeploys.
 
 - Health: `GET /api/health`
 - Update a template install: redeploy from the latest image in Railway
-- Update from a linked checkout: `bun run jig deploy --update`
+- Update from a linked checkout: `bun run jig update <handle>` (switches the release image); `bun run jig deploy --update` rebuilds from your checkout instead
 - Diagnose: `bun run jig doctor`
 - Remote logs and test runs: `bun run jig debug`
 

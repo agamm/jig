@@ -59,7 +59,7 @@ The approved jig version in SQLite is authoritative — there is no jig source o
 Use the Deploy on Railway button in `README.md` for a clean one-click installation, or run:
 
 ```sh
-bun run jig deploy
+bun run jig deploy                  # from the published image; --yes and --workspace=<name> for agents
 ```
 
 The deployment must have a persistent volume mounted at `/data`; it holds the encrypted credentials, versioned jigs, schedules, and run history. No maintainer data or credentials belong in the template.

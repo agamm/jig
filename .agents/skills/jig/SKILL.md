@@ -44,8 +44,10 @@ the AskUserQuestion tool; otherwise just ask in the conversation and wait.
    account is not a thing you can quietly fix afterwards, so confirm the scope out loud even
    when the CLI is already authenticated.
 
-Then run setup non-interactively with the answer baked in: `--railway` or `--local`. You have no
-TTY, so setup cannot ask you, and it refuses rather than guessing.
+Then run setup non-interactively with the answers baked in: `--railway --yes` (add
+`--workspace=<name>` when they named a team or workspace) or `--local --yes`. You have no TTY,
+so setup cannot ask you, and it refuses rather than guessing. `--yes` also answers the deploy's
+own confirmations; anything destructive (deleting an existing project) still answers no.
 
 Everything after that point is a browser authorization the user completes themselves. Print the
 link, wait, and do not answer on their behalf.
@@ -115,11 +117,14 @@ Point a human there; use the CLI when you are driving.
 
 ### Connecting the CLI to a hosted instance
 
-`jig setup` signs itself in when it needs to, prompting for the instance password or reading
-`JIG_PASSWORD`. You have neither, and a password must not pass through a chat.
+`jig setup` signs itself in when it needs to. The machine that ran `jig deploy` holds the
+instance's first-boot setup code, so on that machine nothing is pasted: setup prints the
+dashboard URL and the code, waits for the user to claim the instance (enter the code, choose a
+password), and pairs itself. Otherwise it prompts for the instance password or reads
+`JIG_PASSWORD`; you have neither, and a password must not pass through a chat.
 
-Ask the user to open the dashboard's **Setup** page, press **Generate command** under "Connect
-the CLI", and paste you the line it produces:
+From any other machine, ask the user to open the dashboard's **Setup** page, press **Generate
+command** under "Connect the CLI", and paste you the line it produces:
 
 ```sh
 bunx --bun github:agamm/jig pair <code> --url=https://<their-instance>
@@ -229,9 +234,12 @@ republishes that image on every push to `main`.
 bun run jig deploy
 ```
 
-It authenticates the Railway CLI, creates and links the project and service, mounts a volume
-at `/data`, deploys, generates a domain, waits for `/api/health`, and writes a manifest to
-`~/.config/jig/remotes/`. That manifest is what later lets `jig update` find the instance.
+It authenticates the Railway CLI, creates and links the project, creates the service from the
+published image `ghcr.io/agamm/jig` (the checkout's own release when it is published, else
+`latest`), mounts a volume at `/data`, generates a domain, waits for `/api/health`, and writes a
+manifest to `~/.config/jig/remotes/`. Nothing is built; a deploy is pull plus boot. That manifest
+is what later lets `jig update` find the instance. `--yes` takes every default and `--workspace=`
+picks the Railway workspace, so an agent can run it without a terminal.
 
 **Ask which Railway account or team to deploy under before running it.** Being logged in is
 not consent to use whatever scope is active.
@@ -239,11 +247,12 @@ not consent to use whatever scope is active.
 `/data` is the whole instance: credentials, jigs, schedules, runs. A deployment without a
 volume loses everything on restart.
 
-On first boot, read the one-time setup code from the Railway service logs. The user enters it
-on the public dashboard to claim the instance and create their password; never ask them to
-paste that code into chat. Continue on **Setup**: OpenRouter authorizes with browser OAuth,
-AgentMail is required and verified with the owner, and Composio is optional. The later CLI
-pairing code is generated separately from that page.
+On first boot the instance is unclaimed. `jig deploy` prints the one-time setup code next to
+the dashboard URL (it also appears in the Railway service logs). The user enters it on the
+public dashboard to claim the instance and create their password; never ask them to paste that
+code or the password into chat. `jig setup <handle>` from the deploying machine waits for that
+claim, pairs itself with the same code, and continues: OpenRouter authorizes with browser OAuth,
+AgentMail is required and verified with the owner, and Composio is optional.
 
 ## Update
 
@@ -264,8 +273,12 @@ updating a checkout.
 For the tag-based flow with health-check rollback, use the handle form:
 
 ```sh
-bun run jig update <handle>   # deploy the newest semver tag, roll back if it fails
+bun run jig update <handle>   # move to the newest release, roll back if it fails
 ```
+
+An instance created from the image switches to the release image `ghcr.io/agamm/jig:v<tag>`
+(no build, usually under a minute) and rolls back by switching to the previous image. Older
+instances built from source are redeployed with `railway up` as before.
 
 It compares versions numerically and refuses to move an instance onto an older tag, since old
 code against a volume whose migrations already ran is data damage rather than a failed update.

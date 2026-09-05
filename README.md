@@ -118,7 +118,7 @@ bun run jig update --remote    # ...then redeploy your instance with it
 bun run jig update <handle>    # or move an instance to the newest release tag
 ```
 
-`jig update` pulls this checkout forward and reinstalls dashboard deps, and tells you when the agent skills under `.agents/skills` have changed. Redeploying is opt-in, because it restarts running automation. The `<handle>` form deploys the newest release tag instead, waits for the health check, rolls back on failure, and refuses to move an instance onto an older tag. A Railway instance created with the template button has no clone attached, so update it by redeploying the service, which re-pulls the published image. Your jigs, credentials and schedules live in the database, not the source tree.
+`jig update` pulls this checkout forward and reinstalls dashboard deps, and tells you when the agent skills under `.agents/skills` have changed. Redeploying is opt-in, because it restarts running automation. The `<handle>` form moves the instance to the newest release instead: an instance created from the published image switches to that release's image (no build), waits for the health check, rolls back on failure, and refuses to move onto an older release. A Railway instance created with the template button has no clone attached, so update it by redeploying the service, which re-pulls the published image. Your jigs, credentials and schedules live in the database, not the source tree.
 
 ## Connections
 

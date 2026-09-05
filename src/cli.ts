@@ -382,7 +382,7 @@ try {
       console.log(`  jig pending <name>     Show pending diff; append 'approve' or 'discard'`)
       console.log(`  jig backup             Write a .zip of jigs, connections and settings`)
       console.log(`  jig backup restore <f> Restore from a backup .zip (--dry-run to preview)`)
-      console.log(`  jig deploy             Provision a new Railway-hosted instance (interactive)`)
+      console.log(`  jig deploy             Provision a Railway instance from the published image (--yes, --workspace=<name>)`)
       console.log(`  jig deploy --update    Redeploy current code to the linked Railway project`)
       console.log(`  jig update             Pull the latest code and agent skills from GitHub`)
       console.log(`  jig update --remote    ...and redeploy your instance with it`)

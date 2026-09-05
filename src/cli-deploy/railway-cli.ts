@@ -288,3 +288,64 @@ export async function hasVolumeAtPath(mountPath: string, cwd = process.cwd()): P
   const volumes = await listVolumes(cwd)
   return volumes.some((v) => v.mountPath === mountPath)
 }
+
+/**
+ * Run a GraphQL document through `railway api` and return its `data`. The CLI
+ * prints the JSON on stdout (and unrelated advisories on stderr), so parse the
+ * first object on stdout and surface the API's own error text.
+ */
+export async function railwayApi<T>(query: string, variables: Record<string, unknown> = {}): Promise<T> {
+  const raw = await railwayText(["api", query, "--variables", JSON.stringify(variables)])
+  const start = raw.indexOf("{")
+  const end = raw.lastIndexOf("}")
+  if (start < 0 || end < start) throw new Error(`railway api returned no JSON: ${raw.slice(0, 200)}`)
+  const parsed = JSON.parse(raw.slice(start, end + 1)) as { data?: T | null; errors?: { message?: string }[] }
+  if (parsed.errors?.length) throw new Error(parsed.errors.map((e) => e.message ?? "unknown error").join("; "))
+  if (!parsed.data) throw new Error("railway api returned no data")
+  return parsed.data
+}
+
+/** Create a service from a public image, with its first variables set before the first boot. */
+export async function addImageService(name: string, image: string, variables: Record<string, string>): Promise<number> {
+  const args = ["add", "--service", name, "--image", image]
+  for (const [key, value] of Object.entries(variables)) args.push("--variables", `${key}=${value}`)
+  return railwayInteractive(args)
+}
+
+/** Mount a persistent volume without the CLI's interactive name prompt. */
+export async function createVolume(input: { projectId: string; environmentId: string; serviceId: string; mountPath: string }): Promise<string> {
+  const data = await railwayApi<{ volumeCreate: { id: string } }>(
+    "mutation($input: VolumeCreateInput!) { volumeCreate(input: $input) { id } }",
+    { input },
+  )
+  return data.volumeCreate.id
+}
+
+/** Generate the public *.up.railway.app domain for a service. */
+export async function createServiceDomain(input: { environmentId: string; serviceId: string }): Promise<string> {
+  const data = await railwayApi<{ serviceDomainCreate: { domain: string } }>(
+    "mutation($input: ServiceDomainCreateInput!) { serviceDomainCreate(input: $input) { domain } }",
+    { input },
+  )
+  return data.serviceDomainCreate.domain
+}
+
+/** Point a service at another image and deploy it. This is how an image-based instance updates and rolls back. */
+export async function setServiceImage(input: { serviceId: string; environmentId: string; image: string }): Promise<void> {
+  const { serviceId, environmentId, image } = input
+  await railwayApi(
+    "mutation($serviceId: String!, $environmentId: String!, $source: ServiceSourceInput!) { serviceInstanceUpdate(serviceId: $serviceId, environmentId: $environmentId, input: { source: $source }) }",
+    { serviceId, environmentId, source: { image } },
+  )
+  await railwayApi(
+    "mutation($serviceId: String!, $environmentId: String!) { serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId) }",
+    { serviceId, environmentId },
+  )
+}
+
+/** Set variables on an existing service without triggering a deploy per variable. */
+export async function setServiceVariables(serviceId: string, variables: Record<string, string>, cwd = process.cwd()): Promise<void> {
+  const args = ["variables", "-s", serviceId, "--skip-deploys"]
+  for (const [key, value] of Object.entries(variables)) args.push("--set", `${key}=${value}`)
+  await railwayText(args, cwd)
+}

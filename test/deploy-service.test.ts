@@ -11,8 +11,8 @@ import { readFileSync } from "node:fs"
 describe("jig deploy provisioning", () => {
   const source = readFileSync("src/cli-deploy/index.ts", "utf-8")
 
-  it("creates a service when init did not leave one", () => {
-    expect(source).toMatch(/railwayInteractive\(\["add", "--service", slug\]\)/)
+  it("creates a service from the published image when init did not leave one", () => {
+    expect(source).toMatch(/addImageService\(slug, image, variables\)/)
   })
 
   it("creates it before linking and before the volume", () => {
@@ -21,7 +21,7 @@ describe("jig deploy provisioning", () => {
     // Anchored on the signature, not the name: runDeployArgs matches "runDeploy"
     // too, and slicing from there swept in the separate repair command.
     const deploy = source.slice(source.indexOf("export async function runDeploy(targetArg"))
-    const add = deploy.indexOf('"add", "--service", slug')
+    const add = deploy.indexOf('addImageService(slug, image, variables)')
     const link = deploy.indexOf("Linking cwd to service")
     const volume = deploy.indexOf("Attaching /data volume")
     expect(add).toBeGreaterThan(-1)
@@ -38,7 +38,7 @@ describe("jig deploy provisioning", () => {
     const deploy = source.slice(source.indexOf("export async function runDeploy(targetArg"))
     const identity = deploy.indexOf("getRailwayIdentity()")
     const confirmation = deploy.indexOf('confirm("Use this account and choose its workspace for the new project?", false)')
-    const init = deploy.indexOf('railwayInteractive(["init", "--name", slug])')
+    const init = deploy.indexOf('railwayInteractive(initArgs)')
     expect(identity).toBeGreaterThan(-1)
     expect(confirmation).toBeGreaterThan(identity)
     expect(init).toBeGreaterThan(confirmation)

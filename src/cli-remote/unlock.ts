@@ -114,6 +114,13 @@ export async function ensureSession(
   }
   if (remote.session_cookie && (await probe(remote.session_cookie))) return remote.session_cookie
 
+  // The machine that deployed holds the first-boot setup code; once the owner
+  // has set a password it buys one session, so nothing needs pasting.
+  if (remote.setup_code) {
+    const cookie = await claimWithSetupCode(remote)
+    if (cookie) return cookie
+  }
+
   const password = opts?.password ?? process.env.JIG_PASSWORD ?? (await promptHiddenPassword("  Instance password"))
   if (!password) return null
 
@@ -158,4 +165,20 @@ export async function ensureUnlocked(
   }
   console.log(`  ✓ ${remote.handle} unlocked — scheduler resumes on the next tick.`)
   return true
+}
+
+/** Redeem the deploy-time setup code for a session. Null when the instance is not claimed yet or the code was already used. */
+export async function claimWithSetupCode(remote: RemoteManifest): Promise<string | null> {
+  if (!remote.setup_code) return null
+  const res = await fetch(`${remote.public_url}/api/cli/pair/claim`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code: remote.setup_code }),
+  }).catch(() => null)
+  if (!res?.ok) return null
+  const { token } = (await res.json().catch(() => ({}))) as { token?: string }
+  if (!token) return null
+  setSessionCookie(remote.handle, token)
+  console.log(`  Paired with ${remote.handle} using the setup code from the deploy. Session cached for 30 days.`)
+  return token
 }

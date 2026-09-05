@@ -14,7 +14,7 @@
  *  10. On failure: deploy the running version's tag, then restore the local
  *      checkout and stash.
  */
-import { resolveActiveRemote } from "./manifest.js"
+import { resolveActiveRemote, type RemoteManifest } from "./manifest.js"
 import { railwayInteractive } from "../cli-deploy/railway-cli.js"
 import { PROJECT_ROOT } from "../config/paths.js"
 
@@ -251,6 +251,11 @@ export async function runUpdate(handle?: string): Promise<void> {
     )
   }
 
+  if (remote.image && remote.railway?.service_id && remote.railway.environment_id) {
+    await updateImageInstance(remote, latest.tag, rollback.tag)
+    return
+  }
+
   const originalCheckout = await currentCheckout()
   const stashRef = await gitStash()
 
@@ -299,6 +304,56 @@ export async function runUpdate(handle?: string): Promise<void> {
 
   // Unlocking is post-deploy recovery, not part of the deploy transaction. A
   // missing or mistyped password must never roll a healthy new release back.
+  if (deployedTarget) {
+    const { ensureUnlocked } = await import("./unlock.js")
+    await ensureUnlocked(remote)
+  }
+}
+
+/**
+ * Image-based instances (created by `jig deploy` from the published image) do
+ * not build anything: point the service at the release image, deploy, wait for
+ * the version, and on failure point it back at the image that was running.
+ */
+async function updateImageInstance(remote: RemoteManifest, latestTag: string, rollbackTag: string): Promise<void> {
+  const { imageRef, ghcrTagExists } = await import("../cli-deploy/image.js")
+  const { setServiceImage } = await import("../cli-deploy/railway-cli.js")
+  const { saveRemote } = await import("./manifest.js")
+  const ids = { serviceId: remote.railway!.service_id, environmentId: remote.railway!.environment_id }
+
+  if (!(await ghcrTagExists(latestTag))) {
+    console.error(`  The image for ${latestTag} is not published yet (ghcr.io). The publish workflow runs on every tag push; retry in a few minutes.`)
+    process.exitCode = 1
+    return
+  }
+  const target = imageRef(latestTag)
+  const previous = remote.image ?? imageRef(rollbackTag)
+
+  let deployedTarget = false
+  try {
+    console.log(`  Switching the service to ${target}...`)
+    await setServiceImage({ ...ids, image: target })
+    console.log(`  Waiting for ${remote.public_url}/api/health to report ${latestTag}...`)
+    const seen = await waitForVersion(remote.public_url, releaseTagCandidates(latestTag))
+    if (!seen) throw new Error(`Health didn't report ${latestTag} in time`)
+    saveRemote({ ...remote, image: target })
+    deployedTarget = true
+    console.log(`\n  ✓ Updated to ${latestTag}.`)
+  } catch (e: any) {
+    console.error(`  Deploy failed: ${e?.message ?? e}`)
+    console.error(`  Rolling back to ${previous}...`)
+    try {
+      await setServiceImage({ ...ids, image: previous })
+      const seen = await waitForVersion(remote.public_url, releaseTagCandidates(rollbackTag), 5 * 60_000)
+      if (!seen) throw new Error("Health didn't return to the previous version in time")
+      console.error("  Rollback complete.")
+    } catch (rollbackErr: any) {
+      console.error(`  Rollback also failed: ${rollbackErr?.message ?? rollbackErr}`)
+      console.error("  Investigate with: railway logs")
+    }
+    process.exitCode = 1
+  }
+
   if (deployedTarget) {
     const { ensureUnlocked } = await import("./unlock.js")
     await ensureUnlocked(remote)

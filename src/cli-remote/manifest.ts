@@ -21,6 +21,14 @@ export interface RemoteManifest {
   public_url: string
   /** ISO timestamp when this remote was first created. */
   created_at: string
+  /** Container image the service runs (image-based deploys); absent for source-built instances. */
+  image?: string
+  /**
+   * The first-boot setup code this machine chose for the instance. Lets the
+   * deploying CLI pair itself once the owner has set a password, so no code
+   * or password ever travels through a chat.
+   */
+  setup_code?: string
   /** Railway project / service / environment IDs (target-specific). */
   railway?: {
     project_id: string

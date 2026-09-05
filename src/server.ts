@@ -176,7 +176,9 @@ export function createApiServer(port: number) {
             const body = (await req.json().catch(() => ({}))) as { code?: unknown }
             const code = typeof body.code === "string" ? body.code : ""
             const { claimPairingCode } = await import("./auth/pairing.js")
-            if (!code || !claimPairingCode(code)) {
+            const { claimSetupCodePairing } = await import("./auth/setup-code.js")
+            // A dashboard-minted code, or the retired first-boot setup code held by the machine that deployed.
+            if (!code || !(claimPairingCode(code) || claimSetupCodePairing(code))) {
               return json({ error: "That pairing code is not valid, already used, or expired." }, 401)
             }
             const { issueToken } = await import("./auth/session.js")

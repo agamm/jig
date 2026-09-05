@@ -35,11 +35,12 @@ generated schemas, logs, or personal configuration.
 
 ## Dependencies for Jig Hosting
 
-Jig needs an OpenRouter account for model calls. Authorize it inside Jig after
-first unlock and the instance receives its own key; it is not a Railway template
-variable and there is nothing to paste. External connections such as Gmail,
-Calendar, GitHub, Apify, or Composio are optional and are connected by each
-deployer from the dashboard.
+Jig needs OpenRouter for model calls and AgentMail for failure alerts and
+reply-to-edit. OpenRouter uses browser OAuth: the instance receives its own key,
+so it is not a Railway variable and there is nothing to paste. AgentMail has no
+OAuth server; the Setup page guides the owner through creating and entering its
+key, then verifies it by sending a real message. External connections such as
+Gmail, Calendar, GitHub, Apify, or Composio are optional.
 
 ### Deployment Dependencies
 
@@ -52,11 +53,16 @@ deployer from the dashboard.
 
 After deployment:
 
-1. open the generated Railway domain;
-2. create the instance password;
-3. authorize OpenRouter when prompted;
-4. connect the services your workflows need;
-5. describe a jig, review its TypeScript, and approve it.
+1. open the service logs and copy the one-time setup code;
+2. open the generated Railway domain, enter that code, and create the instance password;
+3. on **Setup**, authorize OpenRouter in the browser; setup verifies that it has credit;
+4. follow the guided AgentMail step and verify the owner email;
+5. optionally authorize Composio and connect the services your workflows need;
+6. under **Connect the CLI**, generate and run the single-use pairing command;
+7. give the first-jig prompt to a coding agent, then review and approve its pending TypeScript.
+
+The setup code claims a new public instance and appears only in its service logs. Do not share
+it. The later CLI pairing code is a different, single-use code generated from the Setup page.
 
 The `/data` volume stores your encrypted credentials, versioned jigs, schedules,
 and run history across redeploys.

@@ -11,8 +11,10 @@ constraints that outlive them.
 **The published template must stay clean.** It must never contain a maintainer database,
 environment variables, OAuth state, credentials, connection schemas, logs, or other runtime
 data. GitHub Actions builds `ghcr.io/agamm/jig:latest` from an allowlisted subset of the
-public repository; local state and secret paths are excluded from the build context. Users add
-their own password, model access, and connections after deployment.
+public repository; local state and secret paths are excluded from the build context. After
+deployment, the owner claims the instance with the one-time code from its service logs, sets a
+password, authorizes OpenRouter in the browser, and completes the required AgentMail step.
+Optional app connections come afterwards.
 
 **`/data` persistence is not optional.** `deploy --update` refuses to proceed without it and
 will attempt to attach a missing volume. Attaching a volume hides any old ephemeral `/data`,
@@ -26,6 +28,17 @@ already advanced is data damage rather than a failed deploy.
 bun run jig doctor
 ```
 
+### First boot
+
+A new public instance prints a one-time setup code to its service logs. Open the generated
+domain, enter that code, and create the instance password. The code is only for claiming the
+instance; keep it private.
+
+Continue on the dashboard's **Setup** page. Authorize OpenRouter with browser OAuth (do not
+create or paste an OpenRouter key), complete the guided AgentMail setup and owner-email check,
+then optionally authorize Composio. To connect a local CLI, use **Generate command** on that
+same page; its short-lived pairing code is separate from the first-boot setup code.
+
 ## Health triage
 
 Start with:
@@ -37,7 +50,8 @@ bun run jig doctor [handle]
 Interpret the checks:
 
 - `reachable` failure: inspect Railway build/deploy logs and `/api/health`.
-- `password_set` warning: finish first-run password setup.
+- `password_set` warning: read the current setup code from the service logs and finish
+  first-run password setup.
 - `unlocked` warning: open the dashboard and unlock it; the service scheduler pauses while encrypted credentials are unavailable.
 
 For remote debug access, avoid putting the password in shell history:

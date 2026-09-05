@@ -33,4 +33,14 @@ describe("jig deploy provisioning", () => {
     // The stale comment is what kept the bug invisible for so long.
     expect(source).not.toMatch(/Railway creates a service named\s*\n?\s*\/\/ after the project during init/)
   })
+
+  it("shows the Railway identity and requires scope confirmation before init", () => {
+    const deploy = source.slice(source.indexOf("export async function runDeploy(targetArg"))
+    const identity = deploy.indexOf("getRailwayIdentity()")
+    const confirmation = deploy.indexOf('confirm("Use this account and choose its workspace for the new project?", false)')
+    const init = deploy.indexOf('railwayInteractive(["init", "--name", slug])')
+    expect(identity).toBeGreaterThan(-1)
+    expect(confirmation).toBeGreaterThan(identity)
+    expect(init).toBeGreaterThan(confirmation)
+  })
 })

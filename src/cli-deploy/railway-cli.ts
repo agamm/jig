@@ -129,6 +129,16 @@ export async function isLoggedIn(): Promise<boolean> {
   }
 }
 
+/** Human-readable identity from the Railway CLI's active login. */
+export async function getRailwayIdentity(): Promise<string | null> {
+  try {
+    const out = (await railwayText(["whoami"])).trim()
+    return out && !out.toLowerCase().includes("not logged in") ? out : null
+  } catch {
+    return null
+  }
+}
+
 /**
  * Read the currently-linked project. `railway status --json` returns the
  * full project payload; we pick the first environment + its first service

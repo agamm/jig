@@ -70,7 +70,10 @@ export default jig("weekly-client-update", {
 
 ## Install
 
-**Railway:** the button above creates a fresh service with a blank `/data` volume and none of the maintainer's data, credentials, or configuration.
+**Railway:** the button above creates a fresh service with a blank `/data` volume and none of
+the maintainer's data, credentials, or configuration. After it deploys, copy the one-time setup
+code from the service logs, open the generated domain, and use the code to create the instance
+password. Keep that claim code private.
 
 **From a clone:**
 

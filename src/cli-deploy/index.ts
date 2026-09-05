@@ -25,6 +25,7 @@ import {
   deleteProject,
   findProjectsByName,
   getPublicUrl,
+  getRailwayIdentity,
   getStatus,
   hasVolumeAtPath,
   installRailway,
@@ -265,6 +266,13 @@ export async function runDeploy(targetArg?: string): Promise<void> {
 
   // Step 2: login
   await ensureRailwayLogin()
+  const railwayIdentity = await getRailwayIdentity()
+  console.log(`Railway login: ${railwayIdentity ?? "identity unavailable"}`)
+  const useScope = await confirm("Use this account and choose its workspace for the new project?", false)
+  if (!useScope) {
+    console.error("Cancelled. Run `railway logout`, sign into the intended account, then re-run `jig deploy`.")
+    process.exit(1)
+  }
 
   // Step 3: project name
   const defaultSlug = slugify(`jig-${Date.now().toString(36).slice(-4)}`)

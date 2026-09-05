@@ -310,6 +310,13 @@ describe("parseSetupArgs", () => {
     const bare = parseSetupArgs([])
     expect({ railway: bare.railway, local: bare.local }).toEqual({ railway: false, local: false })
   })
+
+  it("rejects ambiguous targets and unknown options", () => {
+    expect(() => parseSetupArgs(["--railway", "--local"])).toThrow(/Choose one setup target/)
+    expect(() => parseSetupArgs(["--url=https:\/\/example.com", "--local"])).toThrow(/--url cannot be combined/)
+    expect(() => parseSetupArgs(["--railyway"])).toThrow(/Unknown setup option/)
+    expect(() => parseSetupArgs(["one", "two"])).toThrow(/at most one instance handle/)
+  })
 })
 
 describe("main model probe", () => {

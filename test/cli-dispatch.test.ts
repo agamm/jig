@@ -24,4 +24,17 @@ describe("cli dispatch", () => {
     const dupes = cases.filter((c, i) => cases.indexOf(c) !== i)
     expect({ duplicateCases: [...new Set(dupes)] }).toEqual({ duplicateCases: [] })
   })
+
+  it("shows setup help before starting setup", () => {
+    const setup = source.slice(source.indexOf('case "setup"'), source.indexOf('case "backup"'))
+    expect(setup.indexOf('rest.includes("--help")')).toBeGreaterThan(-1)
+    expect(setup.indexOf("console.log(setupHelp())")).toBeLessThan(setup.indexOf("await runSetup(rest"))
+  })
+
+  it("stops only the temporary local server setup started", () => {
+    const setup = source.slice(source.indexOf('case "setup"'), source.indexOf('case "backup"'))
+    expect(setup).toContain("temporaryServer = await ensureServer()")
+    expect(setup).toContain("stopTemporaryServer()")
+    expect(setup).toContain('process.once("exit", stopTemporaryServer)')
+  })
 })

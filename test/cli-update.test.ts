@@ -27,6 +27,12 @@ describe("jig update", () => {
     expect(source).not.toMatch(/"git", "pull", "upstream", "main"/)
   })
 
+  it("installs both locked dependency trees", () => {
+    const source = readFileSync("src/cli.ts", "utf-8")
+    expect(source).toMatch(/\["bun", "install", "--frozen-lockfile"\], PROJECT_ROOT/)
+    expect(source).toMatch(/\["pnpm", "install", "--frozen-lockfile"\], join\(PROJECT_ROOT, "dashboard"\)/)
+  })
+
   it("is the shape git actually produces", () => {
     // Guards the assumption the fix rests on.
     const label = "jig-update-1788476718"

@@ -29,3 +29,25 @@ Plan: ~/.claude/plans/wondrous-humming-donut.md. Archive branch: archive/in-serv
 - Verified: 772 tests, root and dashboard typechecks, whitespace; end to end against a scratch instance over HTTP as a paired clone: `jig edit --file --approve` with model/runTimeoutMs/toolTimeoutMs in source (modelInCode reported, override fields gone), a failing run, `jig debug ls`, `jig debug audit` text and --json naming the step, error and next command; `/api/agent` 404; `/api/models` main+fast; `/api/examples` prompts; dashboard pages 200 with a clean dev log.
 - Not verified: the dashboard visually (Chrome extension disconnected during the smoke); the email question round-trip and auto-repair against live AgentMail (unit tests only).
 - Left for later, deliberately: the "failed again" and 24h summary email bodies do not yet name the failing step (only the first failure email does); the natural-language trigger editor stays.
+
+# Onboarding setup lock and 80/20 UX/DX fixes (2026-09-04)
+
+- [x] Make setup readiness authoritative and keep incomplete instances directed to Setup.
+- [x] Render the shared setup flow's instructional and recommendation events in the dashboard.
+- [x] Remove the unsafe default port-kill behavior and the documented local setup/start conflict.
+- [x] Show and confirm the active Railway identity/scope before provisioning.
+- [x] Add useful CLI help/argument validation and pin the dashboard package-manager path.
+- [x] Fix optional-connection completion copy without changing setup requirements.
+- [x] Refresh stale onboarding/developer documentation.
+- [x] Add focused tests, then run the full suite, root/dashboard typechecks, build, and diff checks.
+
+## Review
+
+- Setup is now a real gate in local and service modes: only verified required steps can persist completion, and the dashboard stays on Setup until then.
+- The dashboard renders shared instructions and Composio recommendations; the completion card says Jig is ready without implying optional apps are connected.
+- Local CLI setup owns and stops its temporary API server. `jig start` never kills a listener by default and chooses another port non-interactively.
+- Railway deploy shows the active login and requires an explicit account/workspace confirmation before `railway init`.
+- Setup help rejects ambiguous/unknown arguments; updates install both frozen lockfiles; dashboard pins pnpm 10.15.1 and the stale Bun lockfile is removed.
+- Docs now use the actual first-boot claim, OAuth, AgentMail, optional Composio, CLI pairing, and local start sequence.
+- Verified: 783 tests, root and dashboard TypeScript checks, `pnpm run build`, `jig setup --help`, and `git diff --check` all pass.
+- Not browser-smoke-tested: the Jig operating skill disallows automating the dashboard; production compilation and component typechecking cover this change.

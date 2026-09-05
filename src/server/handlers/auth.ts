@@ -41,12 +41,19 @@ function markOnboardingComplete(): void {
 }
 
 function hasOpenRouterKey(): boolean {
-  if (!isUnlocked()) return false
+  // Hosted credentials are encrypted and intentionally unavailable while the
+  // instance is locked. Local credentials can be plaintext, so requiring an
+  // in-memory data key there would incorrectly report a working setup as empty.
+  if (isServiceMode() && !isUnlocked()) return false
   try {
     return !!getCredential("openrouter:api_key")
   } catch {
     return false
   }
+}
+
+function requiredSetupReady(): boolean {
+  return hasOpenRouterKey() && canSendAgentMail()
 }
 
 function isDbWritable(): boolean {
@@ -81,6 +88,11 @@ export async function handleHealth(req: Request, version: string, startedAt: num
   // (uptime, has-key) behind auth so an unauthenticated attacker can't
   // fingerprint the instance's OpenRouter state or last restart time.
   const authed = !isServiceMode() || checkAccess(req, "serverLogs") === null
+  const storedOnboardingComplete = isOnboardingComplete()
+  // The stored flag records that setup completed once. After authentication,
+  // also require the two pieces Jig needs to run and report failures. This
+  // repairs instances that were marked complete by the old hand-off screen.
+  const onboardingComplete = storedOnboardingComplete && (!authed || requiredSetupReady())
   const base = {
     version,
     mode: isServiceMode() ? "service" as const : "local" as const,
@@ -92,7 +104,7 @@ export async function handleHealth(req: Request, version: string, startedAt: num
     locked: isServiceMode() && (!isPasswordSet() || !isUnlocked()),
     password_set: isPasswordSet(),
     setup_code_required: isServiceMode() && !isPasswordSet(),
-    onboarding_complete: isOnboardingComplete(),
+    onboarding_complete: onboardingComplete,
     // Told to the client on purpose: an unlocked instance and an authenticated
     // browser are different things, and the dashboard cannot tell them apart
     // from `locked` alone.
@@ -121,6 +133,12 @@ export async function handleCompleteOnboarding(req: Request): Promise<Response> 
     // the stale pre-key null and reports a good key as invalid.
     const { invalidateOpenRouterCredits } = await import("../../services/openrouter-credits.js")
     invalidateOpenRouterCredits()
+    // This endpoint also receives the CLI/dashboard's no-browser key fallback.
+    // Saving that key is not the same thing as completing all required setup.
+    return apiJson("completeOnboarding", { ok: true })
+  }
+  if (!requiredSetupReady()) {
+    return json({ error: "Finish OpenRouter and AgentMail setup before continuing." }, 409)
   }
   markOnboardingComplete()
   return apiJson("completeOnboarding", { ok: true })

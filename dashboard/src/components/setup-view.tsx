@@ -57,6 +57,8 @@ import {
 type StepState = {
   status: "unknown" | "checking" | "waiting" | "ready" | "failed" | "skipped";
   detail?: string;
+  /** Short-lived guidance emitted by the shared flow while this step runs. */
+  instructions?: string[];
   authUrl?: string;
   /** The browser refused to open the tab, so the link is the only way through. */
   blocked?: boolean;
@@ -133,7 +135,7 @@ function readOnlyBackend(): SetupBackend {
   };
 }
 
-export function SetupView() {
+export function SetupView({ onComplete }: { onComplete?: () => void | Promise<void> } = {}) {
   const [steps, setSteps] = useState<Record<SetupStepId, StepState>>(INITIAL);
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [running, setRunning] = useState<SetupStepId[] | "all" | null>(null);
@@ -141,6 +143,7 @@ export function SetupView() {
   const [promptValue, setPromptValue] = useState("");
   const [finished, setFinished] = useState<{ verified: SetupStepId[]; skipped: SetupStepId[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [recommendations, setRecommendations] = useState<Extract<SetupEvent, { type: "recommendations" }> | null>(null);
   const [approvedSteps, setApprovedSteps] = useState<Set<SetupStepId>>(() => new Set());
   const promptRef = useRef<Prompt | null>(null);
   const currentStep = useRef<SetupStepId | null>(null);
@@ -149,6 +152,13 @@ export function SetupView() {
 
   const patch = useCallback((id: SetupStepId, next: Partial<StepState>) => {
     setSteps((prev) => ({ ...prev, [id]: { ...prev[id], ...next } }));
+  }, []);
+
+  const addInstruction = useCallback((id: SetupStepId, message: string) => {
+    setSteps((prev) => ({
+      ...prev,
+      [id]: { ...prev[id], instructions: [...(prev[id].instructions ?? []), message] },
+    }));
   }, []);
 
   const revealApprovalHighlights = useCallback(() => {
@@ -253,6 +263,7 @@ export function SetupView() {
     setRunning(only ?? "all");
     setError(null);
     setFinished(null);
+    setRecommendations(null);
 
     const io: SetupIO = {
       canPrompt: () => true, // a form is a prompt anyone can answer
@@ -308,7 +319,14 @@ export function SetupView() {
       switch (event.type) {
         case "step-begin":
           currentStep.current = event.id;
-          patch(event.id, { status: "checking", detail: undefined, authUrl: undefined, blocked: false, fix: undefined });
+          patch(event.id, {
+            status: "checking",
+            detail: undefined,
+            instructions: undefined,
+            authUrl: undefined,
+            blocked: false,
+            fix: undefined,
+          });
           break;
         case "step-satisfied":
           patch(event.id, { status: "ready", detail: event.detail });
@@ -317,6 +335,9 @@ export function SetupView() {
           // Held for whichever step is mid-flight. Losing it for composio meant
           // a blocked popup left the user with nothing to click.
           patch(currentStep.current ?? "openrouter", { authUrl: event.url, blocked: !event.opened });
+          break;
+        case "instruction":
+          addInstruction(currentStep.current ?? "openrouter", event.message);
           break;
         case "waiting":
           patch(event.id, { status: "waiting", detail: event.detail });
@@ -342,6 +363,9 @@ export function SetupView() {
         case "step-skipped":
           patch(event.id, { status: "skipped", detail: event.reason });
           break;
+        case "recommendations":
+          setRecommendations(event);
+          break;
         case "complete": {
           setFinished({ verified: event.verified, skipped: event.skipped });
           // Celebrate once: when this run turned the last step green (optional
@@ -360,9 +384,16 @@ export function SetupView() {
       }
     }
 
+    let setupCompleted = false;
     try {
-      await runSetupFlow(io, backend, { dashboardUrl: window.location.origin, ...(only ? { only } : {}) });
-      await completeOnboarding();
+      const result = await runSetupFlow(io, backend, { dashboardUrl: window.location.origin, ...(only ? { only } : {}) });
+      const requiredReady = SETUP_STEPS
+        .filter((step) => step.required)
+        .every((step) => readyAtRunStart.has(step.id) || result.verified.includes(step.id));
+      if (requiredReady) {
+        await completeOnboarding();
+        setupCompleted = true;
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -371,6 +402,7 @@ export function SetupView() {
       setRunning(null);
       await refreshStatus();
       await mutate("connections");
+      if (setupCompleted) await onComplete?.();
     }
   }
 
@@ -503,6 +535,14 @@ export function SetupView() {
                   </p>
                 ) : null}
 
+                {state.instructions?.length && !done ? (
+                  <div className="mt-3 space-y-1 pl-[30px] text-[12px] leading-relaxed text-[var(--text-dim)]">
+                    {state.instructions.map((instruction, index) => (
+                      <p key={`${index}-${instruction}`}>{instruction}</p>
+                    ))}
+                  </div>
+                ) : null}
+
                 {state.fix && state.status === "failed" ? (
                   <div className="mt-2 flex flex-wrap items-center gap-2 pl-[30px]">
                     {state.fix.url ? (
@@ -575,6 +615,17 @@ export function SetupView() {
           })}
         </Section>
 
+        {recommendations ? (
+          <Notice tone="neutral" title="Worth adding next">
+            {recommendations.apps.map((app) => `${app.name}: ${app.why}`).join(" · ")}
+            {recommendations.dashboardUrl ? (
+              <a className="ml-1 underline" href={recommendations.dashboardUrl} target="_blank" rel="noreferrer">
+                Manage apps ↗
+              </a>
+            ) : null}
+          </Notice>
+        ) : null}
+
         <Section label="This instance">
           <InstancePanel health={health} />
         </Section>
@@ -601,10 +652,10 @@ function Section({ label, children }: { label: string; children: ReactNode }) {
 
 /**
  * The last thing this page should do is get out of the way and hand over a
- * first thing to try. "Ready" here means three green ticks, which proves the
- * pieces answer, not that they work together: a jig that emails you exercises
- * the model, the mailbox and the runner in one go, and the proof arrives in
- * your inbox rather than as another status pill.
+ * first thing to try. "Ready" here means the required model and mail steps are
+ * green; optional app connections can still be added below. A jig that emails
+ * you exercises the model, the mailbox and the runner in one go, and the proof
+ * arrives in your inbox rather than as another status pill.
  */
 const FIRST_JIG = { id: "hello-world-email", description: "send me hello world via email" };
 
@@ -626,7 +677,7 @@ function FirstJig() {
   return (
     <section id="first-jig" className="rounded-xl border border-emerald-500/25 bg-emerald-500/[0.05] p-5 shadow-[0_0_0_1px_rgba(16,185,129,0.04)]">
       <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-emerald-300/80">Ready</span>
-      <h3 className="mt-1.5 text-[17px] font-semibold tracking-[-0.01em] text-[#ededed]">Everything is connected. Try it.</h3>
+      <h3 className="mt-1.5 text-[17px] font-semibold tracking-[-0.01em] text-[#ededed]">Jig is ready. Try it.</h3>
       <p className="mt-1.5 max-w-[62ch] text-[12px] leading-relaxed text-[var(--text-dim)]">
         Paste this into Claude Code or Codex in the checkout paired below. It names this instance and the push
         command, so the agent needs nothing else. Approve the version it pushes: it runs a model call, sends real

@@ -42,7 +42,41 @@ export interface SetupArgs {
   force: boolean
 }
 
+export function setupHelp(): string {
+  return `Usage: jig setup [handle] [options]
+
+Guided setup for model access, failure alerts, and optional app connections.
+
+Options:
+  --railway              Provision and set up a hosted Railway instance
+  --local                Set up this checkout's local instance
+  --url=<url>            Set up an instance at an explicit URL
+  --force                Re-check every setup step
+  --skip-optional        Skip optional app connections
+  --yes, -y              Accept setup confirmations
+  --openrouter-key=<key> Non-browser fallback for OpenRouter
+  --agentmail-key=<key>  Pre-seed AgentMail
+  --owner=<email>        Alert recipient used with AgentMail
+  --help, -h             Show this help`
+}
+
 export function parseSetupArgs(argv: string[]): SetupArgs {
+  const valueFlags = ["url", "openrouter-key", "agentmail-key", "owner"]
+  const booleanFlags = new Set(["--skip-optional", "--yes", "-y", "--railway", "--local", "--force"])
+  for (const arg of argv) {
+    if (!arg.startsWith("-")) continue
+    if (booleanFlags.has(arg) || valueFlags.some((name) => arg.startsWith(`--${name}=`))) continue
+    throw new Error(`Unknown setup option: ${arg}. Run \`jig setup --help\` for supported options.`)
+  }
+  if (argv.includes("--railway") && argv.includes("--local")) {
+    throw new Error("Choose one setup target: --railway or --local, not both.")
+  }
+  if (argv.some((a) => a.startsWith("--url=")) && (argv.includes("--railway") || argv.includes("--local"))) {
+    throw new Error("--url cannot be combined with --railway or --local.")
+  }
+  const handles = argv.filter((a) => !a.startsWith("-"))
+  if (handles.length > 1) throw new Error("Setup accepts at most one instance handle.")
+
   const flag = (name: string) => argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3)
   return {
     url: flag("url"),
@@ -55,6 +89,17 @@ export function parseSetupArgs(argv: string[]): SetupArgs {
     railway: argv.includes("--railway"),
     local: argv.includes("--local"),
     force: argv.includes("--force"),
+  }
+}
+
+async function completeSetup(base: string, cookie?: string): Promise<void> {
+  const res = await fetch(`${base}/api/onboarding/complete`, {
+    method: "POST",
+    headers: { ...(cookie ? { Cookie: cookie } : {}) },
+  })
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string }
+    throw new Error(body.error ?? `Could not mark setup complete (HTTP ${res.status}).`)
   }
 }
 
@@ -403,6 +448,7 @@ export async function runSetup(argv: string[], ensureLocalServer: () => Promise<
     const state = await summarizeSetup(backend)
     const outstanding = state.filter((s) => s.required && !s.satisfied)
     if (outstanding.length === 0) {
+      await completeSetup(base, cookie)
       console.log("Already set up. Nothing to do.\n")
       for (const s of state) {
         console.log(`  ${s.satisfied ? "\u2713" : "\u25CB"} ${s.id}: ${s.detail}`)
@@ -428,4 +474,8 @@ export async function runSetup(argv: string[], ensureLocalServer: () => Promise<
     // printed. Re-throwing would make cli.ts print the same line again.
     process.exit(1)
   }
+  // Kept outside the flow catch: if persisting completion fails, cli.ts must
+  // print that distinct error instead of silently treating it like a step that
+  // already rendered its own failure.
+  await completeSetup(base, cookie)
 }

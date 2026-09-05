@@ -6,7 +6,7 @@
  * Single URL for the user, no CORS.
  *
  * Two modes:
- *   - local: `next dev`, auto-open browser, interactive port-kill prompt.
+ *   - local: `next dev`, auto-open browser, safe port selection.
  *   - service (Railway/Fly): lazy dashboard build, `next start` in
  *     production mode, no browser, bind to process.env.PORT.
  */
@@ -43,24 +43,28 @@ async function findPidOnPort(port: number): Promise<number | null> {
   }
 }
 
-/** Local-mode only: ensure a port is available, ask user to kill if needed. */
+/** Local-mode only: ensure a port is available; killing is explicit and opt-in. */
 async function ensurePortLocal(port: number): Promise<number> {
   if (await isPortFree(port)) return port
 
   const pid = await findPidOnPort(port)
   if (pid) {
     console.log(`\n  Port ${port} is in use by PID ${pid}.`)
-    const rl = createInterface({ input: process.stdin, output: process.stdout })
-    const answer = await rl.question(`  Kill it and continue? [Y/n] `)
-    rl.close()
+    if (process.stdin.isTTY && process.stdout.isTTY) {
+      const rl = createInterface({ input: process.stdin, output: process.stdout })
+      const answer = await rl.question(`  Stop that process and continue? [y/N] `)
+      rl.close()
 
-    if (!answer || answer.toLowerCase().startsWith("y")) {
-      process.kill(pid, "SIGTERM")
-      for (let i = 0; i < 10; i++) {
-        await new Promise(r => setTimeout(r, 300))
-        if (await isPortFree(port)) return port
+      if (answer.toLowerCase().startsWith("y")) {
+        process.kill(pid, "SIGTERM")
+        for (let i = 0; i < 10; i++) {
+          await new Promise(r => setTimeout(r, 300))
+          if (await isPortFree(port)) return port
+        }
+        console.log(`  Could not free port ${port}, finding another...`)
       }
-      console.log(`  Could not free port ${port}, finding another...`)
+    } else {
+      console.log("  No interactive terminal; leaving that process alone.")
     }
   } else {
     console.log(`\n  Port ${port} is in use.`)

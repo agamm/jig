@@ -6,7 +6,7 @@
  * nothing else asserts it directly.
  */
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
-import { closeDb, openDb } from "../src/db.js"
+import { closeDb, openDb, setCredential, setSetting } from "../src/db.js"
 import {
   handleApprovePending,
   handleDiscardPending,
@@ -16,7 +16,7 @@ import {
   handleWriteJigCode,
 } from "../src/server/handlers/versions.js"
 import { handleConnectConnection, handleGetConnection, handleGetConnections } from "../src/server/handlers/connections.js"
-import { handleHealth, handleOAuthCallback } from "../src/server/handlers/auth.js"
+import { handleCompleteOnboarding, handleHealth, handleOAuthCallback } from "../src/server/handlers/auth.js"
 import { getActiveCode, deleteJig, writePending } from "../src/services/jig-store.js"
 import { seedJig } from "./_fixtures.js"
 
@@ -182,6 +182,35 @@ export default jig("${JIG_ID}", { trigger: { type: "manual" }, tools: [apify.cal
 })
 
 describe("auth handlers", () => {
+  it("keeps setup locked until OpenRouter and AgentMail are both configured", async () => {
+    const incomplete = await handleCompleteOnboarding(new Request("http://localhost/api/onboarding/complete", { method: "POST" }))
+    expect(incomplete.status).toBe(409)
+
+    setCredential("agentmail:api_key", "am_test", "agentmail")
+    setSetting("agentmail", {
+      inboxId: "inbox_test",
+      address: "jig-test@agentmail.to",
+      owner: "owner@example.com",
+      notifyOnFailure: true,
+    })
+
+    // The key fallback saves the last missing credential but must not treat
+    // storage as verification or complete onboarding early.
+    const savedKey = await handleCompleteOnboarding(new Request("http://localhost/api/onboarding/complete", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ openrouter_key: "sk-or-test" }),
+    }))
+    expect(savedKey.status).toBe(200)
+    let health = await body(await handleHealth(new Request("http://localhost/api/health"), "9.9.9", Date.now()))
+    expect(health.onboarding_complete).toBe(false)
+
+    const completed = await handleCompleteOnboarding(new Request("http://localhost/api/onboarding/complete", { method: "POST" }))
+    expect(completed.status).toBe(200)
+    health = await body(await handleHealth(new Request("http://localhost/api/health"), "9.9.9", Date.now()))
+    expect(health.onboarding_complete).toBe(true)
+  })
+
   it("separates an unlocked instance from an authenticated browser", async () => {
     // The bug: `locked` is about the process holding a crypto key, and the CLI
     // unlocking an instance flipped it to false. The dashboard gated on that

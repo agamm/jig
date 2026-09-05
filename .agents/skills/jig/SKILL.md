@@ -70,17 +70,18 @@ local server, because a local instance is not what most people wanted and it loo
 For a local instance:
 
 ```sh
-bun run jig setup --local
 bun run jig start
 ```
 
-**Running this as an agent against a local instance, start the dashboard first**, because the
-no-terminal path for AgentMail collects its key there:
+Finish the steps on the dashboard's **Setup** page. To drive the same flow from the CLI, leave
+`jig start` running and use a second terminal:
 
 ```sh
-bun run jig start &        # wait for the dashboard to answer
 bun run jig setup --local --yes
 ```
+
+**Running this as an agent against a local instance, always start the dashboard first**, because
+the no-terminal path for AgentMail collects its key there.
 
 `jig start` runs the Next dashboard (3141) and the Bun API behind it. First run installs the
 dashboard's deps with pnpm, not bun. A hosted instance serves both from its public URL and
@@ -237,6 +238,12 @@ not consent to use whatever scope is active.
 
 `/data` is the whole instance: credentials, jigs, schedules, runs. A deployment without a
 volume loses everything on restart.
+
+On first boot, read the one-time setup code from the Railway service logs. The user enters it
+on the public dashboard to claim the instance and create their password; never ask them to
+paste that code into chat. Continue on **Setup**: OpenRouter authorizes with browser OAuth,
+AgentMail is required and verified with the owner, and Composio is optional. The later CLI
+pairing code is generated separately from that page.
 
 ## Update
 

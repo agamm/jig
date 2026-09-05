@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { completeOnboarding, fetchHealth, setupPassword, unlock } from "@/lib/api";
-import { Spinner } from "@/components/spinner";
+import { fetchHealth, setupPassword, unlock } from "@/lib/api";
+import { SetupView } from "@/components/setup-view";
 import type { DataStorageHealth, HealthResponse } from "@shared/api";
 
 /**
@@ -14,7 +14,7 @@ import type { DataStorageHealth, HealthResponse } from "@shared/api";
  *   3. Onboarding - if unlocked but onboarding has not been marked complete.
  *      Hands straight over to the setup page, which owns every credential step.
  *
- * In local mode the server reports mode: "local" and we skip the gate.
+ * Local mode skips password protection, but not required setup.
  */
 export function UnlockGate({ children }: { children: ReactNode }) {
   const [health, setHealth] = useState<HealthResponse | null>(null);
@@ -50,21 +50,22 @@ export function UnlockGate({ children }: { children: ReactNode }) {
     );
   }
 
-  if (health.mode === "local") return <>{children}</>;
-  if (health.data_storage && !health.data_storage.ok) {
+  if (health.mode === "service" && health.data_storage && !health.data_storage.ok) {
     return (
       <Frame>
         <StorageProblem storage={health.data_storage} />
       </Frame>
     );
   }
-  if (!health.password_set)
+  if (health.mode === "service" && !health.password_set)
     return <PasswordForm mode="set" setupCodeRequired={!!health.setup_code_required} onDone={refresh} />;
   // `locked` is about the instance; `authenticated` is about this browser. The
   // CLI unlocking the process used to let a cookieless tab through the gate into
   // a dashboard where every request came back 401 Unauthorized.
-  if (health.locked || !health.authenticated) return <PasswordForm mode="unlock" onDone={refresh} />;
-  if (!health.onboarding_complete) return <OnboardingForm onDone={refresh} />;
+  if (health.mode === "service" && (health.locked || !health.authenticated)) {
+    return <PasswordForm mode="unlock" onDone={refresh} />;
+  }
+  if (!health.onboarding_complete) return <SetupView onComplete={refresh} />;
   return <>{children}</>;
 }
 
@@ -176,58 +177,6 @@ function PasswordForm({
           {busy ? "Working…" : isSet ? "Set password" : "Unlock"}
         </button>
       </form>
-    </Frame>
-  );
-}
-
-/**
- * First screen after the password is set.
- *
- * It used to run its own OpenRouter authorization here: start PKCE, open a tab,
- * poll the credit balance, plus a paste fallback. All of that now lives in the
- * setup page, which runs the same shared flow the CLI runs and covers alerts and
- * integrations too. Duplicating a third of it here only created a second thing
- * to keep in step, so this hands over instead.
- */
-function OnboardingForm({ onDone }: { onDone: () => void }) {
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  const begin = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      // Marks the gate satisfied so the dashboard renders; the setup page is
-      // what actually reports whether this instance can run anything.
-      await completeOnboarding();
-      if (typeof window !== "undefined") window.history.replaceState(null, "", "/?view=setup");
-      onDone();
-    } catch (e: any) {
-      setErr(e?.message ?? "Request failed");
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Frame>
-      <h1>Let's get Jig working</h1>
-      <p>
-        Three things to wire up: model access, failure alerts, and whichever apps your workflows
-        touch. The next screen shows each one, its status, and what it needs. Everything that can
-        be a browser authorization is one, so there is almost nothing to type.
-      </p>
-      <div className="mt-5 flex items-center gap-3">
-        <button
-          type="button"
-          onClick={() => void begin()}
-          disabled={busy}
-          className="rounded-md bg-emerald-500 px-3 py-2 text-[14px] font-semibold text-white transition disabled:opacity-40"
-        >
-          {busy ? "Opening…" : "Start setup"}
-        </button>
-        {busy ? <Spinner /> : null}
-      </div>
-      {err && <p className="mt-3 text-[13px] text-[#fb7185]">{err}</p>}
     </Frame>
   );
 }

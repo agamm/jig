@@ -95,10 +95,10 @@ const io = makeIO()
 // Server-backed agent — ensures server is running, then calls /api/agent
 // ---------------------------------------------------------------------------
 
-async function ensureServer(): Promise<void> {
+async function ensureServer(): Promise<ReturnType<typeof Bun.spawn> | null> {
   try {
     const res = await fetch(`${API_BASE}/api/jigs`)
-    if (res.ok) return // Server already running
+    if (res.ok) return null // Server already running; this command does not own it.
   } catch {}
 
   // Start server in background
@@ -116,9 +116,10 @@ async function ensureServer(): Promise<void> {
     await new Promise(r => setTimeout(r, 100))
     try {
       const res = await fetch(`${API_BASE}/api/jigs`)
-      if (res.ok) return
+      if (res.ok) return proc
     } catch {}
   }
+  proc.kill()
   throw new Error("Failed to start server")
 }
 
@@ -253,11 +254,23 @@ try {
     }
 
     case "setup": {
-      const { runSetup } = await import("./cli-setup/index.js")
-      await runSetup(rest, async () => {
-        await ensureServer()
-        return API_BASE
-      })
+      const { runSetup, setupHelp } = await import("./cli-setup/index.js")
+      if (rest.includes("--help") || rest.includes("-h")) {
+        console.log(setupHelp())
+        break
+      }
+      let temporaryServer: ReturnType<typeof Bun.spawn> | null = null
+      const stopTemporaryServer = () => temporaryServer?.kill()
+      process.once("exit", stopTemporaryServer)
+      try {
+        await runSetup(rest, async () => {
+          temporaryServer = await ensureServer()
+          return API_BASE
+        })
+      } finally {
+        process.off("exit", stopTemporaryServer)
+        stopTemporaryServer()
+      }
       process.exit(0)
       break
     }
@@ -489,11 +502,19 @@ async function update(): Promise<boolean> {
     }
   }
 
-  // Reinstall deps
-  console.log("  Installing dependencies...")
-  const installCode = await runInherited(["pnpm", "install"], join(PROJECT_ROOT, "dashboard"))
-  if (installCode !== 0) {
-    console.error("\nDependencies failed to install. Fix the install issue and run `pnpm install` in dashboard.")
+  // Reinstall both dependency trees. A root lockfile change can be just as
+  // important as a dashboard one, and frozen installs keep either from
+  // silently rewriting the checkout during an update.
+  console.log("  Installing root dependencies...")
+  const rootInstallCode = await runInherited(["bun", "install", "--frozen-lockfile"], PROJECT_ROOT)
+  if (rootInstallCode !== 0) {
+    console.error("\nRoot dependencies failed to install. Fix the issue and run `bun install`.")
+    return false
+  }
+  console.log("  Installing dashboard dependencies...")
+  const dashboardInstallCode = await runInherited(["pnpm", "install", "--frozen-lockfile"], join(PROJECT_ROOT, "dashboard"))
+  if (dashboardInstallCode !== 0) {
+    console.error("\nDashboard dependencies failed to install. Fix the issue and run `pnpm install` in dashboard.")
     return false
   }
 

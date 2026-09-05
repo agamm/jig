@@ -20,7 +20,7 @@ const SECURITY_HEADERS = [
 
 const nextConfig: NextConfig = {
   // Imports reach the repo root (shared/, package.json), so that is the root; saying so also stops
-  // Next guessing between bun.lock here and the pnpm files in this directory.
+  // Next guessing between the root Bun lockfile and this directory's pnpm lockfile.
   turbopack: { root: fileURLToPath(new URL("..", import.meta.url)) },
   experimental: {
     externalDir: true,

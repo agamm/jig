@@ -51,3 +51,19 @@ Plan: ~/.claude/plans/wondrous-humming-donut.md. Archive branch: archive/in-serv
 - Docs now use the actual first-boot claim, OAuth, AgentMail, optional Composio, CLI pairing, and local start sequence.
 - Verified: 783 tests, root and dashboard TypeScript checks, `pnpm run build`, `jig setup --help`, and `git diff --check` all pass.
 - Not browser-smoke-tested: the Jig operating skill disallows automating the dashboard; production compilation and component typechecking cover this change.
+
+# Hosted onboarding: image deploys, non-interactive by flag, setup code hand-off, self-pairing (2026-09-04)
+
+- [x] `jig deploy --yes --workspace=<name>`: prompts take defaults, destructive confirms answer no, no stdin hang
+- [x] Service created from ghcr.io/agamm/jig:v<version> (falls back to latest), setup code + timezone as variables
+- [x] Volume and domain through the Railway API (no CLI prompt); listing lag handled
+- [x] Setup code printed with the dashboard URL and kept in the manifest; server accepts JIG_SETUP_CODE
+- [x] After the owner claims, the same code pairs the deploying machine once; `jig setup <handle>` waits and continues
+- [x] `jig update <handle>` switches the image for image-based instances, rolls back by switching back
+- [x] Docs: skill, README, llms.txt, railway template
+
+## Review
+
+- Verified live against a throwaway project in the user's Railway workspace (deleted afterwards): a full non-interactive deploy took about 36s end to end; claim with the setup code; `jig setup` paired itself and reached the OpenRouter step; `jig debug ls` worked on the paired session; image update from 0.1.136 to v0.1.137 completed and unlocked.
+- Not verified live: the rollback branch of the image update (needs a failing image); the CLI fallback for the volume at a terminal.
+- First live run exposed a race: the CLI's volume listing lags the API create by seconds; the check now retries and treats the API's volume id as proof.

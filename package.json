@@ -1,6 +1,6 @@
 {
   "name": "jig",
-  "version": "0.1.137",
+  "version": "0.1.138",
   "description": "AI workflow automation — deterministic execution with LLM hatches",
   "module": "src/index.ts",
   "type": "module",

@@ -74,3 +74,9 @@ the platform-ID-without-domain state at the HTTP boundary and callback builder.
 **What happened:** `jig new <id> --file=` was added next to `jig edit <id> --file=` for creation. They were the same code path with two names, the exact duplication the repo had removed once before (`debug pull/push`).
 
 **Rule:** Before adding a command or flag, check whether an existing one already covers the job; make it create-if-missing rather than adding a second verb.
+
+## Verify Against The Source Of Truth, Not A Lagging View
+
+**What happened:** A deploy created a volume through the Railway API, then verified it through the CLI's listing, which had not caught up yet, and aborted a healthy deploy as "no volume".
+
+**Rule:** When an API call returns an identifier, that is the proof. A secondary listing is confirmation only: retry it for a bounded time and never let its lag override a success the primary call already reported.

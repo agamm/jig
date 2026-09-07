@@ -1,7 +1,8 @@
 /**
  * Text rendering for `jig debug audit`. Pure: the report comes in, lines go
  * out, so the layout is unit-tested without a server. Sections are ordered by
- * what to do first, and every failing jig ends with the exact next command.
+ * what to do first, and every failing jig ends with the exact next command,
+ * which is the classifier's remedy: reconnect, wait, top up, or edit the code.
  */
 import type { AuditJig, AuditReport } from "../../shared/api.js"
 
@@ -101,8 +102,10 @@ function renderFailing(jig: AuditJig, report: AuditReport): string[] {
     const p = jig.pending
     lines.push(`    pending v${p.versionId} by ${p.author}: "${p.message ?? ""}"`)
     lines.push(`    -> bun run jig pending ${jig.id}`)
-  } else {
-    lines.push(`    -> bun run jig edit ${jig.id} --out=${jig.id}.ts   (fix, then --file=, then run --dry-run)`)
+  } else if (f) {
+    // "code" is the default verdict, so only a recognised external cause gets named.
+    if (f.cause !== "code") lines.push(`    cause: ${f.cause}`)
+    lines.push(`    -> ${f.remedy}`)
   }
   return lines
 }

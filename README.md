@@ -194,9 +194,15 @@ bun run jig edit weekly-update --out=weekly-update.ts    # export the live code 
 bun run jig pair <code>          # cache a CLI session for a deployed instance
 bun run jig visualize <name> -v  # the jig's flow in ASCII: each step, AI or code, prompts (-vv full)
 bun run jig debug connections    # what a deployed instance has connected
+bun run jig debug failures       # every failed run of the last week, with its cause and the fix
 bun run jig debug audit          # what is failing, since when, and the next command to heal it
 ```
 
 `edit`, `run`, `pending` and `types` act on your deployed instance when you have one, and print which
 instance they chose before starting. Add `--local` to act on this machine, or
 `--handle=<name>` to choose between deployed instances.
+
+When a jig fails you get an email with the failing step, the error, the likely cause (an expired
+authorization, a rate limit, a Composio result too large to return, or the jig's own code) and the
+exact next command; repeats are throttled. Reply to that email to have the jig edited, or hand the
+same verdict to your coding agent, which reads `jig debug failures` before touching a jig.

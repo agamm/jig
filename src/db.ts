@@ -542,7 +542,22 @@ export function getJigRuns(
   const runs = db
     .prepare(`SELECT * FROM runs WHERE jig_id = ? ORDER BY id DESC LIMIT ?`)
     .all(jigId, limit) as RunRow[]
+  return attachSteps(runs)
+}
+
+/** Failed runs started at or after `since`, newest first. `since` is compared in the runs table's own UTC "YYYY-MM-DD HH:MM:SS" form. */
+export function listFailedRunsSince(since: Date, limit: number, jigId?: string): (RunRow & { steps: StepRow[] })[] {
+  const db = openDb()
+  const floor = since.toISOString().slice(0, 19).replace("T", " ")
+  const runs = jigId
+    ? db.prepare(`SELECT * FROM runs WHERE status = 'fail' AND started_at >= ? AND jig_id = ? ORDER BY id DESC LIMIT ?`).all(floor, jigId, limit) as RunRow[]
+    : db.prepare(`SELECT * FROM runs WHERE status = 'fail' AND started_at >= ? ORDER BY id DESC LIMIT ?`).all(floor, limit) as RunRow[]
+  return attachSteps(runs)
+}
+
+function attachSteps(runs: RunRow[]): (RunRow & { steps: StepRow[] })[] {
   if (runs.length === 0) return []
+  const db = openDb()
   const ids = runs.map((r) => r.id)
   const placeholders = ids.map(() => "?").join(",")
   const allSteps = db

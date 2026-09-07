@@ -9,13 +9,14 @@
  * alerting uses, so the two cannot disagree about what is failing.
  */
 import packageJson from "../../package.json"
-import type { AuditConnection, AuditFailingStep, AuditJig, AuditReport, AuditRun } from "../../shared/api.js"
+import type { AuditConnection, AuditFailingStep, AuditJig, AuditLastFailure, AuditReport, AuditRun } from "../../shared/api.js"
 import { isServiceMode } from "../config/runtime.js"
 import { getJigRuns, listAllSchedules, type RunRow, type ScheduleRow, type StepRow } from "../db.js"
 import { extractConnections } from "../domain/jig-source.js"
 import { loadServerConfigs } from "../mcp/config.js"
 import { getSchedulerHealth } from "../scheduler/index.js"
 import { getConnectionStatus } from "./connection-status.js"
+import { failureEntry } from "./failures.js"
 import { getActiveCode, getVersion, listJigs } from "./jig-store.js"
 import { readFailureIncident, summarizeFailureStreak } from "./run-failure-notify.js"
 import { hasActiveRunForJig } from "./run-store.js"
@@ -130,9 +131,7 @@ function auditJig(
     failingSince: failing ? earliestIso(incident?.firstFailedAt, sqliteToMs(oldestInStreak.started_at)) : null,
     lastFailureAt: failing ? sqliteToIso(latest.finished_at ?? latest.started_at) : null,
     alertsSent: incident?.emailsSent ?? 0,
-    lastFailure: failing
-      ? { runId: latest.id, at: sqliteToIso(latest.started_at), error: streak.error, step: failingStepOf(latest) }
-      : null,
+    lastFailure: failing ? lastFailureOf(latest, connections) : null,
     runs: runs.filter((r) => sqliteToMs(r.started_at) >= since.getTime()).map(auditRun),
     pending: pending
       ? {
@@ -158,6 +157,12 @@ function auditRun(run: RunWithSteps): AuditRun {
     failingStep: failingStepOf(run),
     steps: run.steps.map((s) => ({ seq: s.seq, label: s.label, status: s.status, durationMs: s.duration_ms })),
   }
+}
+
+/** The latest failure with the classifier's verdict, sharing failureEntry so the log, the audit and the email agree. */
+function lastFailureOf(run: RunWithSteps, jigConnections: string[]): AuditLastFailure {
+  const entry = failureEntry(run, jigConnections)
+  return { runId: entry.runId, at: entry.at, error: entry.error, step: failingStepOf(run), cause: entry.cause, remedy: entry.remedy }
 }
 
 function failingStepOf(run: RunWithSteps): AuditFailingStep | null {

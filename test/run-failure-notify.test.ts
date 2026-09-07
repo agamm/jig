@@ -37,6 +37,43 @@ describe("maybeNotifyRunFailure", () => {
     expect(notifications).toHaveLength(1)
     expect(notifications[0].title).toBe('Jig "weekly-update" failed')
     expect(notifications[0].body).toContain("Error: boom")
+    // Nothing external recognised: the email points at the code.
+    expect(notifications[0].body).toContain("Likely cause: the jig's code")
+    expect(notifications[0].body).toContain("Next: bun run jig edit weekly-update --out=weekly-update.ts")
+  })
+
+  it("names the remedy in every email of an incident, from the failing step's own error", async () => {
+    const bodies: string[] = []
+    const failedRun = (id: number) => ({
+      id,
+      jig_id: "weekly-update",
+      started_at: "2026-04-13 10:00:00",
+      finished_at: "2026-04-13 10:00:05",
+      status: "fail" as const,
+      duration_ms: 5000,
+      error: "Step failed",
+      output: null,
+      params: null,
+      steps: [{
+        id, run_id: id, seq: 1, label: "fetch issues", started_at: null, finished_at: null, duration_ms: null,
+        output: null, status: "fail" as const, error: "401 Unauthorized", connections: JSON.stringify(["linear"]),
+      }],
+    })
+    const deps = (id: number, now: number) => ({
+      getRun: () => failedRun(id),
+      notify: async (payload: any) => { bodies.push(payload.body); return true },
+      now: () => now,
+    })
+    const t0 = Date.parse("2026-04-13T10:00:00Z")
+    await maybeNotifyRunFailure("weekly-update", 1, false, deps(1, t0))
+    await maybeNotifyRunFailure("weekly-update", 2, false, deps(2, t0 + 60_000))
+    await maybeNotifyRunFailure("weekly-update", 3, false, deps(3, t0 + 25 * 60 * 60_000))
+
+    expect(bodies).toHaveLength(3)
+    for (const body of bodies) {
+      expect(body).toContain("Likely cause: authorization expired or revoked")
+      expect(body).toContain("bun run jig connect linear")
+    }
   })
 
   it("skips dry runs and successful runs", async () => {

@@ -187,4 +187,18 @@ describe("formatFailureBody", () => {
     expect(s).toContain("Duration: 10m 3s")
     expect(s).toContain("http://localhost:3141/jigs/morning-calendar")
   })
+
+  it("quotes the classifier's verdict when given one", () => {
+    const s = formatFailureBody({
+      jigId: "morning-calendar",
+      error: "401 Unauthorized",
+      cause: "authorization expired or revoked",
+      remedy: "Re-authorize it: bun run jig connect googlecalendar",
+      startedAt: null,
+      durationMs: null,
+      dashboardBaseUrl: "http://localhost:3141",
+    })
+    expect(s).toContain("Likely cause: authorization expired or revoked")
+    expect(s).toContain("Next: Re-authorize it: bun run jig connect googlecalendar")
+  })
 })

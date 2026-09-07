@@ -1,6 +1,8 @@
 import { getRun, getSetting, setSetting, type RunRow, type StepRow } from "../db.js"
 import { isCancellationMessage } from "../run-cancel.js"
 import { publicUrl } from "../config/runtime.js"
+import { describeCause } from "./failure-class.js"
+import { verdictForRun } from "./failures.js"
 import { formatFailureBody, notify } from "./notify.js"
 
 // ---------------------------------------------------------------------------
@@ -99,6 +101,9 @@ export async function maybeNotifyRunFailure(
   const now = (deps.now ?? Date.now)()
   const incident = readFailureIncident(jigId)
   const doNotify = deps.notify ?? notify
+  // Every email quotes the same verdict the audit and `jig debug failures` show.
+  const verdict = verdictForRun(run)
+  const cause = describeCause(verdict.cause)
 
   if (!incident) {
     // First failure — email normally and open an incident.
@@ -109,6 +114,8 @@ export async function maybeNotifyRunFailure(
         runId,
         error: run.error,
         failedStep: summarizeFailureStreak([run]).failedStep,
+        cause,
+        remedy: verdict.remedy,
         startedAt: run.started_at,
         durationMs: run.duration_ms,
       }),
@@ -140,6 +147,8 @@ export async function maybeNotifyRunFailure(
         `If it's still failing in 24 hours, you'll get one summary with the count.`,
         ``,
         run.error ? `Latest error: ${run.error}` : null,
+        `Likely cause: ${cause}`,
+        `Next: ${verdict.remedy}`,
         `Fix it: ${dashboardJigUrl(jigId)}`,
       ].filter((l): l is string => l !== null).join("\n"),
       kind: "fail",
@@ -164,6 +173,8 @@ export async function maybeNotifyRunFailure(
         `It probably needs something only you can do — reconnecting a service, fixing credentials, or editing the jig.`,
         ``,
         run.error ? `Latest error: ${run.error}` : null,
+        `Likely cause: ${cause}`,
+        `Next: ${verdict.remedy}`,
         ``,
         `Fix it now: ${dashboardJigUrl(jigId)}`,
       ].filter((l): l is string => l !== null).join("\n"),

@@ -7,7 +7,7 @@
 - To install, set up, connect, deploy or update an instance, read `.agents/skills/jig/SKILL.md`.
 - To write or edit a jig, read `SKILL.md` completely.
 - To change the Jig runtime, API, scheduler, dashboard, database, or connection system, read `CLAUDE.md`.
-- To deploy, diagnose, recover, or self-heal an instance, read `docs/operations.md`.
+- To deploy, diagnose, or recover an instance, read `docs/operations.md`.
 - For the product overview and architecture diagram, read `README.md`.
 - For contribution and validation expectations, read `CONTRIBUTING.md`.
 
@@ -82,10 +82,13 @@ unset JIG_PASSWORD
 bun run jig run <jig-id> --dry-run
 bun run jig visualize <jig-id> -v  # the flow: each step, AI or code, connections, prompt summaries (-vv full, --json)
 bun run jig debug tail [handle]
-bun run jig debug audit [handle]  # what is failing, since when, and the next command (--json for the raw report)
+bun run jig debug failures [handle]  # every failed run of the last week, with its cause and the remedy (--json for the raw log)
+bun run jig debug audit [handle]     # what is failing, since when, and the next command (--json for the raw report)
 ```
 
-The heal loop: `jig debug audit` names the failing step and error, `jig edit <jig-id> --out=<jig-id>.ts`
+The heal loop: `jig debug failures` names the failing step, the error, the cause and the remedy. When the
+cause is external (`auth`, `composio-spill`, `rate-limit`, `provider`, `credits`, `missing-connection`,
+`locked`) run the remedy it prints, not an edit. When it is `code`: `jig edit <jig-id> --out=<jig-id>.ts`
 pulls the code, fix it, `jig edit <jig-id> --file=<jig-id>.ts` pushes it as pending, `jig run <jig-id> --dry-run` proves the
 pending version, `jig pending <jig-id> approve` makes it live.
 
@@ -132,7 +135,13 @@ same password the backup was made under; onto an instance with a different
 password they are skipped unless `--force` is passed. Run history, logs and
 step caches are deliberately not included.
 
-After two consecutive real-run failures, Jig can start a repair authoring session. The proposed patch remains pending and never ships without approval. If AgentMail is configured, the owner receives a reply-to-approve thread; otherwise the proposal remains visible in the dashboard.
+When a jig fails, the owner gets an email with the failing step, the error, the likely cause and the exact next command; repeats are throttled per jig. The same verdict is in the failure log, which a coding agent reads before touching a jig:
+
+```sh
+bun run jig debug failures [handle] [--since=7d] [--jig=<id>] [--json]
+```
+
+Nothing is repaired automatically. Replying to the failure email opens a reply-to-edit session for that jig.
 
 ## Safety invariants
 
@@ -140,7 +149,7 @@ After two consecutive real-run failures, Jig can start a repair authoring sessio
 - Never print secrets while debugging. Use redacted structured logs and the dashboard.
 - Never edit SQLite directly to change a jig. Use authoring, pending approval, restore, or the store APIs.
 - Never deploy without `/data` persistence. A redeploy without the volume loses credentials, jigs, schedules, and history.
-- Never auto-approve an AI-generated repair.
+- Never approve a pending version you have not reviewed.
 - Before publishing, run relevant tests, `git diff --check`, and a tracked-file privacy/secret scan.
 
 ## Validation

@@ -577,12 +577,51 @@ export interface AuditRun {
   steps: AuditRunStep[]
 }
 
+/** What the failure classifier recognised in a run's error text; "code" means nothing external. */
+export type FailureCause =
+  | "composio-spill"
+  | "locked"
+  | "missing-connection"
+  | "auth"
+  | "credits"
+  | "rate-limit"
+  | "provider"
+  | "timeout"
+  | "code"
+
 export interface AuditLastFailure {
   runId: number
   at: string
   /** The failing step's error when there is one, else the run's rollup error. */
   error: string
   step: AuditFailingStep | null
+  cause: FailureCause
+  /** One line, imperative, with the exact next command. */
+  remedy: string
+}
+
+/** One failed run in the failure log (GET /api/failures, `jig debug failures`). */
+export interface FailureEntry {
+  runId: number
+  jigId: string
+  /** ISO time the run started. */
+  at: string
+  /** The first failing step, when the run got that far. */
+  step: { seq: number; label: string } | null
+  error: string
+  cause: FailureCause
+  remedy: string
+  /** Connections the failing step used. */
+  connections: string[]
+}
+
+export interface FailureLog {
+  generatedAt: string
+  since: string
+  /** Newest first. */
+  failures: FailureEntry[]
+  /** More failures exist in the window than `failures` holds. */
+  truncated: boolean
 }
 
 export interface AuditPending {
@@ -876,6 +915,7 @@ export interface ApiContracts {
   backupRestore: ApiContract<void, BackupRestoreResponse>
   serverLogs: ApiContract<void, ServerLogsResponse>
   audit: ApiContract<void, AuditReport>
+  failures: ApiContract<void, FailureLog>
   clearServerLogs: ApiContract<void, OkResponse>
 }
 

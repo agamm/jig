@@ -87,6 +87,7 @@ const ROUTES: [pattern: string, handler: string][] = [
   ["/api/permissions", "toolPermissions"],
   ["/api/logs", "serverLogs"],
   ["/api/audit", "audit"],
+  ["/api/failures", "failures"],
 
   ["/api/webhooks/#jigId", "webhook"],
 ]

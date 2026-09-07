@@ -78,6 +78,9 @@ export function formatFailureBody(opts: {
   error: string | null
   /** Label of the step that failed, when the run got that far. */
   failedStep?: string
+  /** The classifier's verdict: what it looks like and what to do. */
+  cause?: string
+  remedy?: string
   startedAt: string | null
   durationMs: number | null
   dashboardBaseUrl?: string
@@ -86,6 +89,8 @@ export function formatFailureBody(opts: {
   if (opts.runId != null) lines.push(`Run: #${opts.runId}`)
   if (opts.failedStep) lines.push(`Failed step: ${opts.failedStep}`)
   if (opts.error) lines.push(`Error: ${opts.error}`)
+  if (opts.cause) lines.push(`Likely cause: ${opts.cause}`)
+  if (opts.remedy) lines.push(`Next: ${opts.remedy}`)
   if (opts.startedAt) lines.push(`Started: ${opts.startedAt}`)
   if (opts.durationMs != null) {
     const seconds = Math.round(opts.durationMs / 1000)

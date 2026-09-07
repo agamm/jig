@@ -465,7 +465,7 @@ ctx.output(`Found ${meetings.length} meetings\n\n${preview}`)
 
 MCP tools return different shapes: arrays, `{items: [...]}`, `{messages: [...]}`, `{data: {...}}`, `{data_preview: {...}}`, plain strings (XML, Markdown, or prose), and sometimes an empty string. Do NOT blindly write `result.items ?? result.messages ?? []` — if the real key is `entries` / `data.results` / `data_preview.messages`, that silently collapses to `[]` and every downstream step starves on empty data while the run still reports success.
 
-**Before writing unwrap code, probe the tool once: from a checkout run `bun run jig debug eval <server> <tool> --args='{...}'`; inside the in-server repair loop call `introspect_tool_output({server, tool, args})`.** Either returns a real shape descriptor. It invokes the tool live and returns a depth-limited descriptor (keys, types, array lengths, value samples) plus a redacted 1KB preview, never the full data. Refuses non-read-only tools unless `allowWrite: true`. Use realistic args (e.g. `{query: "is:unread", max_results: 3}`), then base the unwrap on what you got back. One probe call is much cheaper than shipping a jig that returns 0 results when the API returned 3.
+**Before writing unwrap code, probe the tool once: from a checkout run `bun run jig debug eval <server> <tool> --args='{...}'`; inside a reply-to-email edit session call `introspect_tool_output({server, tool, args})`.** Either returns a real shape descriptor. It invokes the tool live and returns a depth-limited descriptor (keys, types, array lengths, value samples) plus a redacted 1KB preview, never the full data. Refuses non-read-only tools unless `allowWrite: true`. Use realistic args (e.g. `{query: "is:unread", max_results: 3}`), then base the unwrap on what you got back. One probe call is much cheaper than shipping a jig that returns 0 results when the API returned 3.
 
 **Composio tools cap inline responses at ~10k tokens.** Over that, the response spills to a sandbox file the MCP session can't reach and the wrapper throws `ComposioSpillError` at runtime. The bulkiest payloads come from Gmail (`messageText` is the full body, ~1-3k tokens each), Slack message history, GitHub file contents, and any tool with `verbose: true` / `include_payload: true`. **Default to small windows** — e.g. `max_results: 3-5` for any list/fetch on Composio — and paginate via `nextPageToken` if you need more. If `introspect_tool_output` returns `reason: "response_truncated"` or `warnings` mentioning sentinel strings, shrink your args before writing code; do not proceed against the truncated shape. This one is enforced, not advisory: the validator rejects a Composio call with `verbose: true`, `include_payload: true`, or `max_results` above 5.
 
@@ -488,7 +488,7 @@ if (meetings.length === 0) {
 }
 ```
 
-That `return` is right only when zero can genuinely mean zero. When the response clearly had content and your unwrap still yielded nothing, the parse is broken, not the week: `throw` with the raw head in the message so it gets repaired (rule 15).
+That `return` is right only when zero can genuinely mean zero. When the response clearly had content and your unwrap still yielded nothing, the parse is broken, not the week: `throw` with the raw head in the message so the failure log and the email show it (rule 15).
 
 ### 11. Format outbound messages nicely
 
@@ -673,9 +673,9 @@ if (emails.length === 0) {
 
 ### 15. Signal failure by throwing, never by outputting an error string
 
-A handler that returns normally is recorded as a **successful** run no matter what the output says. `ctx.output("Error: ...")` followed by `return` shows a green check: no failure email, no auto-repair, and it clears any existing failure streak. Only a thrown error marks the run failed.
+A handler that returns normally is recorded as a **successful** run no matter what the output says. `ctx.output("Error: ...")` followed by `return` shows a green check: no failure email, nothing in the failure log, and it clears any existing failure streak. Only a thrown error marks the run failed.
 
-- **Can't do the job** (required webhook payload field missing, credential gone, a precondition that makes the work impossible): `throw`. The message becomes the run error and is what auto-repair diagnoses.
+- **Can't do the job** (required webhook payload field missing, credential gone, a precondition that makes the work impossible): `throw`. The message becomes the run error, is what the failure log classifies, and is what the failure email quotes.
 - **Nothing to do** (no new items, doesn't apply this run): `ctx.output()` + `return`, per rule 14. That is a genuine success.
 
 Bad:

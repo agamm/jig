@@ -87,6 +87,9 @@ describe("buildAuditReport", () => {
     expect(jig.alertsSent).toBe(2)
     expect(jig.lastFailure?.step).toEqual({ seq: 2, label: "send report", error: "token rejected", connections: ["composio"] })
     expect(jig.lastFailure?.error).toBe("token rejected")
+    // The classifier's verdict rides along, naming the step's own connection.
+    expect(jig.lastFailure?.cause).toBe("auth")
+    expect(jig.lastFailure?.remedy).toContain("bun run jig connect composio")
     expect(jig.runs).toHaveLength(3)
     expect(jig.runs[0].failingStep?.seq).toBe(2)
     expect(jig.runs[0].steps.map((s) => s.status)).toEqual(["success", "fail"])
@@ -283,6 +286,8 @@ const FIXED_REPORT: AuditReport = {
         at: "2026-09-04T09:00:00.000Z",
         error: "token rejected",
         step: { seq: 2, label: "send report", error: "token rejected", connections: ["composio"] },
+        cause: "auth",
+        remedy: "Authorization expired or was revoked. Re-authorize it: bun run jig connect composio, then bun run jig run weekly-update --dry-run",
       },
       runs: [auditRun(42, "fail"), auditRun(41, "fail"), auditRun(40, "success")],
       connections: ["composio"],
@@ -292,7 +297,10 @@ const FIXED_REPORT: AuditReport = {
       id: "daily-digest",
       consecutiveFailures: 3,
       failingSince: "2026-09-02T09:00:00.000Z",
-      lastFailure: { runId: 39, at: "2026-09-04T09:00:00.000Z", error: "rate limited", step: null },
+      lastFailure: {
+        runId: 39, at: "2026-09-04T09:00:00.000Z", error: "rate limited", step: null,
+        cause: "rate-limit", remedy: "Rate limited or over quota. Rerun later; if it recurs, do less per run or spread the schedule.",
+      },
       pending: { versionId: 12, author: "agent", message: "retry on 429", createdAt: "2026-09-04T09:05:00.000Z" },
     }),
     auditJig({ id: "standup-notes", nextRunAt: "2026-09-04T09:00:00.000Z" }),
@@ -317,7 +325,25 @@ describe("renderAuditReport", () => {
     expect(lines[start + 2]).toBe('    step 2 "send report": token rejected')
     expect(lines[start + 3]).toBe("    last 3: fail fail ok")
     expect(lines[start + 4]).toBe("    connection composio is auth-required since 2026-09-03 07:59Z   <- fix the connection, not the code")
-    expect(lines[start + 5]).toBe("    -> bun run jig edit weekly-update --out=weekly-update.ts   (fix, then --file=, then run --dry-run)")
+    expect(lines[start + 5]).toBe("    cause: auth")
+    expect(lines[start + 6]).toBe("    -> Authorization expired or was revoked. Re-authorize it: bun run jig connect composio, then bun run jig run weekly-update --dry-run")
+  })
+
+  it("keeps the edit command as the next step when nothing external was recognised", () => {
+    const report: AuditReport = {
+      ...FIXED_REPORT,
+      jigs: [auditJig({
+        id: "parse-bug",
+        consecutiveFailures: 1,
+        lastFailure: {
+          runId: 7, at: "2026-09-04T09:00:00.000Z", error: "Cannot read properties of undefined", step: null,
+          cause: "code", remedy: "bun run jig edit parse-bug --out=parse-bug.ts   (fix, then --file=, then run --dry-run)",
+        },
+      })],
+    }
+    const out = renderAuditReport(report, { handle: "prod", url: "https://jig.example.com", since: "24h" })
+    expect(out).not.toContain("cause:")
+    expect(out).toContain("    -> bun run jig edit parse-bug --out=parse-bug.ts   (fix, then --file=, then run --dry-run)")
   })
 
   it("points at the pending fix instead of a fresh edit when one is waiting", () => {

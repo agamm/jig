@@ -97,14 +97,14 @@ bun run jig run <jig-id> --dry-run
 ```
 
 A push leaves the change **pending** unless you pass `--approve`, so the default
-keeps the same human approval gate the dashboard and auto-repair use;
+keeps the same human approval gate the dashboard and reply-to-email edits use;
 `jig pending <jig-id> approve|discard` closes it from the CLI. The server
 typechecks the code against its generated connections and runs the jig
 validator; problems come back and are printed, the code still lands as pending,
 and `--approve` only takes effect when the check is clean. It also applies the
-same guards as reply-to-email edits and auto-repair: it rejects code importing
-disconnected servers, and refuses while the jig is running or while a repair or
-email edit session holds it.
+same guards as reply-to-email edits: it rejects code importing disconnected
+servers, and refuses while the jig is running or while an email edit session
+holds it.
 
 ### Test a connection before writing code against it
 
@@ -123,12 +123,16 @@ Tools whose annotations do not mark them read-only are refused unless
 that would overflow the inline response are reported as a refusal with the
 reason, not returned as a truncated shape.
 
-When a repair or reply-to-email edit gets a jig wrong, fix `SKILL.md` too, or the
-next generated fix repeats the defect.
+When a reply-to-email edit gets a jig wrong, fix `SKILL.md` too, or the next
+generated fix repeats the defect.
 
 ## Repair a failing jig
 
-Start with `bun run jig debug audit [handle]`: it lists every failing jig with its consecutive-failure count, the failing step and error, any pending fix already waiting, unhealthy connections, and the exact next command. `--jig=<id>` narrows it, `--json` returns the raw report.
+Start with `bun run jig debug failures [handle]`: every failed run of the last seven days, newest
+first, with the failing step, the error, the cause the classifier recognised and the exact next
+command (see "Failure log" below). Then `bun run jig debug audit [handle]` for the per-jig view:
+consecutive-failure count, any pending fix already waiting, unhealthy connections, and the same
+remedy. Both take `--jig=<id>` and `--json`.
 
 When the question is what the jig does rather than whether it ran, `bun run jig visualize <jig-id> -vv` reads the
 active version back as a flow: every step, which ones a model decides, the prompts word for word, and the branches
@@ -153,17 +157,31 @@ bun run jig restore <jig-id> <version>
 
 Restore always creates a pending version. Review and approve it; do not bypass the approval boundary.
 
-## Built-in self-healing
+## Failure log
 
-After two consecutive real-run failures, Jig may start an authoring repair session using the latest failing step and error. It attempts a code fix only when a code change can resolve the failure. External outages and revoked credentials are reported as blockers instead of triggering speculative edits.
+Every failed run is kept in the runs table with its failing step and error, and read back
+classified: `GET /api/failures?since=7d[&jig=<id>]` and `bun run jig debug failures`. Nothing
+is repaired automatically; the log exists so that whoever fixes the jig (the owner from the
+email, or a coding agent from the CLI) starts from the cause rather than from the stack trace.
 
-Repairs are approval-gated:
+The classifier matches the error text and names the remedy:
 
-- a proposed version is pending, never immediately active;
-- an existing pending version blocks another repair attempt;
-- live user edits take priority over background repair;
-- the automatic attempt window stops runaway repair loops;
-- AgentMail can deliver the proposal in a reply-to-approve thread.
+| cause | recognised from | remedy |
+|---|---|---|
+| `composio-spill` | Composio spilled a result past its inline limit to a sandbox file | connect the service's own MCP server (`jig connect <service>`) or ask for less |
+| `auth` | 401/403, `invalid_grant`, revoked or expired authorization | `jig connect <server>` to re-authorize |
+| `missing-connection` | preflight found an imported connection that is not set up | `jig connect <name>` |
+| `credits` | OpenRouter 402 | top up credit |
+| `rate-limit` | 429, quota | wait; do less per run |
+| `provider` | 5xx, network errors, SSE failures | wait; `jig debug connections` if it persists |
+| `timeout` | the run or a tool ran past its timeout | raise the timeout in the jig options or do less per run |
+| `locked` | credentials unreadable because the instance was locked | `jig unlock`; `JIG_DATA_KEY` keeps it from recurring |
+| `code` | nothing external recognised | `jig edit --out`, fix, `--file`, dry run |
+
+Failure emails quote the same cause and remedy. Their cadence per jig: the first failure emails,
+the second says repeat alerts are paused, then one summary every 24 hours while it keeps failing;
+a success clears the incident. Replying to any of them still opens the jig's reply-to-edit
+session.
 
 ## Privacy checklist
 

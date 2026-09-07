@@ -81,6 +81,7 @@ import { checkAccess, requireAdminAccess } from "./auth/lock-middleware.js"
 import { announceSetupCode } from "./auth/setup-code.js"
 import { clearLogs, getLogs } from "./server/log-buffer.js"
 import { buildAuditReport, parseSince } from "./services/audit.js"
+import { buildFailureLog } from "./services/failures.js"
 import packageJson from "../package.json"
 
 const PACKAGE_VERSION: string = packageJson.version
@@ -592,6 +593,19 @@ export function createApiServer(port: number) {
             const report = await buildAuditReport({ since, jigId })
             if (jigId && report.jigs.length === 0) throw new ApiError(404, `No active jig: ${jigId}`)
             return apiJson("audit", report)
+          }
+          case "failures": {
+            // Admin-only for the same reason as audit: every error text of every jig.
+            const denied = requireAdminAccess(req)
+            if (denied) return denied
+            if (req.method !== "GET") return json({ error: "Method not allowed" }, 405)
+            let since: Date
+            try {
+              since = parseSince(url.searchParams.get("since") ?? undefined)
+            } catch (e: any) {
+              throw new ApiError(400, e.message)
+            }
+            return apiJson("failures", buildFailureLog({ since, jigId: url.searchParams.get("jig") ?? undefined }))
           }
           case "webhook": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)

@@ -21,8 +21,9 @@ import {listRemotes, resolveActiveRemote, type RemoteManifest} from "../cli-remo
 import { readLocalLogHead, readLocalLogs } from "./local.js"
 import { parseToolArgs } from "./eval-args.js"
 import { renderAuditReport } from "./audit-render.js"
+import { renderFailureLog } from "./failures-render.js"
 import { DB_PATH } from "../config/paths.js"
-import type { AuditReport, JigData, ServerLogEntry, ServerLogsResponse, StartRunResponse, RunDetail, ToolEvalResponse } from "../../shared/api.js"
+import type { AuditReport, FailureLog, JigData, ServerLogEntry, ServerLogsResponse, StartRunResponse, RunDetail, ToolEvalResponse } from "../../shared/api.js"
 
 const COOKIE_NAME = "jig-admin"
 const POLL_MS = 750
@@ -42,6 +43,7 @@ export async function runDebug(args: string[]): Promise<void> {
   if (sub === "tail") return tailCmd(rest)
   if (sub === "ls") return lsCmd(rest)
   if (sub === "audit") return auditCmd(rest)
+  if (sub === "failures") return failuresCmd(rest)
   if (sub === "eval") return evalCmd(rest)
 
   console.log("Usage:")
@@ -49,12 +51,13 @@ export async function runDebug(args: string[]): Promise<void> {
   console.log("  jig debug tail [handle]           Stream debug logs (Ctrl-C to stop)")
   console.log("  jig debug ls [handle]             List jigs on the remote")
   console.log("  jig debug audit [handle]          What is failing, since when, and the next command to heal it")
+  console.log("  jig debug failures [handle]       Every failed run in a window, classified with its remedy (read this before editing a jig)")
   console.log("  jig debug eval <server> <tool>    Call one tool and print its real response shape")
   console.log("")
   console.log("Auditing:")
-  console.log("  --since=<24h|30m|7d|ISO>  audit: window for the runs listed (default 24h)")
-  console.log("  --jig=<id>             audit: one jig only")
-  console.log("  --json                 audit: print the report as JSON instead of text")
+  console.log("  --since=<24h|30m|7d|ISO>  audit, failures: window (default 24h for audit, 7d for failures)")
+  console.log("  --jig=<id>             audit, failures: one jig only")
+  console.log("  --json                 audit, failures: print the report as JSON instead of text")
   console.log("")
   console.log("Testing a connection:")
   console.log("  --args=<json>          eval: tool arguments, e.g. --args='{\"max_results\":3}'")
@@ -325,6 +328,26 @@ async function auditCmd(args: string[]): Promise<void> {
     return
   }
   console.log(renderAuditReport(report, { handle: remote.handle, url: remote.public_url, since }))
+}
+
+/**
+ * The failure log: every failed run in the window, newest first, with the
+ * cause the classifier recognised and the exact next command. A coding agent
+ * reads this before touching a jig, so a failure that no code change can fix
+ * (revoked access, a Composio spill) is named before anyone edits code.
+ */
+async function failuresCmd(args: string[]): Promise<void> {
+  const { remote, cookie } = resolveAuthedRemoteOrExit(positional(args))
+  const since = stringFlag(args, "--since") ?? "7d"
+  const jig = stringFlag(args, "--jig")
+  const query = new URLSearchParams({ since })
+  if (jig) query.set("jig", jig)
+  const log = await getJson<FailureLog>(remote, cookie, `/api/failures?${query}`)
+  if (args.includes("--json")) {
+    console.log(JSON.stringify(log, null, 2))
+    return
+  }
+  console.log(renderFailureLog(log, { handle: remote.handle, url: remote.public_url, since }))
 }
 
 export async function pullRemoteJig(args: string[], remote: RemoteManifest): Promise<void> {

@@ -24,6 +24,11 @@ Reach for that one when you are producing TypeScript, this one for everything el
   built so nobody types a secret at you.
 - **Never automate the dashboard in a browser.** Everything it does has a CLI path; driving it
   with browser tools lands you on a login screen you cannot pass, and wastes the user's time.
+- **Read the failure log before any jig work.** `bun run jig debug failures` lists every failed
+  run of the last seven days with its cause and the exact remedy. Offer those remedies before
+  editing code: an expired authorization, a Composio result that spilled past the inline limit,
+  or a provider outage is not a code bug, and a jig edited for one of those fails the same way
+  next run. `--jig=<id>` narrows it, `--json` is the raw log.
 - **Probe before you state.** Never report what is connected, what tools exist, or what a tool
   returns from inference, from a file on disk, or from what was true earlier in the session. Run
   the command that answers it, then say what came back. "Connected" in particular is layered:
@@ -190,8 +195,8 @@ bun run jig edit <jig-id> --file=jig.ts --approve  # approve in the same push wh
 ```
 
 Export → edit → upload → `jig run <jig-id>` → `jig debug tail` is the loop. Uploading leaves
-the change pending on purpose, the same human gate reply-to-email edits and auto-repair use.
-There is no in-server writer: you are the author.
+the change pending on purpose, the same human gate reply-to-email edits use. There is no
+in-server writer: you are the author.
 
 **All of these act on the instance you deployed**, not on this machine. They resolve the
 active remote from `~/.config/jig/remotes/`, use the paired session, and print which instance
@@ -319,9 +324,14 @@ the source tree, so updating code does not touch them.
 
 ## When something is wrong
 
-Read `docs/operations.md` for health triage, repairing a failing jig, and the built-in
-self-healing loop. Two fast signals:
+Start with the failure log, then read `docs/operations.md` for health triage and the repair
+procedure:
 
+- `bun run jig debug failures [handle]` for every failed run in the last seven days, each with
+  its cause (`auth`, `composio-spill`, `rate-limit`, `provider`, `timeout`, `credits`,
+  `missing-connection`, `locked`, or `code`) and the command that fixes it. The failure email
+  the owner received quotes the same verdict. `bun run jig debug audit` is the per-jig view:
+  streaks, pending versions, unhealthy connections.
 - `bun run jig doctor` for instance health.
 - `bun run jig visualize <jig-id> -vv` to read a jig back without running it: every step, which
   ones a model decides, the prompts word for word, and the branches around them. Start here when

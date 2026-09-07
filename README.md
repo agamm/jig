@@ -98,8 +98,8 @@ dashboard's Setup page (or run `bun run jig setup --local` in a second terminal)
 Install and set up Jig from https://github.com/agamm/jig.git. Clone it, read
 .agents/skills/jig/SKILL.md in the clone, and follow it. Ask me the questions it says to
 ask before you start anything. Setup opens links for me to authorize; wait for me rather
-than answering for me. When it is done, give me the dashboard URL and tell me which steps
-came back ready.
+than answering for me. When it is done, give me the dashboard URL, tell me which steps
+came back ready, and give me the pairing command for my own checkout.
 ```
 
 ## Setup

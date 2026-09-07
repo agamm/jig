@@ -511,6 +511,7 @@ export async function runSetup(argv: string[], ensureLocalServer: () => Promise<
       }
       console.log(`\n  Re-check or change anything on the dashboard under Settings > Setup${dashboardUrl ? ` (${dashboardUrl}/?view=settings&tab=setup)` : ""}.`)
       console.log(`  Run \`jig setup --force\` to walk every step again.`)
+      if (hostedRemote) await printPairingCommand(base, cookie)
       return
     }
   }
@@ -529,4 +530,23 @@ export async function runSetup(argv: string[], ensureLocalServer: () => Promise<
   // print that distinct error instead of silently treating it like a step that
   // already rendered its own failure.
   await completeSetup(base, cookie)
+  if (hostedRemote) await printPairingCommand(base, cookie)
+}
+
+/**
+ * The machine that ran setup is paired; the user's own checkout usually is
+ * not. Mint a pairing code here, where the session already exists, so the
+ * agent can hand the user one line instead of sending them to the dashboard.
+ * Single use and short-lived, which is what makes it safe to print.
+ */
+async function printPairingCommand(base: string, cookie: string | undefined): Promise<void> {
+  try {
+    const res = await fetch(`${base}/api/cli/pair`, { method: "POST", headers: cookie ? { Cookie: `jig-admin=${cookie}` } : {} })
+    if (!res.ok) return
+    const { code, expiresInS } = (await res.json()) as { code: string; expiresInS: number }
+    console.log(`\n  To use this instance from another checkout or machine (single use, expires in ${Math.round(expiresInS / 60)} minutes):`)
+    console.log(`    bunx --bun github:agamm/jig pair ${code} --url=${base}`)
+  } catch {
+    // Best-effort: setup is done either way, and the dashboard can mint a code.
+  }
 }

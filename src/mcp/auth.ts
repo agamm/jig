@@ -378,10 +378,12 @@ export function renderOAuthSuccessPage(serverName: string, opts: { deepLink?: bo
     title: "Authorization complete",
     message: opts.message ?? "Your account is connected. Return to Jig to finish setup and refresh the tool catalog.",
     detail: `Connected service: ${serverName}`,
+    // A non-connection authorization (OpenRouter) is a setup step: land back on
+    // Setup, not on the jig list, so finishing a step never leaves the page.
     primaryHref: deepLink
       ? `${dashboardBaseUrl()}/?view=connections&connection=${encodeURIComponent(serverName)}`
-      : `${dashboardBaseUrl()}/`,
-    primaryLabel: "Return to Jig",
+      : `${dashboardBaseUrl()}/?view=settings&tab=setup`,
+    primaryLabel: deepLink ? "Return to Jig" : "Back to setup",
     autoClose: true,
   })
 }

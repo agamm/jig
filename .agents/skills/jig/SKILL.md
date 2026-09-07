@@ -153,6 +153,12 @@ The code is single use and expires in ten minutes, which is what makes it safe t
 it caches a 30-day session in `~/.config/jig/remotes/`, and every later `jig setup`, `jig update`
 and `jig debug` command against that instance works without asking again.
 
+**When setup finishes on a hosted instance it prints a pairing command** (`bunx --bun
+github:agamm/jig pair <code> --url=...`). Put that line in your final report and ask the user
+whether to run it in their own checkout: the machine that ran setup is paired, theirs usually is
+not. The code is single use and expires in ten minutes, so if they say yes, run it right away
+from the directory they name; if it has expired, the dashboard's Setup page mints a new one.
+
 **An instance is usually already set up when you pair with it.** The dashboard's Setup page is
 how most people onboard, and pairing comes after it (the pairing command is generated on that
 page). So `onboarding_complete: true` with OpenRouter, AgentMail and Composio already connected

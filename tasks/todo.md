@@ -135,3 +135,10 @@ Handoff: HANDOFF.md (design agreed 2026-09-06). Three commits, one version bump 
 - [x] TDD: test/mcp-client.test.ts (policy + real callTool path), failure-class, run-failure-notify. Real check: a stdio MCP server rejecting the first call with -32000 through callTool + invokeWithMcpReconnect. Docs: operations.md Retries table, agent skill. Version 0.1.145.
 - [ ] Still open: "Re-check" on Composio rewrites its schema with the 7 meta-tools and no annotations (verify path); a failed annotation LLM call resets every label to write. Breaks dry-run stubbing and introspection, not retries any more.
 
+# Setup page fixes and the pairing hand-off (2026-09-07)
+
+- [x] Popup detection: window.open with "noopener" returns null even when the tab opened, so every step showed the "blocked" link. Open, then sever the opener by hand. Link text now names the tab's purpose and hides once the step asks its next question.
+- [x] OAuth callback for OpenRouter returns to Settings > Setup, not the jig list.
+- [x] jig setup on a hosted instance prints a single-use pairing command at the end; the skill tells the agent to report it and offer to run it in the user's checkout; README prompt asks for it.
+- [x] Verified: 865 tests, both typechecks; /api/cli/pair minted (600 s) and the code claimed on a scratch server. Not seen live: the dashboard link wording. Version 0.1.146.
+

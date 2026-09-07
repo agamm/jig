@@ -60,6 +60,8 @@ type StepState = {
   /** Short-lived guidance emitted by the shared flow while this step runs. */
   instructions?: string[];
   authUrl?: string;
+  /** What the tab is for, in the flow's own words ("create an API key"); the fallback link says it. */
+  authPurpose?: string;
   /** The browser refused to open the tab, so the link is the only way through. */
   blocked?: boolean;
   /** What to click when the step failed for a reason setup cannot fix itself. */
@@ -275,8 +277,14 @@ export function SetupView() {
         try {
           // Opened after a network round-trip rather than straight off the
           // click, so a popup blocker can refuse it. A null handle is that
-          // refusal, and the caller renders the link instead.
-          const win = window.open(url, "_blank", "noopener,noreferrer");
+          // refusal, and the caller renders the link instead. Not opened with
+          // "noopener": browsers answer null for that even when the tab opened,
+          // which showed the "blocked" link every time. The opener is cut by
+          // hand instead, which keeps the new tab from reaching back into Jig.
+          const win = window.open(url, "_blank");
+          if (win) {
+            try { win.opener = null; } catch { /* cross-origin handle; nothing to sever */ }
+          }
           return win !== null;
         } catch {
           return false;
@@ -332,7 +340,7 @@ export function SetupView() {
         case "open-url":
           // Held for whichever step is mid-flight. Losing it for composio meant
           // a blocked popup left the user with nothing to click.
-          patch(currentStep.current ?? "openrouter", { authUrl: event.url, blocked: !event.opened });
+          patch(currentStep.current ?? "openrouter", { authUrl: event.url, authPurpose: event.purpose, blocked: !event.opened });
           break;
         case "instruction":
           addInstruction(currentStep.current ?? "openrouter", event.message);
@@ -563,7 +571,8 @@ export function SetupView() {
                   </div>
                 ) : null}
 
-                {state.authUrl && (state.status === "waiting" || state.status === "checking") ? (
+                {/* Gone once the step is asking its next question: by then the tab did its job. */}
+                {state.authUrl && !asking && (state.status === "waiting" || state.status === "checking") ? (
                   <a
                     className={`mt-2 inline-block pl-[30px] text-[12px] underline ${
                       state.blocked ? "font-medium text-amber-300" : "text-emerald-400"
@@ -573,8 +582,8 @@ export function SetupView() {
                     rel="noreferrer"
                   >
                     {state.blocked
-                      ? "Your browser blocked the popup. Open the authorization here."
-                      : "Authorization did not open? Use this link."}
+                      ? `Your browser blocked the tab. Open it here to ${state.authPurpose ?? "continue"}.`
+                      : `Tab did not open? Use this link to ${state.authPurpose ?? "continue"}.`}
                   </a>
                 ) : null}
 

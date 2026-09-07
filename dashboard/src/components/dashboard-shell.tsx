@@ -654,7 +654,7 @@ export function DashboardShell({
             <div className="flex h-11 shrink-0 items-center justify-between border-b border-[#1f1f23] px-4">
               <div className="flex flex-col">
                 <span className="text-[13px] font-medium text-[#ededed]">Server Logs</span>
-                <span className="text-[10px] text-[#666]">Every run with its steps, model calls and tool calls, plus connection, scheduler and repair events.</span>
+                <span className="text-[10px] text-[#666]">Every run with its steps, model calls and tool calls, plus connection, scheduler and email-edit events.</span>
               </div>
             </div>
             <div className="flex-1 overflow-y-auto px-6 py-6">

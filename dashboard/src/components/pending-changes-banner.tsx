@@ -9,9 +9,9 @@ import { approvePending, discardPending } from "@/lib/api"
 import { toast } from "@/components/toast"
 
 /**
- * Shows the current pending version for a jig (a reply-to-email edit, an
- * auto-repair, or a CLI push). Approve / Discard / View Diff are the only
- * actions; nothing renders when there is no pending version.
+ * Shows the current pending version for a jig (a reply-to-email edit or a CLI
+ * push). Approve / Discard / View Diff are the only actions; nothing renders
+ * when there is no pending version.
  */
 export function PendingChangesBanner({
   jigId,

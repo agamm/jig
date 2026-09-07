@@ -2,10 +2,9 @@
  * The shared one-shot OpenRouter helper.
  *
  * Its contract is mostly about FAILURE: every caller (auth-failure
- * classification, reply-approval classification, change summaries, trigger
- * parsing, web search) is best-effort and must degrade rather than throw. The
- * approval classifier in particular must fail CLOSED — an unreachable model
- * must never be read as "yes, ship the fix".
+ * classification, change summaries, trigger parsing, web search) is
+ * best-effort and must degrade rather than throw, and fastYesNo fails CLOSED:
+ * an unreachable model is never read as "yes".
  */
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
 import { closeDb, openDb, setCredential } from "../src/db.js"
@@ -140,25 +139,6 @@ describe("fastYesNo", () => {
 })
 
 describe("classifiers built on the shared helper", () => {
-  it("classifyApprovalReply only ships on a clear affirmative", async () => {
-    const { classifyApprovalReply } = await import("../src/services/classify-reply.js")
-
-    stubFetch(() => jsonResponse({ choices: [{ message: { content: "yes" } }] }))
-    expect(await classifyApprovalReply("apply it")).toBe(true)
-
-    stubFetch(() => jsonResponse({ choices: [{ message: { content: "no" } }] }))
-    expect(await classifyApprovalReply("actually, change the subject line")).toBe(false)
-
-    // The one that matters: an unreachable model must not ship an AI-written fix.
-    stubFetch(() => { throw new Error("network down") })
-    expect(await classifyApprovalReply("apply it")).toBe(false)
-
-    // An empty reply never reaches the model at all.
-    requests = []
-    expect(await classifyApprovalReply("   ")).toBe(false)
-    expect(requests).toHaveLength(0)
-  })
-
   it("summarizeJigChange degrades to null so the confirmation email still sends", async () => {
     const { summarizeJigChange } = await import("../src/services/summarize-change.js")
 

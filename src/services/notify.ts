@@ -60,7 +60,7 @@ export async function notify(opts: {
     })
     const send = opts.sendEmail ?? sendAgentMailEmail
     const { threadId } = await send({ to: owner, subject, text, html })
-    if (token) recordEmailThread(threadId, opts.jigId!, "auto", token)
+    if (token) recordEmailThread(threadId, opts.jigId!, token)
     return true
   } catch (e) {
     console.warn("[notify] failure alert not sent:", (e as Error)?.message ?? String(e))

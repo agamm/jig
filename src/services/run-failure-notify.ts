@@ -1,8 +1,7 @@
-import { getRun, getSetting, setSetting } from "../db.js"
+import { getRun, getSetting, setSetting, type RunRow, type StepRow } from "../db.js"
 import { isCancellationMessage } from "../run-cancel.js"
 import { publicUrl } from "../config/runtime.js"
 import { formatFailureBody, notify } from "./notify.js"
-import { maybeStartAutoRepair, summarizeFailureStreak } from "./run-repair.js"
 
 // ---------------------------------------------------------------------------
 // Failure-incident throttling
@@ -15,8 +14,7 @@ import { maybeStartAutoRepair, summarizeFailureStreak } from "./run-repair.js"
 //                  summary email with the failure count + a fix CTA.
 //   next success → incident cleared; a future failure starts fresh.
 // State lives in the settings table (like system-notify's debounce) so it
-// survives restarts. Auto-repair is NOT throttled — every failure stays a
-// repair candidate.
+// survives restarts.
 // ---------------------------------------------------------------------------
 
 const INCIDENT_KEY_PREFIX = "failure_incident."
@@ -36,6 +34,28 @@ export type FailureIncident = {
 
 function incidentKey(jigId: string): string {
   return `${INCIDENT_KEY_PREFIX}${jigId}`
+}
+
+export interface FailureStreak {
+  streak: number
+  error: string
+  failedStep?: string
+}
+
+/** Consecutive-failure streak of the finished runs, plus the sharpest error
+ * text of the latest one (the failing step's error beats the run rollup).
+ * Shared with the audit report so both name the same step and error. */
+export function summarizeFailureStreak(runs: (RunRow & { steps: StepRow[] })[]): FailureStreak {
+  const finished = runs.filter((r) => r.status !== "running")
+  let streak = 0
+  while (streak < finished.length && finished[streak].status === "fail") streak++
+  const latest = finished[0]
+  const failedStep = latest?.steps.find((s) => s.status === "fail")
+  return {
+    streak,
+    error: (failedStep?.error || latest?.error || "(no error message)").trim(),
+    failedStep: failedStep?.label,
+  }
 }
 
 /** The open incident for a jig, or null once a real run has succeeded. Read by the audit report too. */
@@ -61,7 +81,6 @@ export async function maybeNotifyRunFailure(
   deps: {
     getRun?: typeof getRun
     notify?: typeof notify
-    startAutoRepair?: typeof maybeStartAutoRepair
     now?: () => number
   } = {}
 ): Promise<boolean> {
@@ -80,11 +99,6 @@ export async function maybeNotifyRunFailure(
   const now = (deps.now ?? Date.now)()
   const incident = readFailureIncident(jigId)
   const doNotify = deps.notify ?? notify
-
-  // Same chokepoint covers auto-repair: every real failure is a candidate,
-  // and the guards in run-repair.ts decide whether this one warrants a fix.
-  // Deliberately outside the email throttle below.
-  void (deps.startAutoRepair ?? maybeStartAutoRepair)(jigId, runId).catch(() => {})
 
   if (!incident) {
     // First failure — email normally and open an incident.
@@ -147,7 +161,7 @@ export async function maybeNotifyRunFailure(
       title: `Jig "${jigId}" is still failing — ${sinceLastEmail} failures in the last ${hours}h`,
       body: [
         `This jig kept failing after the earlier alerts (${incident.failCount} failures total since ${new Date(incident.firstFailedAt).toISOString()}).`,
-        `Auto-repair hasn't resolved it, so it probably needs something only you can do — reconnecting a service, fixing credentials, or editing the jig.`,
+        `It probably needs something only you can do — reconnecting a service, fixing credentials, or editing the jig.`,
         ``,
         run.error ? `Latest error: ${run.error}` : null,
         ``,

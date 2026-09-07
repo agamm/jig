@@ -202,14 +202,12 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_jig_id ON agent_sessions(jig_id);
 
 -- Maps an inbound mail thread to the jig its failure email was about, so a
--- reply routes to that jig's authoring agent. approval 'auto' ships edits on
--- reply; 'propose' ships only on an explicit apply. reply_token is the shared
+-- reply routes to that jig's authoring agent. reply_token is the shared
 -- secret a genuine reply echoes (a spoofed From alone cannot drive edits).
 CREATE TABLE IF NOT EXISTS email_threads (
   thread_id TEXT PRIMARY KEY,
   jig_id TEXT NOT NULL,
   agent_session_id TEXT,
-  approval TEXT,
   reply_token TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -343,6 +341,9 @@ const MIGRATIONS: (string | ((db: Database) => void))[] = [
       db.exec(`ALTER TABLE jigs DROP COLUMN ${column}`)
     }
   },
+  // v25: the auto-repair loop is gone, and with it the 'propose' threads whose
+  // fixes shipped only on an explicit "apply". Every thread is owner-solicited.
+  `ALTER TABLE email_threads DROP COLUMN approval;`,
 ]
 
 // ---------------------------------------------------------------------------
@@ -1083,16 +1084,10 @@ export function setSetting(key: string, value: unknown): void {
 // Email threads — correlate an inbound mail reply back to the jig it concerns
 // ---------------------------------------------------------------------------
 
-/** How replies on this thread are treated. 'auto' (or null, legacy default):
- * owner-solicited, edits ship on reply. 'propose': unsolicited auto-repair fix
- * that ships only on an explicit "apply". */
-export type EmailThreadApproval = "auto" | "propose"
-
 export interface EmailThreadRow {
   thread_id: string
   jig_id: string
   agent_session_id: string | null
-  approval: EmailThreadApproval | null
   /** Shared secret echoed by a genuine reply. NULL for pre-v20 threads. */
   reply_token: string | null
   created_at: string
@@ -1100,21 +1095,15 @@ export interface EmailThreadRow {
 }
 
 /** Remember that `threadId` (an AgentMail thread) is about `jigId`. Upsert so a
- *  repeated failure email for the same jig keeps one row per thread. Optionally
- *  set the approval mode ('propose' for auto-repair proposals) and the per-thread
- *  reply token that inbound replies must echo. */
-export function recordEmailThread(
-  threadId: string,
-  jigId: string,
-  approval: EmailThreadApproval = "auto",
-  replyToken: string | null = null,
-): void {
+ *  repeated failure email for the same jig keeps one row per thread. The reply
+ *  token is the per-thread secret inbound replies must echo. */
+export function recordEmailThread(threadId: string, jigId: string, replyToken: string | null = null): void {
   const db = openDb()
   db.prepare(
-    `INSERT INTO email_threads (thread_id, jig_id, approval, reply_token) VALUES (?, ?, ?, ?)
-     ON CONFLICT(thread_id) DO UPDATE SET jig_id = excluded.jig_id, approval = excluded.approval,
+    `INSERT INTO email_threads (thread_id, jig_id, reply_token) VALUES (?, ?, ?)
+     ON CONFLICT(thread_id) DO UPDATE SET jig_id = excluded.jig_id,
        reply_token = COALESCE(excluded.reply_token, email_threads.reply_token), updated_at = datetime('now')`
-  ).run(threadId, jigId, approval, replyToken)
+  ).run(threadId, jigId, replyToken)
 }
 
 export function getEmailThread(threadId: string): EmailThreadRow | null {

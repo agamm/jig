@@ -131,7 +131,7 @@ describe("inbound email routing", () => {
   // swallowed by the data path.
   it("leaves mail in the main inbox on the authoring path", async () => {
     const { d, runs } = deps()
-    recordEmailThread("thread_1", "some-other-jig", "auto", "tok")
+    recordEmailThread("thread_1", "some-other-jig", "tok")
     const body = payload({ inbox_id: MAIN_INBOX })
     const res = await handleInboundEmail(body, signedHeaders(body), d)
 

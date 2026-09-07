@@ -27,7 +27,6 @@ const KIND_STYLE: Record<LogKind, { label: string; cls: string }> = {
   tool: { label: "tool", cls: "text-amber-200/70" },
   conn: { label: "conn", cls: "text-teal-300/70" },
   sched: { label: "sched", cls: "text-[#8d8d95]" },
-  repair: { label: "repair", cls: "text-orange-300/80" },
   webhook: { label: "hook", cls: "text-cyan-300/70" },
   sys: { label: "sys", cls: "text-[#777]" },
 };

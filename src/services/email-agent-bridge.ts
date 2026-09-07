@@ -9,20 +9,13 @@
  *   - the agent produces an edit → auto-approve it and reply "shipped"
  *   - the agent errors / answers → reply the message
  *
- * Auto-approve is the default policy: an authenticated owner reply ships the
- * edit with no dashboard step (see email-inbound.ts for the auth gate). The
- * exception is `approval: "propose"` — used for sessions the owner never asked
- * for (auto-repair, see run-repair.ts): the edit is replied as a diff and the
- * thread stays mapped, so only an explicit "apply" reply ships it.
+ * Auto-approve is the policy: an authenticated owner reply ships the edit with
+ * no dashboard step (see email-inbound.ts for the auth gate). The owner asked
+ * for this change in their own words, so the reply is the approval.
  */
 import { publicUrl } from "../config/runtime.js"
 import { setEmailThreadSession } from "../db.js"
-import {
-  autoApproveSession,
-  getAgentSessionStatus,
-  subscribeToSessionFrames,
-  validatePendingFix,
-} from "./agent-service.js"
+import { autoApproveSession, getAgentSessionStatus, subscribeToSessionFrames } from "./agent-service.js"
 import { replyAgentMail } from "./agentmail.js"
 import { getPending } from "./jig-store.js"
 import { summarizeJigChange } from "./summarize-change.js"
@@ -41,13 +34,6 @@ function jigLink(jigId: string | undefined): string {
   return `\n\n${base}/jigs/${jigId}`
 }
 
-/** Keep proposal emails readable — long diffs continue on the dashboard. */
-function excerptDiff(diff: string, maxLines = 120): string {
-  const lines = diff.split("\n")
-  if (lines.length <= maxLines) return diff
-  return `${lines.slice(0, maxLines).join("\n")}\n… (+${lines.length - maxLines} more lines — full diff on the dashboard)`
-}
-
 async function reply(messageId: string, text: string): Promise<void> {
   try {
     await replyAgentMail({ messageId, text })
@@ -61,12 +47,7 @@ async function reply(messageId: string, text: string): Promise<void> {
  * we reply to (keeps the thread); `threadId` lets us release the session mapping
  * once the exchange settles. Fires once per settle, then unsubscribes.
  */
-export function attachEmailBridge(
-  sessionId: string,
-  threadId: string,
-  replyToMessageId: string,
-  opts: { approval?: "auto" | "propose" } = {},
-): void {
+export function attachEmailBridge(sessionId: string, threadId: string, replyToMessageId: string): void {
   let settled = false
 
   const unsubscribe = subscribeToSessionFrames(sessionId, () => {
@@ -113,28 +94,6 @@ export function attachEmailBridge(
     let changeDiff: string | null = null
     if (jigId) {
       try { changeDiff = getPending(jigId)?.diff ?? null } catch { /* best-effort */ }
-    }
-
-    // Propose: the owner never asked for this edit, so it must not self-ship.
-    // Reply the diff and keep the thread mapped — "apply" approves it and any
-    // other reply revises it (email-inbound.ts). A pending that doesn't pass
-    // the jig check (max-rounds can leave a broken write) is never proposed;
-    // relay the agent's own explanation instead.
-    if (opts.approval === "propose") {
-      if (jigId && changeDiff && (await validatePendingFix(jigId).catch(() => false))) {
-        const summary = await summarizeJigChange(changeDiff)
-        await reply(replyToMessageId, [
-          summary ?? "I diagnosed the failure and prepared a fix.",
-          "",
-          excerptDiff(changeDiff),
-          "",
-          `Reply "apply" to ship this fix, or reply with the changes you'd like.${jigLink(jigId)}`,
-        ].join("\n"))
-        return
-      }
-      setEmailThreadSession(threadId, null)
-      await reply(replyToMessageId, latestText(events) || "I couldn't prepare a fix automatically.")
-      return
     }
 
     const approved = await autoApproveSession(sessionId).catch((e) => {

@@ -340,7 +340,7 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
     return requiredConnections.filter((n: string) => !connectedSet.has(n))
   })();
 
-  // Pending version for this jig (email edit, auto-repair, CLI push); usePending polls for it.
+  // Pending version for this jig (email edit, CLI push); usePending polls for it.
   const { data: pending, mutate: revalidatePending } = usePending(jigId);
 
   // Fetch derived steps via SWR (cached server-side by code hash)

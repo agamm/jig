@@ -352,6 +352,7 @@ describe("schema/migration convergence", () => {
     ALTER TABLE jigs ADD COLUMN step_model_overrides TEXT;
     ALTER TABLE jigs ADD COLUMN run_timeout_ms INTEGER;
     ALTER TABLE jigs ADD COLUMN tool_timeout_ms INTEGER;
+    ALTER TABLE email_threads ADD COLUMN approval TEXT;
   `
   const BASELINE_VERSION = 20
 
@@ -410,6 +411,7 @@ describe("schema/migration convergence", () => {
       ALTER TABLE jigs ADD COLUMN step_model_overrides TEXT;
       ALTER TABLE jigs ADD COLUMN run_timeout_ms INTEGER;
       ALTER TABLE jigs ADD COLUMN tool_timeout_ms INTEGER;
+      ALTER TABLE email_threads ADD COLUMN approval TEXT;
       INSERT INTO jigs (id, name, created_at, model_override, tool_timeout_ms)
         VALUES ('weekly-update', 'Weekly Update', 1, 'vendor/x', 900000);
       INSERT INTO jigs (id, name, created_at) VALUES ('untouched', 'Untouched', 1);
@@ -433,7 +435,8 @@ describe("schema/migration convergence", () => {
     expect(columns).not.toContain("step_model_overrides")
     expect(columns).not.toContain("run_timeout_ms")
     expect(columns).not.toContain("tool_timeout_ms")
-    expect((db.prepare("PRAGMA user_version").get() as any).user_version).toBe(24)
+    // Past v24: later migrations (v25+) ran too, so the version is the current latest.
+    expect((db.prepare("PRAGMA user_version").get() as any).user_version).toBeGreaterThanOrEqual(24)
     closeDb()
   })
 })

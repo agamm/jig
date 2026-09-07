@@ -76,8 +76,8 @@ export function usePending(jigId: string | null, config?: SWRConfiguration<Pendi
     jigId ? `jig/${jigId}/pending` : null,
     () => fetchPending(jigId!),
     {
-      // Pending versions arrive out of band (reply-to-email edits, auto-repair,
-      // CLI pushes), so poll rather than wait for a UI event.
+      // Pending versions arrive out of band (reply-to-email edits, CLI pushes),
+      // so poll rather than wait for a UI event.
       refreshInterval: 5000,
       revalidateOnFocus: true,
       ...config,

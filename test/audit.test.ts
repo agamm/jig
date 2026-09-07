@@ -19,7 +19,6 @@ import {
 import { buildAuditReport, parseSince } from "../src/services/audit.js"
 import { renderAuditReport } from "../src/cli-debug/audit-render.js"
 import { matchRoute } from "../src/server/router.js"
-import { repairInstructionPrefix } from "../src/services/run-repair.js"
 import { writePending } from "../src/services/jig-store.js"
 import type { AuditJig, AuditReport, AuditRun } from "../shared/api.js"
 import { seedJig } from "./_fixtures.js"
@@ -107,27 +106,18 @@ describe("buildAuditReport", () => {
     expect(jig.failingSince).toBeNull()
   })
 
-  it("flags a pending version written by auto-repair, and not one pushed by hand", async () => {
+  it("reports the pending version waiting on a jig", async () => {
     seedJig(FAILING, source(FAILING))
     seedJig(HEALTHY, source(HEALTHY))
-    const repair = writePending({
-      jigId: FAILING,
-      code: source(FAILING),
-      author: "agent",
-      message: "retry on 429",
-      // The stored prompt is the rendered conversation, so the instruction follows a role prefix.
-      prompt: `User: ${repairInstructionPrefix(FAILING)} 2 runs in a row. Latest failure at step "send report":\n\nrate limited`,
-    })
-    writePending({ jigId: HEALTHY, code: source(HEALTHY), author: "cli", message: "manual edit" })
+    const pending = writePending({ jigId: FAILING, code: source(FAILING), author: "cli", message: "retry on 429" })
 
     const report = await lastDay()
     expect(report.jigs.find((j) => j.id === FAILING)!.pending).toMatchObject({
-      versionId: repair.versionId,
-      author: "agent",
+      versionId: pending.versionId,
+      author: "cli",
       message: "retry on 429",
-      likelyRepair: true,
     })
-    expect(report.jigs.find((j) => j.id === HEALTHY)!.pending?.likelyRepair).toBe(false)
+    expect(report.jigs.find((j) => j.id === HEALTHY)!.pending).toBeNull()
   })
 
   it("intersects the jig's declared connections with the unhealthy ones", async () => {
@@ -303,7 +293,7 @@ const FIXED_REPORT: AuditReport = {
       consecutiveFailures: 3,
       failingSince: "2026-09-02T09:00:00.000Z",
       lastFailure: { runId: 39, at: "2026-09-04T09:00:00.000Z", error: "rate limited", step: null },
-      pending: { versionId: 12, author: "agent", message: "retry on 429", createdAt: "2026-09-04T09:05:00.000Z", likelyRepair: true },
+      pending: { versionId: 12, author: "agent", message: "retry on 429", createdAt: "2026-09-04T09:05:00.000Z" },
     }),
     auditJig({ id: "standup-notes", nextRunAt: "2026-09-04T09:00:00.000Z" }),
     auditJig({ id: "archive-sync", enabled: false }),
@@ -331,7 +321,7 @@ describe("renderAuditReport", () => {
   })
 
   it("points at the pending fix instead of a fresh edit when one is waiting", () => {
-    expect(text).toContain('    pending v12 by agent (auto-repair): "retry on 429"')
+    expect(text).toContain('    pending v12 by agent: "retry on 429"')
     expect(text).toContain("    -> bun run jig pending daily-digest")
     expect(text).not.toContain("bun run jig edit daily-digest")
     // No failing step recorded: the run's own error is still shown.

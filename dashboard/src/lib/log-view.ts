@@ -2,7 +2,7 @@
 // a block. Pure functions; the Logs page renders the result.
 import type { ServerLogEntry } from "../../../shared/api";
 
-export type LogKind = "run" | "step" | "llm" | "agent" | "tool" | "conn" | "sched" | "repair" | "webhook" | "sys";
+export type LogKind = "run" | "step" | "llm" | "agent" | "tool" | "conn" | "sched" | "webhook" | "sys";
 
 export interface LogItem {
   entry: ServerLogEntry;
@@ -50,7 +50,6 @@ export function isOperationalLog(entry: ServerLogEntry): boolean {
   if (/^\[sdk\.(llm|agent)\]\s/.test(msg)) return true;
   if (/^\[mcp\.(tool|connection)\]\s/.test(msg)) return true;
   if (/^\[authoring\.(agent|discovery)\]\s/.test(msg)) return true;
-  if (/^\[repair\]\s/.test(msg)) return true;
   if (/^\[session-log\]\s/.test(msg)) return true;
   if (/^\[scheduler\]\s/.test(msg) && /(started|done|failed|error|catch-up|marked|skipped|triggered)/i.test(msg)) return true;
   if (/^\[connection\]\s/.test(msg)) return true;
@@ -216,8 +215,6 @@ export function describeLog(entry: ServerLogEntry): LogItem {
       return withCtx({ kind: "conn", title: `${h.event}${h.rest ? " " + h.rest : ""}` });
     case "scheduler":
       return withCtx({ kind: "sched", title: `${h.event}${h.rest ? " " + h.rest : ""}` });
-    case "repair":
-      return withCtx({ kind: "repair", title: `${h.event}${h.rest ? " " + h.rest : ""}` });
     case "webhook":
       return withCtx({ kind: "webhook", title: `${h.event}${h.rest ? " " + h.rest : ""}` });
     case "authoring.agent":

@@ -1,12 +1,11 @@
 /**
  * Headless jig-editing agent loop.
  *
- * Nothing interactive drives this anymore. Its callers are the email bridge
+ * Nothing interactive drives this anymore. Its only caller is the email bridge
  * (a reply to a failure email becomes an edit; an ask_user question goes back
- * out as mail and pushAgentMessage feeds the answer in as the tool result) and
- * run-repair (background auto-repair after a failure streak). Every session
- * edits an existing jig, so startAgentSession requires a jigId. Coding agents
- * author from outside via `jig edit <id> --file=`.
+ * out as mail and pushAgentMessage feeds the answer in as the tool result).
+ * Every session edits an existing jig, so startAgentSession requires a jigId.
+ * Coding agents author from outside via `jig edit <id> --file=`.
  */
 import { createHash } from "node:crypto"
 import { EventEmitter } from "events"
@@ -49,7 +48,6 @@ import {
   deleteAgentSession,
   getAgentSession,
   jigHasActiveSession,
-  listAgentSessions,
   renameJigLocalState,
   setToolPermission,
   upsertAgentSession,
@@ -252,9 +250,9 @@ function releaseSession(session: AgentSession): void {
 
 /**
  * Force-close every session holding this jig, regardless of status. Used when
- * an explicit user edit supersedes whatever is running (hung edit, background
- * repair). releaseSession marks the session closed, so its agent loop exits
- * at the next checkpoint instead of writing into the taken-over jig.
+ * a new user edit supersedes whatever is running (a hung edit). releaseSession
+ * marks the session closed, so its agent loop exits at the next checkpoint
+ * instead of writing into the taken-over jig.
  */
 function forceReleaseJigSessions(jigId: string, reason: string): void {
   for (const session of [...agentSessions.values()]) {
@@ -273,7 +271,7 @@ function forceReleaseJigSessions(jigId: string, reason: string): void {
 
 function releaseStaleJigLock(jigId: string): boolean {
   // Evict expired sessions FIRST. A session stuck in an active status (hung
-  // LLM call, abandoned repair/edit) otherwise holds this jig's lock forever:
+  // LLM call, abandoned edit) otherwise holds this jig's lock forever:
   // startAgentSession throws its 409 before its own prune call ever runs, so
   // the TTL never got a chance to clear the blocker.
   pruneAgentSessions()
@@ -1251,16 +1249,10 @@ export async function startAgentSession(body: any): Promise<{ sessionId: string;
   const jigId = body?.jigId as string | undefined
   if (!jigId) throw new ApiError(400, "jigId is required")
   if (!isValidJigId(jigId)) throw new ApiError(400, "Invalid jig ID")
-  // "repair" = background auto-repair; anything else is an explicit user edit.
-  const origin = body?.origin === "repair" ? "repair" : "user"
 
   if (!releaseStaleJigLock(jigId)) {
-    if (origin === "repair") {
-      // Background repair never steals the jig from a live session.
-      throw new ApiError(409, "An agent session is already editing this jig")
-    }
-    // Single-owner system: an explicit user edit always wins over whatever
-    // holds the lock (a hung edit, a background repair session).
+    // Single-owner system: a new user edit always wins over whatever holds the
+    // lock (a hung edit).
     forceReleaseJigSessions(jigId, "superseded by a new user edit session")
   }
 
@@ -1348,39 +1340,12 @@ export async function autoApproveSession(sessionId: string): Promise<boolean> {
   return true
 }
 
-/**
- * A pending version exists, materializes, and passes the jig check. The gate
- * shared by autoApproveSession (before shipping) and the propose-mode email
- * bridge (before emailing a diff) - a broken pending never reaches either.
- */
-export async function validatePendingFix(jigId: string): Promise<boolean> {
+/** A pending version exists, materializes, and passes the jig check. A broken pending never ships unseen. */
+async function validatePendingFix(jigId: string): Promise<boolean> {
   if (!storeGetPending(jigId)) return false
   const materialized = await materializePendingVersion(jigId)
   if (!materialized) return false
   return (await checkJigFile(materialized.path)) === "ok"
-}
-
-/**
- * Most recent open session that could own the jig's pending version - used to
- * route an emailed "apply" that landed on a different thread than the proposal
- * (e.g. the owner replied to the failure notice instead). Question-waiting
- * sessions are excluded: a "yes" there answers the question, not an approval.
- */
-export function findApprovableSessionForJig(jigId: string): string | null {
-  for (const row of listAgentSessions()) {
-    if (row.jig_id !== jigId || row.pending_ask_tool_call_id) continue
-    if (row.status !== "waiting" && row.status !== "done") continue
-    if (closedAgentSessions.has(row.session_id)) continue
-    return row.session_id
-  }
-  return null
-}
-
-export async function closeAgentSession(sessionId: string): Promise<OkResponse> {
-  const session = loadSession(sessionId)
-  if (!session) return { ok: true }
-  releaseSession(session)
-  return { ok: true }
 }
 
 export async function pushAgentMessage(sessionId: string, body: any): Promise<OkResponse> {

@@ -99,7 +99,7 @@ function renderFailing(jig: AuditJig, report: AuditReport): string[] {
 
   if (jig.pending) {
     const p = jig.pending
-    lines.push(`    pending v${p.versionId} by ${p.author}${p.likelyRepair ? " (auto-repair)" : ""}: "${p.message ?? ""}"`)
+    lines.push(`    pending v${p.versionId} by ${p.author}: "${p.message ?? ""}"`)
     lines.push(`    -> bun run jig pending ${jig.id}`)
   } else {
     lines.push(`    -> bun run jig edit ${jig.id} --out=${jig.id}.ts   (fix, then --file=, then run --dry-run)`)

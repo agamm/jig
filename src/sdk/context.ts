@@ -338,7 +338,7 @@ export class Context {
     // inbox instead, and a thread row would send them to the authoring agent.
     if (this._jigId && !ownInbox) {
       const { recordEmailThread } = await import("../db.js")
-      recordEmailThread(res.threadId, this._jigId, "auto", token)
+      recordEmailThread(res.threadId, this._jigId, token)
     }
     return res
   }

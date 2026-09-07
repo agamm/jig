@@ -6,7 +6,7 @@
  * failure alerting (failure_incident.<jig>) and the MCP client
  * (connection_status.<server>) already keep. No new tables, and never the
  * capped logs table. The streak and the incident come from the same functions
- * repair and alerting use, so the three cannot disagree about what is failing.
+ * alerting uses, so the two cannot disagree about what is failing.
  */
 import packageJson from "../../package.json"
 import type { AuditConnection, AuditFailingStep, AuditJig, AuditReport, AuditRun } from "../../shared/api.js"
@@ -17,8 +17,7 @@ import { loadServerConfigs } from "../mcp/config.js"
 import { getSchedulerHealth } from "../scheduler/index.js"
 import { getConnectionStatus } from "./connection-status.js"
 import { getActiveCode, getVersion, listJigs } from "./jig-store.js"
-import { readFailureIncident } from "./run-failure-notify.js"
-import { repairInstructionPrefix, summarizeFailureStreak } from "./run-repair.js"
+import { readFailureIncident, summarizeFailureStreak } from "./run-failure-notify.js"
 import { hasActiveRunForJig } from "./run-store.js"
 
 const DEFAULT_RUNS_PER_JIG = 10
@@ -141,9 +140,6 @@ function auditJig(
           author: pending.author,
           message: pending.message,
           createdAt: new Date(pending.createdAt).toISOString(),
-          // The session prompt is the rendered conversation, so the repair
-          // instruction sits after a "User:" prefix rather than at offset 0.
-          likelyRepair: pending.author === "agent" && (pending.prompt ?? "").includes(repairInstructionPrefix(id)),
         }
       : null,
     connections,

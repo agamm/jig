@@ -590,8 +590,6 @@ export interface AuditPending {
   author: string
   message: string | null
   createdAt: string
-  /** Written by an auto-repair session rather than a person or an outside agent. */
-  likelyRepair: boolean
 }
 
 export interface AuditJig {

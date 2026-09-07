@@ -120,3 +120,10 @@ Handoff: HANDOFF.md (design agreed 2026-09-06). Three commits, one version bump 
 - [x] test/backup-cli.test.ts (stubbed fetch: cookie, credentials flag, truncated download refused, 401/423 named, restore body and flags, --local never touches the network); real-route run against a scratch server.
 - [x] Docs: README, llms.txt, agent skill, CLI help. Version 0.1.143.
 
+# Setup page exit and its home under Settings (2026-09-07)
+
+- [x] Setup header shows "Go to dashboard" once the required steps are ready (full load so the gate re-reads health); Re-check demotes to subtle.
+- [x] Setup moved under Settings > Setup; sidebar item removed; `?view=setup` links still land there; CLI hint and docs updated.
+- [x] Agent skill: a freshly paired instance is usually already onboarded (dashboard first, pairing after), not suspicious.
+- [x] Verified in the browser against a scratch instance: Settings > Setup tab and the compat link; the ready-state button not seen live (needs real keys). Version 0.1.144.
+

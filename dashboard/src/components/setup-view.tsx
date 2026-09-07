@@ -407,9 +407,22 @@ export function SetupView() {
         title="Setup"
         badge={`${readyCount} of ${SETUP_STEPS.length} ready`}
         actions={
-          <Button variant="accent" size="sm" onClick={() => void run()} disabled={running !== null}>
-            {running ? "Running…" : requiredBlocked.length ? "Run setup" : "Re-check everything"}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant={requiredBlocked.length ? "accent" : "subtle"}
+              size="sm"
+              onClick={() => void run()}
+              disabled={running !== null}
+            >
+              {running ? "Running…" : requiredBlocked.length ? "Run setup" : "Re-check everything"}
+            </Button>
+            {/* Done: the way out. A full load so the gate re-reads health and lets the dashboard through. */}
+            {requiredBlocked.length === 0 && running === null ? (
+              <a href="/" className={buttonClasses({ variant: "accent", size: "sm" })}>
+                Go to dashboard
+              </a>
+            ) : null}
+          </div>
         }
       />
 

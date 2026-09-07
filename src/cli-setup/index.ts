@@ -509,7 +509,7 @@ export async function runSetup(argv: string[], ensureLocalServer: () => Promise<
       if (optional.length > 0) {
         console.log(`\n  Optional and not connected: ${optional.map((s) => s.id).join(", ")}.`)
       }
-      console.log(`\n  Re-check or change anything on the dashboard's Setup page${dashboardUrl ? ` (${dashboardUrl}/?view=setup)` : ""}.`)
+      console.log(`\n  Re-check or change anything on the dashboard under Settings > Setup${dashboardUrl ? ` (${dashboardUrl}/?view=settings&tab=setup)` : ""}.`)
       console.log(`  Run \`jig setup --force\` to walk every step again.`)
       return
     }

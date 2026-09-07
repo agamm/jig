@@ -110,7 +110,7 @@ came back ready.
 * **AgentMail** for failure alerts and reply-to-edit. Setup opens the console, names the clicks, and proves it by mailing you.
 * **Composio** for app integrations, optional. One authorization covers Gmail, Calendar, Slack, Telegram and a long tail.
 
-The dashboard's **Setup** page shows the same steps with live status, a button per step, and whether this instance's data will survive a restart. Nothing is pasted that a browser can authorize instead, so an agent running setup for you never handles a secret. Re-run it any time; satisfied steps are skipped. Details, including the no-terminal path, live in [`.agents/skills/jig/SKILL.md`](.agents/skills/jig/SKILL.md).
+The dashboard's **Setup** page (what a new instance opens on; later under **Settings → Setup**) shows the same steps with live status, a button per step, and whether this instance's data will survive a restart. Nothing is pasted that a browser can authorize instead, so an agent running setup for you never handles a secret. Re-run it any time; satisfied steps are skipped. Details, including the no-terminal path, live in [`.agents/skills/jig/SKILL.md`](.agents/skills/jig/SKILL.md).
 
 Then open the dashboard, connect what you need, and hand the first-jig prompt from the Setup page to your coding agent.
 

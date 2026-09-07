@@ -125,7 +125,8 @@ add `JIG_DATA_KEY` with 64 random hex characters. The next restart asks for the 
 then never again. `jig doctor` reports it as `restart_safe`, and the dashboard's Setup page
 shows a notice while it is missing. Never generate, print or paste the value yourself.
 
-The dashboard has the same thing at **Setup** in the sidebar, running the same flow: a card per
+The dashboard has the same thing on its **Setup** page (the first thing a new instance shows;
+afterwards under **Settings → Setup**), running the same flow: a card per
 step with its live status, a button per card so one thing can be fixed without re-walking the
 others, and a panel showing where the instance runs and whether `/data` survives a restart.
 Point a human there; use the CLI when you are driving.
@@ -151,6 +152,13 @@ wherever you happen to be. The first run fetches the CLI and takes a moment.
 The code is single use and expires in ten minutes, which is what makes it safe to paste. Running
 it caches a 30-day session in `~/.config/jig/remotes/`, and every later `jig setup`, `jig update`
 and `jig debug` command against that instance works without asking again.
+
+**An instance is usually already set up when you pair with it.** The dashboard's Setup page is
+how most people onboard, and pairing comes after it (the pairing command is generated on that
+page). So `onboarding_complete: true` with OpenRouter, AgentMail and Composio already connected
+is the expected state of a freshly paired instance, not a sign that something is off or that the
+user skipped a step. Do not call it suspicious or re-run checks to "trust" it: `jig setup` reports
+the satisfied steps and skips them, and `jig debug connections` shows what is connected.
 
 **One trap worth knowing for the other commands.** `bun run jig …` needs the clone as your
 working directory. One directory above it, `bun run jig` matches the `jig` FOLDER rather than the

@@ -488,9 +488,9 @@ export function DashboardShell({
 
         <div className="flex-1 flex flex-col gap-0.5 py-2">
           <NavItem icon={NavIcons.jigs} label="Jigs" href="/" active={!view || view === "jigs"} collapsed={collapsed} onActivate={() => { setView(null); closeDetail(); }} />
-          <NavItem icon={NavIcons.setup} label="Setup" href="/?view=setup" active={view === "setup"} collapsed={collapsed} onActivate={() => { setView("setup"); closeDetail(); }} />
           <NavItem icon={NavIcons.connections} label="Connections" href="/?view=connections" active={view === "connections"} collapsed={collapsed} onActivate={() => { setView("connections"); closeDetail(); }} />
-          <NavItem icon={NavIcons.settings} label="Settings" href="/?view=settings" active={view === "settings"} collapsed={collapsed} onActivate={() => { setView("settings"); closeDetail(); }} />
+          {/* Setup lives under Settings once onboarding is done; `?view=setup` links still land there. */}
+          <NavItem icon={NavIcons.settings} label="Settings" href="/?view=settings" active={view === "settings" || view === "setup"} collapsed={collapsed} onActivate={() => { setView("settings"); closeDetail(); }} />
           <NavItem icon={NavIcons.logs} label="Logs" href="/?view=logs" active={view === "logs"} collapsed={collapsed} onActivate={() => { setView("logs"); closeDetail(); }} />
         </div>
 
@@ -549,8 +549,6 @@ export function DashboardShell({
       </nav>
 
       <div className="flex flex-1 overflow-hidden">
-        {view === "setup" && <SetupView />}
-
         {view === "connections" && (
           selectedConnection && detailPane ? (
             <ResizablePanelGroup direction="horizontal" className="flex-1">
@@ -567,11 +565,13 @@ export function DashboardShell({
           )
         )}
 
-        {view === "settings" && (() => {
-          const tab: "models" | "system" | "notifications" | "backup" | "danger" =
-            settingsTab === "system" || settingsTab === "notifications" || settingsTab === "backup" || settingsTab === "danger"
-              ? settingsTab
-              : "models";
+        {(view === "settings" || view === "setup") && (() => {
+          const tab: "models" | "system" | "notifications" | "backup" | "setup" | "danger" =
+            view === "setup"
+              ? "setup"
+              : settingsTab === "system" || settingsTab === "notifications" || settingsTab === "backup" || settingsTab === "setup" || settingsTab === "danger"
+                ? settingsTab
+                : "models";
           return (
             <main className="pane-glow flex flex-col flex-1 overflow-hidden">
               <div className="flex h-11 shrink-0 items-center justify-between border-b border-[#1f1f23] px-4">
@@ -584,6 +584,7 @@ export function DashboardShell({
                     ["system", "System"],
                     ["notifications", "Notifications"],
                     ["backup", "Backup"],
+                    ["setup", "Setup"],
                     ["danger", "Danger"],
                   ] as const
                 ).map(([key, label]) => {
@@ -592,6 +593,7 @@ export function DashboardShell({
                     <button
                       key={key}
                       onClick={() => {
+                        setView("settings");
                         setSettingsTab(key);
                         if (key !== "models") setSettingsFocus(null);
                       }}
@@ -610,6 +612,8 @@ export function DashboardShell({
                   );
                 })}
               </div>
+              {/* Setup brings its own header, scroll and width; the other tabs share one scroller. */}
+              {tab === "setup" ? <SetupView /> : (
               <div className="flex-1 overflow-y-auto px-6 py-6">
                 <div className="max-w-4xl mx-auto">
                   {tab === "models" && (
@@ -645,6 +649,7 @@ export function DashboardShell({
                   )}
                 </div>
               </div>
+              )}
             </main>
           );
         })()}
@@ -736,14 +741,6 @@ const NavIcons = {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="3" />
       <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-    </svg>
-  ),
-  setup: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M4 7h5" />
-      <path d="M4 17h5" />
-      <path d="m12.5 5.5 2 2 4-4" />
-      <path d="m12.5 15.5 2 2 4-4" />
     </svg>
   ),
   logs: (

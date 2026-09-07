@@ -1,40 +1,33 @@
 # Jig
 
-**Trusted AI workflows as code.**
-
-Describe a workflow in plain English. Jig turns it into versioned TypeScript you can review, run, and schedule.
+**Trusted AI workflows as code.** Your coding agent writes the workflow in TypeScript. Jig runs it on a schedule, on a server you own, with the AI parts kept small and explicit.
 
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template/jig?utm_medium=integration&utm_source=button&utm_campaign=jig)
 
-## Why Jig
+## Five reasons to use Jig
 
-A carpenter's jig is set once for repeatable results. Jig applies that idea to AI workflows: AI writes the workflow, then code runs it predictably.
+1. **Code runs the workflow, AI is used on purpose.** Most agent tools call a model at every step, so every run depends on the model's mood. A jig is plain code with `llm()` where you need text and `agent()` only where you need judgment. Same input, same path, every run.
+2. **Your coding agent is the author.** Claude Code or Codex writes the jig against typed tool clients, pushes it, and it lands as a pending version. Nothing runs until you approve it. You review a diff, not a chat log.
+3. **Always on, without babysitting.** One command deploys to Railway. Credentials are encrypted with your password, the instance unlocks itself after a restart, and your jigs, versions and run history live on a volume that survives deploys.
+4. **Failures explain themselves.** A failed run emails you the step, the error, the likely cause (expired authorization, rate limit, the jig's own code) and the exact next command, plus a prompt your agent can paste as-is. Reply to the email to have the jig edited.
+5. **Secure by default.** Browser authorization instead of pasted keys, tools scoped per step, dry runs that stub every write, and an approval gate on every code change. The defaults are the safe ones; you opt out, never in.
 
-Use plain code for repeatable work, `llm()` for bounded generation, and `agent()` only when runtime judgment is useful.
+## A warning, honestly
+
+Jig is alpha and very much vibe coded: most of it was written with coding agents, quickly. What keeps that honest is the architecture rather than the polish. The surface is small, every risky action sits behind a gate (approval, read-only checks, an encrypted credential store), and the defaults are the secure ones. Expect rough edges in the dashboard and the docs. Do not expect your credentials or your jigs to be at risk from those edges.
+
+## How it works
 
 ```text
-Most agents:  LLM -> LLM -> LLM -> LLM -> result
-              Every run depends on the model at every step.
-
-Jig:          code -> code -> [AI] -> code -> result
-              Code runs the workflow. AI is used deliberately.
+Most agents:  LLM -> LLM -> LLM -> LLM -> result     every step depends on the model
+Jig:          code -> code -> [AI] -> code -> result   code runs it, AI is a deliberate step
 ```
 
-## Architecture
+Authoring and execution are separate. A coding agent writes a versioned TypeScript jig and pushes it over the CLI. The runtime imports only the approved version. The SDK enforces the step, model and typed-tool boundaries the jig declares.
 
-Jig separates authoring from execution: a coding agent (Claude Code, Codex) writes a versioned TypeScript `JigDefinition` and pushes it over the CLI; the runtime imports the approved version; and the SDK enforces step, model, and typed MCP tool boundaries.
+![Jig architecture: authoring and execution planes joined by a versioned store, runtime, SDK, typed MCP connections and the model API](docs/jig-architecture.svg)
 
-![Jig technical architecture: authoring and execution planes connected through a versioned store, runtime engine, SDK, typed MCP connections, and model API](docs/jig-architecture.svg)
-
-## Ideas for Your First Jig
-
-* **Reasons to reach out.** Watch LinkedIn, news, and reminders for moments worth celebrating.
-* **Post-meeting follow-up.** Turn notes and email threads into a thoughtful follow-up.
-* **Reconnect radar.** Suggest people worth reconnecting with and explain why now.
-
-## Example
-
-> Every Monday at 8am, email me a concise update from last week's client meetings.
+A jig looks like this:
 
 ```typescript
 import { jig, llm } from "@jig/sdk"
@@ -59,40 +52,11 @@ export default jig("weekly-client-update", {
 })
 ```
 
-`ctx.step()` scopes each operation. `ctx.email()` sends a repliable notification to the configured owner; it does not create a Gmail draft.
+Each `ctx.step()` names what it does and which tools it may call; a step cannot reach a tool it did not declare. `ctx.email()` sends a repliable message to you, the owner. Connections cover direct MCP servers (Granola, Notion, Linear and more), Composio (Gmail, Calendar, Slack, Telegram and a long tail) and Apify. The full authoring guide is [`SKILL.md`](SKILL.md).
 
-## What You Get
+## The workflow: coding agent to Railway
 
-* Versioned TypeScript workflows with reviewable changes
-* Step-scoped tools and deliberate `llm()` / `agent()` boundaries
-* MCP, Composio, Apify, and custom connections
-* Local runs or always-on Railway deployment
-
-## Install
-
-**Railway:** the button above creates a fresh service with a blank `/data` volume and none of
-the maintainer's data, credentials, or configuration. After it deploys, copy the one-time setup
-code from the service logs, open the generated domain, and use the code to create the instance
-password. Keep that claim code private. The password encrypts your credentials and is never
-stored on the volume. The template and `jig deploy` both give the service a generated
-`JIG_DATA_KEY` variable, under which the instance keeps its key wrapped so it unlocks itself
-after a restart instead of pausing your jigs until you type the password again. An instance
-without it says so on its Setup page and in `jig doctor`, with the one-line fix.
-
-**From a clone:**
-
-```Shell
-git clone https://github.com/agamm/jig.git
-cd jig
-bun install
-bun run jig setup          # provisions a hosted instance and walks the setup steps
-```
-
-`jig setup` defaults to hosted, because a jig that only runs while your laptop is open is not
-automation. For this machine instead: `bun run jig start`, then finish the steps on the
-dashboard's Setup page (or run `bun run jig setup --local` in a second terminal).
-
-**With a coding agent:** this repo ships a skill covering install, setup, Railway deploys and updates, so Claude Code or Codex can do the whole thing. Paste:
+**1. Let the agent install and deploy.** Paste this into Claude Code or Codex:
 
 ```text
 Install and set up Jig from https://github.com/agamm/jig.git. Clone it, read
@@ -102,110 +66,52 @@ than answering for me. When it is done, give me the dashboard URL, tell me which
 came back ready, and give me the pairing command for my own checkout.
 ```
 
-## Setup
+The agent asks two questions first (hosted or local, and which Railway account), then runs `jig deploy` and `jig setup`. You claim the new instance with the one-time code from its logs and choose a password. Setup then opens the browser for OpenRouter (model access), walks you through creating an AgentMail key (alerts and reply-to-edit), and optionally Composio. Each step is proven, not assumed: OpenRouter has to answer with credit, AgentMail has to deliver a real mail to you.
 
-`bun run jig setup` walks what a new instance needs and proves each step rather than assuming it:
+Without an agent: `git clone`, `bun install`, `bun run jig setup`. The Railway button above does the deploy part on its own; the dashboard's Setup page walks the rest.
 
-* **OpenRouter** for model calls. Authorize in the browser; the key is delivered to your instance and checked for credit, because a valid key with no balance fails every model call.
-* **AgentMail** for failure alerts and reply-to-edit. Setup opens the console, names the clicks, and proves it by mailing you.
-* **Composio** for app integrations, optional. One authorization covers Gmail, Calendar, Slack, Telegram and a long tail.
+**2. Pair your checkout.** Setup ends with a single-use pairing command. Run it in the checkout you write jigs from, and every later `jig` command there talks to your instance.
 
-The dashboard's **Setup** page (what a new instance opens on; later under **Settings → Setup**) shows the same steps with live status, a button per step, and whether this instance's data will survive a restart. Nothing is pasted that a browser can authorize instead, so an agent running setup for you never handles a secret. Re-run it any time; satisfied steps are skipped. Details, including the no-terminal path, live in [`.agents/skills/jig/SKILL.md`](.agents/skills/jig/SKILL.md).
+**3. Write jigs with the agent.** The dashboard's Setup page has a first-jig prompt. From then on the loop is:
 
-Then open the dashboard, connect what you need, and hand the first-jig prompt from the Setup page to your coding agent.
-
-## Updating
-
-```Shell
-bun run jig update             # latest code and agent skills from GitHub
-bun run jig update --remote    # ...then redeploy your instance with it
-bun run jig update <handle>    # or move an instance to the newest release tag
-```
-
-`jig update` pulls this checkout forward and reinstalls dashboard deps, and tells you when the agent skills under `.agents/skills` have changed. Redeploying is opt-in, because it restarts running automation. The `<handle>` form moves the instance to the newest release instead: an instance created from the published image switches to that release's image (no build), waits for the health check, rolls back on failure, and refuses to move onto an older release. A Railway instance created with the template button has no clone attached, so update it by redeploying the service, which re-pulls the published image. Your jigs, credentials and schedules live in the database, not the source tree.
-
-## Connections
-
-Jig can connect workflows to external tools and data sources. The default registry in this repo includes:
-
-* `granola`: meeting notes and transcripts
-* `notion`, `linear`, `figma`, `sentry`, and other direct MCP services
-* `apify`: typed tools for public-web scraping and extraction
-* `composio`: Gmail, Calendar, GitHub, Slack, Telegram, and a long tail of SaaS apps
-
-List available services with:
-
-```Shell
-bun run jig connect
-```
-
-Connect one with:
-
-```Shell
-bun run jig connect <service>
-```
-
-## How A Jig Is Structured
-
-Each jig is a TypeScript file that exports `jig(name, options, handler)`.
-
-* `trigger` decides when it runs: `manual`, `cron`, or `webhook`
-* `tools` declares the tools the jig may use
-* `ctx.step(...)` creates explicit execution steps
-* `llm(...)` is for bounded generation without tool use
-* `agent(...)` is for bounded agent behavior with a specific tool set
-
-Generated jigs use these import aliases:
-
-* `@jig/sdk`
-* `@jig/connections/<service>`
-
-## Project Layout
-
-* `jig.db*`: ignored local state and the authoritative versioned jig store
-* `.jig/connections/`: generated typed connection clients
-* `.jig/schemas/`: cached tool schemas
-* `examples/`: example jigs
-* `dashboard/`: local UI for authoring and runs
-* `src/`: runtime, CLI, scheduler, and code generation internals
-
-## Coding Agents
-
-Two skills, split by what you are doing:
-
-* **Running an instance** (install, setup, connect, Railway deploy, update): [`.agents/skills/jig/SKILL.md`](.agents/skills/jig/SKILL.md), the cross-agent skills directory Claude Code, Codex, Cursor and OpenCode all read.
-* **Writing workflow code**: [`SKILL.md`](SKILL.md), read completely before editing a jig.
-
-[`llms.txt`](llms.txt) routes any other task, [`AGENTS.md`](AGENTS.md) is the cross-agent entry point, and [`docs/operations.md`](docs/operations.md) covers triage and recovery.
-
-## CLI Commands
-
-```Shell
-bun run jig setup
-bun run jig start
-bun run jig update
-bun run jig connect
-bun run jig connect composio
-bun run jig types                # the instance's connection types (.d.ts) into .jig/connections/
-bun run jig edit weekly-update --file=weekly-update.ts  # push code you wrote (creates the jig if new; typechecked, pending)
-bun run jig run weekly-update --dry-run                  # previews the pending version, tools stubbed
+```shell
+bun run jig types                                        # the instance's connection types, into .jig/connections/
+bun run jig edit weekly-update --file=weekly-update.ts   # push code (creates the jig if new; typechecked, pending)
+bun run jig run weekly-update --dry-run                  # preview the pending version, writes stubbed
 bun run jig pending weekly-update approve
 bun run jig run weekly-update
-bun run jig edit weekly-update --out=weekly-update.ts    # export the live code to change it
-bun run jig pair <code>          # cache a CLI session for a deployed instance
-bun run jig visualize <name> -v  # the jig's flow in ASCII: each step, AI or code, prompts (-vv full)
-bun run jig debug connections    # what a deployed instance has connected
-bun run jig debug failures       # every failed run of the last week, with its cause and the fix
-bun run jig debug audit          # what is failing, since when, and the next command to heal it
-bun run jig backup               # a .zip of the instance's jigs, connections and settings
-bun run jig backup restore <f> --dry-run   # what restoring it would change
 ```
 
-`edit`, `run`, `pending`, `types` and `backup` act on your deployed instance when you have one, and
-print which instance they chose before starting. Add `--local` to act on this machine, or
-`--handle=<name>` to choose between deployed instances.
+**4. When something fails.** You get an email with the cause and the fix. Your agent starts from the same place:
 
-When a jig fails you get an email with the failing step, the error, the likely cause (an expired
-authorization, a rate limit, a Composio result too large to return, or the jig's own code) and the
-exact next command; repeats are throttled. Reply to that email to have the jig edited, or hand the
-same verdict to your coding agent, which reads `jig debug failures` before touching a jig.
+```shell
+bun run jig debug failures      # every failed run of the last week, classified, with the remedy
+bun run jig debug audit         # what is failing now, since when, and the next command
+```
+
+**5. Keep it current.** `bun run jig update` pulls this checkout and the agent skills; `bun run jig update <handle>` moves the instance to the newest release with a health check and rollback. A template-button instance updates by redeploying in Railway. `bun run jig backup` writes a zip of the instance's jigs, connections and settings.
+
+## Security
+
+What protects your accounts, in order of what matters most:
+
+| Layer | What it does |
+|---|---|
+| Password and encryption | Your password never leaves your browser or terminal and is never stored. It derives a key (PBKDF2, 600k rounds) that encrypts every credential at rest with AES-256-GCM. |
+| Restart-proof unlock | `jig deploy` and the Railway template give the service a random `JIG_DATA_KEY`. The data key is stored wrapped under it, so a restart unlocks itself. The variable lives only on the service: not on the volume, not in backups, not in the CLI manifest. A stolen volume alone reveals nothing. |
+| Claiming an instance | A new instance prints a one-time setup code to its logs. Only someone who can read those logs can set the first password, so nobody can claim your instance before you do. |
+| Browser authorization | OpenRouter, Composio and MCP servers authorize in your browser with OAuth. Keys are delivered to the instance, never shown to the agent. The one exception, AgentMail, is pasted into the dashboard, not into a chat. |
+| Approval gate | A code change from an agent or a CLI push lands as a pending version, typechecked and validated on arrival, and waits for you (or a clean push with `--approve`). An email reply from you is the approval: the edit ships once it passes the same check, and only replies that carry the thread's secret token count. |
+| Scoped steps | A step can only call the tools it declares. Dry runs stub every write. A write that hits a gateway error is repeated at most once, never after a timeout, so a blip does not mean a duplicate email. |
+| Reply-to-edit | An email reply edits a jig only when it comes from your address, passes AgentMail's signature and authentication checks, and carries the thread's secret token. |
+| Small surface | The API binds to loopback; the dashboard is its only client, behind a signed session cookie. The published image is built by GitHub Actions from an allowlisted subset of this public repo, and the template ships no maintainer data. |
+
+Backups carry credentials as ciphertext and nothing instance-local (no session secret, no key wrap). Restoring onto an instance with a different password asks for the backup's password and re-encrypts under the instance's own; it never replaces that password. Details for operators are in [`docs/operations.md`](docs/operations.md).
+
+## For coding agents
+
+* Running an instance (install, setup, connect, deploy, update): [`.agents/skills/jig/SKILL.md`](.agents/skills/jig/SKILL.md), the cross-agent skills directory Claude Code, Codex, Cursor and OpenCode read.
+* Writing workflow code: [`SKILL.md`](SKILL.md), read completely before editing a jig.
+* Everything else: [`llms.txt`](llms.txt) routes the task, [`AGENTS.md`](AGENTS.md) is the cross-agent entry point.
+
+`edit`, `run`, `pending`, `types` and `backup` act on your deployed instance when you have one and say which one before starting. `--local` means this machine, `--handle=<name>` picks between instances. `bun run jig` lists every command.

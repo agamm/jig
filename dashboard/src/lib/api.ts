@@ -370,16 +370,16 @@ export async function downloadBackup(includeCredentials: boolean): Promise<void>
 
 export async function restoreBackup(
   file: File,
-  opts: { dryRun?: boolean; force?: boolean } = {},
+  opts: { dryRun?: boolean; backupPassword?: string } = {},
 ): Promise<BackupRestoreResponse> {
   const params = new URLSearchParams();
   if (opts.dryRun) params.set("dryRun", "1");
-  if (opts.force) params.set("force", "1");
   const query = params.toString();
   return fetchApi("backupRestore", `/api/backup/restore${query ? `?${query}` : ""}`, {
     method: "POST",
     body: await file.arrayBuffer(),
-    headers: { "Content-Type": "application/zip" },
+    // The backup's password rides in a header, never in the URL.
+    headers: { "Content-Type": "application/zip", ...(opts.backupPassword ? { "x-jig-backup-password": opts.backupPassword } : {}) },
   });
 }
 

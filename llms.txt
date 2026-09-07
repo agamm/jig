@@ -125,7 +125,7 @@ confirm). From the CLI:
 bun run jig backup                              # writes jig-backup-<date>.zip from your deployed instance
 bun run jig backup --no-credentials             # shareable copy, secrets omitted
 bun run jig backup restore <file.zip> --dry-run # print the plan, change nothing
-bun run jig backup restore <file.zip>
+bun run jig backup restore <file.zip>           # asks for the backup's password if it differs
 ```
 
 Like `edit` and `run`, these act on the deployed instance when there is one (`--handle=<name>`
@@ -133,10 +133,13 @@ to choose) and on this machine with `--local`, which needs no running server.
 
 The archive carries jigs and their active code, schedules, connections (custom
 servers, tool permissions, MCP schemas), settings and jig memory. Credentials
-travel as ciphertext with the salt they need, so restoring them requires the
-same password the backup was made under; onto an instance with a different
-password they are skipped unless `--force` is passed. Run history, logs and
-step caches are deliberately not included.
+travel as ciphertext with the salt they need. A restore never changes the
+instance's password: onto an instance with a different password, the backup's
+password (`--backup-password`, `JIG_BACKUP_PASSWORD`, or the field on the
+dashboard) opens them and they are re-encrypted under the instance's own key;
+without it they are skipped. Instance-local state (session secret, key wrap,
+health, incidents, connection health) is never in the archive. Run history,
+logs and step caches are deliberately not included.
 
 When a jig fails, the owner gets an email with the failing step, the error, the likely cause and the exact next command; repeats are throttled per jig. The same verdict is in the failure log, which a coding agent reads before touching a jig:
 

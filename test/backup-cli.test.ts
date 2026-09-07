@@ -115,14 +115,19 @@ describe("jig backup on a deployed instance", () => {
 
     await runBackupArgs(["restore", file, "--dry-run"], LOCAL)
     expect(seen[0].method).toBe("POST")
-    expect(seen[0].url).toBe("https://prod.example/api/backup/restore?dryRun=1&force=0")
+    expect(seen[0].url).toBe("https://prod.example/api/backup/restore?dryRun=1")
     expect(seen[0].headers.cookie).toBe("jig-admin=cookie-value")
     expect(seen[0].headers["content-type"]).toBe("application/zip")
     expect(seen[0].body).toEqual(bytes)
     expect(logs.join("\n")).toContain("Nothing was changed")
 
-    await runBackupArgs(["restore", file, "--force"], LOCAL)
-    expect(seen[1].url).toBe("https://prod.example/api/backup/restore?dryRun=0&force=1")
+    await runBackupArgs(["restore", file, "--backup-password=old-pass"], LOCAL)
+    // A real restore previews first (that is what says whether a password is needed), then applies.
+    expect(seen[1].url).toBe("https://prod.example/api/backup/restore?dryRun=1")
+    expect(seen[2].url).toBe("https://prod.example/api/backup/restore?dryRun=0")
+    // The backup's password rides in a header, never in the URL.
+    expect(seen[2].headers["x-jig-backup-password"]).toBe("old-pass")
+    expect(seen[1].headers["x-jig-backup-password"]).toBeUndefined()
     expect(logs.join("\n")).toContain("add 1 jig(s): backup-cli-jig")
     // The instance re-syncs its own scheduler; only a local restore needs a start.
     expect(logs.join("\n")).not.toContain("Start jig")

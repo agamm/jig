@@ -18,7 +18,7 @@ import {
   upsertSchedule,
 } from "../src/db.js"
 import { CUSTOM_SERVERS_PATH, SCHEMAS_DIR } from "../src/config/paths.js"
-import { lock } from "../src/crypto/password.js"
+import { forgetDataKey, lock, setPassword, unlock } from "../src/crypto/password.js"
 import { deleteJig, getActiveCode, importVersion, listJigs, setActiveVersion } from "../src/services/jig-store.js"
 import { applyRestore, collectSnapshot, planRestore } from "../src/backup/index.js"
 import { buildArchive, parseArchive } from "../src/backup/archive.js"
@@ -135,17 +135,98 @@ describe("backup and restore", () => {
     openDb().prepare(`DELETE FROM settings WHERE key = 'password.salt'`).run()
   })
 
-  it("restores credentials when forced, and says the password must match", () => {
+  // The bug this pins: restoring onto an instance with its own password used to
+  // copy the backup's salt and canary over it, so the owner's new password
+  // stopped working and the old one came back. A restore never touches the
+  // instance's password now; with the backup's password it re-encrypts the
+  // credentials under the instance's own key instead.
+  it("restores credentials under the instance's own password when given the backup's, and never changes that password", () => {
+    // A backup taken on another instance, under another password.
+    closeDb()
+    openDb(":memory:")
+    forgetDataKey()
+    setPassword("old-backup-pass")
+    setCredential("fixture:api_key", "plain-secret", "fixture")
     const snapshot = collectSnapshot()
-    snapshot.crypto = { salt: "SALT-FROM-BACKUP", canary: "v1.CANARY" }
-    putRawSetting("password.salt", "A-COMPLETELY-DIFFERENT-SALT")
+    expect(snapshot.crypto).not.toBeNull()
+    expect(snapshot.credentials[0].value).not.toContain("plain-secret")
 
-    const result = applyRestore(snapshot, { force: true })
+    // This instance, freshly claimed with its own password.
+    closeDb()
+    openDb(":memory:")
+    forgetDataKey()
+    setPassword("new-instance-pass")
+    const saltBefore = getRawSetting("password.salt")
+
+    const result = applyRestore(snapshot, { backupPassword: "old-backup-pass" })
 
     expect(result.credentialsSkipped).toBe(false)
-    expect(getRawSetting("password.salt")).toBe("SALT-FROM-BACKUP")
+    expect(getCredential("fixture:api_key")).toBe("plain-secret")
+    expect(getRawSetting("password.salt")).toBe(saltBefore)
+    forgetDataKey()
+    expect(unlock("old-backup-pass")).toBe(false)
+    expect(unlock("new-instance-pass")).toBe(true)
+    expect(getCredential("fixture:api_key")).toBe("plain-secret")
+  })
 
-    openDb().prepare(`DELETE FROM settings WHERE key = 'password.salt'`).run()
+  it("skips credentials on a wrong backup password and still leaves the password alone", () => {
+    closeDb()
+    openDb(":memory:")
+    forgetDataKey()
+    setPassword("old-backup-pass")
+    setCredential("fixture:api_key", "plain-secret", "fixture")
+    const snapshot = collectSnapshot()
+
+    closeDb()
+    openDb(":memory:")
+    forgetDataKey()
+    setPassword("new-instance-pass")
+    const saltBefore = getRawSetting("password.salt")
+
+    const result = applyRestore(snapshot, { backupPassword: "not-it" })
+
+    expect(result.credentialsSkipped).toBe(true)
+    expect(result.warnings.join(" ")).toMatch(/did not match/i)
+    expect(getCredential("fixture:api_key")).toBeNull()
+    expect(getRawSetting("password.salt")).toBe(saltBefore)
+    forgetDataKey()
+    expect(unlock("new-instance-pass")).toBe(true)
+  })
+})
+
+// The bug this pins: a restore copied the session-signing secret and health
+// stamp from the old instance, which logged every browser and CLI out of the
+// new one and made doctor print "uptime NaNd". State that describes one
+// process, one service or one incident belongs to the instance, not the backup.
+describe("instance-local settings", () => {
+  const instanceLocal: Record<string, unknown> = {
+    "session.hmac_secret": "old-secret",
+    "health.last_check": 1_700_000_000_000,
+    "onboarding_complete": "true",
+    "key.wrapped": "aa:bb:cc",
+    "failure_incident.some-jig": { failCount: 3 },
+    "connection_status.composio": { state: "auth-required", at: "2026-09-01T00:00:00Z" },
+    "system_notify.sent.scheduler": 1_700_000_000_000,
+  }
+
+  it("are neither backed up nor restored", () => {
+    for (const [key, value] of Object.entries(instanceLocal)) {
+      if (typeof value === "string") putRawSetting(key, value)
+      else setSetting(key, value)
+    }
+    setSetting("models", { main: "openai/gpt-5.6-luna-pro" })
+
+    const snapshot = collectSnapshot()
+    for (const key of Object.keys(instanceLocal)) expect(snapshot.settings).not.toHaveProperty(key)
+    expect(snapshot.settings).toHaveProperty("models")
+
+    // An archive that carries them anyway (older jig, hand-edited) must not land them.
+    for (const key of Object.keys(instanceLocal)) openDb().prepare(`DELETE FROM settings WHERE key = ?`).run(key)
+    putRawSetting("session.hmac_secret", "this-instance-secret")
+    const tampered = { ...snapshot, settings: { ...snapshot.settings, "session.hmac_secret": "old-secret", "health.last_check": "1" } }
+    applyRestore(tampered)
+    expect(getRawSetting("session.hmac_secret")).toBe("this-instance-secret")
+    expect(getRawSetting("health.last_check")).toBeNull()
   })
 })
 
@@ -168,8 +249,8 @@ describe("credential portability", () => {
   beforeEach(() => { openDb(); clearCrypto() })
   afterEach(() => { clearCrypto(); closeDb() })
 
-  it("carries the salt, so a restored credential still decrypts", async () => {
-    const { setPassword, unlock, lock: relock } = await import("../src/crypto/password.js")
+  it("carries the salt, so the backup's password opens a restored credential on a fresh instance", async () => {
+    const { setPassword, isPasswordSet, lock: relock } = await import("../src/crypto/password.js")
     setPassword(PASSWORD)
     setCredential(CRED_KEY, "super-secret-value", "portable")
 
@@ -183,11 +264,16 @@ describe("credential portability", () => {
     db.prepare(`DELETE FROM settings WHERE key IN ('password.salt','password.canary')`).run()
     relock()
 
-    applyRestore(snapshot)
+    // Without the backup's password nothing can open the rows, so they are skipped.
+    expect(applyRestore(snapshot).credentialsSkipped).toBe(true)
+    expect(getCredential(CRED_KEY)).toBeNull()
 
-    // The real proof: the original password still opens the restored rows.
-    expect(unlock(PASSWORD)).toBe(true)
+    // With it, the credential is readable here and the instance has NOT taken
+    // on the backup's password: a fresh local instance stays passwordless.
+    const result = applyRestore(snapshot, { backupPassword: PASSWORD })
+    expect(result.credentialsSkipped).toBe(false)
     expect(getCredential(CRED_KEY)).toBe("super-secret-value")
+    expect(isPasswordSet()).toBe(false)
   })
 
   it("stores the salt exactly as the crypto module wrote it, not JSON-wrapped", async () => {

@@ -28,6 +28,9 @@ export function BackupSettings({ onRestored }: { onRestored?: () => Promise<void
   const fileInput = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<BackupRestoreResponse | null>(null);
+  // Only asked for when the preview says the backup was made under another password.
+  const [backupPassword, setBackupPassword] = useState("");
+  const needsBackupPassword = !!preview?.plan.warnings.some((w) => /password/i.test(w));
   const [busy, setBusy] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [restoreStatus, setRestoreStatus] = useState<Status>(null);
@@ -49,6 +52,7 @@ export function BackupSettings({ onRestored }: { onRestored?: () => Promise<void
   async function onPick(picked: File | null) {
     setFile(picked);
     setPreview(null);
+    setBackupPassword("");
     setRestoreStatus(null);
     if (!picked) return;
     setBusy(true);
@@ -67,7 +71,7 @@ export function BackupSettings({ onRestored }: { onRestored?: () => Promise<void
     setBusy(true);
     setRestoreStatus(null);
     try {
-      const result = await restoreBackup(file, { force: false });
+      const result = await restoreBackup(file, { backupPassword: backupPassword || undefined });
       setConfirmOpen(false);
       setFile(null);
       setPreview(null);
@@ -75,7 +79,7 @@ export function BackupSettings({ onRestored }: { onRestored?: () => Promise<void
       setRestoreStatus({
         tone: "success",
         message: result.plan.credentialsSkipped
-          ? `Restored ${planSummary(result.plan)}. Credentials were skipped because this instance has a different password; reconnect each server.`
+          ? `Restored ${planSummary(result.plan)}. Credentials were skipped: ${backupPassword ? "the backup's password did not match" : "this instance has a different password and none was given for the backup"}. Your password is unchanged; reconnect each server or restore again with the backup's password.`
           : `Restored ${planSummary(result.plan)}.`,
       });
       await onRestored?.();
@@ -167,6 +171,18 @@ export function BackupSettings({ onRestored }: { onRestored?: () => Promise<void
             {preview.plan.warnings.map((w) => (
               <p key={w} className="text-[11px] text-[#f59e0b]">{w}</p>
             ))}
+            {needsBackupPassword && (
+              <label className="block pt-1 text-[11px] text-[#999]">
+                The backup's password (leave empty to skip its credentials; this instance's password stays as it is)
+                <input
+                  type="password"
+                  autoComplete="off"
+                  value={backupPassword}
+                  onChange={(e) => setBackupPassword(e.target.value)}
+                  className="mt-1 block w-full rounded-md border border-[#1f1f23] bg-[#111113] px-2.5 py-1.5 text-[12px] text-[#ededed]"
+                />
+              </label>
+            )}
           </div>
         )}
 

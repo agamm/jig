@@ -142,3 +142,10 @@ Handoff: HANDOFF.md (design agreed 2026-09-06). Three commits, one version bump 
 - [x] jig setup on a hosted instance prints a single-use pairing command at the end; the skill tells the agent to report it and offer to run it in the user's checkout; README prompt asks for it.
 - [x] Verified: 865 tests, both typechecks; /api/cli/pair minted (600 s) and the code claimed on a scratch server. Not seen live: the dashboard link wording. Version 0.1.146.
 
+# Restore never touches the password; README rewrite (2026-09-07)
+
+- [x] Backups no longer carry instance-local settings (session.hmac_secret, health.last_check, onboarding_complete, key.wrapped, failure_incident.*, connection_status.*, system_notify.sent.*); a restore ignores them if an old archive has them.
+- [x] Restore never writes password.salt/canary. Different password: the backup's password (CLI --backup-password / JIG_BACKUP_PASSWORD / hidden prompt, API header x-jig-backup-password, dashboard field) opens the credentials and they are re-encrypted under the instance's own key; else skipped. --force removed. Unreadable rows skipped with a count.
+- [x] README rewritten: five reasons, alpha warning, how it works, agent-to-Railway workflow, security table, agent pointers.
+- [x] Verified: 867 tests, both typechecks; real two-instance run over HTTP (A backed up, restored onto B with A's password: B's session kept, credential readable, only B's password unlocks). Version 0.1.147.
+

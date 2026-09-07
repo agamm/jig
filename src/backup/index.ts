@@ -30,6 +30,7 @@ import {
   setToolPermission,
   upsertSchedule,
   type ToolPermissionPolicy,
+  setCredential,
 } from "../db.js"
 import { CUSTOM_SERVERS_PATH, SCHEMAS_DIR } from "../config/paths.js"
 import {
@@ -39,24 +40,31 @@ import {
   listJigs,
   setActiveVersion,
 } from "../services/jig-store.js"
-import { WRAPPED_KEY_SETTING } from "../crypto/password.js"
+import { decryptWithKey, keyForBackup, WRAPPED_KEY_SETTING } from "../crypto/password.js"
 import type { BackupSnapshot } from "./archive.js"
 
 const SALT_KEY = "password.salt"
 const CANARY_KEY = "password.canary"
 
 /**
- * Settings that describe this process rather than this instance's
- * configuration. The crypto pair travels with the credentials instead, the
- * key wrap is bound to one service's JIG_DATA_KEY, and the notify keys are
- * debounce timestamps whose whole purpose is to be stale.
+ * Settings that describe one instance rather than the user's configuration:
+ * its password and key wrap, its session-signing secret, its health stamp,
+ * whether ITS onboarding finished, and the per-jig and per-connection state
+ * of incidents and health. Carrying any of these across logs every browser
+ * and CLI out of the target, or makes it report another instance's troubles.
+ * The crypto pair travels with the credentials instead (see applyRestore).
+ * Classify every new settings key here; backup-restore.test.ts pins the list.
  */
-const SETTINGS_NOT_BACKED_UP = [SALT_KEY, CANARY_KEY, WRAPPED_KEY_SETTING]
-const SETTINGS_PREFIXES_NOT_BACKED_UP = ["system_notify.sent."]
+const SETTINGS_NOT_BACKED_UP = [SALT_KEY, CANARY_KEY, WRAPPED_KEY_SETTING, "session.hmac_secret", "health.last_check", "onboarding_complete"]
+const SETTINGS_PREFIXES_NOT_BACKED_UP = ["system_notify.sent.", "connection_status.", "failure_incident."]
+
+export function isInstanceLocalSetting(key: string): boolean {
+  if (SETTINGS_NOT_BACKED_UP.includes(key)) return true
+  return SETTINGS_PREFIXES_NOT_BACKED_UP.some((p) => key.startsWith(p))
+}
 
 function isBackedUpSetting(key: string): boolean {
-  if (SETTINGS_NOT_BACKED_UP.includes(key)) return false
-  return !SETTINGS_PREFIXES_NOT_BACKED_UP.some((p) => key.startsWith(p))
+  return !isInstanceLocalSetting(key)
 }
 
 // ---------------------------------------------------------------------------
@@ -168,21 +176,24 @@ export function planRestore(snapshot: BackupSnapshot): RestorePlan {
   }
 }
 
+export const BACKUP_PASSWORD_HINT =
+  "This instance has a different password than the backup, so the backup's credentials cannot " +
+  "be read here as they are. Give the backup's password to restore them (the field on the " +
+  "dashboard, or `jig backup restore --backup-password`); without it they are skipped. This " +
+  "instance keeps its own password either way."
+
 /**
- * Credentials are ciphertext under a key derived from password + salt. Writing
- * them into an instance whose salt differs produces rows that nothing on that
- * instance can decrypt, so the mismatch is reported rather than applied.
+ * Credentials are ciphertext under a key derived from password + salt. They
+ * copy across as they are only when the salt matches (same key). Otherwise the
+ * backup's password is needed to open them, and the restore says so.
  */
+function needsBackupPassword(snapshot: BackupSnapshot): boolean {
+  if (snapshot.credentials.length === 0 || !snapshot.crypto) return false
+  return getRawSetting(SALT_KEY) !== snapshot.crypto.salt
+}
+
 function credentialWarnings(snapshot: BackupSnapshot): string[] {
-  if (snapshot.credentials.length === 0) return []
-  const existingSalt = getRawSetting(SALT_KEY)
-  if (!existingSalt || !snapshot.crypto) return []
-  if (existingSalt === snapshot.crypto.salt) return []
-  return [
-    "This instance has a different password than the backup. Its credentials cannot be " +
-    "decrypted here, so they were skipped. Restore onto a fresh instance, or pass --force " +
-    "to overwrite this instance's password with the backup's.",
-  ]
+  return needsBackupPassword(snapshot) ? [BACKUP_PASSWORD_HINT] : []
 }
 
 // ---------------------------------------------------------------------------
@@ -193,12 +204,29 @@ export interface RestoreResult extends RestorePlan {
   credentialsSkipped: boolean
 }
 
+/**
+ * Apply a backup. The instance's password is never touched: credentials from
+ * a backup under another password are opened with that password (given by the
+ * caller) and re-encrypted under this instance's own key, or skipped.
+ */
 export function applyRestore(
   snapshot: BackupSnapshot,
-  options: { force?: boolean } = {},
+  options: { backupPassword?: string } = {},
 ): RestoreResult {
   const plan = planRestore(snapshot)
-  const skipCredentials = plan.warnings.length > 0 && !options.force
+  const warnings = [...plan.warnings]
+  let backupKey: Buffer | null = null
+  let skipCredentials = false
+  if (needsBackupPassword(snapshot)) {
+    backupKey = options.backupPassword && snapshot.crypto
+      ? keyForBackup(options.backupPassword, snapshot.crypto.salt, snapshot.crypto.canary)
+      : null
+    if (backupKey) warnings.length = 0
+    else {
+      skipCredentials = true
+      if (options.backupPassword) warnings.push("The backup password did not match, so its credentials were skipped. This instance's password is unchanged.")
+    }
+  }
 
   for (const jig of snapshot.jigs) {
     // Re-importing identical code would stack a new version every restore, so
@@ -234,21 +262,31 @@ export function applyRestore(
   }
 
   if (!skipCredentials) {
+    let unreadable = 0
     for (const cred of snapshot.credentials) {
-      putRawCredential({
-        key: cred.key,
-        value: cred.value,
-        server: cred.server,
-        encrypted: cred.encrypted ? 1 : 0,
-      })
+      if (backupKey && cred.encrypted) {
+        // Opened with the backup's key, stored under this instance's own
+        // (setCredential encrypts when unlocked, plaintext in local mode).
+        // A row that will not open (corrupt, or written under yet another
+        // key) is skipped and counted; one bad row must not sink the restore.
+        let plaintext: string
+        try {
+          plaintext = decryptWithKey(backupKey, cred.value)
+        } catch {
+          unreadable++
+          continue
+        }
+        setCredential(cred.key, plaintext, cred.server)
+      } else {
+        putRawCredential({
+          key: cred.key,
+          value: cred.value,
+          server: cred.server,
+          encrypted: cred.encrypted ? 1 : 0,
+        })
+      }
     }
-    if (snapshot.crypto) {
-      // Verbatim, matching how crypto/password.ts wrote them. JSON-encoding
-      // here would store the quotes as part of the salt and no password would
-      // ever unlock the restored instance.
-      putRawSetting(SALT_KEY, snapshot.crypto.salt)
-      putRawSetting(CANARY_KEY, snapshot.crypto.canary)
-    }
+    if (unreadable > 0) warnings.push(`${unreadable} credential(s) could not be opened with the backup's password and were skipped.`)
   }
 
   for (const [key, value] of Object.entries(snapshot.settings)) {
@@ -277,5 +315,5 @@ export function applyRestore(
     writeFileSync(CUSTOM_SERVERS_PATH, JSON.stringify(snapshot.customServers, null, 2))
   }
 
-  return { ...plan, credentialsSkipped: skipCredentials }
+  return { ...plan, warnings, credentialsSkipped: skipCredentials }
 }

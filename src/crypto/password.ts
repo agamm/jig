@@ -260,6 +260,26 @@ export function unlock(password: string): boolean {
   return true
 }
 
+/**
+ * The key a backup's credentials were written under: derived from that
+ * backup's password and salt, and only returned when it opens the backup's
+ * canary. Lets a restore re-encrypt credentials under THIS instance's key
+ * instead of replacing this instance's password with the backup's.
+ */
+export function keyForBackup(password: string, saltHex: string, canary: string): Buffer | null {
+  try {
+    const key = deriveKey(password, Buffer.from(saltHex, "hex"))
+    return decryptWith(key, canary) === CANARY_PLAINTEXT ? key : null
+  } catch {
+    return null
+  }
+}
+
+/** Decrypt under a key that is not this instance's (see keyForBackup). */
+export function decryptWithKey(key: Buffer, payload: string): string {
+  return decryptWith(key, payload)
+}
+
 /** Encrypt a value for storage. Throws LockedError if locked. */
 export function encrypt(plaintext: string): string {
   if (!dataKey) throw new LockedError()

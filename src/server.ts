@@ -546,7 +546,8 @@ export function createApiServer(port: number) {
             }
 
             const dryRun = url.searchParams.get("dryRun") === "1"
-            const force = url.searchParams.get("force") === "1"
+            // A header, never the query string: the backup's password must not reach logs.
+            const backupPassword = req.headers.get("x-jig-backup-password") ?? undefined
             if (dryRun) {
               return apiJson("backupRestore", {
                 manifest: parsed.manifest,
@@ -554,7 +555,7 @@ export function createApiServer(port: number) {
                 applied: false,
               })
             }
-            const result = applyRestore(parsed.snapshot, { force })
+            const result = applyRestore(parsed.snapshot, { backupPassword })
             await syncSchedules()
             broadcastJigsUpdated("backup-restore")
             return apiJson("backupRestore", {

@@ -52,25 +52,33 @@ export async function runBackupArgs(args: string[], localBase: string): Promise<
 function printUsage(): void {
   console.log("Usage:")
   console.log("  jig backup [--out <file.zip>] [--no-credentials]")
-  console.log("  jig backup restore <file.zip> [--dry-run] [--force]")
+  console.log("  jig backup restore <file.zip> [--dry-run] [--backup-password=<pw>]")
   console.log("")
   console.log("Acts on your deployed instance when you have one (--handle=<name> to choose),")
   console.log("or on this machine with --local.")
   console.log("")
   console.log("Backup contains your jigs, schedules, connections, tool permissions,")
-  console.log("settings and jig memory. Credentials travel encrypted, exactly as stored,")
-  console.log("so restoring them needs the same password that instance uses.")
+  console.log("settings and jig memory. Credentials travel encrypted, exactly as stored.")
+  console.log("A restore never changes the instance's password: credentials from a backup")
+  console.log("made under another password are opened with that password and re-encrypted.")
   console.log("")
-  console.log("  --no-credentials   Leave secrets out, for an archive you can share")
-  console.log("  --dry-run          Print what a restore would change, then stop")
-  console.log("  --force            Restore credentials even if the password differs")
+  console.log("  --no-credentials        Leave secrets out, for an archive you can share")
+  console.log("  --dry-run               Print what a restore would change, then stop")
+  console.log("  --backup-password=<pw>  The password the backup was made under (or JIG_BACKUP_PASSWORD;")
+  console.log("                          a terminal asks for it when needed)")
 }
 
 /** Fetch against the deployed instance with the paired session; failures name the fix. */
-async function remoteFetch(target: AuthoringTarget & { remote: true }, method: string, path: string, body?: Uint8Array): Promise<Response> {
+async function remoteFetch(
+  target: AuthoringTarget & { remote: true },
+  method: string,
+  path: string,
+  body?: Uint8Array,
+  extraHeaders: Record<string, string> = {},
+): Promise<Response> {
   const res = await fetch(`${target.base}${path}`, {
     method,
-    headers: { ...target.headers, ...(body ? { "Content-Type": "application/zip" } : {}) },
+    headers: { ...target.headers, ...(body ? { "Content-Type": "application/zip" } : {}), ...extraHeaders },
     body: body as unknown as BodyInit | undefined,
     cache: "no-store",
   })
@@ -150,17 +158,30 @@ async function runRestore(args: string[], localBase: string): Promise<void> {
   }
 
   const dryRun = flag(args, "--dry-run")
-  const force = flag(args, "--force")
   const target = resolveAuthoringTarget(args, localBase)
   console.log(`Backup from ${parsed.manifest.createdAt}, written by jig ${parsed.manifest.jigVersion}.`)
   console.log(`Restoring to ${target.label}...`)
 
+  // Preview first, everywhere: it is what says whether the backup's password is
+  // needed, and the only way to ask for it before anything is written.
+  const preview = target.remote
+    ? ((await (await remoteFetch(target, "POST", "/api/backup/restore?dryRun=1", bytes)).json()) as BackupRestoreResponse).plan
+    : planRestore(parsed.snapshot)
+  let backupPassword = value(args, "--backup-password") ?? process.env.JIG_BACKUP_PASSWORD
+  if (!dryRun && !backupPassword && preview.warnings.some((w) => /password/i.test(w))) {
+    const { promptHiddenPassword } = await import("../cli-remote/unlock.js")
+    backupPassword = (await promptHiddenPassword("  Backup's password (Enter to skip its credentials)")) || undefined
+  }
+
   let plan: BackupRestorePlan
-  if (target.remote) {
-    const res = await remoteFetch(target, "POST", `/api/backup/restore?dryRun=${dryRun ? "1" : "0"}&force=${force ? "1" : "0"}`, bytes)
+  if (dryRun) {
+    plan = preview
+  } else if (target.remote) {
+    const headers: Record<string, string> = backupPassword ? { "x-jig-backup-password": backupPassword } : {}
+    const res = await remoteFetch(target, "POST", "/api/backup/restore?dryRun=0", bytes, headers)
     plan = ((await res.json()) as BackupRestoreResponse).plan
   } else {
-    plan = dryRun ? planRestore(parsed.snapshot) : applyRestore(parsed.snapshot, { force })
+    plan = applyRestore(parsed.snapshot, { backupPassword })
   }
 
   if (dryRun) {
@@ -173,7 +194,7 @@ async function runRestore(args: string[], localBase: string): Promise<void> {
   console.log("\nRestored:")
   describe(plan)
   if (plan.credentialsSkipped) {
-    console.log("\n  Credentials were NOT restored. Reconnect each server, or re-run with --force.")
+    console.log("\n  Credentials were NOT restored. Re-run with --backup-password=<the backup's password>, or reconnect each server.")
   }
   // The instance re-syncs its schedules itself; a local restore ran with no
   // server up, so the next start is what picks the jigs up.

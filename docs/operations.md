@@ -179,10 +179,26 @@ The classifier matches the error text and names the remedy:
 | `locked` | credentials unreadable because the instance was locked | `jig unlock`; `JIG_DATA_KEY` keeps it from recurring |
 | `code` | nothing external recognised | `jig edit --out`, fix, `--file`, dry run |
 
-Failure emails quote the same cause and remedy. Their cadence per jig: the first failure emails,
-the second says repeat alerts are paused, then one summary every 24 hours while it keeps failing;
-a success clears the incident. Replying to any of them still opens the jig's reply-to-edit
-session.
+Failure emails quote the same cause and remedy, and end with a prompt a coding agent can take
+as-is. Their cadence per jig: the first failure emails, the second says repeat alerts are paused,
+then one summary every 24 hours while it keeps failing; a success clears the incident. Replying
+to any of them still opens the jig's reply-to-edit session.
+
+### Retries
+
+Before a failure reaches the log, the tool call that failed is repeated on gateway and transport
+errors (a dropped session, `MCP error -32000: Upstream MCP server error`, a reset socket). Only
+that one call is repeated, with the same arguments; nothing earlier in the step runs again.
+
+| Tool | Repeats | Why |
+|---|---|---|
+| read (`readOnlyHint` true) | up to 3, with backoff | repeating a read changes nothing |
+| write | exactly 1, never after a timeout | a gateway rejection usually never reached the provider; a timeout means the request was accepted and may still complete |
+| any, when the provider itself answered with an error | 0 | it would fail the same way, or duplicate |
+
+A repeated write can still duplicate when the provider had applied it before the reply went
+missing. That is the trade made for far fewer dead runs; each repeat is logged as
+`[mcp.connection] reconnect` with `readOnly: false`, so a duplicate can be traced to its run.
 
 ## Privacy checklist
 

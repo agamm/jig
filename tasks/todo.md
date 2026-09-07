@@ -127,3 +127,11 @@ Handoff: HANDOFF.md (design agreed 2026-09-06). Three commits, one version bump 
 - [x] Agent skill: a freshly paired instance is usually already onboarded (dashboard first, pairing after), not suspicious.
 - [x] Verified in the browser against a scratch instance: Settings > Setup tab and the compat link; the ready-state button not seen live (needs real keys). Version 0.1.144.
 
+# Retry writes once, agent prompt in failure emails (2026-09-07)
+
+- [x] Tool calls: reads keep 3 backoff retries; writes get exactly one repeat on a gateway rejection (-32000, transport reset) and never after a timeout; provider-answered errors are never repeated. The repeat is the same single call with the same args. Logged as `[mcp.connection] reconnect` with readOnly.
+- [x] Failure classifier: `MCP error -32000: Upstream MCP server error` -> provider.
+- [x] Failure emails (all three cadences) end with a paste-ready coding-agent prompt.
+- [x] TDD: test/mcp-client.test.ts (policy + real callTool path), failure-class, run-failure-notify. Real check: a stdio MCP server rejecting the first call with -32000 through callTool + invokeWithMcpReconnect. Docs: operations.md Retries table, agent skill. Version 0.1.145.
+- [ ] Still open: "Re-check" on Composio rewrites its schema with the 7 meta-tools and no annotations (verify path); a failed annotation LLM call resets every label to write. Breaks dry-run stubbing and introspection, not retries any more.
+

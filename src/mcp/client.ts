@@ -798,9 +798,8 @@ export function shouldReconnectMcpConnection(
   // nothing to do with credentials.
   if (isTransportReconnectable(error)) return true
 
-  // Same failure reported through the protocol instead of the socket. Only
-  // read-only tools, see isRetryableServerError.
-  return options.readOnly === true && isRetryableServerError(error)
+  // Same failure reported through the protocol instead of the socket.
+  return isRetryableServerError(error, options)
 }
 
 /**
@@ -823,15 +822,20 @@ export function shouldReconnectMcpConnection(
  * the authorization prompt the user needs to see. Widen this set when a real
  * gateway is observed using another code, not in anticipation.
  *
- * Read-only callers only. Neither code says whether the server had already
- * applied the effect before the reply went missing, so retrying a send could
- * send twice.
+ * Writes get -32000 only. Neither code says whether the server had already
+ * applied the effect before the reply went missing, but a timeout means the
+ * request was accepted and may still complete, which is the likeliest way to
+ * send twice; a gateway rejection usually never reached the provider. One
+ * repeat of a write is the trade chosen over a dead run (see
+ * invokeWithMcpReconnect for the budget).
  */
 const RETRYABLE_MCP_SERVER_CODES = new Set([-32000, -32001])
+const RETRYABLE_MCP_SERVER_CODES_FOR_WRITES = new Set([-32000])
 
-export function isRetryableServerError(error: unknown): boolean {
+export function isRetryableServerError(error: unknown, options: { readOnly?: boolean } = {}): boolean {
+  const codes = options.readOnly === true ? RETRYABLE_MCP_SERVER_CODES : RETRYABLE_MCP_SERVER_CODES_FOR_WRITES
   for (const c of walkErrorShape(error)) {
-    if (typeof c.code === "number" && RETRYABLE_MCP_SERVER_CODES.has(c.code)) return true
+    if (typeof c.code === "number" && codes.has(c.code)) return true
   }
   return false
 }
@@ -850,6 +854,8 @@ function errorMessageForReport(error: unknown): string {
 // fails right back. Three retries with short backoff cover transient blips
 // without stalling a run for long.
 const MCP_RECONNECT_DELAYS_MS = [100, 500, 2000]
+/** A write is sent at most twice in total: the repeat itself is the duplicate risk, so it is not compounded. */
+const MAX_WRITE_RETRIES = 1
 
 /**
  * Run an MCP tool call, reconnecting with backoff on transport/auth-shaped
@@ -857,8 +863,10 @@ const MCP_RECONNECT_DELAYS_MS = [100, 500, 2000]
  * attempt goes through connectServer() again. Used by the generated
  * connection modules (typegen) — the single retry path for every tool call.
  *
- * `options.readOnly` additionally retries server-reported errors that a write
- * must not repeat (isRetryableServerError). Pass the tool's readOnlyHint.
+ * The repeat is of this one call with the same arguments; nothing earlier in
+ * the step runs again. Reads get the full backoff schedule, writes exactly one
+ * repeat and never after a timeout (see isRetryableServerError). Pass the
+ * tool's readOnlyHint as `options.readOnly`; absent means write.
  *
  * Exhausting all retries marks the connection unreachable (dashboard status
  * + debounced system notification) and rethrows the last error.
@@ -869,6 +877,8 @@ export async function invokeWithMcpReconnect<T>(
   run: () => Promise<T>,
   options: { readOnly?: boolean } = {},
 ): Promise<T> {
+  const readOnly = options.readOnly === true
+  const maxRetries = readOnly ? MCP_RECONNECT_DELAYS_MS.length : MAX_WRITE_RETRIES
   let lastError: unknown
   try {
     return await run()
@@ -876,13 +886,14 @@ export async function invokeWithMcpReconnect<T>(
     if (!shouldReconnectMcpConnection(error, options)) throw error
     lastError = error
   }
-  for (let attempt = 1; attempt <= MCP_RECONNECT_DELAYS_MS.length; attempt++) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
     await Bun.sleep(MCP_RECONNECT_DELAYS_MS[attempt - 1])
     logSessionEvent({
       source: "mcp.connection",
       event: "reconnect",
       server: serverName,
       attempt,
+      readOnly,
       error: errorMessageForReport(lastError),
     })
     await closeStaleConnection()

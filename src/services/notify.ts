@@ -81,6 +81,8 @@ export function formatFailureBody(opts: {
   /** The classifier's verdict: what it looks like and what to do. */
   cause?: string
   remedy?: string
+  /** A prompt a coding agent can take as-is; goes last, as its own block. */
+  agentPrompt?: string
   startedAt: string | null
   durationMs: number | null
   dashboardBaseUrl?: string
@@ -102,5 +104,6 @@ export function formatFailureBody(opts: {
     ?? publicUrl()
     ?? `http://localhost:${process.env.JIG_DASHBOARD_PORT ?? "3141"}`
   lines.push(`Link: ${base}/jigs/${opts.jigId}`)
+  if (opts.agentPrompt) lines.push("", "For a coding agent, paste as-is:", opts.agentPrompt)
   return lines.join("\n")
 }

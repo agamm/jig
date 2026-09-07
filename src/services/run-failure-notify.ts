@@ -71,9 +71,28 @@ export function clearFailureIncident(jigId: string): void {
   if (readFailureIncident(jigId)) setSetting(incidentKey(jigId), null)
 }
 
+function dashboardBase(): string {
+  return publicUrl() ?? `http://localhost:${process.env.JIG_DASHBOARD_PORT ?? "3141"}`
+}
+
 function dashboardJigUrl(jigId: string): string {
-  const base = publicUrl() ?? `http://localhost:${process.env.JIG_DASHBOARD_PORT ?? "3141"}`
-  return `${base}/jigs/${jigId}`
+  return `${dashboardBase()}/jigs/${jigId}`
+}
+
+/**
+ * One paragraph a coding agent can take as-is. It names the instance and the
+ * jig, sends the agent to the failure log first (so an external cause is fixed
+ * as itself, not as code), and spells out the push-and-prove loop for a code
+ * fix. Kept generic on purpose: the remedy line above it carries the specifics.
+ */
+function agentFixPrompt(jigId: string, cause: string): string {
+  return (
+    `In my Jig checkout paired to ${dashboardBase()}, the jig "${jigId}" failed (${cause}). ` +
+    `Run \`bun run jig debug failures --jig=${jigId}\` and follow the remedy it prints. ` +
+    `If the fix is code: \`bun run jig edit ${jigId} --out=${jigId}.ts\`, fix it, ` +
+    `\`bun run jig edit ${jigId} --file=${jigId}.ts\`, prove it with \`bun run jig run ${jigId} --dry-run\`, ` +
+    `then \`bun run jig pending ${jigId} approve\`.`
+  )
 }
 
 export async function maybeNotifyRunFailure(
@@ -104,6 +123,7 @@ export async function maybeNotifyRunFailure(
   // Every email quotes the same verdict the audit and `jig debug failures` show.
   const verdict = verdictForRun(run)
   const cause = describeCause(verdict.cause)
+  const agentPrompt = agentFixPrompt(jigId, cause)
 
   if (!incident) {
     // First failure — email normally and open an incident.
@@ -116,6 +136,7 @@ export async function maybeNotifyRunFailure(
         failedStep: summarizeFailureStreak([run]).failedStep,
         cause,
         remedy: verdict.remedy,
+        agentPrompt,
         startedAt: run.started_at,
         durationMs: run.duration_ms,
       }),
@@ -150,6 +171,9 @@ export async function maybeNotifyRunFailure(
         `Likely cause: ${cause}`,
         `Next: ${verdict.remedy}`,
         `Fix it: ${dashboardJigUrl(jigId)}`,
+        ``,
+        `For a coding agent, paste as-is:`,
+        agentPrompt,
       ].filter((l): l is string => l !== null).join("\n"),
       kind: "fail",
       jigId,
@@ -177,6 +201,9 @@ export async function maybeNotifyRunFailure(
         `Next: ${verdict.remedy}`,
         ``,
         `Fix it now: ${dashboardJigUrl(jigId)}`,
+        ``,
+        `For a coding agent, paste as-is:`,
+        agentPrompt,
       ].filter((l): l is string => l !== null).join("\n"),
       kind: "fail",
       jigId,

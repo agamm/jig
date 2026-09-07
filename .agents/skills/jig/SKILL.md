@@ -351,6 +351,9 @@ procedure:
   `missing-connection`, `locked`, or `code`) and the command that fixes it. The failure email
   the owner received quotes the same verdict. `bun run jig debug audit` is the per-jig view:
   streaks, pending versions, unhealthy connections.
+- A tool call that hit a gateway error was already retried before the run failed: reads up to
+  three times, writes exactly once (never after a timeout). So a failure in the log is not a
+  blip that one more try would fix; act on its remedy.
 - `bun run jig doctor` for instance health.
 - `bun run jig visualize <jig-id> -vv` to read a jig back without running it: every step, which
   ones a model decides, the prompts word for word, and the branches around them. Start here when

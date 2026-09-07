@@ -21,6 +21,7 @@ describe("classifyFailure", () => {
     ["429 Rate limit exceeded", "rate-limit"],
     ["Quota exceeded for quota metric 'Queries' and limit 'Queries per day'", "rate-limit"],
     ["502 Bad Gateway", "provider"],
+    ["MCP error -32000: Upstream MCP server error", "provider"],
     ["SSE error: Non-200 status code (503)", "provider"],
     ["fetch failed: ECONNRESET", "provider"],
     ["Run timed out after 10 minutes", "timeout"],

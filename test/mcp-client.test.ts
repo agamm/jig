@@ -236,12 +236,17 @@ describe("shouldReconnectMcpConnection", () => {
     expect(shouldReconnectMcpConnection(new McpError(ErrorCode.RequestTimeout, "timed out"), { readOnly: true })).toBe(true)
   })
 
-  it("leaves the same error fatal for a write tool", () => {
+  // A gateway rejection kills a write step just as dead as a read step, and a
+  // single repeat is the trade the owner chose over a failed run. A timeout is
+  // the one case kept fatal for writes: the request was accepted and may still
+  // complete, so a repeat is the likeliest way to send twice.
+  it("retries a gateway rejection once for a write tool, but never a timeout", () => {
     const error = new McpError(ErrorCode.ConnectionClosed, "Upstream MCP server error")
 
-    // The code says the reply went missing, not that the send didn't happen.
-    expect(shouldReconnectMcpConnection(error, { readOnly: false })).toBe(false)
-    expect(shouldReconnectMcpConnection(error)).toBe(false)
+    expect(shouldReconnectMcpConnection(error, { readOnly: false })).toBe(true)
+    expect(shouldReconnectMcpConnection(error)).toBe(true)
+    expect(shouldReconnectMcpConnection(new McpError(ErrorCode.RequestTimeout, "timed out"), { readOnly: false })).toBe(false)
+    expect(shouldReconnectMcpConnection(new McpError(ErrorCode.RequestTimeout, "timed out"))).toBe(false)
   })
 
   it("does not retry deterministic protocol errors even when read-only", () => {
@@ -277,17 +282,106 @@ describe("invokeWithMcpReconnect", () => {
     expect(closed).toBe(1)
   })
 
-  it("throws immediately for a write tool instead of sending twice", async () => {
+  it("repeats a write exactly once on a gateway rejection, then succeeds", async () => {
     let attempts = 0
+    let closed = 0
 
+    const result = await invokeWithMcpReconnect(
+      "composio",
+      async () => { closed++ },
+      async () => {
+        attempts++
+        if (attempts === 1) throw upstreamDown()
+        return "sent"
+      },
+      { readOnly: false },
+    )
+
+    expect(result).toBe("sent")
+    expect(attempts).toBe(2)
+    expect(closed).toBe(1)
+  })
+
+  it("never repeats a write more than once, whatever the error", async () => {
+    // Idempotency budget: a write is sent at most twice in total. Reads keep
+    // the full backoff schedule because repeating a read changes nothing.
+    let writeAttempts = 0
     await expect(invokeWithMcpReconnect(
       "composio",
       async () => {},
-      async () => { attempts++; throw upstreamDown() },
+      async () => { writeAttempts++; throw upstreamDown() },
       { readOnly: false },
     )).rejects.toThrow("Upstream MCP server error")
+    expect(writeAttempts).toBe(2)
 
-    expect(attempts).toBe(1)
+    let resetAttempts = 0
+    await expect(invokeWithMcpReconnect(
+      "composio",
+      async () => {},
+      async () => { resetAttempts++; throw Object.assign(new Error("socket hang up"), { code: "ECONNRESET" }) },
+      { readOnly: false },
+    )).rejects.toThrow("socket hang up")
+    expect(resetAttempts).toBe(2)
+
+    let readAttempts = 0
+    await expect(invokeWithMcpReconnect(
+      "composio",
+      async () => {},
+      async () => { readAttempts++; throw upstreamDown() },
+      { readOnly: true },
+    )).rejects.toThrow("Upstream MCP server error")
+    expect(readAttempts).toBe(4)
+  })
+
+  it("does not repeat a write that timed out or that the provider answered", async () => {
+    let timeoutAttempts = 0
+    await expect(invokeWithMcpReconnect(
+      "composio",
+      async () => {},
+      async () => { timeoutAttempts++; throw new McpError(ErrorCode.RequestTimeout, "Request timed out") },
+      { readOnly: false },
+    )).rejects.toThrow("Request timed out")
+    expect(timeoutAttempts).toBe(1)
+
+    // A tool result carrying the provider's own error means the provider
+    // processed the call; repeating it fails the same way or duplicates.
+    let providerAttempts = 0
+    await expect(invokeWithMcpReconnect(
+      "composio",
+      async () => {},
+      async () => {
+        providerAttempts++
+        return callTool({
+          client: { callTool: async () => ({ content: [{ type: "text", text: "Invalid recipient" }], isError: true }) },
+          transport: {} as any,
+          serverName: "composio",
+          config: {} as any,
+        } as any, "gmail_send_email", {})
+      },
+      { readOnly: false },
+    )).rejects.toThrow("Invalid recipient")
+    expect(providerAttempts).toBe(1)
+  })
+
+  it("repeats the one failing call with the same arguments, through the real tool path", async () => {
+    // The gateway throws the SDK's McpError with a numeric code, which is what
+    // Composio's "Upstream MCP server error" looks like from inside a run.
+    const seen: unknown[] = []
+    const client = {
+      callTool: async (req: { arguments?: unknown }) => {
+        seen.push(req.arguments)
+        if (seen.length === 1) throw new McpError(ErrorCode.ConnectionClosed, "Upstream MCP server error")
+        return { content: [{ type: "text", text: "{\"id\":\"msg_1\"}" }] }
+      },
+    }
+    const connection = { client, transport: {} as any, serverName: "composio", config: {} as any } as any
+    const args = { to: "owner@example.com", subject: "hi" }
+
+    const result = await invokeWithMcpReconnect("composio", async () => {}, () => callTool(connection, "gmail_send_email", args), { readOnly: false })
+
+    expect(result).toEqual({ id: "msg_1" })
+    expect(seen).toHaveLength(2)
+    expect(seen[1]).toEqual(seen[0])
   })
 })
 

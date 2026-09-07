@@ -35,7 +35,7 @@ const RULES: { cause: FailureCause; test: RegExp }[] = [
   { cause: "rate-limit", test: /\b429\b|rate.?limit|too many requests|quota/i },
   {
     cause: "provider",
-    test: /\b50[0-9]\b|bad gateway|service unavailable|gateway time.?out|ECONNRESET|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|fetch failed|socket hang up|SSE error|unreachable after/i,
+    test: /\b50[0-9]\b|bad gateway|service unavailable|gateway time.?out|ECONNRESET|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|fetch failed|socket hang up|SSE error|unreachable after|upstream mcp server error|MCP error -32000\b/i,
   },
   { cause: "timeout", test: /timed out|timeout/i },
 ]

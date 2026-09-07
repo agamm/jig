@@ -52,47 +52,9 @@ export function getSchedulerHealth(): SchedulerHealth {
 // that case needs an external check on /api/health.
 // ---------------------------------------------------------------------------
 
-const LOCKED_ALERT_AFTER_MS = (() => {
-  const raw = Number(process.env.JIG_LOCKED_ALERT_MINUTES)
-  return (Number.isFinite(raw) && raw > 0 ? raw : 60) * 60_000
-})()
-
-let lockedSinceMs: number | null = null
-let lockedAlertSent = false
-
-async function maybeAlertStillLocked(): Promise<void> {
-  if (lockedSinceMs === null) lockedSinceMs = Date.now()
-  if (lockedAlertSent) return
-  if (Date.now() - lockedSinceMs < LOCKED_ALERT_AFTER_MS) return
-  lockedAlertSent = true
-
-  const minutes = Math.round((Date.now() - lockedSinceMs) / 60_000)
-  try {
-    const { listEnabledCronSchedules } = await import("../db.js")
-    const paused = listEnabledCronSchedules().map((s) => s.jig_id)
-    const { notifySystem } = await import("../services/system-notify.js")
-    const sent = await notifySystem({
-      source: "scheduler.locked",
-      title: "jig is locked — scheduled jigs are paused",
-      body:
-        `jig has been locked for ${minutes} minutes, since it last restarted.\n\n` +
-        `Credentials stay encrypted until you unlock, so the scheduler is paused and ` +
-        `nothing has run in that time.\n\n` +
-        (paused.length
-          ? `Paused schedules (${paused.length}): ${paused.join(", ")}\n\n`
-          : "") +
-        `Unlock it:\n  jig unlock\n\nOr open the dashboard and enter your password.`,
-    })
-    if (!sent) {
-      console.warn(
-        "[scheduler] locked for " + minutes + "m and the lock alert could not be sent " +
-        "(no cached AgentMail key — it is written on unlock)",
-      )
-    }
-  } catch (e: any) {
-    console.error("[scheduler] locked-alert failed:", e?.message ?? e)
-  }
-}
+// Once per locked period. No email can go out while locked (the AgentMail key
+// is encrypted too), so the log is the signal; JIG_DATA_KEY keeps it rare.
+let warnedLocked = false
 
 // ---------------------------------------------------------------------------
 // Daily maintenance — retention pruning, runtime-cache sweep
@@ -144,11 +106,13 @@ export async function startScheduler(): Promise<{ stop: () => void }> {
     // Credentials are encrypted and inaccessible until then, so a tick that
     // fires a jig would only crash on first credential access.
     if (isServiceMode() && isPasswordSet() && !isUnlocked()) {
-      await maybeAlertStillLocked()
+      if (!warnedLocked) {
+        warnedLocked = true
+        console.warn("[scheduler] locked: scheduled jigs are paused until the instance is unlocked (jig unlock <handle>)")
+      }
       return
     }
-    lockedSinceMs = null
-    lockedAlertSent = false
+    warnedLocked = false
     tickInFlight = true
     try {
       await syncSchedules()

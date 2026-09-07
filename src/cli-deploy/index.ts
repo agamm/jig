@@ -48,6 +48,7 @@ import {
 } from "./railway-cli.js"
 import { detectRuntimeTimeZone, writeDeployDefaults } from "../config/timezone.js"
 import { mintSetupCode } from "../auth/setup-code.js"
+import { DATA_KEY_ENV, mintDataKey } from "../crypto/password.js"
 import { resolveDeployImage } from "./image.js"
 import { PROJECT_ROOT } from "../config/paths.js"
 
@@ -428,11 +429,13 @@ export async function runDeploy(targetArg?: string, options: DeployOptions = {})
 
   // Step 4a: the service, from the published image. The setup code and the
   // timezone ride along as variables so they are there before the first boot.
+  // So does the instance key that lets the service unlock itself after a
+  // restart; it exists only on the service, never in the manifest or output.
   const setupCode = mintSetupCode()
   const timezone = detectRuntimeTimeZone()
   const { image, pinned } = await resolveDeployImage(PACKAGE_VERSION)
   console.log(`  Image: ${image}${pinned ? "" : " (this checkout's release is not published yet, using latest)"}`)
-  const variables = { JIG_SETUP_CODE: setupCode, JIG_TIMEZONE: timezone }
+  const variables = { JIG_SETUP_CODE: setupCode, JIG_TIMEZONE: timezone, [DATA_KEY_ENV]: mintDataKey() }
   if (await getStatus()) {
     // An older CLI created a service during init; point it at the image instead of adding a second one.
     const existing = (await getStatus())!

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test"
+import { readFileSync } from "node:fs"
 import { compareSemver, decideUpdate, parseSemverTag, releaseTagCandidates } from "../src/cli-remote/update.js"
 
 describe("releaseTagCandidates", () => {
@@ -45,5 +46,24 @@ describe("decideUpdate", () => {
     expect(compareSemver(parseSemverTag("v0.1.10")!, parseSemverTag("v0.1.9")!)).toBeGreaterThan(0)
     expect(decideUpdate("0.1.9", "v0.1.10").action).toBe("update")
     expect(decideUpdate("0.1.10", "v0.1.9").action).toBe("ahead")
+  })
+})
+
+describe("jig update adds the instance key", () => {
+  const source = readFileSync("src/cli-remote/update.ts", "utf-8")
+
+  it("sets JIG_DATA_KEY before any deploy, so the update's own restart is the last one that locks", () => {
+    const run = source.slice(source.indexOf("export async function runUpdate("))
+    const ensure = run.indexOf("await ensureDataKeyVariable(remote)")
+    expect(ensure).toBeGreaterThan(-1)
+    expect(ensure).toBeLessThan(run.indexOf("updateImageInstance(remote, latest.tag"))
+    expect(ensure).toBeLessThan(run.indexOf("await railwayDeploy()"))
+  })
+
+  it("skips the variable when the service already has it, and does not fail the update when Railway refuses", () => {
+    const fn = source.slice(source.indexOf("async function ensureDataKeyVariable("), source.indexOf("async function updateImageInstance("))
+    expect(fn).toMatch(/if \(names\.includes\(DATA_KEY_ENV\)\) return/)
+    expect(fn).toMatch(/upsertServiceVariable\(\{ \.\.\.ids, name: DATA_KEY_ENV, value: mintDataKey\(\) \}\)/)
+    expect(fn).not.toMatch(/process\.exit|throw /)
   })
 })

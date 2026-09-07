@@ -52,7 +52,13 @@ Interpret the checks:
 - `reachable` failure: inspect Railway build/deploy logs and `/api/health`.
 - `password_set` warning: read the current setup code from the service logs and finish
   first-run password setup.
-- `unlocked` warning: open the dashboard and unlock it; the service scheduler pauses while encrypted credentials are unavailable.
+- `unlocked` warning: enter the password (dashboard or `jig unlock`); the scheduler pauses while
+  encrypted credentials are unavailable. A hosted instance normally unlocks itself at boot from
+  the `JIG_DATA_KEY` service variable, which wraps the data key without putting it on the volume
+  or in backups. If it is locked after every restart, the variable is missing: `jig update
+  <handle>` adds it to instances deployed before it existed (that update is the last restart
+  that needs a password), and a template-button instance gets it by adding a `JIG_DATA_KEY`
+  service variable of 64 hex characters in Railway.
 
 For remote debug access, avoid putting the password in shell history:
 

@@ -57,7 +57,9 @@ async function checkRemote(remote: RemoteManifest): Promise<Check[]> {
   checks.push({
     name: "unlocked",
     status: health.locked ? "warn" : "pass",
-    detail: health.locked ? "Visit the dashboard to enter your password — scheduler is paused." : undefined,
+    detail: health.locked
+      ? "Enter your password (dashboard or `jig unlock`); the scheduler is paused. If this recurs after restarts, the service is missing JIG_DATA_KEY: `jig update <handle>` adds it."
+      : undefined,
   })
   return checks
 }

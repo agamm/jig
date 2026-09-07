@@ -39,6 +39,7 @@ import {
   listJigs,
   setActiveVersion,
 } from "../services/jig-store.js"
+import { WRAPPED_KEY_SETTING } from "../crypto/password.js"
 import type { BackupSnapshot } from "./archive.js"
 
 const SALT_KEY = "password.salt"
@@ -46,10 +47,11 @@ const CANARY_KEY = "password.canary"
 
 /**
  * Settings that describe this process rather than this instance's
- * configuration. The crypto pair travels with the credentials instead, and the
- * notify keys are debounce timestamps whose whole purpose is to be stale.
+ * configuration. The crypto pair travels with the credentials instead, the
+ * key wrap is bound to one service's JIG_DATA_KEY, and the notify keys are
+ * debounce timestamps whose whole purpose is to be stale.
  */
-const SETTINGS_NOT_BACKED_UP = [SALT_KEY, CANARY_KEY]
+const SETTINGS_NOT_BACKED_UP = [SALT_KEY, CANARY_KEY, WRAPPED_KEY_SETTING]
 const SETTINGS_PREFIXES_NOT_BACKED_UP = ["system_notify.sent."]
 
 function isBackedUpSetting(key: string): boolean {

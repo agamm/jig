@@ -10,7 +10,8 @@ import type { DataStorageHealth, HealthResponse } from "@shared/api";
  *
  * Three possible gates shown in sequence, each appearing only when needed:
  *   1. Set-password form — if no password has been set yet.
- *   2. Unlock form — if a password exists but the in-memory key is gone.
+ *   2. Password form — if the instance is locked (no key in memory) or this
+ *      browser has no session yet; the same password answers both.
  *   3. Onboarding - if unlocked but onboarding has not been marked complete.
  *      Hands straight over to the setup page, which owns every credential step.
  *
@@ -63,7 +64,7 @@ export function UnlockGate({ children }: { children: ReactNode }) {
   // CLI unlocking the process used to let a cookieless tab through the gate into
   // a dashboard where every request came back 401 Unauthorized.
   if (health.mode === "service" && (health.locked || !health.authenticated)) {
-    return <PasswordForm mode="unlock" onDone={refresh} />;
+    return <PasswordForm mode="unlock" locked={health.locked} onDone={refresh} />;
   }
   if (!health.onboarding_complete) return <SetupView />;
   return <>{children}</>;
@@ -88,10 +89,13 @@ function StorageProblem({ storage }: { storage: DataStorageHealth }) {
 
 function PasswordForm({
   mode,
+  locked = true,
   setupCodeRequired = false,
   onDone,
 }: {
   mode: "set" | "unlock";
+  /** Unlock mode only: the instance itself is locked, not just this browser signed out. */
+  locked?: boolean;
   setupCodeRequired?: boolean;
   onDone: () => void;
 }) {
@@ -124,11 +128,13 @@ function PasswordForm({
 
   return (
     <Frame>
-      <h1>{isSet ? "Welcome to jig" : "Jig is locked"}</h1>
+      <h1>{isSet ? "Welcome to jig" : locked ? "Jig is locked" : "Sign in"}</h1>
       <p>
         {isSet
-          ? "Set a password to encrypt your credentials. It's never stored on disk — you'll re-enter it after any service restart."
-          : "Enter your password to unlock the dashboard and resume scheduled jigs."}
+          ? "Set a password to encrypt your credentials. It is the way in to this dashboard and the CLI, and it is never stored on disk."
+          : locked
+            ? "Enter your password to unlock the dashboard and resume scheduled jigs."
+            : "Enter your password to open the dashboard."}
       </p>
       {isSet && setupCodeRequired && (
         <p className="mt-2 text-[13px] text-[#aaa]">

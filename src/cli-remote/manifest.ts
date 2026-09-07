@@ -26,7 +26,8 @@ export interface RemoteManifest {
   /**
    * The first-boot setup code this machine chose for the instance. Lets the
    * deploying CLI pair itself once the owner has set a password, so no code
-   * or password ever travels through a chat.
+   * or password ever travels through a chat. The instance key (JIG_DATA_KEY)
+   * is deliberately NOT here: manifests sync between paired machines.
    */
   setup_code?: string
   /** Railway project / service / environment IDs (target-specific). */

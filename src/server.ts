@@ -76,7 +76,7 @@ import {
 import { isCancellationError, USER_CANCELLED_MESSAGE } from "./run-cancel.js"
 import { isServiceMode, publicUrl, publicUrlFromRequest } from "./config/runtime.js"
 import { getSystemSettings, saveSystemSettings, seedSystemSettingsDefaults } from "./config/timezone.js"
-import { isPasswordSet } from "./crypto/password.js"
+import { isPasswordSet, tryAutoUnlock } from "./crypto/password.js"
 import { checkAccess, requireAdminAccess } from "./auth/lock-middleware.js"
 import { announceSetupCode } from "./auth/setup-code.js"
 import { clearLogs, getLogs } from "./server/log-buffer.js"
@@ -109,12 +109,33 @@ export async function regenerateConnectionArtifacts(): Promise<void> {
   }
 }
 
+/** Service mode: restore the data key from JIG_DATA_KEY so a restart does not lock the instance. */
+function autoUnlockAtBoot(): void {
+  switch (tryAutoUnlock()) {
+    case "unlocked":
+      console.log("[auth] unlocked with JIG_DATA_KEY")
+      break
+    case "no-env-key":
+      console.warn("[auth] JIG_DATA_KEY is not set: this instance locks on every restart until someone enters the password. `jig update <handle>` adds the variable.")
+      break
+    case "no-wrapped-key":
+      console.log("[auth] JIG_DATA_KEY is set; after one unlock with the password, restarts will no longer lock this instance")
+      break
+    case "bad-key":
+      console.error("[auth] JIG_DATA_KEY does not match the stored key wrap; unlock with the password once to re-wrap it")
+      break
+  }
+}
+
 export function createApiServer(port: number) {
   openDb()
   seedSystemSettingsDefaults()
-  // Unclaimed internet-exposed instance: print the one-time setup code the
-  // owner needs to claim it (closes the first-boot takeover race).
-  if (isServiceMode() && !isPasswordSet()) announceSetupCode()
+  if (isServiceMode()) {
+    // Unclaimed internet-exposed instance: print the one-time setup code the
+    // owner needs to claim it (closes the first-boot takeover race).
+    if (!isPasswordSet()) announceSetupCode()
+    else autoUnlockAtBoot()
+  }
   // Clear step cache on startup — ensures stale derivations from old SDK versions don't persist
   const { clearAllStepCache } = require("./db.js")
   clearAllStepCache()

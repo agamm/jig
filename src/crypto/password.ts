@@ -1,14 +1,19 @@
 /**
  * System password + credential encryption.
  *
- * One password gates the whole instance. Derives a 256-bit key via PBKDF2;
- * the key lives only in process memory (never on disk, never in env).
+ * One password gates the whole instance. Derives a 256-bit data key via
+ * PBKDF2; the key lives in process memory and never on the volume.
  *
- * On boot, jig is "locked": the key is absent, scheduler paused, /api/* returns
- * 423 except /api/health + /api/unlock + /api/setup-password. After unlock, the
- * key is restored and normal operation resumes. A service restart re-locks.
+ * Without a key in memory jig is "locked": scheduler paused, /api/* returns
+ * 423 except /api/health + /api/unlock + /api/setup-password. Two ways out:
+ *   - the password (POST /api/unlock), which derives the key again;
+ *   - JIG_DATA_KEY, a random instance key `jig deploy` sets as a service
+ *     variable. The data key is stored wrapped under it (`key.wrapped`
+ *     setting, AES-256-GCM) and unwrapped at boot, so a deploy, update or
+ *     crash does not lock the instance. The env is not on the volume and not
+ *     in backups, so a stolen volume alone still reveals nothing.
  *
- * Credentials in the `credentials` table are encrypted with this key
+ * Credentials in the `credentials` table are encrypted with the data key
  * (AES-256-GCM with per-row random IV + auth tag). Legacy plaintext rows are
  * encrypted in place the first time a password is set.
  *
@@ -20,12 +25,16 @@ import { openDb } from "../db.js"
 
 const SALT_KEY = "password.salt"
 const CANARY_KEY = "password.canary"
+/** The data key, wrapped under JIG_DATA_KEY. Absent until the first unlock with the variable present. */
+export const WRAPPED_KEY_SETTING = "key.wrapped"
+export const DATA_KEY_ENV = "JIG_DATA_KEY"
 const CANARY_PLAINTEXT = "jig-canary-v1"
 const PBKDF2_ITERATIONS = 600_000
 const KEY_BYTES = 32
 const SALT_BYTES = 32
 const IV_BYTES = 12
 const TAG_BYTES = 16
+const DATA_KEY_HEX = /^[0-9a-f]{64}$/i
 
 export class LockedError extends Error {
   constructor(message = "jig is locked — unlock with password to access credentials") {
@@ -50,8 +59,53 @@ function setSetting(key: string, value: string): void {
   ).run(key, value)
 }
 
+function deleteSetting(key: string): void {
+  openDb().prepare(`DELETE FROM settings WHERE key = ?`).run(key)
+}
+
 function deriveKey(password: string, salt: Buffer): Buffer {
   return pbkdf2Sync(password, salt, PBKDF2_ITERATIONS, KEY_BYTES, "sha256")
+}
+
+/** A fresh instance key for JIG_DATA_KEY. */
+export function mintDataKey(): string {
+  return randomBytes(KEY_BYTES).toString("hex")
+}
+
+function parseDataKey(hex: string | undefined): Buffer | null {
+  const trimmed = hex?.trim() ?? ""
+  return DATA_KEY_HEX.test(trimmed) ? Buffer.from(trimmed, "hex") : null
+}
+
+/** Store the data key wrapped under JIG_DATA_KEY; a no-op when the variable is absent or malformed. */
+function wrapDataKey(key: Buffer): void {
+  const envKey = parseDataKey(process.env[DATA_KEY_ENV])
+  if (envKey) setSetting(WRAPPED_KEY_SETTING, encryptWith(envKey, key.toString("hex")))
+}
+
+export type AutoUnlockResult = "unlocked" | "no-env-key" | "no-wrapped-key" | "bad-key"
+
+/**
+ * Restore the data key from JIG_DATA_KEY and the stored wrap. Called at boot in
+ * service mode. Never throws: every outcome is a state the caller reports.
+ */
+export function tryAutoUnlock(): AutoUnlockResult {
+  if (dataKey) return "unlocked"
+  const envKey = parseDataKey(process.env[DATA_KEY_ENV])
+  if (!envKey) return "no-env-key"
+  const wrapped = getSetting(WRAPPED_KEY_SETTING)
+  const canary = getSetting(CANARY_KEY)
+  if (!wrapped || !canary) return "no-wrapped-key"
+  try {
+    const key = Buffer.from(decryptWith(envKey, wrapped), "hex")
+    // The wrap authenticates under GCM; the canary check also catches a wrap
+    // that belongs to another password generation (copied settings rows).
+    if (key.length !== KEY_BYTES || decryptWith(key, canary) !== CANARY_PLAINTEXT) return "bad-key"
+    dataKey = key
+    return "unlocked"
+  } catch {
+    return "bad-key"
+  }
 }
 
 /**
@@ -88,8 +142,14 @@ export function isUnlocked(): boolean {
   return dataKey !== null
 }
 
-/** Clear the in-memory key. Called on manual lock or process exit. */
+/** A deliberate lock: clear the key from memory and drop the wrap, so the next boot stays locked until the password is entered. */
 export function lock(): void {
+  dataKey = null
+  deleteSetting(WRAPPED_KEY_SETTING)
+}
+
+/** Test seam: what a process restart does to memory. The wrap stays. */
+export function forgetDataKey(): void {
   dataKey = null
 }
 
@@ -112,6 +172,7 @@ export function setPassword(password: string): void {
   const canary = encryptWith(key, CANARY_PLAINTEXT)
   setSetting(SALT_KEY, salt.toString("hex"))
   setSetting(CANARY_KEY, canary)
+  wrapDataKey(key)
   dataKey = key
 
   const db = openDb()
@@ -163,6 +224,7 @@ export function changePassword(newPassword: string): void {
     }
     setSetting(SALT_KEY, newSalt.toString("hex"))
     setSetting(CANARY_KEY, newCanary)
+    wrapDataKey(newKey)
     db.exec("COMMIT")
   } catch (e) {
     db.exec("ROLLBACK")
@@ -188,6 +250,7 @@ export function unlock(password: string): boolean {
   } catch {
     return false
   }
+  wrapDataKey(key)
   dataKey = key
   return true
 }

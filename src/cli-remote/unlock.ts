@@ -1,11 +1,12 @@
 /**
  * `jig unlock` — restore a deployed instance's crypto key from the terminal.
  *
- * Every restart re-locks the instance: the key is derived from the password
- * and held only in memory, so a deploy, crash or host migration leaves the
- * scheduler paused until someone unlocks. POST /api/unlock is what actually
- * restores it — the session cookie it returns is a side effect, and is no use
- * on a locked box because the lock gate runs before the cookie check.
+ * An instance with JIG_DATA_KEY unlocks itself at boot; one without it (or
+ * one deliberately locked) holds the key only in memory, so a deploy, crash
+ * or host migration leaves the scheduler paused until someone unlocks.
+ * POST /api/unlock is what restores it — the session cookie it returns is a
+ * side effect, and is no use on a locked box because the lock gate runs
+ * before the cookie check.
  *
  * Reads the password from a hidden prompt so it stays out of shell history and
  * the process list. `--password=` and JIG_PASSWORD still work for scripts.

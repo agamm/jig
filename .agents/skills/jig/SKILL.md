@@ -270,6 +270,11 @@ code or the password into chat. `jig setup <handle>` from the deploying machine 
 claim, pairs itself with the same code, and continues: OpenRouter authorizes with browser OAuth,
 AgentMail is required and verified with the owner, and Composio is optional.
 
+The service also gets a `JIG_DATA_KEY` variable. The instance keeps its data key wrapped under
+it and unlocks itself after every restart, so updates and redeploys never pause the jigs; the
+password is only for signing in. That variable lives on the Railway service alone: never read
+it out, print it, or copy it anywhere.
+
 ## Update
 
 ```sh
@@ -298,6 +303,8 @@ instances built from source are redeployed with `railway up` as before.
 
 It compares versions numerically and refuses to move an instance onto an older tag, since old
 code against a volume whose migrations already ran is data damage rather than a failed update.
+An instance deployed before `JIG_DATA_KEY` existed gets the variable during this update; the
+unlock at the end of it is the last one a restart will ever need.
 If `main` is ahead of the newest tag it correctly refuses; tag the release first
 (`git tag v0.2.0 && git push origin v0.2.0`).
 

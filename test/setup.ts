@@ -32,6 +32,7 @@ process.env.JIG_REMOTES_DIR = join(SCRATCH_DIR, "remotes")
 delete process.env.JIG_PUBLIC_URL
 delete process.env.RAILWAY_ENVIRONMENT_ID
 delete process.env.RAILWAY_PROJECT_ID
+delete process.env.JIG_DATA_KEY
 
 rmSync(SCRATCH_DIR, { recursive: true, force: true })
 mkdirSync(SCRATCH_DIR, { recursive: true })

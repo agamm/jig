@@ -29,6 +29,17 @@ describe("jig deploy provisioning", () => {
     expect(add).toBeLessThan(volume)
   })
 
+  it("gives the service an instance key that never reaches the manifest or the output", () => {
+    // Without JIG_DATA_KEY every restart locks the instance until someone
+    // types the password; with it the service unwraps its own data key.
+    const deploy = source.slice(source.indexOf("export async function runDeploy(targetArg"))
+    expect(deploy).toMatch(/const variables = \{[^}]*\[DATA_KEY_ENV\]: mintDataKey\(\)[^}]*\}/)
+    const manifest = deploy.slice(deploy.indexOf("const manifest: RemoteManifest = {"), deploy.indexOf("saveRemote(manifest)"))
+    expect(manifest).not.toMatch(/DATA_KEY|mintDataKey|variables/)
+    const output = deploy.slice(deploy.indexOf("saveRemote(manifest)"))
+    expect(output).not.toMatch(/DATA_KEY|variables/)
+  })
+
   it("does not claim init makes a service any more", () => {
     // The stale comment is what kept the bug invisible for so long.
     expect(source).not.toMatch(/Railway creates a service named\s*\n?\s*\/\/ after the project during init/)

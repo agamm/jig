@@ -48,6 +48,9 @@ Gmail, Calendar, GitHub, Apify, or Composio are optional.
 - One blank Railway volume mounted at `/data`
 - One Railway-provided public domain
 - No preconfigured variables, registry credentials, or maintainer data
+- Recommended: a `JIG_DATA_KEY` service variable (64 random hex characters). The instance
+  keeps its data key wrapped under it and unlocks itself after a restart; without it, every
+  redeploy pauses scheduled jigs until the owner enters the password.
 
 ## First Run
 
@@ -70,6 +73,7 @@ and run history across redeploys.
 ## Operate Jig
 
 - Health: `GET /api/health`
+- Locked after a restart: add the `JIG_DATA_KEY` variable above and unlock once; later restarts unlock themselves
 - Update a template install: redeploy from the latest image in Railway
 - Update from a linked checkout: `bun run jig update <handle>` (switches the release image); `bun run jig deploy --update` rebuilds from your checkout instead
 - Diagnose: `bun run jig doctor`

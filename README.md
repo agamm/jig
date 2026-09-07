@@ -73,7 +73,10 @@ export default jig("weekly-client-update", {
 **Railway:** the button above creates a fresh service with a blank `/data` volume and none of
 the maintainer's data, credentials, or configuration. After it deploys, copy the one-time setup
 code from the service logs, open the generated domain, and use the code to create the instance
-password. Keep that claim code private.
+password. Keep that claim code private. The password encrypts your credentials and is never
+stored on the volume. So that a restart does not pause your jigs until you type it again, give
+the service a `JIG_DATA_KEY` variable (64 hex characters): the instance keeps its key wrapped
+under it and unlocks itself at boot. `jig deploy` from a clone sets that variable for you.
 
 **From a clone:**
 

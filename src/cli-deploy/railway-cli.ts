@@ -343,6 +343,23 @@ export async function setServiceImage(input: { serviceId: string; environmentId:
   )
 }
 
+/** Names of the variables set on a service; the values are never needed by the CLI. */
+export async function getServiceVariableNames(input: { projectId: string; environmentId: string; serviceId: string }): Promise<string[]> {
+  const data = await railwayApi<{ variables: Record<string, string> | null }>(
+    "query($projectId: String!, $environmentId: String!, $serviceId: String) { variables(projectId: $projectId, environmentId: $environmentId, serviceId: $serviceId) }",
+    input,
+  )
+  return Object.keys(data.variables ?? {})
+}
+
+/** Set one variable on a service. Skips the deploy the change would trigger; the caller deploys next. */
+export async function upsertServiceVariable(input: { projectId: string; environmentId: string; serviceId: string; name: string; value: string }): Promise<void> {
+  await railwayApi(
+    "mutation($input: VariableUpsertInput!) { variableUpsert(input: $input) }",
+    { input: { ...input, skipDeploys: true } },
+  )
+}
+
 /** Set variables on an existing service without triggering a deploy per variable. */
 export async function setServiceVariables(serviceId: string, variables: Record<string, string>, cwd = process.cwd()): Promise<void> {
   const args = ["variables", "-s", serviceId, "--skip-deploys"]

@@ -1,9 +1,16 @@
 /**
  * `jig backup` and `jig backup restore`.
  *
+ * Follows the authoring target rule (cli-agent/target.ts): the instance you
+ * deployed unless you say `--local`, `--handle=<name>` to choose. A deployed
+ * instance is backed up over HTTP with the paired session (GET /api/backup,
+ * POST /api/backup/restore, the same routes the dashboard uses); this machine
+ * is backed up in-process, so no server has to be running for it.
+ *
  * Thin glue only: argument parsing, file I/O and printing. All of the decisions
- * live in src/backup, so the same logic can be driven from the dashboard later
- * without dragging console output along with it.
+ * live in src/backup, and the remote path runs those same functions inside the
+ * instance, so what the archive holds and what a restore touches cannot differ
+ * by where you ran the command.
  *
  * The restore verb sits under `backup` because the top-level `jig restore`
  * already means "roll a jig back to an earlier version", which is a different
@@ -11,8 +18,10 @@
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
+import type { BackupRestorePlan, BackupRestoreResponse } from "../../shared/api.js"
 import { buildArchive, parseArchive } from "../backup/archive.js"
-import { applyRestore, collectSnapshot, planRestore, type RestorePlan } from "../backup/index.js"
+import { applyRestore, collectSnapshot, planRestore } from "../backup/index.js"
+import { resolveAuthoringTarget, type AuthoringTarget } from "../cli-agent/target.js"
 
 function flag(args: string[], name: string): boolean {
   return args.includes(name)
@@ -34,10 +43,10 @@ function defaultFileName(now: Date): string {
   return `${base}-${time}.zip`
 }
 
-export async function runBackupArgs(args: string[]): Promise<void> {
-  if (args[0] === "restore") return runRestore(args.slice(1))
+export async function runBackupArgs(args: string[], localBase: string): Promise<void> {
+  if (args[0] === "restore") return runRestore(args.slice(1), localBase)
   if (flag(args, "--help") || flag(args, "-h")) return printUsage()
-  return runBackup(args)
+  return runBackup(args, localBase)
 }
 
 function printUsage(): void {
@@ -45,40 +54,72 @@ function printUsage(): void {
   console.log("  jig backup [--out <file.zip>] [--no-credentials]")
   console.log("  jig backup restore <file.zip> [--dry-run] [--force]")
   console.log("")
+  console.log("Acts on your deployed instance when you have one (--handle=<name> to choose),")
+  console.log("or on this machine with --local.")
+  console.log("")
   console.log("Backup contains your jigs, schedules, connections, tool permissions,")
   console.log("settings and jig memory. Credentials travel encrypted, exactly as stored,")
-  console.log("so restoring them needs the same password this instance uses.")
+  console.log("so restoring them needs the same password that instance uses.")
   console.log("")
   console.log("  --no-credentials   Leave secrets out, for an archive you can share")
   console.log("  --dry-run          Print what a restore would change, then stop")
   console.log("  --force            Restore credentials even if the password differs")
 }
 
-async function runBackup(args: string[]): Promise<void> {
+/** Fetch against the deployed instance with the paired session; failures name the fix. */
+async function remoteFetch(target: AuthoringTarget & { remote: true }, method: string, path: string, body?: Uint8Array): Promise<Response> {
+  const res = await fetch(`${target.base}${path}`, {
+    method,
+    headers: { ...target.headers, ...(body ? { "Content-Type": "application/zip" } : {}) },
+    body: body as unknown as BodyInit | undefined,
+    cache: "no-store",
+  })
+  if (res.status === 401) throw new Error(`Unauthorized. Re-run "jig unlock ${target.manifest.handle}".`)
+  if (res.status === 423) throw new Error(`${target.manifest.handle} is locked. Run "jig unlock ${target.manifest.handle}" first.`)
+  if (!res.ok) {
+    const text = await res.text().catch(() => "")
+    let detail = text
+    try { detail = JSON.parse(text)?.error ?? text } catch {}
+    throw new Error(`${method} ${path} → ${res.status}${detail ? `: ${detail}` : ""}`)
+  }
+  return res
+}
+
+async function runBackup(args: string[], localBase: string): Promise<void> {
   const includeCredentials = !flag(args, "--no-credentials")
   const out = resolve(value(args, "--out") ?? defaultFileName(new Date()))
+  const target = resolveAuthoringTarget(args, localBase)
+  console.log(`Backing up ${target.label}...`)
 
-  const { version } = await import("../../package.json")
-  const snapshot = collectSnapshot()
-  const archive = buildArchive(snapshot, {
-    jigVersion: String(version),
-    createdAt: new Date().toISOString(),
-    includeCredentials,
-  })
+  let archive: Uint8Array
+  if (target.remote) {
+    const res = await remoteFetch(target, "GET", `/api/backup?credentials=${includeCredentials ? "1" : "0"}`)
+    archive = new Uint8Array(await res.arrayBuffer())
+  } else {
+    const { version } = await import("../../package.json")
+    archive = buildArchive(collectSnapshot(), {
+      jigVersion: String(version),
+      createdAt: new Date().toISOString(),
+      includeCredentials,
+    })
+  }
 
+  // Parsing what we are about to keep is the integrity check: a truncated
+  // download would otherwise sit on disk until the day it is needed.
+  const { snapshot } = parseArchive(archive)
   writeFileSync(out, archive, { mode: 0o600 })
 
   const kb = (archive.length / 1024).toFixed(1)
   console.log(`Wrote ${out} (${kb} KB)`)
   console.log(`  ${snapshot.jigs.length} jig(s), ${Object.keys(snapshot.schemas).length} connection schema(s), ${snapshot.memory.length} memory entr(ies)`)
   if (includeCredentials) {
-    console.log(`  ${snapshot.credentials.length} credential(s), encrypted. Restoring them needs this instance's password.`)
+    console.log(`  ${snapshot.credentials.length} credential(s), encrypted. Restoring them needs that instance's password.`)
   } else {
     console.log(`  No credentials. You will reconnect each server after restoring.`)
   }
 }
 
-function describe(plan: RestorePlan): void {
+function describe(plan: BackupRestorePlan): void {
   const { added, overwritten } = plan.jigs
   if (added.length) console.log(`  add ${added.length} jig(s): ${added.join(", ")}`)
   if (overwritten.length) console.log(`  overwrite ${overwritten.length} jig(s): ${overwritten.join(", ")}`)
@@ -87,7 +128,7 @@ function describe(plan: RestorePlan): void {
   for (const warning of plan.warnings) console.log(`\n  ! ${warning}`)
 }
 
-async function runRestore(args: string[]): Promise<void> {
+async function runRestore(args: string[], localBase: string): Promise<void> {
   const file = args.find((a) => !a.startsWith("--"))
   if (!file) {
     console.error("Usage: jig backup restore <file.zip> [--dry-run] [--force]")
@@ -99,29 +140,42 @@ async function runRestore(args: string[]): Promise<void> {
     process.exit(1)
   }
 
+  const bytes = new Uint8Array(readFileSync(path))
   let parsed: ReturnType<typeof parseArchive>
   try {
-    parsed = parseArchive(new Uint8Array(readFileSync(path)))
+    parsed = parseArchive(bytes)
   } catch (error) {
     console.error(`Could not read ${path}: ${(error as Error).message}`)
     process.exit(1)
   }
 
-  const { manifest, snapshot } = parsed
-  console.log(`Backup from ${manifest.createdAt}, written by jig ${manifest.jigVersion}.`)
+  const dryRun = flag(args, "--dry-run")
+  const force = flag(args, "--force")
+  const target = resolveAuthoringTarget(args, localBase)
+  console.log(`Backup from ${parsed.manifest.createdAt}, written by jig ${parsed.manifest.jigVersion}.`)
+  console.log(`Restoring to ${target.label}...`)
 
-  if (flag(args, "--dry-run")) {
+  let plan: BackupRestorePlan
+  if (target.remote) {
+    const res = await remoteFetch(target, "POST", `/api/backup/restore?dryRun=${dryRun ? "1" : "0"}&force=${force ? "1" : "0"}`, bytes)
+    plan = ((await res.json()) as BackupRestoreResponse).plan
+  } else {
+    plan = dryRun ? planRestore(parsed.snapshot) : applyRestore(parsed.snapshot, { force })
+  }
+
+  if (dryRun) {
     console.log("\nThis would:")
-    describe(planRestore(snapshot))
+    describe(plan)
     console.log("\nNothing was changed. Re-run without --dry-run to apply.")
     return
   }
 
-  const result = applyRestore(snapshot, { force: flag(args, "--force") })
   console.log("\nRestored:")
-  describe(result)
-  if (result.credentialsSkipped) {
+  describe(plan)
+  if (plan.credentialsSkipped) {
     console.log("\n  Credentials were NOT restored. Reconnect each server, or re-run with --force.")
   }
-  console.log("\nStart jig (or restart it) so the scheduler picks the jigs up.")
+  // The instance re-syncs its schedules itself; a local restore ran with no
+  // server up, so the next start is what picks the jigs up.
+  if (!target.remote) console.log("\nStart jig (or restart it) so the scheduler picks the jigs up.")
 }

@@ -122,11 +122,14 @@ pick one to restore (choosing a file previews it; nothing changes until you
 confirm). From the CLI:
 
 ```sh
-bun run jig backup                              # writes jig-backup-<date>.zip
+bun run jig backup                              # writes jig-backup-<date>.zip from your deployed instance
 bun run jig backup --no-credentials             # shareable copy, secrets omitted
 bun run jig backup restore <file.zip> --dry-run # print the plan, change nothing
 bun run jig backup restore <file.zip>
 ```
+
+Like `edit` and `run`, these act on the deployed instance when there is one (`--handle=<name>`
+to choose) and on this machine with `--local`, which needs no running server.
 
 The archive carries jigs and their active code, schedules, connections (custom
 servers, tool permissions, MCP schemas), settings and jig memory. Credentials

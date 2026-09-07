@@ -197,10 +197,12 @@ bun run jig visualize <name> -v  # the jig's flow in ASCII: each step, AI or cod
 bun run jig debug connections    # what a deployed instance has connected
 bun run jig debug failures       # every failed run of the last week, with its cause and the fix
 bun run jig debug audit          # what is failing, since when, and the next command to heal it
+bun run jig backup               # a .zip of the instance's jigs, connections and settings
+bun run jig backup restore <f> --dry-run   # what restoring it would change
 ```
 
-`edit`, `run`, `pending` and `types` act on your deployed instance when you have one, and print which
-instance they chose before starting. Add `--local` to act on this machine, or
+`edit`, `run`, `pending`, `types` and `backup` act on your deployed instance when you have one, and
+print which instance they chose before starting. Add `--local` to act on this machine, or
 `--handle=<name>` to choose between deployed instances.
 
 When a jig fails you get an email with the failing step, the error, the likely cause (an expired

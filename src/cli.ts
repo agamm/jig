@@ -282,7 +282,7 @@ try {
 
     case "backup": {
       const { runBackupArgs } = await import("./cli-backup/index.js")
-      await runBackupArgs(rest)
+      await runBackupArgs(rest, API_BASE)
       process.exit(0)
       break
     }
@@ -387,8 +387,8 @@ try {
       console.log(`  jig versions <name>    List versions for a jig (local)`)
       console.log(`  jig restore <name> <v> Restore version <v> as a pending change (local)`)
       console.log(`  jig pending <name>     Show pending diff; append 'approve' or 'discard'`)
-      console.log(`  jig backup             Write a .zip of jigs, connections and settings`)
-      console.log(`  jig backup restore <f> Restore from a backup .zip (--dry-run to preview)`)
+      console.log(`  jig backup             Write a .zip of the instance's jigs, connections and settings`)
+      console.log(`  jig backup restore <f> Restore a backup .zip into the instance (--dry-run to preview)`)
       console.log(`  jig deploy             Provision a Railway instance from the published image (--yes, --workspace=<name>)`)
       console.log(`  jig deploy --update    Redeploy current code to the linked Railway project`)
       console.log(`  jig update             Pull the latest code and agent skills from GitHub`)
@@ -398,7 +398,7 @@ try {
       console.log(`  jig pair <code>        Cache a CLI session from a dashboard pairing code`)
       console.log(`  jig unlock [handle]    Sign in to a deployed instance with its password (hidden prompt)`)
       console.log(`  jig debug <sub>        Diagnostics: logs, connections, tool probes (see "jig debug")`)
-      console.log(`\nTarget flags for run/edit/pending/types/visualize: --handle=<name> | --local`)
+      console.log(`\nTarget flags for run/edit/pending/types/visualize/backup: --handle=<name> | --local`)
       break
   }
 } catch (e: any) {

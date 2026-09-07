@@ -208,7 +208,8 @@ Export → edit → upload → `jig run <jig-id>` → `jig debug tail` is the lo
 the change pending on purpose, the same human gate reply-to-email edits use. There is no
 in-server writer: you are the author.
 
-**All of these act on the instance you deployed**, not on this machine. They resolve the
+**All of these act on the instance you deployed**, not on this machine (so does `jig backup`,
+which downloads the instance's archive over the paired session). They resolve the
 active remote from `~/.config/jig/remotes/`, use the paired session, and print which instance
 they chose before starting. Add `--local` when you mean this machine, or `--handle=<name>` to
 pick between several instances.

@@ -113,3 +113,10 @@ Handoff: HANDOFF.md (design agreed 2026-09-06). Three commits, one version bump 
 - Verified: 853 tests, root and dashboard typechecks, whitespace. Service-mode boot against a scratch data dir: claim, restart with the key -> locked:false with no unlock; without it -> locked:true; wrong key -> locked:true with the re-wrap hint. Local HTTP: GET /api/failures returns classified entries with the reconnect command naming the step's connection; bad since -> 400.
 - Not verified: a real Railway restart (needs a throwaway deploy under the Jig workspace, or `jig update jig-rp3l`), and the Railway GraphQL variables query/upsert against a live service (shapes confirmed by introspection only).
 - Left deliberately: the Railway template still sets no variables, so template-button instances keep locking on restart until the owner adds JIG_DATA_KEY (documented in README, operations.md and docs/railway-template.md). The classifier is string matching on run.error; extend RULES in src/services/failure-class.ts when a new class shows up.
+
+# jig backup on the deployed instance (2026-09-07)
+
+- [x] `jig backup` / `jig backup restore` follow the authoring target rule: deployed instance over the paired session (GET /api/backup, POST /api/backup/restore), `--local` in-process, `--handle=` to choose. Downloaded archives are parsed before being kept.
+- [x] test/backup-cli.test.ts (stubbed fetch: cookie, credentials flag, truncated download refused, 401/423 named, restore body and flags, --local never touches the network); real-route run against a scratch server.
+- [x] Docs: README, llms.txt, agent skill, CLI help. Version 0.1.143.
+

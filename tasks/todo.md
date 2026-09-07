@@ -67,3 +67,48 @@ Plan: ~/.claude/plans/wondrous-humming-donut.md. Archive branch: archive/in-serv
 - Verified live against a throwaway project in the user's Railway workspace (deleted afterwards): a full non-interactive deploy took about 36s end to end; claim with the setup code; `jig setup` paired itself and reached the OpenRouter step; `jig debug ls` worked on the paired session; image update from 0.1.136 to v0.1.137 completed and unlocked.
 - Not verified live: the rollback branch of the image update (needs a failing image); the CLI fallback for the volume at a terminal.
 - First live run exposed a race: the CLI's volume listing lags the API create by seconds; the check now retries and treats the API's volume id as proof.
+
+# Never-lock instance key + failure log replacing auto-repair (2026-09-07)
+
+Handoff: HANDOFF.md (design agreed 2026-09-06). Three commits, one version bump to 0.1.141.
+
+## A. Remove the auto-repair loop (mechanical)
+- [x] Delete src/services/run-repair.ts; move summarizeFailureStreak into run-failure-notify.ts
+- [x] run-failure-notify.ts: drop startAutoRepair dep, the fire-and-forget call, and the auto-repair email line
+- [x] audit.ts / audit-render.ts / shared/api.ts: drop likelyRepair and the "(auto-repair)" label
+- [x] agent-service.ts: drop origin "repair"; email-agent-bridge.ts + email-inbound.ts + classify-reply.ts: drop propose mode and the reply-to-approve routing
+- [x] db.ts: email_threads approval column stays (legacy rows), type/docs updated
+- [x] dashboard log-view.ts / logs-settings.tsx / cli-debug whitelist: drop the repair kind; fix comments
+- [x] Delete test/run-repair.test.ts; update test/audit.test.ts (likelyRepair assertions encode the removed feature)
+- [x] bun test + tsc (root + dashboard) green; grep sweep
+
+## B. Instance key (JIG_DATA_KEY)
+- [x] test/data-key.test.ts first (boot unlock, no wrap stays locked, unlock wraps, lock deletes wrap, changePassword re-wraps, bad key)
+- [x] password.ts: key.wrapped setting, wrap on setPassword/unlock/changePassword, tryAutoUnlock(envKeyHex), lock() deletes wrap
+- [x] server.ts createApiServer: service mode + password set -> tryAutoUnlock from env, log outcome
+- [x] backup: exclude key.wrapped from settings
+- [x] cli-deploy: mint JIG_DATA_KEY into the service variables (never printed, never in manifest)
+- [x] cli-remote/update.ts: set JIG_DATA_KEY via railway API when the service lacks it, before the image switch
+- [x] Remove .alert-key cache (agentmail.ts, auth.ts) and the 60-minute lock alert (scheduler); delete test/locked-alert.test.ts
+- [x] Docs: operations.md lock lines, README security note, agent skill, unlock.ts header, railway-template.md
+- [x] Local service-mode boot check with a scratch data dir: set password, restart, health locked:false
+
+## C. Failure log
+- [x] src/services/failure-class.ts pure classifier + table test
+- [x] db.ts listFailedRunsSince; services/failures.ts builds the log; GET /api/failures?since=&jig=
+- [x] jig debug failures [handle] [--since] [--jig] [--json] + text renderer
+- [x] audit: class + remedy on lastFailure; audit-render prints the remedy line
+- [x] failure emails quote the class and remedy (all three cadences)
+- [x] Docs: agent skill (ground rule + "when something is wrong"), operations.md ("Failure log" section), llms.txt, README, root SKILL.md rule 15
+
+## D. Ship
+- [x] Bump both package.json to 0.1.141, bun test, tsc, git diff --check, commit, push, tag
+- [x] Update memory feedback_agent_first_product.md (loop kept for email replies only)
+- [ ] Ask Agam: throwaway Railway deploy for the live restart check, and jig update jig-rp3l
+
+## Review
+
+- Three commits on main: auto-repair removal (migration v25 drops email_threads.approval), JIG_DATA_KEY auto-unlock, the failure log. Version 0.1.141.
+- Verified: 853 tests, root and dashboard typechecks, whitespace. Service-mode boot against a scratch data dir: claim, restart with the key -> locked:false with no unlock; without it -> locked:true; wrong key -> locked:true with the re-wrap hint. Local HTTP: GET /api/failures returns classified entries with the reconnect command naming the step's connection; bad since -> 400.
+- Not verified: a real Railway restart (needs a throwaway deploy under the Jig workspace, or `jig update jig-rp3l`), and the Railway GraphQL variables query/upsert against a live service (shapes confirmed by introspection only).
+- Left deliberately: the Railway template still sets no variables, so template-button instances keep locking on restart until the owner adds JIG_DATA_KEY (documented in README, operations.md and docs/railway-template.md). The classifier is string matching on run.error; extend RULES in src/services/failure-class.ts when a new class shows up.

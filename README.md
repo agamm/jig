@@ -184,11 +184,12 @@ bun run jig connect
 bun run jig connect composio
 bun run jig types                # the instance's connection types (.d.ts) into .jig/connections/
 bun run jig edit weekly-update --file=weekly-update.ts  # push code you wrote (creates the jig if new; typechecked, pending)
+bun run jig run weekly-update --dry-run                  # previews the pending version, tools stubbed
 bun run jig pending weekly-update approve
-bun run jig edit weekly-update --out=weekly-update.ts    # export the live code to change it
-bun run jig run weekly-update --dry-run
 bun run jig run weekly-update
+bun run jig edit weekly-update --out=weekly-update.ts    # export the live code to change it
 bun run jig pair <code>          # cache a CLI session for a deployed instance
+bun run jig visualize <name> -v  # the jig's flow in ASCII: each step, AI or code, prompts (-vv full)
 bun run jig debug connections    # what a deployed instance has connected
 bun run jig debug audit          # what is failing, since when, and the next command to heal it
 ```

@@ -80,7 +80,7 @@ function inlineMarkdownToHtml(value: string): string {
     .replace(/\*([^*]{1,120})\*/g, "<em>$1</em>")
 }
 
-function escapeHtml(value: string): string {
+export function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")

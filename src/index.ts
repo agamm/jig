@@ -5,3 +5,4 @@ export type { JigTool, JigDefinition, JigOptions, JigTrigger } from "./sdk/jig.j
 export { llm, agent } from "./sdk/llm.js"
 export { Context } from "./sdk/context.js"
 export type { RunRecorder } from "./sdk/context.js"
+export type { EmailBlock, EmailCard, EmailKvRow, EmailPriority } from "./sdk/email.js"

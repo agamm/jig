@@ -116,9 +116,28 @@ describe("run lifecycle", () => {
     expect(runId).toBeLessThan(0)
     expect(listRuns(JIG_ID).length).toBe(before)
   })
+
+  it("dry runs the pending version of a jig that has no active one, and says so", async () => {
+    writePending({ jigId: JIG_ID, code: jigSource("only pending"), author: "cli" })
+    await expect(startJigRun(JIG_ID, {})).rejects.toThrow("no active version")
+    const started = await startJigRun(JIG_ID, { dryRun: true })
+    expect(started.dryRun).toBe(true)
+    expect(started.runId).toBeLessThan(0)
+    expect(started.pendingVersionId).toBeGreaterThan(0)
+  })
 })
 
 describe("prepareRun", () => {
+  it("prefers the pending version only when asked, so the scheduler never runs unapproved code", async () => {
+    seedJig(JIG_ID, jigSource("live"))
+    writePending({ jigId: JIG_ID, code: jigSource("draft"), author: "agent" })
+    const scheduled = await prepareRun(JIG_ID)
+    expect(scheduled.ok && scheduled.pendingVersionId).toBeFalsy()
+    const preview = await prepareRun(JIG_ID, { preferPending: true })
+    expect(preview.ok && preview.pendingVersionId).toBeGreaterThan(0)
+    expect(preview.ok && scheduled.ok && preview.jigPath !== scheduled.jigPath).toBe(true)
+  })
+
   it("reports a missing jig distinctly from one with no approved version", async () => {
     expect(await prepareRun("no-such-jig")).toEqual({ ok: false, reason: "not-found" })
 

@@ -148,15 +148,31 @@ Coding agents are the main way jigs get written, so writing the file yourself an
 is the first-class CLI path. Writing the workflow code itself is a different skill: read
 `SKILL.md` in the repo root, completely, before you write or edit any jig.
 
+**Clarify before you write.** "I want a daily email" is not a spec. Before touching code, ask
+one question at a time (AskUserQuestion in Claude Code, otherwise in the conversation), each
+with a recommended answer, until you know: what it should do, when it should run, what the
+content should include, and where the data comes from (which connections). Summarize the plan
+in a few lines and wait for the go-ahead. Skip questions the request already answers.
+
+**Then build.** Once the answers are in and the probes are green, write, push and dry-run the jig
+in the same turn and report the result. Do not end a turn on a status summary that waits for a
+go-ahead you already have; the only questions left are the ones only the user can answer.
+
 ```sh
 bun run jig types                              # the instance's connection types, into .jig/connections/
 # write <jig-id>.ts per SKILL.md, importing from "@jig/connections/<server>.js"
 bun run jig edit <jig-id> --file=<jig-id>.ts   # create it: typechecked on the instance, lands PENDING
+bun run jig visualize <jig-id>.ts -v           # read the flow back before pushing: steps, AI or code, prompts
+bun run jig run <jig-id> --dry-run             # previews the PENDING version, tools stubbed, output printed
 bun run jig pending <jig-id>                   # read the diff (works against the remote too)
 bun run jig pending <jig-id> approve           # or: discard, or push with --approve
-bun run jig run <jig-id> --dry-run             # prove it without side effects
-bun run jig run <jig-id>                       # trigger it once for real
+bun run jig run <jig-id>                       # trigger the active version once for real
 ```
+
+`jig run` prints the run's output when it finishes, and a dry run of a jig that has only a
+pending version works; there is no need to call the API by hand with the session cookie.
+`jig debug eval` refuses tools whose annotation says they write; when the tool is plainly a read
+(list, get, search) rerun it with `--allow-write`, since that annotation is a classifier's guess.
 
 The push runs the instance's own check (tsc against its generated connections, the jig
 validator, step structure). Problems are printed,
@@ -300,5 +316,8 @@ Read `docs/operations.md` for health triage, repairing a failing jig, and the bu
 self-healing loop. Two fast signals:
 
 - `bun run jig doctor` for instance health.
+- `bun run jig visualize <jig-id> -vv` to read a jig back without running it: every step, which
+  ones a model decides, the prompts word for word, and the branches around them. Start here when
+  the user asks why a jig did or did not do something.
 - `"SSE error: Non-200 (405)"` means an outbound MCP connection failed to authorize
   (usually expired auth), not a dashboard problem.

@@ -6,7 +6,8 @@ import { abortRunForJig, getActiveRunStatusForJig, getRunStatus, hasActiveRunFor
 import { executeRun, prepareRun } from "./run-core.js"
 
 export async function startJigRun(id: string, body: any): Promise<StartRunResponse> {
-  const prepared = await prepareRun(id)
+  const dryRun = body?.dryRun === true
+  const prepared = await prepareRun(id, { preferPending: dryRun })
   if (!prepared.ok) {
     if (prepared.reason === "not-found") throw new ApiError(404, `Jig not found: ${id}`)
     if (prepared.reason === "no-active-version") throw new ApiError(404, "Jig has no active version")
@@ -18,12 +19,11 @@ export async function startJigRun(id: string, body: any): Promise<StartRunRespon
   }
   if (hasActiveRunForJig(id)) throw new ApiError(409, `A run is already in progress for ${id}`)
 
-  const { jigPath } = prepared
-  const dryRun = body?.dryRun === true
+  const { jigPath, pendingVersionId } = prepared
   const runId = dryRun ? -Date.now() : insertRun(id)
   startTrackedRun(runId, id, dryRun)
 
-  console.log(`[run] ${id} started (runId=${runId}${dryRun ? ", dryRun" : ""})`)
+  console.log(`[run] ${id} started (runId=${runId}${dryRun ? ", dryRun" : ""}${pendingVersionId ? `, pending v${pendingVersionId}` : ""})`)
 
   // Fire and forget: the dashboard follows progress over the run-status API.
   void executeRun({
@@ -34,7 +34,7 @@ export async function startJigRun(id: string, body: any): Promise<StartRunRespon
     logPrefix: "run",
   }).catch(() => {})
 
-  return { runId, jigId: id, dryRun }
+  return { runId, jigId: id, dryRun, ...(pendingVersionId && { pendingVersionId }) }
 }
 
 export function getActiveRunSnapshot(jigId?: string) {

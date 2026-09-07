@@ -501,7 +501,8 @@ When the jig sends content to a human — email bodies, Gmail, Telegram/Slack/Ch
 - Gmail does not render Markdown in email bodies. If the user expects formatted Gmail output, generate valid HTML, send it in `body`, and set `isHtml: true`.
 - Do not invent unsupported Gmail fields such as `contentType` or `htmlBody`; use the generated schema field `isHtml`.
 - Do not wrap Markdown lines in HTML tags and call that "HTML". If the source is Markdown, either ask `llm()` for an HTML fragment with no Markdown markers, or deterministically convert inline Markdown (`**bold**`, `*italic*`, `[label](url)`) before sending.
-- For branded Gmail output, use Gmail-safe inline styles or simple `<style>` rules with the Jig brand palette: dark canvas `#0a0a0b`, raised panel `#111113`, border `#1f1f23`, text `#ededed`, muted `#8b8b91`, emerald `#10b981`, blue `#60a5fa`, amber `#f59e0b`.
+- `ctx.email()` already carries the Jig design (dark canvas, centered panel, typography, footer). Give it `blocks` or a plain HTML fragment (`h2`/`h3`/`p`/`ul`/`strong`); never build page chrome yourself (`<html>`, `<body>`, backgrounds, full-width tables) and never invent decoration (colored side rails, gradients, dotted badges, emoji headers): the blocks are the design. Send a complete document only when you deliberately want to own the whole look; it goes out untouched.
+- For branded output through Gmail/Composio (other recipients), where the shell does not apply, use Gmail-safe inline styles with the Jig palette: dark canvas `#0a0a0b`, raised panel `#111113`, border `#1f1f23`, text `#ededed`, muted `#8b8b91`, emerald `#10b981`, blue `#60a5fa`, amber `#f59e0b`.
 - The send step output should prove what changed: include the destination plus a short preview of sections/items rendered, not only "Email sent".
 - **Link back to the source record.** When the jig reports items it derived from something the user can open (an email, a meeting, a calendar event, a ticket), include that item's title and a link to it. Most tools already return one: Composio Gmail messages carry `display_url`, Google Calendar events carry `htmlLink`. A report that names a finding but gives the reader no way to reach the thing it came from makes them search for it by hand. When the finding comes from an LLM pass over several records, tag each record in the prompt (`[#0]`, `[#1]`, …) and have the schema return the index, so the link survives the summarization.
 - For coaching, digests, and executive summaries, do not feed arbitrary newest Gmail messages into the LLM. Search with a bounded recent window, then filter out auth codes, noreply/notification senders, newsletters, prior jig alerts/failures, and other operational noise before summarizing.
@@ -544,16 +545,28 @@ and the jig is edited. No MCP email connection needed.
 
 ```typescript
 await ctx.step("Email the digest", [], async () => {
-  const html = await llm(
-    `Write today's reading digest as a valid HTML fragment (h2/h3, ul/li, p, strong). Return only HTML.`,
+  const dateLabel = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })
+  // Structured content: let the model fill the shape, then hand the shape to ctx.email.
+  const digest = await llm(
+    `Pick what deserves attention today. priority "high" only for items that block someone or are due within a day.`,
     { items },
-  ) as string
-  await ctx.email({ subject: `Daily digest — ${new Date().toLocaleDateString()}`, html })
-  ctx.output(`Emailed the digest (${items.length} items). Reply to it to tweak this jig.`)
+    { schema: { headline: "string", picks: [{ title: "string", detail: "string", tag: "string", href: "string", priority: "high | medium | low" }] } },
+  ) as { headline: string; picks: EmailCard[] }
+  await ctx.email({
+    subject: `Daily digest: ${dateLabel}`,
+    blocks: [
+      { type: "heading", eyebrow: dateLabel, title: digest.headline },
+      { type: "cards", title: "Focus", items: digest.picks },
+    ],
+  })
+  ctx.output(`Emailed the digest (${digest.picks.length} items). Reply to it to tweak this jig.`)
 })
 ```
 
-- Signature: `ctx.email({ subject: string; text?: string; html?: string }): Promise<{ threadId, messageId }>`. Pass `text`, `html`, or both.
+- Signature: `ctx.email({ subject: string; text?: string; html?: string; blocks?: EmailBlock[] }): Promise<{ threadId, messageId }>`. Pass `blocks`, `html`, `text`, or `text` plus one of the others (text is the plain-text alternative).
+- **The design is built in.** Every send goes out in the Jig email shell: dark canvas, centered panel with the jig's name, typography, footer. Do not write page chrome. `text` may be markdown (headings, bullets, `**bold**`) and is converted. An `html` fragment gets the shell's typography. A complete document (`<!doctype`/`<html>`) is sent untouched.
+- **Blocks** (`import type { EmailBlock, EmailCard } from "@jig/sdk"`): `heading` (`eyebrow`, `title`, `lede`), `text` (`markdown`), `cards` (`title`, `items`) and `kv` (`title`, `rows: [{ label, value, href? }]`). A card has `title`, `detail`, `tag` (a pill: project, person, source), `href` (title becomes the link) and `priority`.
+- **Importance at a glance.** `priority: "high"` puts a fire mark on the right of the card and an amber accent; `"medium"` a blue accent; unset means plain. Reserve high for what blocks someone or is due within a day, so the mark keeps its meaning.
 - Always sends to the configured user (the AgentMail owner) — there is no `to`
   field, because reply-to-edit only works for replies from that address.
 - Call it **inside a `ctx.step(...)`**, like any other send.

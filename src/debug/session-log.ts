@@ -1,4 +1,5 @@
 import { appendFile, mkdir } from "node:fs/promises"
+import { AsyncLocalStorage } from "node:async_hooks"
 import { dirname, basename, join } from "node:path"
 import { DATA_DIR } from "../config/paths.js"
 import { recordStructured, type LogLevel } from "../server/log-buffer.js"
@@ -8,6 +9,15 @@ export const SESSION_LOG_PATH = join(DATA_DIR, "jig.log")
 
 let queue: string[] = []
 let flushPending = false
+
+// Ambient run identity: everything logged while a jig runs (LLM calls, tool
+// calls, steps) inherits jigId/runId so the Logs page can group it by run.
+export type RunLogContext = { jigId: string; runId?: number; runType: "run" | "dry-run" }
+const runLogStore = new AsyncLocalStorage<RunLogContext>()
+
+export function withRunLogContext<T>(ctx: RunLogContext, fn: () => Promise<T>): Promise<T> {
+  return runLogStore.run(ctx, fn)
+}
 
 function sanitize(value: unknown): unknown {
   if (value instanceof Error) {
@@ -55,6 +65,9 @@ const HEADLINE_KEYS = [
   "jigPath",
   "jigId",
   "jigName",
+  "runId",
+  "seq",
+  "step",
   "sessionId",
   "model",
   "round",
@@ -157,7 +170,7 @@ export function logSessionEvent(entry: Record<string, unknown>): void {
   // raw object, so bearer tokens / api keys landed in jig.log (the persistent
   // /data volume in service mode) in cleartext even though the SQLite mirror
   // was redacted. Redact before the file write too so neither sink leaks.
-  const lean = leanEntry(entry)
+  const lean = leanEntry({ ...runLogStore.getStore(), ...entry })
   let redacted: Record<string, unknown>
   try {
     redacted = redact(lean) as Record<string, unknown>

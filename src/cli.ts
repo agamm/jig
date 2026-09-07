@@ -247,6 +247,11 @@ try {
       break
     }
 
+    case "visualize": {
+      const { runVisualize } = await import("./cli-visualize/index.js")
+      process.exit(await runVisualize(rest, API_BASE))
+    }
+
     case "types": {
       const { pullTypes } = await import("./cli-agent/push.js")
       process.exit(await pullTypes(rest, API_BASE))
@@ -377,6 +382,8 @@ try {
       console.log(`  jig edit <name>        --file=<f> uploads code you wrote (creates the jig if new; typechecked,`)
       console.log(`                         pending unless --approve); --out=<f> exports the live code`)
       console.log(`  jig types [--out=<d>]  Pull the instance's connection types (.d.ts) into .jig/connections/`)
+      console.log(`  jig visualize <name>   Draw the jig's flow in ASCII: each step, AI or code, what it touches`)
+      console.log(`                         (-v adds logic and prompt summaries, -vv full prompts; also takes a .ts file)`)
       console.log(`  jig versions <name>    List versions for a jig (local)`)
       console.log(`  jig restore <name> <v> Restore version <v> as a pending change (local)`)
       console.log(`  jig pending <name>     Show pending diff; append 'approve' or 'discard'`)
@@ -391,7 +398,7 @@ try {
       console.log(`  jig pair <code>        Cache a CLI session from a dashboard pairing code`)
       console.log(`  jig unlock [handle]    Sign in to a deployed instance with its password (hidden prompt)`)
       console.log(`  jig debug <sub>        Diagnostics: logs, connections, tool probes (see "jig debug")`)
-      console.log(`\nTarget flags for run/edit/pending/types: --handle=<name> | --local`)
+      console.log(`\nTarget flags for run/edit/pending/types/visualize: --handle=<name> | --local`)
       break
   }
 } catch (e: any) {

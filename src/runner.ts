@@ -9,12 +9,13 @@ import { SkipError } from "./sdk/context.js"
 import type { RunEvent } from "./run-events.js"
 import { insertStep, completeStep, completeRun } from "./db.js"
 import { dryRunContext } from "./sdk/dryrun.js"
-import { logSessionEvent } from "./debug/session-log.js"
+import { logSessionEvent, withRunLogContext } from "./debug/session-log.js"
 import { checkStepStructure } from "./services/jig-checker.js"
 import { hasConsoleLogCall } from "./domain/source-analysis.js"
 import { isCancellationMessage, USER_CANCELLED_MESSAGE } from "./run-cancel.js"
 import { materializeJigWithRuntimeImports } from "./domain/runtime-imports.js"
 import { rearmRunTimeout } from "./services/run-store.js"
+import { basename } from "node:path"
 
 // --- Runner ---
 export interface RunResult {
@@ -51,14 +52,18 @@ export async function runJig(
   // Wrap entire execution in dryRun context (AsyncLocalStorage)
   // Generated tool functions read isDryRun() which checks this context
   const signal = options?.signal
-  return dryRunContext.run(dryRun ?? false, () =>
-    _runJig(jigPath, params, onEvent, {
-      dryRun: dryRun ?? false,
-      silent: silent ?? false,
-      signal,
-      jigId: options?.jigId,
-      runId: options?.runId,
-    })
+  const jigId = options?.jigId ?? basename(jigPath).replace(/\.ts$/, "")
+  const runType = dryRun ? "dry-run" : "run"
+  return withRunLogContext({ jigId, runId: options?.runId, runType }, () =>
+    dryRunContext.run(dryRun ?? false, () =>
+      _runJig(jigPath, params, onEvent, {
+        dryRun: dryRun ?? false,
+        silent: silent ?? false,
+        signal,
+        jigId: options?.jigId,
+        runId: options?.runId,
+      })
+    )
   )
 }
 
@@ -97,9 +102,24 @@ async function _runJig(
   })
 
   // Recorder bridges Context's step lifecycle → RunEvent stream
+  // Step lines feed the Logs page; jigId/runId arrive via withRunLogContext.
+  const stepLabels = new Map<number, string>()
   const recorder: RunRecorder = {
-    onStepStart(seq, label) { onEvent({ type: "step-start", seq, label }) },
+    onStepStart(seq, label) {
+      stepLabels.set(seq, label)
+      logSessionEvent({ source: "run.step", event: "start", seq, step: label })
+      onEvent({ type: "step-start", seq, label })
+    },
     onStepDone(seq, output, status, ms, connections, err) {
+      logSessionEvent({
+        source: "run.step",
+        event: status === "fail" ? "failed" : "done",
+        seq,
+        step: stepLabels.get(seq),
+        durationMs: ms,
+        connections,
+        ...(err !== undefined && { error: err }),
+      })
       onEvent({ type: "step-done", seq, output, status, durationMs: ms, connections, error: err })
     },
     onOutput(text) { onEvent({ type: "output", text }) },

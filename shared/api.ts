@@ -397,6 +397,8 @@ export interface StartRunResponse {
   runId: number
   jigId: string
   dryRun: boolean
+  /** Set when a dry run previewed the pending version instead of the active one. */
+  pendingVersionId?: number
 }
 
 export interface RunDetailStep {

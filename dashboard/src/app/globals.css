@@ -74,16 +74,19 @@ a:focus-visible {
   border-radius: 0.75rem;
 }
 
-.ui-input {
-  width: 100%;
-  border: 1px solid var(--border);
-  background: var(--surface-input);
-  border-radius: 0.625rem;
-  color: var(--text-primary);
-  padding: 0.5rem 0.75rem;
-  font-size: 12px;
-  line-height: 1.5;
-  transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease;
+/* Layered so Tailwind utilities on the element (padding for a leading icon, etc.) win. */
+@layer components {
+  .ui-input {
+    width: 100%;
+    border: 1px solid var(--border);
+    background: var(--surface-input);
+    border-radius: 0.625rem;
+    color: var(--text-primary);
+    padding: 0.5rem 0.75rem;
+    font-size: 12px;
+    line-height: 1.5;
+    transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease;
+  }
 }
 
 .ui-input::placeholder,
@@ -135,16 +138,18 @@ a:focus-visible {
   box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.18);
 }
 
-.ui-textarea {
-  width: 100%;
-  border: 1px solid var(--border);
-  background: var(--surface-input);
-  border-radius: 0.625rem;
-  color: var(--text-primary);
-  padding: 0.625rem 0.75rem;
-  font-size: 12px;
-  line-height: 1.5;
-  transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease;
+@layer components {
+  .ui-textarea {
+    width: 100%;
+    border: 1px solid var(--border);
+    background: var(--surface-input);
+    border-radius: 0.625rem;
+    color: var(--text-primary);
+    padding: 0.625rem 0.75rem;
+    font-size: 12px;
+    line-height: 1.5;
+    transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease;
+  }
 }
 
 .ui-checkbox {

@@ -80,3 +80,10 @@ the platform-ID-without-domain state at the HTTP boundary and callback builder.
 **What happened:** A deploy created a volume through the Railway API, then verified it through the CLI's listing, which had not caught up yet, and aborted a healthy deploy as "no volume".
 
 **Rule:** When an API call returns an identifier, that is the proof. A secondary listing is confirmation only: retry it for a bounded time and never let its lag override a success the primary call already reported.
+
+## Build when unblocked (2026-09-05)
+A coding agent following the jig skill interviewed the user, probed every connection green, then
+ended its turn on a status summary. The user came back 15 hours later to ask why the jig was not
+built. Once the questions are answered and the probes pass, write, push and dry-run in the same
+turn; the only questions left are the ones only the user can answer. The skill now says so, and
+`jig run --dry-run` previews the pending version so the loop does not stall on the approval gate.

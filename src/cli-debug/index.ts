@@ -191,7 +191,8 @@ export async function runRemoteJig(args: string[], remote: RemoteManifest): Prom
     console.error(`Failed to start run: ${e.message}`)
     process.exit(1)
   }
-  console.log(`▶ ${jigId} started (runId=${started.runId}${dryRun ? ", dry-run" : ""}) on ${remote.handle}`)
+  const what = dryRun ? (started.pendingVersionId ? `dry-run of pending v${started.pendingVersionId}` : "dry-run") : `runId=${started.runId}`
+  console.log(`▶ ${jigId} started (${what}) on ${remote.handle}`)
   console.log("")
 
   const deadline = Date.now() + RUN_TIMEOUT_MS
@@ -211,6 +212,10 @@ export async function runRemoteJig(args: string[], remote: RemoteManifest): Prom
       // Drain any final rows that landed between the last poll and termination.
       const tail = await fetchLogs(remote, cookie, cursor).catch(() => null)
       if (tail) for (const entry of tail.entries) printEntry(entry)
+      if (status.output?.trim()) {
+        console.log("")
+        console.log(status.output.trim())
+      }
       console.log("")
       console.log(`■ run ${started.runId} ${status.status}${status.error ? ` — ${status.error}` : ""}`)
       process.exit(status.status === "success" ? 0 : 1)
@@ -483,7 +488,7 @@ function formatPayload(raw: string): string[] {
 function isInterestingForDebug(entry: ServerLogEntry): boolean {
   const msg = entry.msg.trim()
   if (entry.level === "error" || entry.level === "warn") return true
-  if (/^\[run\]\s/.test(msg)) return true
+  if (/^\[run(\.step)?\]\s/.test(msg)) return true
   if (/^\[runner\]\s/.test(msg)) return true
   if (/^\[sdk\.(llm|agent)\]\s/.test(msg)) return true
   if (/^\[mcp\.tool\]\s/.test(msg)) return true

@@ -100,7 +100,7 @@ export function parseSetupArgs(argv: string[]): SetupArgs {
 async function completeSetup(base: string, cookie?: string): Promise<void> {
   const res = await fetch(`${base}/api/onboarding/complete`, {
     method: "POST",
-    headers: { ...(cookie ? { Cookie: cookie } : {}) },
+    headers: { ...(cookie ? { Cookie: `jig-admin=${cookie}` } : {}) },
   })
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string }

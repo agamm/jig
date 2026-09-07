@@ -15,7 +15,8 @@
  *     single on/off switch for alerting.
  */
 import { recordEmailThread } from "../db.js"
-import { mintReplyToken, replyTokenFooter, subjectWithReplyToken } from "./reply-token.js"
+import { mintReplyToken, replyTokenFooter, replyTokenHtmlFooter, subjectWithReplyToken } from "./reply-token.js"
+import { escapeHtml, markdownishToHtml } from "../text.js"
 import {
   canSendAgentMail,
   getAgentMailSettings,
@@ -49,8 +50,16 @@ export async function notify(opts: {
       : opts.body
     const subject = token ? subjectWithReplyToken(opts.title, token) : opts.title
 
+    // Same shell as jig mail: the failure email is the whole no-agent path, so it
+    // should not be the one message that looks unfinished.
+    const { buildEmailParts } = await import("../sdk/email.js")
+    const { html } = buildEmailParts({
+      html: `<h1>${escapeHtml(opts.title)}</h1>${markdownishToHtml(token ? `${opts.body}\n\nReply to this email to fix the jig. Your reply goes straight to its authoring agent.` : opts.body)}`,
+      jigName: opts.jigId,
+      ...(token && { token: { html: replyTokenHtmlFooter(token), text: replyTokenFooter(token) } }),
+    })
     const send = opts.sendEmail ?? sendAgentMailEmail
-    const { threadId } = await send({ to: owner, subject, text })
+    const { threadId } = await send({ to: owner, subject, text, html })
     if (token) recordEmailThread(threadId, opts.jigId!, "auto", token)
     return true
   } catch (e) {

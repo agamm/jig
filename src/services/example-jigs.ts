@@ -41,6 +41,7 @@ function buildPrompt(example: Omit<ExampleJig, "prompt">, uses: string | undefin
   if (uses) parts.push(sentence(uses))
   parts.push(`Trigger: ${example.trigger}.`)
   if (example.connections.length > 0) parts.push(`Connections: ${example.connections.join(", ")}.`)
+  parts.push("Before writing code, ask me one question at a time (with a recommended answer) about anything this leaves open: schedule, content, sources. Confirm the plan, then follow SKILL.md.")
   return parts.join(" ")
 }
 

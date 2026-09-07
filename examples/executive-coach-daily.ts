@@ -29,16 +29,6 @@ function emailSignals(result: unknown): EmailSignal[] {
   }))
 }
 
-function escapeHtml(text: string): string {
-  return text.replace(/[&<>"']/g, (char) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#039;",
-  })[char] ?? char)
-}
-
 function normalizeMarkdown(text: string): string {
   return text
     .replace(/^#+\s*/gm, "")
@@ -65,49 +55,6 @@ function parseCoachingSections(note: string): CoachingSection[] {
       text: clean.slice(start, end).trim(),
     }
   }).filter((section) => section.text)
-}
-
-function coachingHtml(note: string, dateLabel: string): string {
-  const sections = parseCoachingSections(note)
-  const sectionHtml = sections.map((section) => `
-        <tr>
-          <td style="padding:16px 0;border-top:1px solid #2a2a2e;">
-            <div style="margin:0 0 7px;color:#17d4a7;font-size:11px;line-height:1.2;font-weight:800;letter-spacing:.14em;text-transform:uppercase;">${escapeHtml(section.label)}</div>
-            <div style="margin:0;color:#f2f2f2;font-size:18px;line-height:1.48;font-weight:600;">${escapeHtml(section.text)}</div>
-          </td>
-        </tr>`).join("")
-
-  return `<!doctype html>
-<html>
-  <body style="margin:0;padding:0;background:#f4f1ea;">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f4f1ea;margin:0;padding:0;">
-      <tr>
-        <td align="center" style="padding:28px 14px;">
-          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:560px;width:100%;background:#111113;border:1px solid #2a2a2e;border-radius:22px;overflow:hidden;">
-            <tr>
-              <td style="padding:28px 30px 10px 30px;">
-                <div style="color:#17d4a7;font-size:12px;line-height:1.2;font-weight:800;letter-spacing:.18em;text-transform:uppercase;">Executive Coach</div>
-                <div style="margin-top:10px;color:#f7f7f8;font-size:34px;line-height:1.05;font-weight:800;letter-spacing:-.04em;">${escapeHtml(dateLabel)}</div>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding:2px 30px 8px 30px;">
-                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-${sectionHtml}
-                </table>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding:14px 30px 24px 30px;color:#a3a3a8;font-size:12px;line-height:1.4;border-top:1px solid #2a2a2e;">
-                Built to be read in under one minute.
-              </td>
-            </tr>
-          </table>
-        </td>
-      </tr>
-    </table>
-  </body>
-</html>`
 }
 
 export default jig(
@@ -183,7 +130,10 @@ ${inboxSignal.map((email) => `- ${email.subject} from ${email.sender}: ${email.s
       // hardcode and forget. Replying to it edits this jig.
       await ctx.email({
         subject: `Executive coach: ${dateLabel}`,
-        html: coachingHtml(note, dateLabel),
+        blocks: [
+          { type: "heading", eyebrow: "Executive coach", title: dateLabel },
+          { type: "kv", rows: parseCoachingSections(note).map((s) => ({ label: s.label, value: s.text })) },
+        ],
         text: note,
       })
       ctx.output(note)

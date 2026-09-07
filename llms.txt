@@ -32,8 +32,8 @@ bun run jig connect                          # connect services first
 bun run jig types                            # the instance's connection types, into .jig/connections/
 # write <jig-id>.ts following SKILL.md; import from "@jig/connections/<server>.js"
 bun run jig edit <jig-id> --file=<jig-id>.ts # create it (pending, typechecked)
+bun run jig run <jig-id> --dry-run           # previews the pending version, tools stubbed, output printed
 bun run jig pending <jig-id> approve         # or push with --approve
-bun run jig run <jig-id> --dry-run
 bun run jig run <jig-id>
 ```
 
@@ -80,12 +80,14 @@ read -s JIG_PASSWORD && export JIG_PASSWORD
 bun run jig unlock [handle]
 unset JIG_PASSWORD
 bun run jig run <jig-id> --dry-run
+bun run jig visualize <jig-id> -v  # the flow: each step, AI or code, connections, prompt summaries (-vv full, --json)
 bun run jig debug tail [handle]
 bun run jig debug audit [handle]  # what is failing, since when, and the next command (--json for the raw report)
 ```
 
 The heal loop: `jig debug audit` names the failing step and error, `jig edit <jig-id> --out=<jig-id>.ts`
-pulls the code, fix it, `jig edit <jig-id> --file=<jig-id>.ts` pushes it as pending, `jig run <jig-id> --dry-run` proves it.
+pulls the code, fix it, `jig edit <jig-id> --file=<jig-id>.ts` pushes it as pending, `jig run <jig-id> --dry-run` proves the
+pending version, `jig pending <jig-id> approve` makes it live.
 
 To see what a deployed instance has:
 

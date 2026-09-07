@@ -14,11 +14,11 @@ import { runJig, persist } from "../runner.js"
 import { applyRunEvent, discardTrackedRun, finishTrackedRun, getSignalForRun } from "./run-store.js"
 import { maybeNotifyRunFailure } from "./run-failure-notify.js"
 import { missingConnectionsForJig } from "./connection-preflight.js"
-import { materializeActiveVersion } from "./jig-runtime.js"
+import { materializeActiveVersion, materializePendingVersion } from "./jig-runtime.js"
 import { getJigRow, type JigRow } from "./jig-store.js"
 
 export type PreparedRun =
-  | { ok: true; jigPath: string; jigRow: JigRow }
+  | { ok: true; jigPath: string; jigRow: JigRow; pendingVersionId?: number }
   | { ok: false; reason: "not-found" }
   | { ok: false; reason: "no-active-version" }
   | { ok: false; reason: "missing-connections"; missing: string[]; message: string }
@@ -34,11 +34,13 @@ export function missingConnectionsMessage(missing: string[]): string {
  * Returns a discriminated result rather than throwing, so each caller can map
  * the failure onto its own reporting channel.
  */
-export async function prepareRun(jigId: string): Promise<PreparedRun> {
+export async function prepareRun(jigId: string, opts: { preferPending?: boolean } = {}): Promise<PreparedRun> {
   const jigRow = getJigRow(jigId)
   if (!jigRow) return { ok: false, reason: "not-found" }
 
-  const materialized = await materializeActiveVersion(jigId)
+  // A dry run previews what is about to go live, so it takes the pending version when there is one.
+  const pending = opts.preferPending ? await materializePendingVersion(jigId) : null
+  const materialized = pending ?? (await materializeActiveVersion(jigId))
   if (!materialized) return { ok: false, reason: "no-active-version" }
 
   const missing = missingConnectionsForJig(materialized.path)
@@ -46,7 +48,7 @@ export async function prepareRun(jigId: string): Promise<PreparedRun> {
     return { ok: false, reason: "missing-connections", missing, message: missingConnectionsMessage(missing) }
   }
 
-  return { ok: true, jigPath: materialized.path, jigRow }
+  return { ok: true, jigPath: materialized.path, jigRow, ...(pending && { pendingVersionId: pending.versionId }) }
 }
 
 export interface ExecuteRunOptions {
@@ -79,11 +81,9 @@ export async function executeRun(options: ExecuteRunOptions): Promise<{ skipped:
         applyRunEvent(runId, event)
         persistHandler?.(event)
       }
-      // Mirror step failures + fatal errors to console.error so the Logs page
-      // surfaces *why* a run failed (silent:true otherwise hides it).
-      if (event.type === "step-done" && event.status === "fail") {
-        console.error(`[${logPrefix}] ${jigId} step ${event.seq} failed: ${event.error ?? "(no error message)"}`)
-      } else if (event.type === "error") {
+      // Mirror fatal errors to console.error so the Logs page surfaces *why* a
+      // run failed (silent:true otherwise hides it). Step failures log as [run.step].
+      if (event.type === "error") {
         console.error(`[${logPrefix}] ${jigId} error: ${event.message}`)
       } else if (event.type === "done") {
         console.log(`[${logPrefix}] ${jigId} done in ${event.durationMs}ms`)

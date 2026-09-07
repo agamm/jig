@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks"
+import type { EmailBlock } from "./email.js"
 import type { JigTool } from "./jig.js"
 import { isCancellationError, USER_CANCELLED_MESSAGE } from "../run-cancel.js"
 import { createJigMemory, type JigMemory } from "./memory.js"
@@ -289,7 +290,7 @@ export class Context {
    * Sends only to the owner (a reply from anyone else is rejected on inbound).
    * No-ops during dry-run. Throws if AgentMail isn't set up.
    */
-  async email(opts: { subject: string; text?: string; html?: string }): Promise<{ threadId: string; messageId: string }> {
+  async email(opts: { subject: string; text?: string; html?: string; blocks?: EmailBlock[] }): Promise<{ threadId: string; messageId: string }> {
     // Dry-run first: a preview must never send, and must not fail just because
     // AgentMail isn't configured.
     const { isDryRun } = await import("./dryrun.js")
@@ -315,19 +316,21 @@ export class Context {
     const { mintReplyToken, subjectWithReplyToken, replyTokenFooter, replyTokenHtmlFooter } =
       await import("../services/reply-token.js")
     const token = this._jigId && !ownInbox ? mintReplyToken() : null
-    // Send HTML by default. Jig bodies are usually LLM output, which is markdown,
-    // and a text/plain part renders "**bold**" literally in the client. Derive
-    // the HTML part from the text when the caller didn't supply its own, keeping
-    // the original text as the plain-text alternative.
-    const { looksHtml, markdownishToHtml } = await import("../text.js")
-    const html =
-      opts.html ??
-      (opts.text != null && !looksHtml(opts.text) ? markdownishToHtml(opts.text) : undefined)
+    // Blocks and fragments go out in the Jig shell (see sdk/email.ts); a full
+    // document is the author's own design. Markdown-looking text becomes the
+    // html part too, so "**bold**" never reaches the inbox literally.
+    const { buildEmailParts } = await import("./email.js")
+    const parts = buildEmailParts({
+      text: opts.text,
+      html: opts.html,
+      blocks: opts.blocks,
+      jigName: this._jigId,
+      ...(token && { token: { html: replyTokenHtmlFooter(token), text: replyTokenFooter(token) } }),
+    })
     const res = await sendAgentMailEmail({
       to: owner,
       subject: token ? subjectWithReplyToken(opts.subject, token) : opts.subject,
-      text: token && opts.text != null ? `${opts.text}${replyTokenFooter(token)}` : opts.text,
-      html: token && html != null ? `${html}${replyTokenHtmlFooter(token)}` : html,
+      ...parts,
       ...(ownInbox && { fromInboxId: ownInbox.inbox_id }),
     })
     // Map the thread to this jig so the user's reply routes to its authoring

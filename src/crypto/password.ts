@@ -77,6 +77,11 @@ function parseDataKey(hex: string | undefined): Buffer | null {
   return DATA_KEY_HEX.test(trimmed) ? Buffer.from(trimmed, "hex") : null
 }
 
+/** True when this process was started with a well-formed JIG_DATA_KEY, so restarts can unlock themselves. */
+export function hasDataKeyEnv(): boolean {
+  return parseDataKey(process.env[DATA_KEY_ENV]) !== null
+}
+
 /** Store the data key wrapped under JIG_DATA_KEY; a no-op when the variable is absent or malformed. */
 function wrapDataKey(key: Buffer): void {
   const envKey = parseDataKey(process.env[DATA_KEY_ENV])

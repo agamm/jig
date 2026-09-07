@@ -15,9 +15,10 @@ The image is built from the public repository by GitHub Actions. Its Dockerfile
 uses an explicit runtime-file allowlist, and its build context excludes local
 state and secrets.
 
-No maintainer data is copied. The template has no variables and contains no
-database, credentials, OAuth state, environment secrets, connected accounts,
-generated schemas, logs, or personal configuration.
+No maintainer data is copied. The template's only variable is `JIG_DATA_KEY`,
+which Railway generates per deploy (`${{secret(64, "0123456789abcdef")}}`), and
+it contains no database, credentials, OAuth state, environment secrets,
+connected accounts, generated schemas, logs, or personal configuration.
 
 ## Why Deploy Jig on Railway
 
@@ -47,10 +48,11 @@ Gmail, Calendar, GitHub, Apify, or Composio are optional.
 - Public container image: `ghcr.io/agamm/jig:latest`
 - One blank Railway volume mounted at `/data`
 - One Railway-provided public domain
-- No preconfigured variables, registry credentials, or maintainer data
-- Recommended: a `JIG_DATA_KEY` service variable (64 random hex characters). The instance
-  keeps its data key wrapped under it and unlocks itself after a restart; without it, every
-  redeploy pauses scheduled jigs until the owner enters the password.
+- No registry credentials or maintainer data
+- One generated variable, `JIG_DATA_KEY` (64 random hex characters, `${{secret(64, "0123456789abcdef")}}`).
+  The instance keeps its data key wrapped under it and unlocks itself after a restart. An
+  instance created before the template had it shows a notice on its Setup page and in
+  `jig doctor`; add the variable by hand (service, then Variables) to get the same behaviour.
 
 ## First Run
 

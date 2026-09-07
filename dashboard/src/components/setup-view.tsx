@@ -812,6 +812,9 @@ function InstancePanel({ health }: { health: HealthResponse | null }) {
     ...(health.public_url ? [{ label: "URL", value: health.public_url }] : []),
     ...(storage ? [{ label: "Data", value: `${storage.path}${storage.persistent ? " (persistent)" : " (NOT persistent)"}` }] : []),
     ...(health.scheduler ? [{ label: "Scheduler", value: health.scheduler.running ? "running" : "stopped" }] : []),
+    ...(typeof health.restart_safe === "boolean"
+      ? [{ label: "Restarts", value: health.restart_safe ? "unlock themselves (JIG_DATA_KEY)" : "need the password (no JIG_DATA_KEY)" }]
+      : []),
   ];
 
   return (
@@ -830,6 +833,17 @@ function InstancePanel({ health }: { health: HealthResponse | null }) {
           <Notice tone="danger" title="No persistent volume">
             {storage.message ?? `${storage.path} is not on a mounted volume.`} Everything set up on this page is lost on the next
             deploy.{storage.action ? ` ${storage.action}` : ""}
+          </Notice>
+        </div>
+      ) : null}
+
+      {hosted && health.restart_safe === false ? (
+        <div className="mt-3">
+          <Notice tone="warning" title="Locks on every restart">
+            This service has no <code className="text-[#ededed]">JIG_DATA_KEY</code> variable, so each redeploy or restart
+            pauses your jigs until you enter the password. In Railway open the service, then Variables, and add{" "}
+            <code className="text-[#ededed]">JIG_DATA_KEY</code> with 64 random hex characters (a generated value is fine).
+            The next restart asks for the password once; after that the instance unlocks itself.
           </Notice>
         </div>
       ) : null}

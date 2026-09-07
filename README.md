@@ -74,9 +74,10 @@ export default jig("weekly-client-update", {
 the maintainer's data, credentials, or configuration. After it deploys, copy the one-time setup
 code from the service logs, open the generated domain, and use the code to create the instance
 password. Keep that claim code private. The password encrypts your credentials and is never
-stored on the volume. So that a restart does not pause your jigs until you type it again, give
-the service a `JIG_DATA_KEY` variable (64 hex characters): the instance keeps its key wrapped
-under it and unlocks itself at boot. `jig deploy` from a clone sets that variable for you.
+stored on the volume. The template and `jig deploy` both give the service a generated
+`JIG_DATA_KEY` variable, under which the instance keeps its key wrapped so it unlocks itself
+after a restart instead of pausing your jigs until you type the password again. An instance
+without it says so on its Setup page and in `jig doctor`, with the one-line fix.
 
 **From a clone:**
 

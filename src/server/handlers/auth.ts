@@ -9,7 +9,7 @@
 import { openDb, getCredential, setCredential } from "../../db.js"
 import { apiJson, apiJsonWithHeaders, json } from "../http.js"
 import { isServiceMode, publicUrl } from "../../config/runtime.js"
-import { changePassword, isPasswordSet, isUnlocked, setPassword, unlock } from "../../crypto/password.js"
+import { changePassword, hasDataKeyEnv, isPasswordSet, isUnlocked, setPassword, unlock } from "../../crypto/password.js"
 import { checkAccess } from "../../auth/lock-middleware.js"
 import { issueToken, setCookieHeader } from "../../auth/session.js"
 import { clearSetupCode, verifySetupCode } from "../../auth/setup-code.js"
@@ -120,6 +120,9 @@ export async function handleHealth(req: Request, version: string, startedAt: num
     db_writable: isDbWritable(),
     stalled_runs: countStalledRuns(),
     agentmail_configured: canSendAgentMail(),
+    // Unlocked with the variable present means the wrap exists, so the next
+    // restart unlocks itself. Local mode has no lock to speak of.
+    ...(isServiceMode() && { restart_safe: hasDataKeyEnv() && isUnlocked() }),
   })
 }
 

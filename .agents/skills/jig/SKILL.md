@@ -115,6 +115,16 @@ values, and the matching step then finds itself already satisfied. Prefer the br
 
 Re-running setup is safe. Satisfied steps report as done and are skipped.
 
+**Restart-proof unlock.** A hosted instance needs a `JIG_DATA_KEY` service variable, or every
+redeploy and restart pauses its jigs until the owner types the password. `jig deploy` and the
+Railway template set it; `jig setup` and `jig update <handle>` add it to an older instance when
+this machine deployed it (the manifest holds the Railway ids). When setup prints that it cannot
+(the instance was paired from elsewhere, or came from the template before the variable
+existed), relay the steps it prints to the user: in Railway open the service, then Variables,
+add `JIG_DATA_KEY` with 64 random hex characters. The next restart asks for the password once,
+then never again. `jig doctor` reports it as `restart_safe`, and the dashboard's Setup page
+shows a notice while it is missing. Never generate, print or paste the value yourself.
+
 The dashboard has the same thing at **Setup** in the sidebar, running the same flow: a card per
 step with its live status, a button per card so one thing can be fixed without re-walking the
 others, and a panel showing where the instance runs and whether `/data` survives a restart.

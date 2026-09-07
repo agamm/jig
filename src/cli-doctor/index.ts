@@ -26,14 +26,17 @@ interface HealthResponse {
   version: string
   mode: "service" | "local"
   locked: boolean
+  /** Admin-only; absent when unauthenticated or on an older instance. */
+  restart_safe?: boolean
   password_set: boolean
   uptime_s: number
   public_url: string | null
 }
 
-async function fetchHealth(publicUrl: string): Promise<HealthResponse | { error: string }> {
+async function fetchHealth(publicUrl: string, cookie?: string): Promise<HealthResponse | { error: string }> {
   try {
-    const res = await fetch(`${publicUrl}/api/health`, { cache: "no-store" })
+    // The admin-only fields (restart_safe among them) need the paired session.
+    const res = await fetch(`${publicUrl}/api/health`, { cache: "no-store", headers: cookie ? { Cookie: `jig-admin=${cookie}` } : {} })
     if (!res.ok) return { error: `HTTP ${res.status}` }
     return (await res.json()) as HealthResponse
   } catch (e: any) {
@@ -43,7 +46,7 @@ async function fetchHealth(publicUrl: string): Promise<HealthResponse | { error:
 
 async function checkRemote(remote: RemoteManifest): Promise<Check[]> {
   const checks: Check[] = []
-  const health = await fetchHealth(remote.public_url)
+  const health = await fetchHealth(remote.public_url, remote.session_cookie)
   if ("error" in health) {
     checks.push({ name: "reachable", status: "fail", detail: health.error })
     return checks
@@ -57,10 +60,18 @@ async function checkRemote(remote: RemoteManifest): Promise<Check[]> {
   checks.push({
     name: "unlocked",
     status: health.locked ? "warn" : "pass",
-    detail: health.locked
-      ? "Enter your password (dashboard or `jig unlock`); the scheduler is paused. If this recurs after restarts, the service is missing JIG_DATA_KEY: `jig update <handle>` adds it."
-      : undefined,
+    detail: health.locked ? "Enter your password (dashboard or `jig unlock`); the scheduler is paused." : undefined,
   })
+  // Older instances do not report it; only a definite false is a finding.
+  if (health.restart_safe === false) {
+    checks.push({
+      name: "restart_safe",
+      status: "warn",
+      detail: "Every restart locks this instance until someone enters the password. `jig setup` or `jig update <handle>` from the deploying machine adds JIG_DATA_KEY; otherwise add it in Railway (service > Variables, 64 random hex characters).",
+    })
+  } else if (health.restart_safe === true) {
+    checks.push({ name: "restart_safe", status: "pass" })
+  }
   return checks
 }
 

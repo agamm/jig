@@ -105,6 +105,7 @@ Handoff: HANDOFF.md (design agreed 2026-09-06). Three commits, one version bump 
 - [x] Bump both package.json to 0.1.141, bun test, tsc, git diff --check, commit, push, tag
 - [x] Update memory feedback_agent_first_product.md (loop kept for email replies only)
 - [ ] Ask Agam: throwaway Railway deploy for the live restart check, and jig update jig-rp3l
+- [x] Missing-key visibility (2026-09-07, follow-up): health restart_safe, jig doctor check, jig setup adds the variable or prints the clicks, Setup page notice; template gets `${{secret(64, "0123456789abcdef")}}` on Agam's side
 
 ## Review
 

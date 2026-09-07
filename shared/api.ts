@@ -722,6 +722,12 @@ export interface HealthResponse {
   stalled_runs?: number
   /** Whether the repliable AgentMail failure-alert channel is set up. */
   agentmail_configured?: boolean
+  /**
+   * Service mode only: the service has JIG_DATA_KEY and is unlocked, so the
+   * next restart unlocks itself. False means every restart pauses the jigs
+   * until someone enters the password.
+   */
+  restart_safe?: boolean
 }
 
 // ---------------------------------------------------------------------------

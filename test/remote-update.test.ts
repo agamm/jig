@@ -61,8 +61,8 @@ describe("jig update adds the instance key", () => {
   })
 
   it("skips the variable when the service already has it, and does not fail the update when Railway refuses", () => {
-    const fn = source.slice(source.indexOf("async function ensureDataKeyVariable("), source.indexOf("async function updateImageInstance("))
-    expect(fn).toMatch(/if \(names\.includes\(DATA_KEY_ENV\)\) return/)
+    const fn = readFileSync("src/cli-remote/data-key.ts", "utf-8")
+    expect(fn).toMatch(/if \(names\.includes\(DATA_KEY_ENV\)\) return "present"/)
     expect(fn).toMatch(/upsertServiceVariable\(\{ \.\.\.ids, name: DATA_KEY_ENV, value: mintDataKey\(\) \}\)/)
     expect(fn).not.toMatch(/process\.exit|throw /)
   })

@@ -15,8 +15,8 @@
  *      checkout and stash.
  */
 import { resolveActiveRemote, type RemoteManifest } from "./manifest.js"
-import { getServiceVariableNames, railwayInteractive, upsertServiceVariable } from "../cli-deploy/railway-cli.js"
-import { DATA_KEY_ENV, mintDataKey } from "../crypto/password.js"
+import { ensureDataKeyVariable } from "./data-key.js"
+import { railwayInteractive } from "../cli-deploy/railway-cli.js"
 import { PROJECT_ROOT } from "../config/paths.js"
 
 interface HealthResponse {
@@ -252,6 +252,8 @@ export async function runUpdate(handle?: string): Promise<void> {
     )
   }
 
+  // Before the deploy below, so this update is the last restart that needs a
+  // password: the unlock at its end wraps the key, and the next boot unwraps.
   await ensureDataKeyVariable(remote)
 
   if (remote.image && remote.railway?.service_id && remote.railway.environment_id) {
@@ -310,32 +312,6 @@ export async function runUpdate(handle?: string): Promise<void> {
   if (deployedTarget) {
     const { ensureUnlocked } = await import("./unlock.js")
     await ensureUnlocked(remote)
-  }
-}
-
-/**
- * Instances deployed before JIG_DATA_KEY existed lock on every restart. Add the
- * variable ahead of the deploy below, so this update is the last restart that
- * locks: the unlock at the end of it wraps the key, and the next boot unwraps.
- * Best-effort, since the update itself must not depend on it.
- */
-async function ensureDataKeyVariable(remote: RemoteManifest): Promise<void> {
-  const r = remote.railway
-  if (!r?.project_id || !r.service_id || !r.environment_id) return
-  const ids = { projectId: r.project_id, environmentId: r.environment_id, serviceId: r.service_id }
-  let names: string[]
-  try {
-    names = await getServiceVariableNames(ids)
-  } catch (e: any) {
-    console.warn(`  Could not read the service variables (${e?.message ?? e}); skipping the ${DATA_KEY_ENV} check.`)
-    return
-  }
-  if (names.includes(DATA_KEY_ENV)) return
-  console.log(`  Adding ${DATA_KEY_ENV} so the instance unlocks itself after restarts...`)
-  try {
-    await upsertServiceVariable({ ...ids, name: DATA_KEY_ENV, value: mintDataKey() })
-  } catch (e: any) {
-    console.warn(`  Could not set ${DATA_KEY_ENV} (${e?.message ?? e}); the instance will keep locking on restart.`)
   }
 }
 

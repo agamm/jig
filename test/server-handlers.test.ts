@@ -231,6 +231,31 @@ describe("auth handlers", () => {
     }
   })
 
+  it("tells an authenticated admin whether restarts unlock themselves", async () => {
+    const { issueToken } = await import("../src/auth/session.js")
+    const { forgetDataKey, mintDataKey, setPassword } = await import("../src/crypto/password.js")
+    const previous = { env: process.env.RAILWAY_ENVIRONMENT_ID, key: process.env.JIG_DATA_KEY }
+    process.env.RAILWAY_ENVIRONMENT_ID = "env_test" // service mode
+    const authed = () => new Request("http://jig.example/api/health", { headers: { cookie: `jig-admin=${issueToken()}` } })
+    try {
+      // Set up without the variable: unlocked, but the next restart will lock.
+      delete process.env.JIG_DATA_KEY
+      setPassword("restart-safe-test")
+      expect((await body(await handleHealth(authed(), "9.9.9", Date.now()))).restart_safe).toBe(false)
+      // With it, an unlocked instance has wrapped its key, so restarts are safe.
+      process.env.JIG_DATA_KEY = mintDataKey()
+      expect((await body(await handleHealth(authed(), "9.9.9", Date.now()))).restart_safe).toBe(true)
+      // Anonymous callers do not get to fingerprint it.
+      expect((await body(await handleHealth(new Request("http://jig.example/api/health"), "9.9.9", Date.now()))).restart_safe).toBeUndefined()
+    } finally {
+      forgetDataKey()
+      if (previous.env === undefined) delete process.env.RAILWAY_ENVIRONMENT_ID
+      else process.env.RAILWAY_ENVIRONMENT_ID = previous.env
+      if (previous.key === undefined) delete process.env.JIG_DATA_KEY
+      else process.env.JIG_DATA_KEY = previous.key
+    }
+  })
+
   it("reports an ungated local instance as authenticated", async () => {
     const res = await handleHealth(new Request("http://localhost/api/health"), "9.9.9", Date.now())
     expect((await body(res)).authenticated).toBe(true)

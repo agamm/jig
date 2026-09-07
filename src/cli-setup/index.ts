@@ -398,6 +398,7 @@ export async function runSetup(argv: string[], ensureLocalServer: () => Promise<
 
   let base: string
   let cookie: string | undefined
+  let hostedRemote: RemoteManifest | null = null
   // Where a browser should go to finish a step by hand. Remote instances serve
   // the dashboard and the API off the same origin; locally they are two ports.
   let dashboardUrl: string | undefined
@@ -433,6 +434,7 @@ export async function runSetup(argv: string[], ensureLocalServer: () => Promise<
 
     if (listRemotes().length > 0 && !args.local) {
       const remote = resolveActiveRemote(args.handle)
+      hostedRemote = remote
       base = remote.public_url
       dashboardUrl = base
       console.log(`Setting up ${remote.handle} (${base}).\n`)
@@ -464,10 +466,24 @@ export async function runSetup(argv: string[], ensureLocalServer: () => Promise<
   // confusing per-step failure. Checked before preseed, which writes credentials
   // and would itself 423. Normally unreachable now: signing in above unlocks the
   // instance, so this only fires when something else re-locked it since.
-  const health = await fetch(`${base}/api/health`).then((r) => r.json()).catch(() => null) as { locked?: boolean } | null
+  const health = await fetch(`${base}/api/health`, { headers: cookie ? { Cookie: `jig-admin=${cookie}` } : {} })
+    .then((r) => r.json()).catch(() => null) as { locked?: boolean; restart_safe?: boolean } | null
   if (health?.locked) {
     console.error(`That instance is locked. Run "jig unlock" first, then re-run "jig setup".`)
     process.exit(1)
+  }
+
+  // A hosted instance without JIG_DATA_KEY pauses its jigs on every restart.
+  // Fixable from here only when this machine deployed it (Railway ids in the
+  // manifest); otherwise say exactly what to click. Never blocks setup.
+  if (hostedRemote && health?.restart_safe === false) {
+    const { ensureDataKeyVariable, manualDataKeySteps } = await import("../cli-remote/data-key.js")
+    const result = await ensureDataKeyVariable(hostedRemote)
+    if (result === "added") {
+      console.log("  JIG_DATA_KEY added to the service. It takes effect on the next restart, which asks for the password once.\n")
+    } else if (result === "no-railway-ids") {
+      console.log(manualDataKeySteps().map((l) => `  ${l}`).join("\n") + "\n")
+    }
   }
 
   // Escape hatch, applied before the wizard rather than inside it: a step that

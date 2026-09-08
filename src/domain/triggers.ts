@@ -12,7 +12,9 @@ export function cronToText(cron: string): string {
   const time = `${hour}:${min.padStart(2, "0")}`
 
   if (dow !== "*" && dom === "*") {
-    const dayNames = dow.split(",").map((d) => days[parseInt(d)] ?? d).join(", ")
+    // Each token is a day or a range of days; "1-5" is Mon-Fri, not Monday.
+    const dayName = (d: string) => days[parseInt(d)] ?? d
+    const dayNames = dow.split(",").map((token) => token.split("-").map(dayName).join("-")).join(", ")
     return `${dayNames} ${time}`
   }
   if (dom !== "*") return `${dom} of month ${time}`

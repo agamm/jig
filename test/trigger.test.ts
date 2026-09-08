@@ -22,6 +22,9 @@ describe("cronToText", () => {
 
   it("formats multi-day cron", () => {
     expect(cronToText("0 8 * * 1,3,5")).toBe("Mon, Wed, Fri 8:00")
+    // A day range used to read as its first day only ("Mon 8:00" for weekdays).
+    expect(cronToText("0 8 * * 1-5")).toBe("Mon-Fri 8:00")
+    expect(cronToText("0 8 * * 1-3,6")).toBe("Mon-Wed, Sat 8:00")
   })
 
   it("formats daily cron", () => {

@@ -14,7 +14,7 @@ import { join } from "path"
 import OpenAI from "openai"
 import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions"
 import type { AgentConversationTurn, AgentEvent, AgentStatusResponse, OkResponse } from "../../shared/api.js"
-import { getMainModel } from "../config/models.js"
+import { getWriterModel } from "../config/models.js"
 import { SCHEMAS_DIR } from "../config/paths.js"
 import { isValidJigId } from "../domain/jig-id.js"
 import { getImportedServers } from "../domain/source-analysis.js"
@@ -884,7 +884,7 @@ async function healJig(session: AgentSession, round: number): Promise<HealResult
   let fixed: string
   try {
     const resp = await getAgentClient().chat.completions.create({
-      model: getMainModel(),
+      model: getWriterModel(),
       max_tokens: 16384,
       messages: [
         { role: "system", content: HEAL_SYSTEM_PROMPT },
@@ -946,12 +946,12 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
         sessionId: session.sessionId,
         jigId: session.jigId,
         round,
-        model: getMainModel(),
+        model: getWriterModel(),
         messages: session.messages,
         tools: AGENT_TOOL_DEFS,
       })
       response = await client.chat.completions.create({
-        model: getMainModel(),
+        model: getWriterModel(),
         max_tokens: 16384,
         messages: session.messages,
         tools: AGENT_TOOL_DEFS,
@@ -965,7 +965,7 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
         sessionId: session.sessionId,
         jigId: session.jigId,
         round,
-        model: getMainModel(),
+        model: getWriterModel(),
         error: e,
       })
       consecutiveErrors++
@@ -994,7 +994,7 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
         sessionId: session.sessionId,
         jigId: session.jigId,
         round,
-        model: getMainModel(),
+        model: getWriterModel(),
         usage: response.usage,
       })
       return
@@ -1005,7 +1005,7 @@ async function runAgentLoop(session: AgentSession): Promise<void> {
       sessionId: session.sessionId,
       jigId: session.jigId,
       round,
-      model: getMainModel(),
+      model: getWriterModel(),
       message: msg,
       finishReason: response.choices[0]?.finish_reason,
       usage: response.usage,

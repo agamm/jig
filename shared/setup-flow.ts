@@ -114,7 +114,11 @@ export interface SetupBackend {
   setOpenRouterKey(key: string): Promise<void>
   /** Stage an OpenRouter PKCE authorization; the key arrives at the callback, not here. */
   startOpenRouterOAuth(): Promise<{ authorizationUrl: string }>
-  agentMailStatus(): Promise<{ hasKey: boolean; owner: string | null; address: string | null; canSend: boolean; webhookReady: boolean }>
+  agentMailStatus(): Promise<{
+    hasKey: boolean; owner: string | null; address: string | null; canSend: boolean; webhookReady: boolean
+    /** Set by the server: the webhook is registered at another instance's URL (a restored backup). */
+    webhookMismatch?: boolean; webhookUrl?: string | null
+  }>
   saveAgentMail(input: { apiKey?: string; owner?: string }): Promise<void>
   provisionAgentMailInbox(): Promise<{ ok: boolean; address?: string; webhookReady?: boolean; error?: string }>
   sendAgentMailTest(): Promise<{ ok: boolean; error?: string }>
@@ -205,12 +209,16 @@ export async function summarizeSetup(backend: SetupBackend): Promise<SetupStepSt
       ...(probe && !probe.ok && !probe.transient ? { fix: modelFix(probe) } : {}),
     },
     agentmail: {
-      satisfied: Boolean(mail?.canSend && mail.owner),
-      detail: mail?.canSend
-        ? `alerts go to ${mail.owner} from ${mail.address}`
-        : mail?.hasKey
-          ? "Key saved, but the inbox is not sending yet."
-          : "No AgentMail key yet.",
+      // A webhook registered by another instance (a restored backup) means the
+      // owner's replies go there; that is not "set up" here.
+      satisfied: Boolean(mail?.canSend && mail.owner && !mail.webhookMismatch),
+      detail: mail?.canSend && mail.webhookMismatch
+        ? `alerts go to ${mail.owner}, but replies still reach ${mail.webhookUrl ?? "another instance"}. Re-check to move reply-to-edit here.`
+        : mail?.canSend
+          ? `alerts go to ${mail.owner} from ${mail.address}`
+          : mail?.hasKey
+            ? "Key saved, but the inbox is not sending yet."
+            : "No AgentMail key yet.",
     },
     composio: {
       // Authorized with nothing inside it is the state most easily mistaken for
@@ -402,8 +410,8 @@ async function runAgentMailStep(io: SetupIO, backend: SetupBackend, options: Set
     }
   }
 
-  if (!status.address) {
-    io.emit({ type: "verifying", id: "agentmail", detail: "provisioning the Jig inbox" })
+  if (!status.address || status.webhookMismatch) {
+    io.emit({ type: "verifying", id: "agentmail", detail: status.address ? "pointing reply-to-edit at this instance" : "provisioning the Jig inbox" })
     const provisioned = await backend.provisionAgentMailInbox()
     if (!provisioned.ok) throw new Error(provisioned.error ?? "Could not provision an AgentMail inbox.")
     if (!provisioned.webhookReady) {

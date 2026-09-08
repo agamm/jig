@@ -113,7 +113,13 @@ Escape hatch for a machine with no browser at all: `--openrouter-key=`, `--agent
 `--owner=` (or `JIG_OPENROUTER_KEY`, `JIG_AGENTMAIL_KEY`, `JIG_OWNER_EMAIL`) pre-seed those
 values, and the matching step then finds itself already satisfied. Prefer the browser.
 
-Re-running setup is safe. Satisfied steps report as done and are skipped.
+Re-running setup is safe. Satisfied steps report as done and are skipped. One case worth knowing:
+after a backup is restored onto a new instance, the AgentMail step reports that replies still
+reach the old instance; re-running the step (or Re-check on the Setup page) moves the webhook here.
+
+Models live under Settings > Models in three slots: main (what jigs run `llm()` and `agent()`
+on), fast (classifiers), and writer (the agent that edits a jig when the user replies to a
+failure email). The writer defaults to a strong coding model; leave it unless the user asks.
 
 **Restart-proof unlock.** A hosted instance needs a `JIG_DATA_KEY` service variable, or every
 redeploy and restart pauses its jigs until the owner types the password. `jig deploy` and the

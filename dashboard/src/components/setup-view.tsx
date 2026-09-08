@@ -123,7 +123,7 @@ function readOnlyBackend(): SetupBackend {
     },
     agentMailStatus: async () => {
       const s = await fetchAgentMailSettings();
-      return { hasKey: s.hasKey, owner: s.owner, address: s.address, canSend: s.canSend, webhookReady: s.webhookReady };
+      return { hasKey: s.hasKey, owner: s.owner, address: s.address, canSend: s.canSend, webhookReady: s.webhookReady, webhookUrl: s.webhookUrl ?? null, webhookMismatch: s.webhookMismatch ?? false };
     },
     probeMainModel: () => probeMainModel(),
     listConnections: () => fetchConnections(),
@@ -305,7 +305,7 @@ export function SetupView() {
       },
       agentMailStatus: async () => {
         const s = await fetchAgentMailSettings();
-        return { hasKey: s.hasKey, owner: s.owner, address: s.address, canSend: s.canSend, webhookReady: s.webhookReady };
+        return { hasKey: s.hasKey, owner: s.owner, address: s.address, canSend: s.canSend, webhookReady: s.webhookReady, webhookUrl: s.webhookUrl ?? null, webhookMismatch: s.webhookMismatch ?? false };
       },
       saveAgentMail: async (input) => {
         await saveAgentMailSettings({

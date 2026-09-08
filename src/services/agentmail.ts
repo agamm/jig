@@ -15,6 +15,7 @@
  */
 import { createHmac, timingSafeEqual } from "node:crypto"
 import { getCredential, getSetting, setCredential, setSetting } from "../db.js"
+import { publicUrl } from "../config/runtime.js"
 import { logSessionEvent } from "../debug/session-log.js"
 import { collapseHtmlTagWhitespace } from "../text.js"
 import type { AgentMailSettingsResponse } from "../../shared/api.js"
@@ -33,6 +34,8 @@ export interface AgentMailSettings {
   inboxId: string | null
   address: string | null
   owner: string | null
+  /** The URL the inbound webhook was registered with. Replies go there, wherever this instance now lives. */
+  webhookUrl: string | null
   /** Email the owner when a jig run fails. Alerting's only on/off switch. */
   notifyOnFailure: boolean
 }
@@ -44,8 +47,27 @@ export function getAgentMailSettings(): AgentMailSettings {
     inboxId: str(raw?.inboxId),
     address: str(raw?.address),
     owner: str(raw?.owner),
+    webhookUrl: str(raw?.webhookUrl),
     notifyOnFailure: typeof raw?.notifyOnFailure === "boolean" ? raw.notifyOnFailure : true,
   }
+}
+
+/** Where this instance's inbound webhook must point; null when there is no public URL (local). */
+export function expectedWebhookUrl(): string | null {
+  const base = publicUrl()
+  return base ? `${base}/api/email/inbound` : null
+}
+
+/**
+ * The registered webhook points somewhere else. The shape a restored backup
+ * produces: settings and secret from the old instance, a new URL here, and
+ * AgentMail still posting the owner's replies to the old one. Unknown (no URL
+ * stored by an older version, or no public URL) is not a mismatch.
+ */
+export function webhookMismatch(): boolean {
+  const expected = expectedWebhookUrl()
+  const stored = getAgentMailSettings().webhookUrl
+  return expected != null && stored != null && stored !== expected
 }
 
 function getApiKey(): string | null {
@@ -76,21 +98,24 @@ export function canSendAgentMail(): boolean {
   return getApiKey() != null && s.inboxId != null && s.owner != null
 }
 
-/** Fully wired for reply-to-edit: can send AND has the inbound webhook registered. */
+/** Fully wired for reply-to-edit: can send AND the inbound webhook is registered and points here. */
 export function isAgentMailConfigured(): boolean {
-  return canSendAgentMail() && getWebhookSecret() != null
+  return canSendAgentMail() && getWebhookSecret() != null && !webhookMismatch()
 }
 
 /** Dashboard-facing status — never exposes the API key or signing secret. */
 export function getAgentMailStatus(): AgentMailSettingsResponse {
   const s = getAgentMailSettings()
+  const mismatch = webhookMismatch()
   return {
     configured: isAgentMailConfigured(),
     canSend: canSendAgentMail(),
     hasKey: getApiKey() != null,
     address: s.address,
     owner: s.owner,
-    webhookReady: getWebhookSecret() != null,
+    webhookReady: getWebhookSecret() != null && !mismatch,
+    webhookUrl: s.webhookUrl,
+    webhookMismatch: mismatch,
     notifyOnFailure: s.notifyOnFailure,
   }
 }
@@ -111,23 +136,24 @@ export function saveAgentMailSettings(input: { apiKey?: string; owner?: string; 
 // API calls (raw fetch)
 // ---------------------------------------------------------------------------
 
-async function apiFetch(path: string, body: unknown): Promise<any> {
+async function apiFetch(path: string, body?: unknown, method: "POST" | "GET" | "DELETE" = "POST"): Promise<any> {
   const apiKey = getApiKey()
   if (!apiKey) throw new Error("AgentMail API key is not configured")
   const res = await fetch(`${API_BASE}${path}`, {
-    method: "POST",
+    method,
     headers: {
       Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
+      ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
     },
-    body: JSON.stringify(body),
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     signal: AbortSignal.timeout(15_000),
   })
   if (!res.ok) {
     const text = await res.text().catch(() => "")
     throw new Error(`AgentMail API error ${res.status}: ${text.slice(0, 300)}`)
   }
-  return res.json()
+  const text = await res.text()
+  return text ? JSON.parse(text) : null
 }
 
 /** Create (or fetch existing, via client_id) the Jig inbox. */
@@ -196,14 +222,26 @@ function inboxSuffix(jigId: string): string {
   return hasher.digest("hex").slice(0, 6)
 }
 
-/** Register (or fetch existing) the inbound webhook. Returns the signing secret. */
+/**
+ * Register the inbound webhook at `url`. Creation is idempotent by client_id,
+ * so an existing registration is returned as it is, URL included: a webhook
+ * made by the instance a backup came from would keep receiving the owner's
+ * replies. AgentMail cannot change a webhook's URL, so one that points
+ * elsewhere is deleted and registered afresh. Returns the signing secret.
+ */
 async function registerWebhook(url: string): Promise<string> {
+  const listed = (await apiFetch("/webhooks", undefined, "GET")) as { webhooks?: { webhook_id: string; url: string; client_id?: string }[] } | null
+  const ours = listed?.webhooks?.find((w) => w.client_id === CLIENT_ID)
+  if (ours && ours.url !== url) {
+    await apiFetch(`/webhooks/${encodeURIComponent(ours.webhook_id)}`, undefined, "DELETE")
+    console.log(`[agentmail] moved the reply-to-edit webhook from ${ours.url} to ${url}`)
+  }
   const data = await apiFetch("/webhooks", {
     url,
     event_types: ["message.received"],
     client_id: CLIENT_ID,
   })
-  if (!data.secret) throw new Error("AgentMail did not return a webhook signing secret")
+  if (!data?.secret) throw new Error("AgentMail did not return a webhook signing secret")
   return data.secret as string
 }
 
@@ -226,6 +264,7 @@ export async function setupAgentMail(
     try {
       const secret = await registerWebhook(webhookUrl)
       setCredential(WEBHOOK_SECRET_CREDENTIAL, secret, "agentmail")
+      setSetting(SETTINGS_KEY, { ...getAgentMailSettings(), webhookUrl })
       webhookReady = true
     } catch (e) {
       // Inbox is usable for alerts; reply-to-edit just isn't wired up yet.

@@ -254,9 +254,11 @@ export interface ModelInfo {
 export interface ModelCatalog {
   main: ModelInfo
   fast: ModelInfo
+  writer: ModelInfo
   defaults?: {
     main: ModelInfo
     fast: ModelInfo
+    writer: ModelInfo
   }
 }
 
@@ -327,12 +329,14 @@ export interface DataStorageHealth {
   action?: string
 }
 
-export const MODEL_SLOTS = ["main", "fast"] as const
+/** main: what jigs run llm()/agent() on. fast: classifiers. writer: the reply-to-edit agent that edits jig code. */
+export const MODEL_SLOTS = ["main", "fast", "writer"] as const
 export type ModelSlot = (typeof MODEL_SLOTS)[number]
 
 export interface ModelOverrideInput {
   main?: string
   fast?: string
+  writer?: string
 }
 
 export interface AgentConversationTurn {
@@ -746,8 +750,12 @@ export interface AgentMailSettingsResponse {
   address: string | null
   /** The sole address allowed to drive edits by reply. */
   owner: string | null
-  /** Whether the inbound webhook has been registered (signing secret stored). */
+  /** The inbound webhook is registered and points at this instance. */
   webhookReady: boolean
+  /** Where the webhook was registered to point. Replies go there. */
+  webhookUrl?: string | null
+  /** Registered somewhere else (a restored backup): replies reach that instance, not this one. */
+  webhookMismatch?: boolean
   /** Email the owner when a jig run fails. Alerting's only on/off switch. */
   notifyOnFailure: boolean
 }

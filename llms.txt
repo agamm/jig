@@ -139,7 +139,10 @@ password (`--backup-password`, `JIG_BACKUP_PASSWORD`, or the field on the
 dashboard) opens them and they are re-encrypted under the instance's own key;
 without it they are skipped. Instance-local state (session secret, key wrap,
 health, incidents, connection health) is never in the archive. Run history,
-logs and step caches are deliberately not included.
+logs and step caches are deliberately not included. After restoring onto a
+different instance, re-run the AgentMail step under Settings > Setup: the
+reply-to-edit webhook at AgentMail still points at the instance the backup came
+from until then, and the Setup page says so.
 
 When a jig fails, the owner gets an email with the failing step, the error, the likely cause and the exact next command; repeats are throttled per jig. The same verdict is in the failure log, which a coding agent reads before touching a jig:
 

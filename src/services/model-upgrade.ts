@@ -24,6 +24,7 @@ import {
   getFastModel,
   getMainModel,
   setModelOverrides,
+  getWriterModel,
 } from "../config/models.js"
 import { fetchModelPerf, fetchOpenRouterModels } from "./openrouter-catalog.js"
 import { listJigs } from "./jig-store.js"
@@ -41,6 +42,7 @@ function getSlotModel(slot: ModelSlot): string {
   switch (slot) {
     case "main": return getMainModel()
     case "fast": return getFastModel()
+    case "writer": return getWriterModel()
   }
 }
 
@@ -187,7 +189,7 @@ function reasonString(current: OpenRouterModelInfo, suggested: OpenRouterModelIn
 async function countCodeRefsForAllSlots(
   currentBySlot: Record<ModelSlot, string>,
 ): Promise<Record<ModelSlot, number>> {
-  const counts: Record<ModelSlot, number> = { main: 0, fast: 0 }
+  const counts: Record<ModelSlot, number> = { main: 0, fast: 0, writer: 0 }
   const summaries = listJigs()
   // Source parsing is the slow part: fan out, swallow per-jig failures so
   // one broken jig doesn't blank the whole count.
@@ -213,6 +215,7 @@ export async function computeUpgradeSuggestions(): Promise<ModelUpgradesResponse
   const currentBySlot: Record<ModelSlot, string> = {
     main: getSlotModel("main"),
     fast: getSlotModel("fast"),
+    writer: getSlotModel("writer"),
   }
 
   const picks: Array<{ slot: ModelSlot; current: OpenRouterModelInfo; suggested: OpenRouterModelInfo }> = []

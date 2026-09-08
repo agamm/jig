@@ -156,3 +156,11 @@ Handoff: HANDOFF.md (design agreed 2026-09-06). Three commits, one version bump 
 - [x] `jig edit --file` ships a clean push by default; `--pending` holds it; problems still land pending and exit 1. Docs, prompts, skill, help updated.
 - [x] Tests: cli-push flipped to the new default (the old ones encoded pending-by-default), jig-store sweep test replaced by "a pending-only jig is kept", new jig-api test. Version 0.1.148.
 
+# Reply-to-edit after a restore; writer model; SKILL.md in the image (2026-09-08)
+
+- [x] AgentMail webhook: list by client_id, delete when it points elsewhere, recreate at this URL; registered URL stored; status reports webhookMismatch; the AgentMail setup step re-points on Re-check; boot warns when replies go elsewhere (no auto-move: two live instances would fight).
+- [x] Writer model slot (default anthropic/claude-sonnet-5) used by the reply-to-edit agent; Models tab card with Claude/OpenAI-first recommendations.
+- [x] Dockerfile copies SKILL.md; the edit agent warns when it is missing.
+- [x] Tests: agentmail-webhook (stubbed AgentMail API), models slot test. 873 pass. Version 0.1.150.
+- [ ] Runs + spend graph on the jigs page (mockup approved): cost per run recorded from OpenRouter usage, aggregate endpoint, React panel.
+

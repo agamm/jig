@@ -566,6 +566,9 @@ async function assembleContext(
 ): Promise<AuthoringContext> {
   const skillPath = join(PROJECT_ROOT, "SKILL.md")
   const rawSkillMd = existsSync(skillPath) ? await Bun.file(skillPath).text() : ""
+  // Loud, because the fallback is an edit agent with no rules: it still writes
+  // code, just not the code the skill would have produced.
+  if (!rawSkillMd) console.warn(`[authoring] ${skillPath} is missing; the edit agent is running without the jig-writing rules`)
   const skillMd = extractPromptSkillMd(rawSkillMd)
 
   let toolCatalog = ""

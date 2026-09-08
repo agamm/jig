@@ -82,6 +82,7 @@ import { announceSetupCode } from "./auth/setup-code.js"
 import { clearLogs, getLogs } from "./server/log-buffer.js"
 import { buildAuditReport, parseSince } from "./services/audit.js"
 import { buildFailureLog } from "./services/failures.js"
+import { MODEL_SLOTS, type ModelSlot } from "../shared/api.js"
 import packageJson from "../package.json"
 
 const PACKAGE_VERSION: string = packageJson.version
@@ -110,6 +111,23 @@ export async function regenerateConnectionArtifacts(): Promise<void> {
   }
 }
 
+/**
+ * A restored backup carries the AgentMail settings of the instance it came
+ * from, so the owner's replies keep going there. Nothing is moved at boot
+ * (two live instances would take the webhook from each other on every
+ * restart); the Setup page's AgentMail step moves it on request.
+ */
+function warnIfRepliesGoElsewhere(): void {
+  try {
+    const status = getAgentMailStatus()
+    if (status.webhookMismatch) {
+      console.warn(`[agentmail] reply-to-edit replies go to ${status.webhookUrl}, not this instance; re-run the AgentMail step under Settings > Setup to move them here`)
+    }
+  } catch {
+    // Locked or not configured: nothing to say yet.
+  }
+}
+
 /** Service mode: restore the data key from JIG_DATA_KEY so a restart does not lock the instance. */
 function autoUnlockAtBoot(): void {
   switch (tryAutoUnlock()) {
@@ -135,7 +153,10 @@ export function createApiServer(port: number) {
     // Unclaimed internet-exposed instance: print the one-time setup code the
     // owner needs to claim it (closes the first-boot takeover race).
     if (!isPasswordSet()) announceSetupCode()
-    else autoUnlockAtBoot()
+    else {
+      autoUnlockAtBoot()
+      warnIfRepliesGoElsewhere()
+    }
   }
   // Clear step cache on startup — ensures stale derivations from old SDK versions don't persist
   const { clearAllStepCache } = require("./db.js")
@@ -213,11 +234,9 @@ export function createApiServer(port: number) {
             return createLiveUpdatesResponse()
           case "models": {
             if (req.method === "PUT") {
-              const body = (await req.json().catch(() => ({}))) as {
-                main?: unknown; fast?: unknown
-              }
-              const patch: { main?: string; fast?: string } = {}
-              for (const k of ["main", "fast"] as const) {
+              const body = (await req.json().catch(() => ({}))) as Partial<Record<ModelSlot, unknown>>
+              const patch: Partial<Record<ModelSlot, string>> = {}
+              for (const k of MODEL_SLOTS) {
                 const v = body[k]
                 if (v === undefined) continue
                 if (typeof v !== "string") throw new ApiError(400, `${k} must be a string`)

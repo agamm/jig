@@ -40,9 +40,10 @@ const SORT_LABELS: Record<SortKey, string> = {
   recency: "Newest",
 };
 
-const SLOT_ORDER: ModelSlot[] = ["main", "fast"];
+const SLOT_ORDER: ModelSlot[] = ["main", "fast", "writer"];
 const PRICE_CEILING_USD_PER_M = 5;
 const FAST_PRICE_CEILING_USD_PER_M = 1;
+const WRITER_PRICE_CEILING_USD_PER_M = 60;
 
 export const SLOT_META: Record<ModelSlot, { label: string; hint: string }> = {
   main: {
@@ -52,6 +53,10 @@ export const SLOT_META: Record<ModelSlot, { label: string; hint: string }> = {
   fast: {
     label: "Fast",
     hint: `Throughput-optimized & cheap. :nitro variants first, then most popular under $${FAST_PRICE_CEILING_USD_PER_M}/M blended.`,
+  },
+  writer: {
+    label: "Writer",
+    hint: "Edits jig code when you reply to a failure email. Runs rarely, so pick the strongest coding model: Claude and OpenAI first, newest generation on top.",
   },
 };
 
@@ -128,9 +133,22 @@ function scoreFast(m: OpenRouterModelInfo): number {
   return s;
 }
 
+/** Coding quality over price: Claude and OpenAI lead, then the other labs, newest first. */
+function scoreWriter(m: OpenRouterModelInfo): number {
+  if (!m.supportsTools) return -Infinity;
+  if (m.blendedPriceUsdPerM <= 0) return -Infinity;
+  if (m.blendedPriceUsdPerM >= WRITER_PRICE_CEILING_USD_PER_M) return -Infinity;
+  if (m.id.includes(":batch") || m.id.includes("-image") || m.id.includes("-nano") || m.id.includes("-lite")) return -Infinity;
+  let s = baseScore(m);
+  const p = provider(m.id);
+  if (p === "anthropic" || p === "openai") s += 100_000;
+  return s;
+}
+
 const SCORERS: Record<ModelSlot, (m: OpenRouterModelInfo) => number> = {
   main: scoreMain,
   fast: scoreFast,
+  writer: scoreWriter,
 };
 
 function recommendFor(slot: ModelSlot, models: OpenRouterModelInfo[]): OpenRouterModelInfo[] {
@@ -213,7 +231,7 @@ export function ModelsSettings({ autofocusSlot }: { autofocusSlot?: ModelSlot } 
   const { data: current, isLoading: modelsLoading } = useModels();
   const [catalog, setCatalog] = useState<OpenRouterCatalogResponse | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
-  const [draft, setDraft] = useState<Record<ModelSlot, string>>({ main: "", fast: "" });
+  const [draft, setDraft] = useState<Record<ModelSlot, string>>({ main: "", fast: "", writer: "" });
   const [activeSlot, setActiveSlot] = useState<ModelSlot>(autofocusSlot ?? "main");
   const [browseOpen, setBrowseOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -250,7 +268,7 @@ export function ModelsSettings({ autofocusSlot }: { autofocusSlot?: ModelSlot } 
 
   useEffect(() => {
     if (!current) return;
-    setDraft({ main: current.main.id, fast: current.fast.id });
+    setDraft({ main: current.main.id, fast: current.fast.id, writer: current.writer.id });
   }, [current]);
 
   useEffect(() => {
@@ -310,7 +328,7 @@ export function ModelsSettings({ autofocusSlot }: { autofocusSlot?: ModelSlot } 
 
   function resetToCurrent() {
     if (!current) return;
-    setDraft({ main: current.main.id, fast: current.fast.id });
+    setDraft({ main: current.main.id, fast: current.fast.id, writer: current.writer.id });
     setStatus(null);
   }
 
@@ -319,6 +337,7 @@ export function ModelsSettings({ autofocusSlot }: { autofocusSlot?: ModelSlot } 
     setDraft({
       main: current.defaults.main.id,
       fast: current.defaults.fast.id,
+      writer: current.defaults.writer.id,
     });
     setStatus(null);
   }
@@ -480,6 +499,7 @@ export function ModelsSettings({ autofocusSlot }: { autofocusSlot?: ModelSlot } 
                         savedIds={{
                           main: current.main.id,
                           fast: current.fast.id,
+                          writer: current.writer.id,
                         }}
                         activeSlot={activeSlot}
                         sort={sort}

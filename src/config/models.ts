@@ -1,12 +1,15 @@
-import type { ModelCatalog } from "../../shared/api.js"
+import { MODEL_SLOTS, type ModelCatalog, type ModelSlot } from "../../shared/api.js"
 import { getSetting, setSetting } from "../db.js"
 
 export const DEFAULT_MAIN_MODEL = "meta/muse-spark-1.3"
 export const DEFAULT_FAST_MODEL = "deepseek/deepseek-v4-flash-0731"
+// The writer edits jig code from the owner's email replies. It runs rarely and
+// the code has to be right, so the default is a strong coding model.
+export const DEFAULT_WRITER_MODEL = "anthropic/claude-sonnet-5"
 
 const SETTINGS_KEY = "models"
 
-type ModelOverrides = { main?: string; fast?: string }
+type ModelOverrides = Partial<Record<ModelSlot, string>>
 
 function readOverrides(): ModelOverrides {
   return getSetting<ModelOverrides>(SETTINGS_KEY) ?? {}
@@ -20,11 +23,15 @@ export function getFastModel(): string {
   return readOverrides().fast?.trim() || DEFAULT_FAST_MODEL
 }
 
+export function getWriterModel(): string {
+  return readOverrides().writer?.trim() || DEFAULT_WRITER_MODEL
+}
+
 export function setModelOverrides(patch: ModelOverrides): ModelCatalog {
   const current = readOverrides()
   // Rebuilt from the known slots only, so a key left by a removed slot is dropped on save.
   const next: ModelOverrides = {}
-  for (const k of ["main", "fast"] as const) {
+  for (const k of MODEL_SLOTS) {
     const v = patch[k] === undefined ? current[k] : patch[k]
     const trimmed = v?.trim()
     if (trimmed) next[k] = trimmed
@@ -42,9 +49,11 @@ export function getModelCatalog(): ModelCatalog {
   return {
     main: toInfo(getMainModel()),
     fast: toInfo(getFastModel(), true),
+    writer: toInfo(getWriterModel()),
     defaults: {
       main: toInfo(DEFAULT_MAIN_MODEL),
       fast: toInfo(DEFAULT_FAST_MODEL, true),
+      writer: toInfo(DEFAULT_WRITER_MODEL),
     },
   }
 }

@@ -24,6 +24,8 @@ COPY shared ./shared
 COPY dashboard ./dashboard
 COPY examples ./examples
 COPY servers ./servers
+# The jig-writing rules the reply-to-edit agent is prompted with (src/jig-gen.ts reads it).
+COPY SKILL.md ./
 
 RUN cd dashboard && ./node_modules/.bin/next build
 

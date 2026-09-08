@@ -380,7 +380,7 @@ try {
       console.log(`  jig connect [server]   List servers or connect one`)
       console.log(`  jig run <name>         Run a jig on your deployed instance (--local for here)`)
       console.log(`  jig edit <name>        --file=<f> uploads code you wrote (creates the jig if new; typechecked,`)
-      console.log(`                         pending unless --approve); --out=<f> exports the live code`)
+      console.log(`                         live when the check is clean, --pending holds it); --out=<f> exports the live code`)
       console.log(`  jig types [--out=<d>]  Pull the instance's connection types (.d.ts) into .jig/connections/`)
       console.log(`  jig visualize <name>   Draw the jig's flow in ASCII: each step, AI or code, what it touches`)
       console.log(`                         (-v adds logic and prompt summaries, -vv full prompts; also takes a .ts file)`)

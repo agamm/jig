@@ -42,7 +42,7 @@ export async function pushJigFile(jigId: string, argv: string[], localBase: stri
   }
   const file = flag(argv, "--file")
   if (!file) {
-    console.error(`Usage: jig edit ${jigId} --file=<path> [--message=<msg>] [--approve]`)
+    console.error(`Usage: jig edit ${jigId} --file=<path> [--message=<msg>] [--pending]`)
     return 1
   }
   let code: string
@@ -58,7 +58,9 @@ export async function pushJigFile(jigId: string, argv: string[], localBase: stri
   }
 
   const target = resolveAuthoringTarget(argv, localBase)
-  const approve = argv.includes("--approve")
+  // The agent pushing is the owner's author, so a clean push goes live, the
+  // way an owner's email reply does. --pending holds it for a look first.
+  const approve = !argv.includes("--pending")
   const body = { code, message: flag(argv, "--message") ?? `Pushed from ${file}`, approve }
 
   let res: WriteJigCodeResponse
@@ -73,7 +75,7 @@ export async function pushJigFile(jigId: string, argv: string[], localBase: stri
   if (res.check.length > 0) {
     console.error(`✗ ${jigId} ${verb} on ${target.label} as pending v${res.pendingVersionId}, not approved: ${res.check.length} problem${res.check.length === 1 ? "" : "s"}`)
     for (const line of res.check) console.error(`    ${line}`)
-    console.error(`  Fix the file and push again: jig edit ${jigId} --file=${file}${approve ? " --approve" : ""}`)
+    console.error(`  Fix the file and push again: jig edit ${jigId} --file=${file}`)
     return 1
   }
   if (res.activeVersionId != null) {
@@ -81,7 +83,7 @@ export async function pushJigFile(jigId: string, argv: string[], localBase: stri
     return 0
   }
   console.log(`✓ ${jigId} ${verb} on ${target.label} as pending v${res.pendingVersionId}. Check ok.`)
-  console.log(`  Approve: jig pending ${jigId} approve   (or push with --approve)`)
+  console.log(`  Approve: jig pending ${jigId} approve   (held because you pushed with --pending)`)
   return 0
 }
 

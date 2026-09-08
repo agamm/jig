@@ -5,10 +5,11 @@ import { prettifyId } from "../domain/jig-source.js"
 import { getActiveRunStatusForJig } from "./run-store.js"
 import { webhookToken } from "../scheduler/webhook-auth.js"
 import { introspectJig } from "./introspect-jig.js"
-import { listJigs as storeListJigs } from "./jig-store.js"
+import { getJigRow, getPending, listJigs as storeListJigs } from "./jig-store.js"
 import { publicUrl } from "../config/runtime.js"
 
 function deriveStatus(jigId: string): "healthy" | "attention" | "failed" {
+  // (a jig with no active version is handled before this is called)
   try {
     const lastRun = getLastRun(jigId)
     if (!lastRun) return "attention"
@@ -51,6 +52,18 @@ export async function buildJigResponse(
    */
   includeState = false,
 ): Promise<JigData> {
+  // A jig whose only version is pending has nothing active to introspect yet.
+  // Show the pending code, marked "pending", so a push waiting for approval
+  // is a visible jig with a banner rather than one that seems not to exist.
+  const row = getJigRow(id)
+  if (row && row.active_version_id == null && row.pending_version_id != null) {
+    const pending = getPending(id)
+    const { materializePendingVersion } = await import("./jig-runtime.js")
+    const materialized = await materializePendingVersion(id)
+    if (pending && materialized) {
+      return { ...(await buildDraftJigResponse(id, pending.code, materialized.path, includeSteps)), status: "pending" }
+    }
+  }
   const jig = await introspectJig(id, { includeSteps })
 
   let runs: ReturnType<typeof getJigRuns> = []
@@ -173,10 +186,11 @@ export async function buildDraftJigResponse(
   }
 }
 
+/** Every jig that has code: an active version, or only a pending one still waiting for approval. */
 export function discoverAllJigs(): Map<string, string[]> {
   const map = new Map<string, string[]>()
   for (const jig of storeListJigs()) {
-    if (jig.activeVersionId != null) map.set(jig.id, [])
+    if (jig.activeVersionId != null || jig.pendingVersionId != null) map.set(jig.id, [])
   }
   return map
 }

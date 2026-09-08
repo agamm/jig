@@ -7,10 +7,10 @@
 ## Five reasons to use Jig
 
 1. **Code runs the workflow, AI is used on purpose.** Most agent tools call a model at every step, so every run depends on the model's mood. A jig is plain code with `llm()` where you need text and `agent()` only where you need judgment. Same input, same path, every run.
-2. **Your coding agent is the author.** Claude Code or Codex writes the jig against typed tool clients, pushes it, and it lands as a pending version. Nothing runs until you approve it. You review a diff, not a chat log.
+2. **Your coding agent is the author.** Claude Code or Codex writes the jig against typed tool clients and pushes it. The instance typechecks and validates it before it goes live, keeps every version, and shows you diffs instead of chat logs. Roll back with one command.
 3. **Always on, without babysitting.** One command deploys to Railway. Credentials are encrypted with your password, the instance unlocks itself after a restart, and your jigs, versions and run history live on a volume that survives deploys.
 4. **Failures explain themselves.** A failed run emails you the step, the error, the likely cause (expired authorization, rate limit, the jig's own code) and the exact next command, plus a prompt your agent can paste as-is. Reply to the email to have the jig edited.
-5. **Secure by default.** Browser authorization instead of pasted keys, tools scoped per step, dry runs that stub every write, and an approval gate on every code change. The defaults are the safe ones; you opt out, never in.
+5. **Secure by default.** Browser authorization instead of pasted keys, tools scoped per step, dry runs that stub every write, and a check on every push before it can run. The defaults are the safe ones; you opt out, never in.
 
 ## A warning, honestly
 
@@ -76,11 +76,12 @@ Without an agent: `git clone`, `bun install`, `bun run jig setup`. The Railway b
 
 ```shell
 bun run jig types                                        # the instance's connection types, into .jig/connections/
-bun run jig edit weekly-update --file=weekly-update.ts   # push code (creates the jig if new; typechecked, pending)
-bun run jig run weekly-update --dry-run                  # preview the pending version, writes stubbed
-bun run jig pending weekly-update approve
+bun run jig edit weekly-update --file=weekly-update.ts   # push code (creates the jig if new; live when the check is clean)
+bun run jig run weekly-update --dry-run                  # preview, writes stubbed
 bun run jig run weekly-update
 ```
+
+A push with problems waits as pending with its diff, and `--pending` holds a clean one for review; `bun run jig pending <id> approve` closes either.
 
 **4. When something fails.** You get an email with the cause and the fix. Your agent starts from the same place:
 
@@ -101,7 +102,7 @@ What protects your accounts, in order of what matters most:
 | Restart-proof unlock | `jig deploy` and the Railway template give the service a random `JIG_DATA_KEY`. The data key is stored wrapped under it, so a restart unlocks itself. The variable lives only on the service: not on the volume, not in backups, not in the CLI manifest. A stolen volume alone reveals nothing. |
 | Claiming an instance | A new instance prints a one-time setup code to its logs. Only someone who can read those logs can set the first password, so nobody can claim your instance before you do. |
 | Browser authorization | OpenRouter, Composio and MCP servers authorize in your browser with OAuth. Keys are delivered to the instance, never shown to the agent. The one exception, AgentMail, is pasted into the dashboard, not into a chat. |
-| Approval gate | A code change from an agent or a CLI push lands as a pending version, typechecked and validated on arrival, and waits for you (or a clean push with `--approve`). An email reply from you is the approval: the edit ships once it passes the same check, and only replies that carry the thread's secret token count. |
+| Check before live | Every push is typechecked against the instance's connections and run through the validator; only a clean result goes live, anything else waits as pending with its diff. Every version is kept, so a bad one is one restore away. An email reply from you ships the same way, and only replies that carry the thread's secret token count. |
 | Scoped steps | A step can only call the tools it declares. Dry runs stub every write. A write that hits a gateway error is repeated at most once, never after a timeout, so a blip does not mean a duplicate email. |
 | Reply-to-edit | An email reply edits a jig only when it comes from your address, passes AgentMail's signature and authentication checks, and carries the thread's secret token. |
 | Small surface | The API binds to loopback; the dashboard is its only client, behind a signed session cookie. The published image is built by GitHub Actions from an allowlisted subset of this public repo, and the template ships no maintainer data. |

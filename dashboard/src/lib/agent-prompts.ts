@@ -7,7 +7,7 @@
 const PAIRING_HINT = "If the CLI is not paired yet, the Setup page generates the pairing command."
 
 function editTail(jigId: string, action: string) {
-  return `Pull it with \`bun run jig edit ${jigId} --out=${jigId}.ts\`, read SKILL.md, ${action}, push it with \`bun run jig edit ${jigId} --file=${jigId}.ts\`, run \`bun run jig run ${jigId} --dry-run\` (it previews the pending version), and when it looks right approve it with \`bun run jig pending ${jigId} approve\`. ${PAIRING_HINT}`
+  return `Pull it with \`bun run jig edit ${jigId} --out=${jigId}.ts\`, read SKILL.md, ${action}, push it with \`bun run jig edit ${jigId} --file=${jigId}.ts\` (it goes live when the instance's check is clean), then run \`bun run jig run ${jigId} --dry-run\` and fix and push again if the output is not right. ${PAIRING_HINT}`
 }
 
 export function changeJigPrompt({ origin, jigId }: { origin: string; jigId: string }) {
@@ -24,5 +24,5 @@ export const CLARIFY_FIRST =
 
 /** Placeholders by default; pass `id` and `description` for a prompt the agent can run as-is. */
 export function newJigPrompt({ origin, id = "<id>", description = "<what it should do>" }: { origin: string; id?: string; description?: string }) {
-  return `In my Jig checkout paired to ${origin}, create a jig "${id}": ${description}. ${CLARIFY_FIRST} Then run \`bun run jig types\`, read SKILL.md, write ${id}.ts, push it with \`bun run jig edit ${id} --file=${id}.ts\`, run \`bun run jig run ${id} --dry-run\` (it previews the pending version), and when it looks right approve it with \`bun run jig pending ${id} approve\`. ${PAIRING_HINT}`
+  return `In my Jig checkout paired to ${origin}, create a jig "${id}": ${description}. ${CLARIFY_FIRST} Then run \`bun run jig types\`, read SKILL.md, write ${id}.ts, push it with \`bun run jig edit ${id} --file=${id}.ts\` (it goes live when the instance's check is clean), then run \`bun run jig run ${id} --dry-run\` and fix and push again if the output is not right. ${PAIRING_HINT}`
 }

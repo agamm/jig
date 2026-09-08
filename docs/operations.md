@@ -97,15 +97,15 @@ bun run jig edit <jig-id> --file=/tmp/<jig-id>.ts --message="what changed"   # c
 bun run jig run <jig-id> --dry-run
 ```
 
-A push leaves the change **pending** unless you pass `--approve`, so the default
-keeps the same human approval gate the dashboard and reply-to-email edits use;
-`jig pending <jig-id> approve|discard` closes it from the CLI. The server
-typechecks the code against its generated connections and runs the jig
-validator; problems come back and are printed, the code still lands as pending,
-and `--approve` only takes effect when the check is clean. It also applies the
-same guards as reply-to-email edits: it rejects code importing disconnected
-servers, and refuses while the jig is running or while an email edit session
-holds it.
+A clean push goes **live**: the server typechecks the code against its generated
+connections and runs the jig validator, and only a clean result is promoted.
+Problems come back and are printed, and the code lands as **pending** with its
+diff; `--pending` holds a clean push the same way, and
+`jig pending <jig-id> approve|discard` closes it from the CLI. A push also
+applies the same guards as reply-to-email edits: it rejects code importing
+disconnected servers, and refuses while the jig is running or while an email
+edit session holds it. A jig whose only version is pending is listed with a
+"pending" status, never hidden.
 
 ### Test a connection before writing code against it
 

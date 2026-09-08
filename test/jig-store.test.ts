@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test"
-import { closeDb, openDb, upsertAgentSession } from "../src/db.js"
+import { closeDb, openDb } from "../src/db.js"
 import {
   approvePending,
   deleteJig,
@@ -15,7 +15,6 @@ import {
   renameJig,
   restoreVersion,
   setActiveVersion,
-  sweepOrphanedDraftJigs,
   writePending,
 } from "../src/services/jig-store.js"
 
@@ -267,38 +266,21 @@ describe("getPending diff", () => {
   })
 })
 
-describe("sweepOrphanedDraftJigs", () => {
-  function upsertSessionFor(jigId: string) {
-    upsertAgentSession({
-      session_id: "aaaa0003-1234-4234-9234-123456789abc",
-      jig_id: jigId,
-      creation_mode: 0,
-      authoring_intent: "User: Test",
-      conversation_history: JSON.stringify([{ role: "user", content: "Test" }]),
-      authoring_policy: JSON.stringify({ requiresIntegration: false, buildResolutions: [] }),
-      messages: JSON.stringify([{ role: "user", content: "Test" }]),
-      events: JSON.stringify([{ type: "text", content: "Working" }]),
-      status: "waiting",
-      metrics: "{}",
-      created_at: 100,
-      updated_at: 200,
-      pending_ask_tool_call_id: null,
-      pending_ask_question: null,
-      draft_approval: null,
-      last_event_seq: 0,
-    })
-  }
+// The bug this pins: a daily "orphan sweep" deleted every jig with no active
+// version and no agent session. That shape is exactly a jig a coding agent
+// pushed and held for review, so the first maintenance tick after a boot made
+// pushed jigs vanish (404 on approve). There is no sweep any more.
+describe("a jig whose only version is pending", () => {
+  it("is kept and listed, and no maintenance pass removes it", async () => {
+    writePending({ jigId: "held_push", name: "Held", code: "// held", author: "cli", message: null, prompt: null })
 
-  it("sweeps orphaned draft rows but keeps session-referenced and approved jigs", () => {
-    writePending({ jigId: "orphan_draft", name: "Orphan", code: "// orphan", author: "agent", message: null, prompt: null })
-    upsertSessionFor("held_draft")
-    writePending({ jigId: "held_draft", name: "Held", code: "// held", author: "agent", message: null, prompt: null })
-    writePending({ jigId: "shipped_jig", name: "Shipped", code: "// shipped", author: "agent", message: null, prompt: null })
-    approvePending("shipped_jig")
+    const listed = listJigs().find((j) => j.id === "held_push")
+    expect(listed).toBeDefined()
+    expect(listed!.activeVersionId).toBeNull()
+    expect(listed!.pendingVersionId).not.toBeNull()
 
-    expect(sweepOrphanedDraftJigs()).toEqual(["orphan_draft"])
-    expect(getJigRow("orphan_draft")).toBeNull()
-    expect(getJigRow("held_draft")).not.toBeNull()
-    expect(getJigRow("shipped_jig")).not.toBeNull()
+    const store = await import("../src/services/jig-store.js")
+    expect("sweepOrphanedDraftJigs" in store).toBe(false)
+    expect(getJigRow("held_push")).not.toBeNull()
   })
 })

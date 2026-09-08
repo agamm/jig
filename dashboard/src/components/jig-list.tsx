@@ -12,7 +12,7 @@ import { CopyButton } from "@/components/copy-button";
 import { newJigPrompt } from "@/lib/agent-prompts";
 
 const statusColor = (s: string) =>
-  s === "healthy" ? "#34d399" : s === "attention" ? "#f59e0b" : "#f43f5e";
+  s === "healthy" ? "#34d399" : s === "attention" ? "#f59e0b" : s === "pending" ? "#60a5fa" : "#f43f5e";
 
 const runStatusColor = (s: "success" | "fail") =>
   s === "success" ? "#34d399" : "#f43f5e";
@@ -42,7 +42,7 @@ function formatNextRun(iso: string): string {
 }
 
 const statusDot = (s: string) =>
-  s === "healthy" ? "bg-emerald-400" : s === "attention" ? "bg-amber-400" : "bg-rose-400";
+  s === "healthy" ? "bg-emerald-400" : s === "attention" ? "bg-amber-400" : s === "pending" ? "bg-sky-400" : "bg-rose-400";
 
 export function JigList({ jigs, selectedJigId, onJigClick, onReorder }: {
   jigs: Jig[];

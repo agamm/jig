@@ -1,4 +1,5 @@
-export type JigHealth = "healthy" | "attention" | "failed"
+/** "pending": the jig's only version is waiting for approval; nothing has run yet. */
+export type JigHealth = "healthy" | "attention" | "failed" | "pending"
 export type RunOutcomeStatus = "success" | "fail"
 export type LiveStepStatus = "running" | "success" | "fail" | "healed"
 

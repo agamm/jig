@@ -149,3 +149,10 @@ Handoff: HANDOFF.md (design agreed 2026-09-06). Three commits, one version bump 
 - [x] README rewritten: five reasons, alpha warning, how it works, agent-to-Railway workflow, security table, agent pointers.
 - [x] Verified: 867 tests, both typechecks; real two-instance run over HTTP (A backed up, restored onto B with A's password: B's session kept, credential readable, only B's password unlocks). Version 0.1.147.
 
+# Pushed jigs go live; no more orphan sweep (2026-09-07)
+
+- [x] Root cause of the vanished jig: the daily maintenance sweep deleted every jig with no active version and no agent session, which is exactly a CLI-pushed jig awaiting approval; it ran on the first tick after every boot. Sweep removed (it served the deleted in-server authoring flow).
+- [x] /api/jigs lists a pending-only jig with status "pending" and its pending code (dashboard dot in blue); it was hidden before.
+- [x] `jig edit --file` ships a clean push by default; `--pending` holds it; problems still land pending and exit 1. Docs, prompts, skill, help updated.
+- [x] Tests: cli-push flipped to the new default (the old ones encoded pending-by-default), jig-store sweep test replaced by "a pending-only jig is kept", new jig-api test. Version 0.1.148.
+

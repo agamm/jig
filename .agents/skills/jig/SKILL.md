@@ -192,10 +192,9 @@ bun run jig types                              # the instance's connection types
 # write <jig-id>.ts per SKILL.md, importing from "@jig/connections/<server>.js"
 bun run jig edit <jig-id> --file=<jig-id>.ts   # create it: typechecked on the instance, lands PENDING
 bun run jig visualize <jig-id>.ts -v           # read the flow back before pushing: steps, AI or code, prompts
-bun run jig run <jig-id> --dry-run             # previews the PENDING version, tools stubbed, output printed
-bun run jig pending <jig-id>                   # read the diff (works against the remote too)
-bun run jig pending <jig-id> approve           # or: discard, or push with --approve
+bun run jig run <jig-id> --dry-run             # tools stubbed, output printed (works on a held push too)
 bun run jig run <jig-id>                       # trigger the active version once for real
+bun run jig pending <jig-id>                   # a held push: read the diff, then approve or discard
 ```
 
 `jig run` prints the run's output when it finishes, and a dry run of a jig that has only a
@@ -204,23 +203,24 @@ pending version works; there is no need to call the API by hand with the session
 (list, get, search) rerun it with `--allow-write`, since that annotation is a classifier's guess.
 
 The push runs the instance's own check (tsc against its generated connections, the jig
-validator, step structure). Problems are printed,
-the code still lands as pending so the diff stays visible, the command exits 1, and
-`--approve` is ignored until the check is clean. Read `.jig/connections/<server>.d.ts` for tool
-names and parameter types instead of guessing them; `edit --file` creates the jig when it does
-not exist and updates it otherwise, so there is one push command.
+validator, step structure). A clean push goes live at once: you are the user's author, the
+same way the user's own email reply ships an edit. Problems are printed, the code lands as
+pending so the diff stays visible, and the command exits 1: fix the file and push again.
+`--pending` holds a clean push for the user to look at first; use it when they asked to review
+before anything runs. Read `.jig/connections/<server>.d.ts` for tool names and parameter types
+instead of guessing them; `edit --file` creates the jig when it does not exist and updates it
+otherwise, so there is one push command.
 
 To change an existing jig the same way:
 
 ```sh
 bun run jig edit <jig-id> --out=jig.ts             # export the live code
-bun run jig edit <jig-id> --file=jig.ts            # upload it as PENDING
-bun run jig edit <jig-id> --file=jig.ts --approve  # approve in the same push when the check is clean
+bun run jig edit <jig-id> --file=jig.ts            # upload it; live when the check is clean
+bun run jig edit <jig-id> --file=jig.ts --pending  # hold it for review instead
 ```
 
-Export → edit → upload → `jig run <jig-id>` → `jig debug tail` is the loop. Uploading leaves
-the change pending on purpose, the same human gate reply-to-email edits use. There is no
-in-server writer: you are the author.
+Export → edit → upload → `jig run <jig-id> --dry-run` → `jig run <jig-id>` → `jig debug tail`
+is the loop. There is no in-server writer: you are the author.
 
 **All of these act on the instance you deployed**, not on this machine (so does `jig backup`,
 which downloads the instance's archive over the paired session). They resolve the

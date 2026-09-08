@@ -25,22 +25,22 @@ The dashboard opens on a loopback URL. Authorize OpenRouter when it asks (browse
 ### Author a jig
 
 Write the jig yourself, then push it. The instance typechecks it against its connections and
-holds it as pending until approved:
+runs the validator; a clean push goes live, a push with problems waits as pending with its diff:
 
 ```sh
 bun run jig connect                          # connect services first
 bun run jig types                            # the instance's connection types, into .jig/connections/
 # write <jig-id>.ts following SKILL.md; import from "@jig/connections/<server>.js"
-bun run jig edit <jig-id> --file=<jig-id>.ts # create it (pending, typechecked)
-bun run jig run <jig-id> --dry-run           # previews the pending version, tools stubbed, output printed
-bun run jig pending <jig-id> approve         # or push with --approve
+bun run jig edit <jig-id> --file=<jig-id>.ts # create or update it; live when the check is clean
+bun run jig run <jig-id> --dry-run           # tools stubbed, output printed
 bun run jig run <jig-id>
+bun run jig pending <jig-id> approve         # only for a held push: --pending, or one that had problems
 ```
 
 `edit --file` creates the jig when it does not exist and updates it otherwise;
 `bun run jig edit <jig-id> --out=<file>` exports the live code first when you are changing one.
-A push with problems still lands as pending, prints them, and exits 1; `--approve` only takes
-effect when the check is clean.
+A push with problems lands as pending, prints them, and exits 1: fix the file and push again.
+`--pending` holds a clean push for review; `jig pending <jig-id> approve|discard` closes it.
 
 Jig has no in-server writer. Fixes without a coding agent happen by replying to the failure
 email (reply-to-edit), and the dashboard offers copy-ready prompts for Claude Code or Codex.
@@ -89,8 +89,8 @@ bun run jig debug audit [handle]     # what is failing, since when, and the next
 The heal loop: `jig debug failures` names the failing step, the error, the cause and the remedy. When the
 cause is external (`auth`, `composio-spill`, `rate-limit`, `provider`, `credits`, `missing-connection`,
 `locked`) run the remedy it prints, not an edit. When it is `code`: `jig edit <jig-id> --out=<jig-id>.ts`
-pulls the code, fix it, `jig edit <jig-id> --file=<jig-id>.ts` pushes it as pending, `jig run <jig-id> --dry-run` proves the
-pending version, `jig pending <jig-id> approve` makes it live.
+pulls the code, fix it, `jig edit <jig-id> --file=<jig-id>.ts` pushes it (live when the check is clean, `--pending`
+holds it), `jig run <jig-id> --dry-run` proves it.
 
 To see what a deployed instance has:
 

@@ -683,8 +683,8 @@ function FirstJig() {
       <h3 className="mt-1.5 text-[17px] font-semibold tracking-[-0.01em] text-[#ededed]">Jig is ready. Try it.</h3>
       <p className="mt-1.5 max-w-[62ch] text-[12px] leading-relaxed text-[var(--text-dim)]">
         Paste this into Claude Code or Codex in the checkout paired below. It names this instance and the push
-        command, so the agent needs nothing else. Approve the version it pushes: it runs a model call, sends real
-        mail through your inbox, and lands there as proof the whole path works.
+        command, so the agent needs nothing else. The jig it pushes goes live once the instance's check is clean;
+        running it makes a model call, sends real mail through your inbox, and lands there as proof the whole path works.
       </p>
       <div className="mt-3 flex items-center gap-2">
         <code className="flex-1 truncate rounded-md border border-[#1f1f23] bg-[#111113] px-3 py-2 font-mono text-[11px] text-[#ededed]">

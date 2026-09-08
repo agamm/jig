@@ -35,8 +35,16 @@ afterEach(() => {
 })
 
 describe("pushJigFile", () => {
-  it("creates a jig from a file as pending, then approves it through jig pending", async () => {
-    expect(await pushJigFile(JIG_ID, ["--local", `--file=${file("a.ts", "one")}`], LOCAL)).toBe(0)
+  // The agent is the owner's author: a clean push goes live, as an owner's
+  // email reply does. --pending is how a push is held for review.
+  it("ships a clean push by default", async () => {
+    expect(await pushJigFile(JIG_ID, ["--local", `--file=${file("b.ts", "two")}`], LOCAL)).toBe(0)
+    expect(getActiveCode(JIG_ID)).toContain("two")
+    expect(getPending(JIG_ID)).toBeNull()
+  })
+
+  it("holds a push with --pending, then approves it through jig pending", async () => {
+    expect(await pushJigFile(JIG_ID, ["--local", "--pending", `--file=${file("a.ts", "one")}`], LOCAL)).toBe(0)
     expect(getPending(JIG_ID)?.code).toContain("one")
     expect(getActiveCode(JIG_ID)).toBeNull()
 
@@ -44,13 +52,8 @@ describe("pushJigFile", () => {
     expect(getActiveCode(JIG_ID)).toContain("one")
   })
 
-  it("approves in one push with --approve when the check is clean", async () => {
-    expect(await pushJigFile(JIG_ID, ["--local", "--approve", `--file=${file("b.ts", "two")}`], LOCAL)).toBe(0)
-    expect(getActiveCode(JIG_ID)).toContain("two")
-  })
-
-  it("exits 1 and leaves broken code pending, even with --approve", async () => {
-    expect(await pushJigFile(JIG_ID, ["--local", "--approve", `--file=${file("c.ts", "", true)}`], LOCAL)).toBe(1)
+  it("exits 1 and leaves broken code pending, never live", async () => {
+    expect(await pushJigFile(JIG_ID, ["--local", `--file=${file("c.ts", "", true)}`], LOCAL)).toBe(1)
     expect(getPending(JIG_ID)).not.toBeNull()
     expect(getActiveCode(JIG_ID)).toBeNull()
   })

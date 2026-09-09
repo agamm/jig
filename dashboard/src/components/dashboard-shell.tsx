@@ -233,7 +233,7 @@ export function DashboardShell({
         )}
         {!showOnboarding && !loading && !errorMessage && (
           <>
-            <div className="px-3 pt-3">
+            <div className="mx-auto mb-4 max-w-3xl">
               <ActivityPanel />
             </div>
             <JigList

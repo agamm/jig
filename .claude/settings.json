@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"${CLAUDE_PROJECT_DIR:-.}\" && command -v bun >/dev/null && bun run --silent jig debug audit --hook 2>/dev/null || true",
+            "timeout": 20,
+            "statusMessage": "Checking the paired jig instance for failures"
+          }
+        ]
+      }
+    ]
+  }
+}

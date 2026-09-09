@@ -28,7 +28,11 @@ Reach for that one when you are producing TypeScript, this one for everything el
   run of the last seven days with its cause and the exact remedy. Offer those remedies before
   editing code: an expired authorization, a Composio result that spilled past the inline limit,
   or a provider outage is not a code bug, and a jig edited for one of those fails the same way
-  next run. `--jig=<id>` narrows it, `--json` is the raw log.
+  next run. `--jig=<id>` narrows it, `--json` is the raw log. In Claude Code the first look
+  happens by itself: this repo's `.claude/settings.json` runs `bun run jig debug audit --hook`
+  when a session starts, so the paired instance's audit is already in your context. When it
+  says every jig is healthy, the failure log can wait; when it lists problems, start there.
+  Codex has no such hook in this repo, so there you run the command yourself.
 - **Probe before you state.** Never report what is connected, what tools exist, or what a tool
   returns from inference, from a file on disk, or from what was true earlier in the session. Run
   the command that answers it, then say what came back. "Connected" in particular is layered:

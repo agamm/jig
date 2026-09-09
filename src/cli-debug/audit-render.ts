@@ -76,6 +76,35 @@ export function renderAuditReport(
   return out.join("\n")
 }
 
+/** True when nobody has to act: no failing, overdue, paused or mis-scheduled jig, every connection ok, the scheduler ticking. */
+export function auditIsClean(report: AuditReport): boolean {
+  const s = report.scheduler
+  return report.jigs.every((j) => j.consecutiveFailures === 0)
+    && s.problems.length === 0 && s.overdue.length === 0 && s.disabled.length === 0
+    && report.connections.length === 0
+    && report.instance.scheduler.running
+}
+
+/**
+ * What a coding agent reads when its session starts (the hook in
+ * .claude/settings.json): one line when there is nothing to do, otherwise the
+ * full audit under a header saying what to do with it before touching code.
+ */
+export function renderSessionAudit(
+  report: AuditReport,
+  target: { handle: string; url: string; since: string },
+): string {
+  if (report.jigs.length === 0) return `[jig] ${target.handle}: no jigs yet, nothing to check.`
+  if (auditIsClean(report)) {
+    return `[jig] ${target.handle}: all ${report.jigs.length} jigs healthy, connections ok, nothing to fix before you start.`
+  }
+  return [
+    `[jig] ${target.handle} needs attention. Read this before editing any jig and offer the remedies first: an expired authorization, a rate limit or a provider outage is not a code bug. Full log: bun run jig debug failures`,
+    "",
+    renderAuditReport(report, target),
+  ].join("\n")
+}
+
 function renderFailing(jig: AuditJig, report: AuditReport): string[] {
   const lines: string[] = []
   const n = jig.consecutiveFailures

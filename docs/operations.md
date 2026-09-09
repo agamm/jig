@@ -165,6 +165,12 @@ classified: `GET /api/failures?since=7d[&jig=<id>]` and `bun run jig debug failu
 is repaired automatically; the log exists so that whoever fixes the jig (the owner from the
 email, or a coding agent from the CLI) starts from the cause rather than from the stack trace.
 
+A coding agent in Claude Code gets the first look without asking: `.claude/settings.json` in
+this repo runs `bun run jig debug audit --hook` when a session starts in the checkout. Hook
+mode prints nothing when the checkout is not paired, one line when the instance cannot answer,
+otherwise the audit under a read-me-first header, and it never exits non-zero. A session that
+was already open when the file arrived picks it up after `/hooks` or a restart.
+
 The classifier matches the error text and names the remedy:
 
 | cause | recognised from | remedy |

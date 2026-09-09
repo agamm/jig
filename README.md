@@ -90,6 +90,8 @@ bun run jig debug failures      # every failed run of the last week, classified,
 bun run jig debug audit         # what is failing now, since when, and the next command
 ```
 
+In Claude Code the audit runs by itself when a session starts in the paired checkout (a hook in `.claude/settings.json`), so the agent knows what is failing before it edits anything.
+
 **5. Keep it current.** `bun run jig update` pulls this checkout and the agent skills; `bun run jig update <handle>` moves the instance to the newest release with a health check and rollback. A template-button instance updates by redeploying in Railway. `bun run jig backup` writes a zip of the instance's jigs, connections and settings.
 
 ## Security

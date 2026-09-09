@@ -17,7 +17,7 @@ import {
   upsertSchedule,
 } from "../src/db.js"
 import { buildAuditReport, parseSince } from "../src/services/audit.js"
-import { renderAuditReport } from "../src/cli-debug/audit-render.js"
+import { auditIsClean, renderAuditReport, renderSessionAudit } from "../src/cli-debug/audit-render.js"
 import { matchRoute } from "../src/server/router.js"
 import { writePending } from "../src/services/jig-store.js"
 import type { AuditJig, AuditReport, AuditRun } from "../shared/api.js"
@@ -377,5 +377,45 @@ describe("renderAuditReport", () => {
     expect(out).not.toContain("DEGRADED")
     expect(out).not.toContain("PAUSED")
     expect(out).toContain("1 of 1 jigs need attention")
+  })
+})
+
+describe("renderSessionAudit (the session-start hook)", () => {
+  const target = { handle: "prod", url: "https://jig.example.com", since: "24h" }
+  const clean: AuditReport = {
+    ...FIXED_REPORT,
+    connections: [],
+    scheduler: { problems: [], disabled: [], overdue: [] },
+    jigs: [auditJig({ id: "weekly-update" }), auditJig({ id: "inbox-triage", trigger: "email" })],
+  }
+
+  it("is one line when nothing needs a person", () => {
+    expect(auditIsClean(clean)).toBe(true)
+    const out = renderSessionAudit(clean, target)
+    expect(out.split("\n")).toHaveLength(1)
+    expect(out).toBe("[jig] prod: all 2 jigs healthy, connections ok, nothing to fix before you start.")
+  })
+
+  it("says so when the instance has no jigs yet", () => {
+    expect(renderSessionAudit({ ...clean, jigs: [] }, target)).toBe("[jig] prod: no jigs yet, nothing to check.")
+  })
+
+  it("prints the whole audit under a read-me-first header when anything is off", () => {
+    expect(auditIsClean(FIXED_REPORT)).toBe(false)
+    const out = renderSessionAudit(FIXED_REPORT, target)
+    expect(out.split("\n")[0]).toContain("[jig] prod needs attention. Read this before editing any jig")
+    expect(out).toContain("Full log: bun run jig debug failures")
+    expect(out).toContain("FAILING")
+    expect(out).toContain("4 of 5 jigs need attention")
+  })
+
+  const offBy: [string, Partial<AuditReport>][] = [
+    ["a schedule error", { scheduler: { problems: [{ jigId: "weekly-update", error: "Invalid cron expression: x" }], disabled: [], overdue: [] } }],
+    ["a paused jig", { scheduler: { problems: [], disabled: ["weekly-update"], overdue: [] } }],
+    ["a connection that is not ok", { connections: FIXED_REPORT.connections }],
+    ["a stopped scheduler", { instance: { ...clean.instance, scheduler: { running: false, lastTickAt: null } } }],
+  ]
+  it.each(offBy)("is not clean with %s", (_label, patch) => {
+    expect(auditIsClean({ ...clean, ...patch })).toBe(false)
   })
 })

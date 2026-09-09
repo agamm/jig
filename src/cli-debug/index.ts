@@ -20,7 +20,7 @@
 import {listRemotes, resolveActiveRemote, type RemoteManifest} from "../cli-remote/manifest.js"
 import { readLocalLogHead, readLocalLogs } from "./local.js"
 import { parseToolArgs } from "./eval-args.js"
-import { renderAuditReport } from "./audit-render.js"
+import { renderAuditReport, renderSessionAudit } from "./audit-render.js"
 import { renderFailureLog } from "./failures-render.js"
 import { DB_PATH } from "../config/paths.js"
 import type { AuditReport, FailureLog, JigData, ServerLogEntry, ServerLogsResponse, StartRunResponse, RunDetail, ToolEvalResponse } from "../../shared/api.js"
@@ -58,6 +58,7 @@ export async function runDebug(args: string[]): Promise<void> {
   console.log("  --since=<24h|30m|7d|ISO>  audit, failures: window (default 24h for audit, 7d for failures)")
   console.log("  --jig=<id>             audit, failures: one jig only")
   console.log("  --json                 audit, failures: print the report as JSON instead of text")
+  console.log("  --hook                 audit: for editor session hooks; silent without a paired instance, never exits non-zero")
   console.log("")
   console.log("Testing a connection:")
   console.log("  --args=<json>          eval: tool arguments, e.g. --args='{\"max_results\":3}'")
@@ -317,6 +318,7 @@ async function lsCmd(args: string[]): Promise<void> {
  * that starts the fix, and --json is the same report verbatim.
  */
 async function auditCmd(args: string[]): Promise<void> {
+  if (args.includes("--hook")) return auditHook(args)
   const { remote, cookie } = resolveAuthedRemoteOrExit(positional(args))
   const since = stringFlag(args, "--since") ?? "24h"
   const jig = stringFlag(args, "--jig")
@@ -328,6 +330,39 @@ async function auditCmd(args: string[]): Promise<void> {
     return
   }
   console.log(renderAuditReport(report, { handle: remote.handle, url: remote.public_url, since }))
+}
+
+const HOOK_FETCH_TIMEOUT_MS = 8000
+
+/**
+ * The session-start variant for editor hooks (.claude/settings.json): silent
+ * when this checkout is not paired to an instance, one line when the instance
+ * cannot answer, and never a non-zero exit, so the hook cannot break the
+ * session it runs in.
+ */
+async function auditHook(args: string[]): Promise<void> {
+  const target = pairedRemote(positional(args))
+  if (!target) return
+  const since = stringFlag(args, "--since") ?? "24h"
+  const label = { handle: target.remote.handle, url: target.remote.public_url, since }
+  try {
+    const query = new URLSearchParams({ since })
+    const report = await getJson<AuditReport>(target.remote, target.cookie, `/api/audit?${query}`, AbortSignal.timeout(HOOK_FETCH_TIMEOUT_MS))
+    console.log(renderSessionAudit(report, label))
+  } catch (e: any) {
+    console.log(`[jig] could not check ${target.remote.handle} for failures: ${e?.message ?? e}. Run: bun run jig debug audit`)
+  }
+}
+
+/** The paired instance with a cached session, or null when there is nothing to ask. */
+function pairedRemote(handle: string | undefined): { remote: RemoteManifest; cookie: string } | null {
+  try {
+    if (listRemotes().length === 0) return null
+    const remote = resolveActiveRemote(handle)
+    return remote.session_cookie ? { remote, cookie: remote.session_cookie } : null
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -435,8 +470,8 @@ async function fetchLogHead(remote: RemoteManifest, cookie: string): Promise<num
   return recent.entries.length > 0 ? recent.entries[recent.entries.length - 1].seq : 0
 }
 
-async function getJson<T>(remote: RemoteManifest, cookie: string, path: string): Promise<T> {
-  const res = await fetch(`${remote.public_url}${path}`, { headers: authHeaders(cookie), cache: "no-store" })
+async function getJson<T>(remote: RemoteManifest, cookie: string, path: string, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(`${remote.public_url}${path}`, { headers: authHeaders(cookie), cache: "no-store", signal })
   if (res.status === 401) throw new Error(`Unauthorized. Re-run "jig unlock ${remote.handle}"`)
   if (!res.ok) throw new Error(`GET ${path} → ${res.status}`)
   return (await res.json()) as T

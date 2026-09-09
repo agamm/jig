@@ -13,7 +13,9 @@ secrets/
 .railway/
 # .agents/skills is the cross-agent skills directory (Claude Code, Codex,
 # Cursor, OpenCode all read it), so it is source and must be committed.
-# .codex/ and .claude/ are per-tool local state and stay ignored.
+# .codex/ and .claude/ are per-tool local state and stay ignored, except
+# .claude/settings.json: it ships the session-start hook that prints the paired
+# instance's audit to a coding agent, so it is source.
 .codex/
 .a5c/
 .worktrees/
@@ -27,6 +29,7 @@ jigs/
 runtime/
 check/
 jig.log
-.claude/
+.claude/*
+!.claude/settings.json
 tmp/
 test/.tmp/

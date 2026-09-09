@@ -83,7 +83,7 @@ bun run jig run <jig-id> --dry-run
 bun run jig visualize <jig-id> -v  # the flow: each step, AI or code, connections, prompt summaries (-vv full, --json)
 bun run jig debug tail [handle]
 bun run jig debug failures [handle]  # every failed run of the last week, with its cause and the remedy (--json for the raw log)
-bun run jig debug audit [handle]     # what is failing, since when, and the next command (--json for the raw report)
+bun run jig debug audit [handle]     # what is failing, since when, and the next command (--json for the raw report; --hook is the session-start form .claude/settings.json runs)
 ```
 
 The heal loop: `jig debug failures` names the failing step, the error, the cause and the remedy. When the

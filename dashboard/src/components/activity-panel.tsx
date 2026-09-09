@@ -157,7 +157,7 @@ function ActivityBody({ report }: { report: ActivityReport }) {
 }
 
 function Chart({ days, showSpend }: { days: ActivityDay[]; showSpend: boolean }) {
-  const [hover, setHover] = useState<{ i: number; x: number; y: number } | null>(null);
+  const [hover, setHover] = useState<{ i: number; x: number; y: number; width: number } | null>(null);
 
   const geo = useMemo(() => {
     const W = 1000, L = 52, R = 44, top = 20, runsH = 100, gap = showSpend ? 30 : 0, spendH = showSpend ? 84 : 0, axisH = 22;
@@ -246,20 +246,21 @@ function Chart({ days, showSpend }: { days: ActivityDay[]; showSpend: boolean })
               height={H - top - axisH + 6}
               onMouseMove={(e) => {
                 const rect = (e.currentTarget.ownerSVGElement?.parentElement as HTMLElement | null)?.getBoundingClientRect();
-                if (rect) setHover({ i, x: e.clientX - rect.left, y: e.clientY - rect.top });
+                if (rect) setHover({ i, x: e.clientX - rect.left, y: e.clientY - rect.top, width: rect.width });
               }}
               onMouseLeave={() => setHover(null)}
             />
           ))}
         </g>
       </svg>
-      {hover && <Tooltip day={days[hover.i]} x={hover.x} y={hover.y} showSpend={showSpend} />}
+      {hover && <Tooltip day={days[hover.i]} x={hover.x} y={hover.y} width={hover.width} showSpend={showSpend} />}
     </div>
   );
 }
 
-function Tooltip({ day, x, y, showSpend }: { day: ActivityDay; x: number; y: number; showSpend: boolean }) {
-  const flip = typeof window !== "undefined" && x + 230 > (document.body.clientWidth - 220);
+function Tooltip({ day, x, y, width, showSpend }: { day: ActivityDay; x: number; y: number; width: number; showSpend: boolean }) {
+  // The panel clips overflow, so the flip is measured against the chart, not the page.
+  const flip = x + 230 > width;
   return (
     <div
       className="pointer-events-none absolute z-20 min-w-[190px] rounded-lg border border-[#2a2a2e] bg-[#141417] px-2.5 py-2 text-[11px] shadow-lg"

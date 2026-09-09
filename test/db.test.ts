@@ -353,6 +353,7 @@ describe("schema/migration convergence", () => {
     ALTER TABLE jigs ADD COLUMN run_timeout_ms INTEGER;
     ALTER TABLE jigs ADD COLUMN tool_timeout_ms INTEGER;
     ALTER TABLE email_threads ADD COLUMN approval TEXT;
+    ALTER TABLE runs DROP COLUMN cost_usd;
   `
   const BASELINE_VERSION = 20
 
@@ -412,6 +413,7 @@ describe("schema/migration convergence", () => {
       ALTER TABLE jigs ADD COLUMN run_timeout_ms INTEGER;
       ALTER TABLE jigs ADD COLUMN tool_timeout_ms INTEGER;
       ALTER TABLE email_threads ADD COLUMN approval TEXT;
+      ALTER TABLE runs DROP COLUMN cost_usd;
       INSERT INTO jigs (id, name, created_at, model_override, tool_timeout_ms)
         VALUES ('weekly-update', 'Weekly Update', 1, 'vendor/x', 900000);
       INSERT INTO jigs (id, name, created_at) VALUES ('untouched', 'Untouched', 1);

@@ -24,6 +24,8 @@ export interface RunRow {
   error: string | null
   output: string | null
   params: string | null // JSON
+  /** Model spend for the run in USD; null when unknown (older runs, no model calls). */
+  cost_usd: number | null
 }
 
 export interface StepRow {
@@ -66,7 +68,8 @@ CREATE TABLE IF NOT EXISTS runs (
   duration_ms INTEGER,
   error TEXT,
   output TEXT,
-  params TEXT
+  params TEXT,
+  cost_usd REAL
 );
 CREATE INDEX IF NOT EXISTS idx_runs_jig_id ON runs(jig_id);
 CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
@@ -344,6 +347,9 @@ const MIGRATIONS: (string | ((db: Database) => void))[] = [
   // v25: the auto-repair loop is gone, and with it the 'propose' threads whose
   // fixes shipped only on an explicit "apply". Every thread is owner-solicited.
   `ALTER TABLE email_threads DROP COLUMN approval;`,
+  // v26: what a run cost in model calls (USD, from OpenRouter's usage
+  // accounting). NULL for runs recorded before this, or with no model call.
+  `ALTER TABLE runs ADD COLUMN cost_usd REAL;`,
 ]
 
 // ---------------------------------------------------------------------------
@@ -504,12 +510,30 @@ export function completeRun(
   status: "success" | "fail",
   durationMs: number,
   error?: string,
-  output?: string
+  output?: string,
+  costUsd?: number,
 ): void {
   const db = openDb()
   db.prepare(
-    `UPDATE runs SET status = ?, duration_ms = ?, finished_at = datetime('now'), error = ?, output = ? WHERE id = ?`
-  ).run(status, durationMs, error ?? null, output ?? null, runId)
+    `UPDATE runs SET status = ?, duration_ms = ?, finished_at = datetime('now'), error = ?, output = ?, cost_usd = ? WHERE id = ?`
+  ).run(status, durationMs, error ?? null, output ?? null, typeof costUsd === "number" ? costUsd : null, runId)
+}
+
+/** Finished runs started at or after `since`, oldest first, without steps: the activity chart's input. */
+export function listFinishedRunsSince(since: Date): Pick<RunRow, "id" | "jig_id" | "started_at" | "status" | "cost_usd">[] {
+  const floor = since.toISOString().slice(0, 19).replace("T", " ")
+  return openDb()
+    .prepare(`SELECT id, jig_id, started_at, status, cost_usd FROM runs WHERE status != 'running' AND started_at >= ? ORDER BY id ASC`)
+    .all(floor) as Pick<RunRow, "id" | "jig_id" | "started_at" | "status" | "cost_usd">[]
+}
+
+/** Model spend of one jig's runs started at or after `since`, in USD. */
+export function sumJigCostSince(jigId: string, since: Date): number {
+  const floor = since.toISOString().slice(0, 19).replace("T", " ")
+  const row = openDb()
+    .prepare(`SELECT COALESCE(SUM(cost_usd), 0) AS total FROM runs WHERE jig_id = ? AND started_at >= ?`)
+    .get(jigId, floor) as { total: number } | null
+  return row?.total ?? 0
 }
 
 export function listRuns(jigId?: string, limit = 20): RunRow[] {

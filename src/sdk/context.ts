@@ -53,6 +53,9 @@ export class Context {
   private _stepTools = new Map<string, StepTool>()
   private _stepFinalized = true
 
+  /** Model spend so far in USD, summed from OpenRouter's per-call usage accounting. */
+  private _costUsd = 0
+
   /** True while inside an agent() call — tool calls won't auto-create steps. */
   private _inAgent = false
 
@@ -260,6 +263,15 @@ export class Context {
   /** Record a connection used in the current step. */
   addConnection(name: string) {
     this._stepConnections.add(name)
+  }
+
+  /** Add one model call's cost. Ignores absent or malformed usage. */
+  addCost(usd: unknown) {
+    if (typeof usd === "number" && Number.isFinite(usd) && usd > 0) this._costUsd += usd
+  }
+
+  get costUsd(): number {
+    return this._costUsd
   }
 
   addTool(connection: string, name: string, readOnly: boolean) {

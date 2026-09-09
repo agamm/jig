@@ -64,6 +64,10 @@ export function fetchJigs(): Promise<JigData[]> {
   return fetchApi("listJigs", "/api/jigs")
 }
 
+export function fetchActivity(since: string): Promise<ApiResponse<"activity">> {
+  return fetchApi("activity", `/api/activity?since=${encodeURIComponent(since)}`, { cache: "no-store" })
+}
+
 export function fetchHealth(): Promise<ApiResponse<"health">> {
   return fetchApi("health", "/api/health", { cache: "no-store" })
 }

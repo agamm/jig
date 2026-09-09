@@ -25,6 +25,7 @@ describe("maybeNotifyRunFailure", () => {
         error: "boom",
         output: null,
         params: null,
+      cost_usd: null,
         steps: [],
       }),
       notify: async (payload) => {
@@ -57,6 +58,7 @@ describe("maybeNotifyRunFailure", () => {
       error: "Step failed",
       output: null,
       params: null,
+      cost_usd: null,
       steps: [{
         id, run_id: id, seq: 1, label: "fetch issues", started_at: null, finished_at: null, duration_ms: null,
         output: null, status: "fail" as const, error: "401 Unauthorized", connections: JSON.stringify(["linear"]),
@@ -102,6 +104,7 @@ describe("maybeNotifyRunFailure", () => {
         error: null,
         output: null,
         params: null,
+      cost_usd: null,
         steps: [],
       }),
       notify: async (payload) => {
@@ -129,6 +132,7 @@ describe("maybeNotifyRunFailure", () => {
         error: "Cancelled by user",
         output: "Cancelled by user",
         params: null,
+      cost_usd: null,
         steps: [],
       }),
       notify: async (payload) => {

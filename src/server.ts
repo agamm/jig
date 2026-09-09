@@ -82,6 +82,7 @@ import { announceSetupCode } from "./auth/setup-code.js"
 import { clearLogs, getLogs } from "./server/log-buffer.js"
 import { buildAuditReport, parseSince } from "./services/audit.js"
 import { buildFailureLog } from "./services/failures.js"
+import { buildActivity } from "./services/activity.js"
 import { MODEL_SLOTS, type ModelSlot } from "../shared/api.js"
 import packageJson from "../package.json"
 
@@ -626,6 +627,19 @@ export function createApiServer(port: number) {
               throw new ApiError(400, e.message)
             }
             return apiJson("failures", buildFailureLog({ since, jigId: url.searchParams.get("jig") ?? undefined }))
+          }
+          case "activity": {
+            // Admin-only like audit: every jig's run history and spend.
+            const denied = requireAdminAccess(req)
+            if (denied) return denied
+            if (req.method !== "GET") return json({ error: "Method not allowed" }, 405)
+            let since: Date
+            try {
+              since = parseSince(url.searchParams.get("since") ?? "30d")
+            } catch (e: any) {
+              throw new ApiError(400, e.message)
+            }
+            return apiJson("activity", buildActivity({ since }))
           }
           case "webhook": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)

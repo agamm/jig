@@ -162,5 +162,5 @@ Handoff: HANDOFF.md (design agreed 2026-09-06). Three commits, one version bump 
 - [x] Writer model slot (default anthropic/claude-sonnet-5) used by the reply-to-edit agent; Models tab card with Claude/OpenAI-first recommendations.
 - [x] Dockerfile copies SKILL.md; the edit agent warns when it is missing.
 - [x] Tests: agentmail-webhook (stubbed AgentMail API), models slot test. 873 pass. Version 0.1.150.
-- [ ] Runs + spend graph on the jigs page (mockup approved): cost per run recorded from OpenRouter usage, aggregate endpoint, React panel.
+- [x] Runs + spend graph on the jigs page: runs.cost_usd (migration v26) summed from OpenRouter usage accounting (`usage: {include: true}`) on every SDK model call; GET /api/activity?since= buckets runs and spend per day in the scheduler timezone with a previous window (null past retention); ActivityPanel (tiles, stacked bars, spend line, tooltip, 7d/30d/90d) above the jig list; per-jig cost chips live. Writer slot excluded from price-driven upgrade nudges. 879 pass. Seen in the browser on a seeded scratch instance. Not verified live: OpenRouter's `usage.cost` field on a real call. Version 0.1.151.
 

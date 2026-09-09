@@ -1,7 +1,7 @@
 /** SWR keys and fetchers for jig data. */
 import useSWR, { type SWRConfiguration } from "swr"
-import { fetchJigs, fetchModels, fetchJigSteps, fetchConnections, fetchConnection, fetchActiveRunForJig, fetchExamples, fetchHealth, fetchSystemSettings, fetchPending, fetchVersionsV2, fetchOpenRouterCredits, fetchOpenRouterCatalog } from "./api"
-import type { JigData, ModelCatalog, StepList, Connection, ConnectionDetail, RunStatus, ExampleJig, HealthResponse, SystemSettings, PendingState, JigVersionListResponse, OpenRouterCredits, OpenRouterCatalogResponse } from "@shared/api"
+import { fetchActivity, fetchJigs, fetchModels, fetchJigSteps, fetchConnections, fetchConnection, fetchActiveRunForJig, fetchExamples, fetchHealth, fetchSystemSettings, fetchPending, fetchVersionsV2, fetchOpenRouterCredits, fetchOpenRouterCatalog } from "./api"
+import type { ActivityReport, JigData, ModelCatalog, StepList, Connection, ConnectionDetail, RunStatus, ExampleJig, HealthResponse, SystemSettings, PendingState, JigVersionListResponse, OpenRouterCredits, OpenRouterCatalogResponse } from "@shared/api"
 
 const REFRESH_INTERVAL = 10_000
 
@@ -16,6 +16,13 @@ export function useJigs(config?: SWRConfiguration<JigData[]>) {
 export function useExamples() {
   return useSWR<ExampleJig[]>("examples", fetchExamples, {
     revalidateOnFocus: false,
+  })
+}
+
+export function useActivity(since: string) {
+  return useSWR<ActivityReport>(`activity:${since}`, () => fetchActivity(since), {
+    refreshInterval: REFRESH_INTERVAL,
+    revalidateOnFocus: true,
   })
 }
 

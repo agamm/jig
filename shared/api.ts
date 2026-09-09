@@ -620,6 +620,34 @@ export interface FailureEntry {
   connections: string[]
 }
 
+/** One day of runs and model spend on the jigs page chart. */
+export interface ActivityDay {
+  /** YYYY-MM-DD in the instance's timezone. */
+  date: string
+  ok: number
+  fail: number
+  costUsd: number
+  byJig: { jigId: string; ok: number; fail: number; costUsd: number }[]
+}
+
+export interface ActivityReport {
+  generatedAt: string
+  since: string
+  timeZone: string
+  /** Every day in the window, oldest first, including days with nothing. */
+  days: ActivityDay[]
+  totals: {
+    runs: number
+    ok: number
+    fail: number
+    costUsd: number
+    /** False until a run in the window recorded a cost; the chart hides spend until then. */
+    costKnown: boolean
+  }
+  /** The window of the same length just before `since`, for the deltas; null when run retention no longer holds all of it. */
+  previous: { runs: number; costUsd: number } | null
+}
+
 export interface FailureLog {
   generatedAt: string
   since: string
@@ -931,6 +959,7 @@ export interface ApiContracts {
   serverLogs: ApiContract<void, ServerLogsResponse>
   audit: ApiContract<void, AuditReport>
   failures: ApiContract<void, FailureLog>
+  activity: ApiContract<void, ActivityReport>
   clearServerLogs: ApiContract<void, OkResponse>
 }
 

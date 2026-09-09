@@ -6,6 +6,7 @@ import { mutate } from "swr";
 import type { Jig } from "@/types/jig";
 import { OnboardingView } from "@/components/onboarding-view";
 import { SetupView } from "@/components/setup-view";
+import { ActivityPanel } from "@/components/activity-panel";
 import { JigList } from "@/components/jig-list";
 import { JigDetailPane } from "@/components/jig-detail-pane";
 import { ConnectionPane } from "@/components/connection-pane";
@@ -231,12 +232,17 @@ export function DashboardShell({
           />
         )}
         {!showOnboarding && !loading && !errorMessage && (
-          <JigList
-            jigs={jigs}
-            selectedJigId={selectedJig}
-            onJigClick={(jig) => openJigDetail(jig.id)}
-            onReorder={(reordered) => mutate("jigs", reordered, false)}
-          />
+          <>
+            <div className="px-3 pt-3">
+              <ActivityPanel />
+            </div>
+            <JigList
+              jigs={jigs}
+              selectedJigId={selectedJig}
+              onJigClick={(jig) => openJigDetail(jig.id)}
+              onReorder={(reordered) => mutate("jigs", reordered, false)}
+            />
+          </>
         )}
       </div>
     </main>

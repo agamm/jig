@@ -7,6 +7,6 @@ export type RunEvent =
   | { type: "step-done"; seq: number; output: string; status: "success" | "fail"; durationMs: number; connections: string[]; error?: string }
   | { type: "tool"; completed: string[]; active: string[]; readOnly?: Record<string, boolean> }
   | { type: "output"; text: string }
-  | { type: "done"; tools: string[]; output: string; durationMs: number }
+  | { type: "done"; tools: string[]; output: string; durationMs: number; costUsd?: number }
   | { type: "skipped"; reason: string }
-  | { type: "error"; message: string }
+  | { type: "error"; message: string; costUsd?: number }

@@ -4,7 +4,7 @@
  * Handles the full lifecycle: import → validate → run → collect results.
  * Callers observe execution via the onEvent callback.
  */
-import type { RunRecorder } from "./sdk/context.js"
+import type { Context, RunRecorder } from "./sdk/context.js"
 import { SkipError } from "./sdk/context.js"
 import type { RunEvent } from "./run-events.js"
 import { insertStep, completeStep, completeRun } from "./db.js"
@@ -104,6 +104,8 @@ async function _runJig(
   // Recorder bridges Context's step lifecycle → RunEvent stream
   // Step lines feed the Logs page; jigId/runId arrive via withRunLogContext.
   const stepLabels = new Map<number, string>()
+  // Declared outside the try so a failed run can still report what it spent.
+  let ctx: Context | undefined
   const recorder: RunRecorder = {
     onStepStart(seq, label) {
       stepLabels.set(seq, label)
@@ -197,7 +199,7 @@ async function _runJig(
     // --- Run ---
     log("executing-handler", { jigName: def.name, model: def.options?.model ?? null })
     const { run } = await import("./sdk/jig.js")
-    const ctx = await run(def, params, {
+    ctx = await run(def, params, {
       ...(silent && { silent: true }),
       recorder,
       signal,
@@ -213,8 +215,8 @@ async function _runJig(
       onEvent({ type: "output", text: "[warn] Jig produced no output" })
     }
 
-    log("done", { durationMs, toolCount: tools.length, outputLength: output.length })
-    onEvent({ type: "done", tools, output, durationMs })
+    log("done", { durationMs, toolCount: tools.length, outputLength: output.length, costUsd: ctx.costUsd })
+    onEvent({ type: "done", tools, output, durationMs, costUsd: ctx.costUsd })
     return { output, tools, durationMs }
 
   } catch (e: any) {
@@ -241,7 +243,8 @@ async function _runJig(
     }
     const durationMs = Date.now() - start
     log("error", { durationMs, error })
-    onEvent({ type: "error", message: error })
+    // A failed run still spent whatever its model calls cost before it broke.
+    onEvent({ type: "error", message: error, costUsd: ctx?.costUsd })
     return { output: "", tools: [], durationMs, error }
 
   } finally {
@@ -266,7 +269,7 @@ export function persist(runId: number, startTime: number): (e: RunEvent) => void
         break
       }
       case "done":
-        completeRun(runId, "success", event.durationMs, undefined, event.output)
+        completeRun(runId, "success", event.durationMs, undefined, event.output, event.costUsd)
         break
       case "error": {
         const cancelled = isCancellationMessage(event.message)
@@ -275,7 +278,8 @@ export function persist(runId: number, startTime: number): (e: RunEvent) => void
           "fail",
           Date.now() - startTime,
           cancelled ? USER_CANCELLED_MESSAGE : event.message,
-          cancelled ? USER_CANCELLED_MESSAGE : undefined
+          cancelled ? USER_CANCELLED_MESSAGE : undefined,
+          event.costUsd,
         )
         break
       }

@@ -220,6 +220,9 @@ export async function computeUpgradeSuggestions(): Promise<ModelUpgradesResponse
 
   const picks: Array<{ slot: ModelSlot; current: OpenRouterModelInfo; suggested: OpenRouterModelInfo }> = []
   for (const slot of MODEL_SLOTS) {
+    // The writer is chosen for code quality, not price; a "newer and cheaper"
+    // model from any lab is not an upgrade there.
+    if (slot === "writer") continue
     const current = byId.get(currentBySlot[slot])
     if (!current) continue
     const suggested = pickBest(slot, current, models, dismissed[slot] ?? [])

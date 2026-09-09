@@ -16,7 +16,8 @@ import type { SchedulerHealth } from "../../shared/api.js"
 
 const TICK_INTERVAL_MS = 60_000
 
-const RUN_RETENTION_DAYS = (() => {
+/** How long finished runs are kept; the activity chart cannot compare windows older than this. */
+export const RUN_RETENTION_DAYS = (() => {
   const raw = Number(process.env.JIG_RUN_RETENTION_DAYS)
   return Number.isFinite(raw) && raw > 0 ? raw : 30
 })()

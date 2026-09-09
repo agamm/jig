@@ -1,5 +1,5 @@
 import type { JigData, JigRun } from "../../shared/api.js"
-import { getJigInbox, getJigRuns, getLastRun, getSchedule, listJigMemory, listPendingJigReminders } from "../db.js"
+import { getJigInbox, getJigRuns, getLastRun, getSchedule, listJigMemory, listPendingJigReminders, sumJigCostSince } from "../db.js"
 import { formatDuration } from "../utils.js"
 import { prettifyId } from "../domain/jig-source.js"
 import { getActiveRunStatusForJig } from "./run-store.js"
@@ -123,8 +123,7 @@ export async function buildJigResponse(
       permissions: jig.permissions,
     },
     modelInCode: jig.modelInCode ?? null,
-    costMonth: "",
-    costLifetime: "",
+    ...jigCost(id),
     // A jig's own state, so the user can see and correct what it remembers.
     ...(includeState ? {
       memory: listJigMemory(id).map((row) => ({
@@ -193,4 +192,12 @@ export function discoverAllJigs(): Map<string, string[]> {
     if (jig.activeVersionId != null || jig.pendingVersionId != null) map.set(jig.id, [])
   }
   return map
+}
+
+/** The list's cost chip: model spend over the last 30 days and all time, blank until a run has a cost. */
+function jigCost(jigId: string): { costMonth: string; costLifetime: string } {
+  const month = sumJigCostSince(jigId, new Date(Date.now() - 30 * 24 * 60 * 60 * 1000))
+  const lifetime = sumJigCostSince(jigId, new Date(0))
+  const money = (v: number) => (v >= 0.01 ? `$${v.toFixed(2)}` : v > 0 ? "<$0.01" : "")
+  return { costMonth: money(month), costLifetime: money(lifetime) }
 }

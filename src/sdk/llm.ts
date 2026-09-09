@@ -82,6 +82,15 @@ export function getClient(): OpenAI {
   })
 }
 
+// OpenRouter returns the call's cost in `usage.cost` when asked for usage
+// accounting. The OpenAI SDK's types do not know the field, hence the spread.
+const USAGE_ACCOUNTING = { usage: { include: true } } as unknown as Record<string, never>
+
+/** Book one response's cost on the current run, if there is one. */
+function recordCost(usage: unknown): void {
+  runContext.getStore()?.addCost((usage as { cost?: unknown } | undefined)?.cost)
+}
+
 /**
  * Call an LLM for content generation or judgment. No tool access.
  *
@@ -116,6 +125,7 @@ export async function llm<T = string>(
     const schemaBody = buildJsonSchema(options.schema)
 
     const response = await getClient().chat.completions.create({
+    ...USAGE_ACCOUNTING,
       model,
       max_tokens: maxTokens,
       messages: [{ role: "user", content: userContent }],
@@ -128,6 +138,7 @@ export async function llm<T = string>(
         },
       },
     }, signal ? { signal } : undefined)
+    recordCost(response.usage)
 
     const raw = response.choices[0]?.message?.content
     if (!raw) throw new Error("LLM returned empty response")
@@ -149,10 +160,12 @@ export async function llm<T = string>(
   }
 
   const response = await getClient().chat.completions.create({
+    ...USAGE_ACCOUNTING,
     model,
     max_tokens: maxTokens,
     messages: [{ role: "user", content: userContent }],
   }, signal ? { signal } : undefined)
+  recordCost(response.usage)
 
   const text = response.choices[0]?.message?.content
   if (!text) throw new Error("LLM returned empty response")
@@ -260,11 +273,13 @@ async function runAgent<T>(
     })
 
     const response = await getClient().chat.completions.create({
+    ...USAGE_ACCOUNTING,
       model,
       max_tokens: maxTokens,
       messages,
       tools: toolDefs,
     }, { signal: spinner.signal })
+    recordCost(response.usage)
 
     const message = response.choices[0]?.message
     if (!message) throw new Error("LLM returned empty response")
@@ -373,6 +388,7 @@ async function structureResponse<T>(
   const schemaBody = buildJsonSchema(schema)
 
   const response = await getClient().chat.completions.create({
+    ...USAGE_ACCOUNTING,
     model,
     max_tokens: maxTokens,
     messages: [
@@ -391,6 +407,7 @@ async function structureResponse<T>(
       },
     },
   }, { signal: spinner.signal })
+  recordCost(response.usage)
 
   const raw = response.choices[0]?.message?.content
   if (!raw) throw new Error("Structured response was empty")

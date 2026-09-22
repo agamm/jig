@@ -1,0 +1,54 @@
+test/jig-flow.test.ts
+  s_064b3fc3877ae5::t_798a33df2cd9ad 111-152
+dashboard/src/components/jig-detail-pane.tsx
+  s_064b3fc3877ae5::t_84e27e2c4f5869 357-360,379-384,392-398,402,415
+  s_064b3fc3877ae5::t_31d239f812a46f 308-314,385-391,669
+shared/api.ts
+  s_064b3fc3877ae5::t_22515ed64cad7c 17-25
+dashboard/package.json
+  s_064b3fc3877ae5::t_9220f6c46dfb2d 3
+dashboard/src/components/service-icon.tsx
+  s_064b3fc3877ae5::t_803fc8f13a43c7 99
+dashboard/src/lib/step-labels.ts
+  s_064b3fc3877ae5::t_916799041f462b 1-51
+src/db.ts
+  s_064b3fc3877ae5::t_22515ed64cad7c 638-641
+package.json
+  s_064b3fc3877ae5::t_9220f6c46dfb2d 3
+dashboard/src/components/run-steps.tsx
+  s_064b3fc3877ae5::t_edbdba4c2803a5 212-215,221-222,226,228,230-232
+  s_064b3fc3877ae5::t_aed3d0ebea879a 227
+  s_064b3fc3877ae5::t_2ffb925fa3fdc3 261-263,265-267,270-274,282-283,288-303,305-308
+  s_064b3fc3877ae5::t_80a0f622564b46 3,15-16,24-25,28-32,91,94-95,97,102-126,137,154-155,158-165
+  s_064b3fc3877ae5::t_b446ba11c04f80 347,349-352,447-452,511-516,519,521-532
+src/domain/jig-flow.ts
+  s_064b3fc3877ae5::t_7ae2ca2de770d2 271
+  s_064b3fc3877ae5::t_3d257301807b39 328,337-343,346-356,359
+  s_064b3fc3877ae5::t_54d6ba5b8d60f9 54-60
+  s_064b3fc3877ae5::t_34284e8b094423 373
+  s_064b3fc3877ae5::t_087828fef2a535 307-310,314-327
+  s_064b3fc3877ae5::t_4ef1abd236b92b 329
+dashboard/src/app/globals.css
+  s_064b3fc3877ae5::t_8e8aa8c0e6198b 381-399
+dashboard/src/components/step-code-peek.tsx
+  s_064b3fc3877ae5::t_35f83ec407541c 28
+  s_064b3fc3877ae5::t_10c789e8532713 1-27,29-106
+src/derive-steps.ts
+  s_064b3fc3877ae5::t_78a32a17b5c7cc 9-12,106-107,136-144,156
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2d6710d368de1f2733c339b31f8928c01f472f41",
+  "prompts": {},
+  "sessions": {
+    "s_064b3fc3877ae5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "19b8c104-1a51-4d54-ae3a-a8732940a26e",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "agamm <1269911+agamm@users.noreply.github.com>"
+    }
+  }
+}

@@ -77,12 +77,18 @@ export async function syncSchedules(): Promise<void> {
       const missedStrategy = trigger.missedStrategy ?? "catch-up"
       const timezone = schedulerTimeZone()
 
-      // Only recompute next_run_at when the schedule definition changed. This
-      // preserves already-due runs during regular sync, while migrating old UTC
-      // schedules once because their stored timezone is null.
+      // Only recompute next_run_at when the schedule definition changed, or the
+      // last attempt left it unset. This preserves already-due runs during
+      // regular sync, while migrating old UTC schedules once because their
+      // stored timezone is null, and retrying a schedule stuck on a past
+      // computeNextRun failure instead of leaving it permanently stuck:
+      // next_run_at null falls out of listDueSchedules's `<= ?` comparison for
+      // good (SQLite's NULL <= x is never true), so without a retry here
+      // nothing else ever looks at it again.
       const cronChanged = !existing || existing.cron_expr !== cronExpr
       const timezoneChanged = !existing || existing.timezone !== timezone
-      const computedNextRunAt = cronChanged || timezoneChanged ? computeNextRun(cronExpr, timezone) : existing.next_run_at
+      const stuck = !!existing && existing.next_run_at == null
+      const computedNextRunAt = cronChanged || timezoneChanged || stuck ? computeNextRun(cronExpr, timezone) : existing.next_run_at
       const nextRunAt = computedNextRunAt ?? existing?.next_run_at ?? null
       const syncError = computedNextRunAt === null ? `Invalid cron expression: ${cronExpr}` : null
 

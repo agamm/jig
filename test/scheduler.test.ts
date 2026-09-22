@@ -21,6 +21,7 @@ import { seedJig } from "./_fixtures.js"
 
 const TEST_JIG_IDS = [
   "scheduler-sync-case",
+  "scheduler-stuck-case",
   "scheduler-bad-trigger-case",
   "scheduler-tick-case",
   "scheduler-missing-connection-case",
@@ -87,6 +88,33 @@ export default jig("scheduler-sync-case", {
     expect(broken!.cron_expr).toBe("not a cron")
     expect(broken!.next_run_at).toBe(initial!.next_run_at)
     expect(broken!.error).toContain("Invalid cron expression")
+  })
+
+  it("retries a schedule stuck with no next_run_at even when the cron and timezone are unchanged", async () => {
+    seedJig("scheduler-stuck-case", `
+import { jig } from "@jig/sdk"
+
+export default jig("scheduler-stuck-case", {
+  trigger: { type: "cron", cron: "*/5 * * * *", missedStrategy: "skip" },
+}, async (ctx) => {
+  ctx.output("ok")
+})
+`)
+    // Simulate a schedule whose first-ever computeNextRun failed for some reason
+    // other than the cron string (e.g. a transient error): next_run_at is stuck
+    // at null with the same cron/timezone the current jig source declares, so a
+    // sync that only recomputes on a cron/timezone change would never retry it.
+    // listDueSchedules's `next_run_at <= ?` never matches NULL in SQLite, so a
+    // schedule left this way is never picked up by the tick either: sync is
+    // its only path back to a real next_run_at.
+    upsertSchedule("scheduler-stuck-case", "cron", "*/5 * * * *", "skip", null, "Invalid cron expression: */5 * * * *", schedulerTimeZone())
+    expect(getSchedule("scheduler-stuck-case")!.next_run_at).toBeNull()
+
+    await syncSchedules()
+
+    const recovered = getSchedule("scheduler-stuck-case")
+    expect(recovered!.next_run_at).not.toBeNull()
+    expect(recovered!.error).toBeNull()
   })
 
   it("rejects unsupported trigger types with a visible error", async () => {

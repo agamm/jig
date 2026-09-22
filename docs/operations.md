@@ -190,6 +190,22 @@ as-is. Their cadence per jig: the first failure emails, the second says repeat a
 then one summary every 24 hours while it keeps failing; a success clears the incident. Replying
 to any of them still opens the jig's reply-to-edit session.
 
+**If a failure email never arrived, do not assume the broken connection also blocked its own
+alert.** Delivery is AgentMail only, deliberately: an MCP connection (Composio, Gmail, Granola,
+...) has no part in sending it, precisely so a dead connection can still report itself. Check, in
+order: `notifyOnFailure` at `/api/settings/agentmail` (also `canSend`, `owner`); whether the run
+actually produced a failed *run* at all (a scheduler-level failure, e.g. a calendar-trigger lookup
+that errors before a run is created, currently has no notify path, so nothing will ever email
+about it); and the inbox itself, including spam. A per-jig incident having `alertsSent >= 1` in
+`jig debug audit --json` means a send was attempted, not confirmed delivered.
+
+Separately: a connection that fails mid-session (a cached client's token expires between tool
+calls, rather than at the initial connect) does not currently update that connection's dashboard
+status or fire the system-notify alert on it, only the initial-connect path does. Its jigs still
+get their own per-jig failure emails above, but the Connections page can keep showing "ready" long
+after it's actually broken. `jig debug connections` doesn't catch this either since it only checks
+whether tools are listed, not whether a call still succeeds.
+
 ### Retries
 
 Before a failure reaches the log, the tool call that failed is repeated on gateway and transport

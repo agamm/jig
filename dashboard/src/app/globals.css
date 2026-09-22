@@ -378,3 +378,22 @@ a:focus-visible {
   background: linear-gradient(90deg, transparent, rgba(237, 237, 237, 0.5), transparent);
   animation: agent-token-sweep 1.35s ease-in-out infinite;
 }
+
+@keyframes code-peek-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Source line numbers on the step code peek; the wrapper sets counter-reset to the step's first line. */
+.step-code-peek .line { counter-increment: line; }
+.step-code-peek .line::before {
+  content: counter(line);
+  display: inline-block;
+  width: 2.25rem;
+  margin-right: 0.9rem;
+  padding-right: 0.6rem;
+  text-align: right;
+  color: #3a3a41;
+  border-right: 1px solid #1c1c21;
+  user-select: none;
+}

@@ -96,6 +96,7 @@ export const ICON_REGISTRY: Record<string, IconEntry> = {
 export const ICON_ALIASES: Record<string, string> = {
   "google": "workspace", "google workspace": "workspace",
   "google calendar": "calendar", "google drive": "drive", "gdrive": "drive",
+  "googlecalendar": "calendar", "googledrive": "drive", "googlesheets": "drive", "googledocs": "drive",
   "llm": "ai", "openai": "ai", "anthropic": "ai",
   "notion": "notion", "linear": "linear", "mercury": "mercury",
 };

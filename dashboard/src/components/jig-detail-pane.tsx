@@ -305,6 +305,13 @@ function WebhookUrlRow({ url }: { url: string }) {
   );
 }
 
+/** A derived label matches a run label; `${...}` in a template label matches anything. */
+function labelMatches(derived: string, live: string): boolean {
+  if (!derived.includes("${")) return derived === live;
+  const pattern = derived.split(/\$\{[^}]*\}/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*");
+  return new RegExp(`^${pattern}$`, "s").test(live);
+}
+
 export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionClick }: {
   jig: Jig;
   onClose: () => void;
@@ -347,7 +354,10 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
   const { data: stepsData, isValidating: derivingSteps, error: stepsError, mutate: revalidateSteps } = useJigSteps(jigId);
   const derivedSteps: RunStep[] = useMemo(() => {
     const raw = stepsData?.steps ?? jig.steps;
-    return raw.map(s => ({ num: s.num, name: s.name, connections: s.connections, tools: s.tools }));
+    return raw.map(s => ({
+      num: s.num, name: s.name, connections: s.connections, tools: s.tools,
+      line: s.line, endLine: s.endLine, when: s.when, exits: s.exits, stopIf: s.stopIf,
+    }));
   }, [stepsData, jig.steps]);
   const deriveError = stepsError?.message ?? (stepsData && !stepsData.steps?.length ? "Steps could not be derived from this jig yet." : null);
   const derivingElapsed = useElapsed(derivingSteps);
@@ -366,13 +376,30 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
 
       if (derivedSteps.length === 0) return liveSteps;
 
-      const liveByNum = new Map(liveSteps.map((step) => [step.num, step]));
-      const mergedSteps = derivedSteps.map((derived) => {
-        const live = liveByNum.get(derived.num);
+      // Match by label in source order: conditional steps the run did not take
+      // leave gaps, so position alone would pin later results on the wrong step.
+      const liveFor = new Map<number, RunStep>();
+      const matchedLive = new Set<RunStep>();
+      let cursor = 0;
+      for (const live of liveSteps) {
+        const at = derivedSteps.findIndex((d, idx) => idx >= cursor && labelMatches(d.name, live.name));
+        // A step inside a loop repeats its label; the latest run of it wins.
+        if (at === -1 && cursor > 0 && labelMatches(derivedSteps[cursor - 1].name, live.name)) {
+          liveFor.set(cursor - 1, live);
+          matchedLive.add(live);
+          continue;
+        }
+        if (at === -1) continue;
+        liveFor.set(at, live);
+        matchedLive.add(live);
+        cursor = at + 1;
+      }
+      const mergedSteps = derivedSteps.map((derived, idx) => {
+        const live = liveFor.get(idx);
         if (!live) {
           return {
             ...derived,
-            status: mode.type === "running" ? "pending" as const : undefined,
+            status: idx < cursor ? "skipped" as const : mode.type === "running" ? "pending" as const : undefined,
           };
         }
 
@@ -382,11 +409,10 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
           tools: derived.tools ?? live.tools,
           connections: derived.connections ?? live.connections,
         };
-        if (derived.name.length <= 60) merged.name = derived.name;
         return merged;
       });
 
-      const extraLiveSteps = liveSteps.filter((live) => !derivedSteps.some((derived) => derived.num === live.num));
+      const extraLiveSteps = liveSteps.filter((live) => !matchedLive.has(live));
       return [...mergedSteps, ...extraLiveSteps];
     }
     return derivedSteps;
@@ -640,6 +666,7 @@ export function JigDetailPane({ jig, onClose, onRefresh, onDelete, onConnectionC
                 toolDisplay={toolApproval.reviewRequired ? "expanded" : "collapsed"}
                 reviewedToolKeys={reviewedToolKeys}
                 jigId={jig.id}
+                source={jig.code}
                 onApproveTool={toolApproval.reviewRequired ? (tool) => {
                   setReviewedToolKeys((current) => new Set(current).add(toolKey(tool)));
                 } : undefined}

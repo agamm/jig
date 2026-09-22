@@ -14,6 +14,15 @@ export interface JigStep {
   name: string
   connections?: string[]
   tools?: JigStepTool[]
+  /** Source lines of the ctx.step() call, 1-based and inclusive. */
+  line?: number
+  endLine?: number
+  /** The `if` condition the step runs under, as code; absent when it always runs. */
+  when?: string
+  /** The run ends after this conditional step. */
+  exits?: boolean
+  /** Conditions of `if (...) return` guards right after this step. */
+  stopIf?: string[]
 }
 
 export interface JigRunStep {

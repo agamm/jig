@@ -51,6 +51,13 @@ export interface FlowStep {
   /** Every statement in the step body, flattened with depth, for the full breakdown. */
   statements: FlowStatement[]
   line: number
+  endLine: number
+  /** The `if` conditions the step sits under, joined with &&; absent when it always runs. */
+  when?: string
+  /** True when the branch holding this step returns right after it, ending the run. */
+  exits?: boolean
+  /** Conditions of step-less `if (...) return` guards between this step and the next. */
+  stopIf: string[]
 }
 
 export interface JigFlow {
@@ -261,7 +268,7 @@ export function analyzeJigFlow(code: string, fileName = "jig.ts"): JigFlow {
     }
   }
 
-  const analyzeStep = (call: ts.CallExpression, seq: number): FlowStep => {
+  const analyzeStep = (call: ts.CallExpression, seq: number, guards: string[]): FlowStep => {
     const [labelArg, toolsArg, cbArg, optsArg] = call.arguments
     const label = literalText(labelArg) ?? (labelArg ? `<${squash(text(labelArg)).slice(0, 40)}>` : "<unnamed>")
     const declared = resolveTools(toolsArg)
@@ -297,7 +304,27 @@ export function analyzeJigFlow(code: string, fileName = "jig.ts"): JigFlow {
       logic: statements.filter((s) => NOTABLE.has(s.kind) && s.depth < MAX_DEPTH),
       statements,
       line: lineOf(call),
+      endLine: sf.getLineAndCharacterOfPosition(call.getEnd()).line + 1,
+      when: guards.length > 0 ? guards.join(" && ") : undefined,
+      exits: guards.length > 0 && exitsAfter(call) ? true : undefined,
+      stopIf: [],
     }
+  }
+
+  // The step's statement is followed by `return`/`throw` in the same block.
+  const exitsAfter = (call: ts.CallExpression): boolean => {
+    let stmt: ts.Node = call
+    while (stmt.parent && !ts.isBlock(stmt.parent) && !ts.isSourceFile(stmt.parent)) stmt = stmt.parent
+    const siblings = (stmt.parent as ts.Block).statements
+    const next = siblings[siblings.indexOf(stmt as ts.Statement) + 1]
+    return !!next && (ts.isReturnStatement(next) || ts.isThrowStatement(next))
+  }
+
+  const containsStep = (n: ts.Node): boolean => isCtxCall(n, "step") || !!ts.forEachChild(n, (c) => containsStep(c) || undefined)
+  const endsRun = (n: ts.Statement): boolean => {
+    const stmts = blockStatements(n)
+    const last = stmts[stmts.length - 1]
+    return !!last && (ts.isReturnStatement(last) || ts.isThrowStatement(last))
   }
 
   // ---- walk -----------------------------------------------------------------
@@ -307,10 +334,29 @@ export function analyzeJigFlow(code: string, fileName = "jig.ts"): JigFlow {
   const warnings: string[] = []
   const params = new Set<string>()
   let stepDepth = 0
+  let handler: ts.Node | undefined
+  const guards: string[] = []
+  const inHandler = (n: ts.Node): boolean => {
+    let p = n.parent
+    while (p && !ts.isFunctionLike(p)) p = p.parent
+    return !!p && p === handler
+  }
 
   const visit = (node: ts.Node) => {
+    if (ts.isIfStatement(node) && stepDepth === 0 && inHandler(node)) {
+      const cond = squash(text(node.expression))
+      if (!containsStep(node)) {
+        if (endsRun(node.thenStatement) && steps.length > 0) steps[steps.length - 1].stopIf.push(cond)
+      } else {
+        visit(node.expression)
+        guards.push(cond); visit(node.thenStatement); guards.pop()
+        if (node.elseStatement) { guards.push(`!(${cond})`); visit(node.elseStatement); guards.pop() }
+        return
+      }
+    }
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "jig" && !name) {
       name = literalText(node.arguments[0]) ?? ""
+      handler = node.arguments[2]
       const opts = node.arguments[1]
       if (opts && ts.isObjectLiteralExpression(opts)) {
         model = propString(opts, "model")
@@ -324,7 +370,7 @@ export function analyzeJigFlow(code: string, fileName = "jig.ts"): JigFlow {
     }
     if (isCtxCall(node, "step")) {
       if (stepDepth > 0) warnings.push(`Nested ctx.step() at line ${lineOf(node)}: steps must not contain steps.`)
-      else steps.push(analyzeStep(node, steps.length + 1))
+      else steps.push(analyzeStep(node, steps.length + 1, guards))
       stepDepth++
       ts.forEachChild(node, visit)
       stepDepth--

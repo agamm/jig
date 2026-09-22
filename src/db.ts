@@ -635,7 +635,10 @@ export function completeStep(
 // ---------------------------------------------------------------------------
 
 export interface CachedStepTool { connection: string; name: string; readOnly: boolean }
-export interface CachedStep { num: number; name: string; connections: string[]; tools?: CachedStepTool[] }
+export interface CachedStep {
+  num: number; name: string; connections: string[]; tools?: CachedStepTool[]
+  line?: number; endLine?: number; when?: string; exits?: boolean; stopIf?: string[]
+}
 
 export function getStepCache(jigId: string, codeHash: string): CachedStep[] | null {
   const db = openDb()

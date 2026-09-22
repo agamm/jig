@@ -6,6 +6,10 @@ import type { CachedStep, CachedStepTool } from "./db.js"
 import { getConnectionImportBindings } from "./domain/source-analysis.js"
 import { extractJigModel, readObjectLiteral } from "./domain/jig-source.js"
 import { getMainModel } from "./config/models.js"
+import { analyzeJigFlow } from "./domain/jig-flow.js"
+
+// Bump when the parsed shape changes so cached steps re-derive.
+const PARSER_VERSION = "2"
 
 function parseConnectionImports(code: string): Map<string, string> {
   return new Map(getConnectionImportBindings(code).map((binding) => [binding.localName, binding.serverName]))
@@ -99,6 +103,8 @@ export function parseStepsFromSource(code: string): CachedStep[] {
   const stepRegex = /ctx\.step\(\s*["'`]([^"'`]+)["'`]\s*,\s*(\[[^\]]*\]|\w+)\s*,\s*async/g
   const matches = [...code.matchAll(stepRegex)]
   const steps: CachedStep[] = []
+  let flowByLine = new Map<number, ReturnType<typeof analyzeJigFlow>["steps"][number]>()
+  try { flowByLine = new Map(analyzeJigFlow(code).steps.map((s) => [s.line, s])) } catch {}
 
   for (let i = 0; i < matches.length; i++) {
     const match = matches[i]
@@ -127,7 +133,15 @@ export function parseStepsFromSource(code: string): CachedStep[] {
     }
 
     const stepConnections = [...new Set(tools.map(t => t.connection))]
-    steps.push({ num: i + 1, name, connections: stepConnections, tools })
+    const flow = flowByLine.get(code.slice(0, match.index).split("\n").length)
+    steps.push({
+      num: i + 1, name, connections: stepConnections, tools,
+      ...(flow && {
+        line: flow.line, endLine: flow.endLine,
+        ...(flow.when && { when: flow.when, exits: flow.exits ?? false }),
+        ...(flow.stopIf.length > 0 && { stopIf: flow.stopIf }),
+      }),
+    })
   }
 
   return steps
@@ -139,6 +153,7 @@ export async function deriveSteps(jigId: string, code: string): Promise<CachedSt
   hasher.update(code)
   // Chip labels fall back to the global main model, so a new default must miss the cache.
   hasher.update(getMainModel())
+  hasher.update(PARSER_VERSION)
   const codeHash = hasher.digest("hex")
 
   const cached = getStepCache(jigId, codeHash)

@@ -108,6 +108,48 @@ export default jig("x", { trigger: { type: "manual" } }, async (ctx) => {
     expect(flow.steps[0].calls[0].prompt).toBe('Triage ${"me"}. Be brief.Return indexes.')
     expect(flow.warnings[0]).toContain("Nested ctx.step() at line 6")
   })
+
+  it("records the condition a step runs under, early exits, and step-less return guards", () => {
+    const flow = analyzeJigFlow(`
+import { jig } from "@jig/sdk"
+function helper(x: string) {
+  if (!x) return ""
+  return x
+}
+export default jig("x", { trigger: { type: "manual" } }, async (ctx) => {
+  let items: string[] = []
+  await ctx.step("Gather", [], async () => {
+    items = ["a"]
+  })
+  if (items.length === 0) {
+    await ctx.step("Nothing found", [], async () => {})
+    return
+  }
+  if (items.length > 3) {
+    await ctx.step("Trim", [], async () => {})
+  } else {
+    await ctx.step("Pad", [], async () => {})
+  }
+  await ctx.step("Pick", [], async () => {
+    if (items.length === 1) return
+  })
+  if (!items.includes("b")) return
+  await ctx.step("Send", [], async () => {})
+})`)
+    const by = Object.fromEntries(flow.steps.map((s) => [s.label, s]))
+    expect(by.Gather.when).toBeUndefined()
+    expect(by.Gather.stopIf).toEqual([])
+    expect(by.Gather.line).toBe(9)
+    expect(by.Gather.endLine).toBe(11)
+    expect(by["Nothing found"].when).toBe("items.length === 0")
+    expect(by["Nothing found"].exits).toBe(true)
+    expect(by.Trim.when).toBe("items.length > 3")
+    expect(by.Trim.exits).toBeUndefined()
+    expect(by.Pad.when).toBe("!(items.length > 3)")
+    // The return inside Pick's body and the helper's guard are not run-level guards.
+    expect(by.Pick.stopIf).toEqual(['!items.includes("b")'])
+    expect(by.Send.when).toBeUndefined()
+  })
 })
 
 describe("renderFlow", () => {

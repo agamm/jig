@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import type { JigStepTool } from "@shared/api";
 import { classifyFailure } from "@/lib/api";
@@ -12,6 +12,8 @@ import { Spinner } from "@/components/spinner";
 import { MarkdownOutput } from "@/components/markdown-output";
 import { toolKey } from "@/lib/tool-review";
 import { fixJigPrompt } from "@/lib/agent-prompts";
+import { describeCondition, describeTool, serviceName } from "@/lib/step-labels";
+import { StepCodePeek } from "@/components/step-code-peek";
 
 /** Step with optional live run status */
 export interface RunStep {
@@ -19,9 +21,15 @@ export interface RunStep {
   name: string;
   connections?: string[];
   tools?: JigStepTool[];
-  status?: "pending" | "running" | "success" | "fail" | "healed";
+  /** skipped: the run went past this step without taking its branch. */
+  status?: "pending" | "running" | "success" | "fail" | "healed" | "skipped";
   time?: string;
   output?: string;
+  line?: number;
+  endLine?: number;
+  when?: string;
+  exits?: boolean;
+  stopIf?: string[];
 }
 
 /** Mode determines how steps are displayed */
@@ -80,15 +88,41 @@ function toolService(tool: string): string | null {
   return null;
 }
 
-function groupToolsByConnection(tools: JigStepTool[]) {
+function groupToolsByService(tools: JigStepTool[]) {
   const grouped = new Map<string, JigStepTool[]>();
   for (const tool of tools) {
-    const existing = grouped.get(tool.connection);
+    const { service } = describeTool(tool);
+    const existing = grouped.get(service);
     if (existing) existing.push(tool);
-    else grouped.set(tool.connection, [tool]);
+    else grouped.set(service, [tool]);
   }
   return [...grouped.entries()];
 }
+
+function BranchIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <circle cx="6" cy="5" r="2" /><circle cx="18" cy="8" r="2" /><path d="M6 7v12" /><path d="M18 10c0 5-12 3-12 9" />
+    </svg>
+  );
+}
+
+function StopIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" className={className}><rect x="5" y="5" width="14" height="14" rx="3" /></svg>
+  );
+}
+
+/** "if no meetings" in words when the condition reads plainly, else the code itself. */
+function ConditionText({ cond, prefix }: { cond: string; prefix: string }) {
+  const words = describeCondition(cond);
+  return words
+    ? <span>{prefix} {words}</span>
+    : <span>{prefix} <code className="font-mono normal-case tracking-normal">{cond}</code></span>;
+}
+
+const PEEK_OPEN_MS = 350;
+const PEEK_CLOSE_MS = 120;
 
 export function RunSteps({
   steps, mode = { type: "idle" }, onClear, emptyAction,
@@ -100,6 +134,7 @@ export function RunSteps({
   pendingToolKeys,
   onApproveTool,
   jigId,
+  source,
 }: {
   steps: RunStep[];
   mode?: RunStepsMode;
@@ -116,8 +151,18 @@ export function RunSteps({
   onApproveTool?: (tool: JigStepTool) => void;
   /** Jig id, required for the fix prompt on a failed step. */
   jigId?: string;
+  /** Jig source; enables the code peek on step hover. */
+  source?: string;
 }) {
   const [expandedStep, setExpandedStep] = useState<number | null>(null);
+  const [peek, setPeek] = useState<{ index: number; anchor: HTMLElement } | null>(null);
+  const peekTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const schedulePeek = (next: { index: number; anchor: HTMLElement } | null, delay: number) => {
+    if (peekTimer.current) clearTimeout(peekTimer.current);
+    peekTimer.current = setTimeout(() => setPeek(next), delay);
+  };
+  const holdPeek = () => { if (peekTimer.current) clearTimeout(peekTimer.current); };
+  useEffect(() => () => { if (peekTimer.current) clearTimeout(peekTimer.current); }, []);
 
   // Auto-expand output when run completes
   const modeType = mode.type;
@@ -164,18 +209,27 @@ export function RunSteps({
         </div>
       )}
       <div className="rounded-lg border border-[#1f1f23] bg-[#111113]">
-        {steps.map((step, i) => {
+        {(() => { let mainNum = 0; return steps.map((step, i) => {
+          const isBranch = !!step.when;
+          if (!isBranch) mainNum++;
+          const skipped = step.status === "skipped";
           const modeError = mode.type === "done" ? mode.error : undefined;
           const hasOutput = !!step.output || (step.status === "fail" && !!modeError);
           const isExpanded = expandedStep === i;
           const stepRunning = step.status === "running";
           const dryRunLimited = isDryRun && !!step.output?.includes("[dry-run]") && (step.status === "healed" || step.status === "fail");
-          const groupedTools = step.tools ? groupToolsByConnection(step.tools) : [];
+          const groupedTools = step.tools ? groupToolsByService(step.tools) : [];
+          const canPeek = !!source && !!step.line && !!step.endLine;
 
           // Status indicator
           const statusEl = (() => {
+            if (skipped) {
+              return <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-dashed border-[#2a2a2e] mt-0.5"><span className="h-px w-2 bg-[#3a3a40]" /></span>;
+            }
             if (!isLive || !step.status || step.status === "pending") {
-              return <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#1a1a1d] text-[10px] font-mono text-[#444] mt-0.5">{step.num}</span>;
+              return isBranch
+                ? <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-dashed border-amber-400/25 text-amber-300/60 mt-0.5"><BranchIcon /></span>
+                : <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#1a1a1d] text-[10px] font-mono text-[#444] mt-0.5">{mainNum}</span>;
             }
             if (stepRunning) {
               return (
@@ -204,10 +258,20 @@ export function RunSteps({
             >
               <div
                 onClick={hasOutput ? () => setExpandedStep(isExpanded ? null : i) : undefined}
-                className={`flex items-start gap-3 px-4 py-3 transition-colors duration-150 ${!stepRunning ? "hover:bg-[#151517]" : ""} ${hasOutput ? "cursor-pointer" : ""} ${stepRunning ? "relative z-10" : ""}`}
+                onMouseEnter={canPeek ? (e) => schedulePeek({ index: i, anchor: e.currentTarget }, peek ? 0 : PEEK_OPEN_MS) : undefined}
+                onMouseLeave={canPeek ? () => schedulePeek(null, PEEK_CLOSE_MS) : undefined}
+                className={`relative flex items-start gap-3 py-3 pr-4 transition-colors duration-150 ${isBranch ? "pl-10" : "pl-4"} ${!stepRunning ? "hover:bg-[#151517]" : ""} ${hasOutput ? "cursor-pointer" : ""} ${stepRunning ? "z-10" : ""} ${skipped ? "opacity-45" : ""}`}
               >
+                {isBranch && (
+                  <span aria-hidden className="pointer-events-none absolute left-[25px] top-0 h-[24px] w-[13px] rounded-bl-lg border-b border-l border-dashed border-amber-400/25" />
+                )}
                 {statusEl}
                 <div className="flex-1 min-w-0">
+                  {isBranch && (
+                    <p className="mb-0.5 text-[9px] font-medium uppercase tracking-[0.12em] text-amber-300/60">
+                      <ConditionText prefix="Only if" cond={step.when!} />
+                    </p>
+                  )}
                   <p className={`text-[13px] font-medium ${
                     stepRunning
                       ? "text-[#ededed]"
@@ -215,46 +279,33 @@ export function RunSteps({
                       ? "text-[#d6c29a]"
                       : step.status === "success"
                       ? "text-[#999]"
+                      : isBranch
+                      ? "text-[#a9a9b0]"
                       : "text-[#ddd]"
                   }`}>{step.name}</p>
                   {groupedTools.length > 0 && toolDisplay === "collapsed" ? (
                     <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                      {groupedTools.map(([connection, tools]) => (
-                        <span key={connection} className="group/tool relative inline-flex">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onConnectionClick?.(connection);
-                            }}
-                            className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-[#2a2a2e] bg-[#1a1a1d] px-1.5 py-0.5 transition-colors hover:border-[#3a3a3e] hover:bg-[#202024]"
-                            title={tools.map((tool) => `${tool.name} (${tool.readOnly ? "read" : "write"})`).join(", ")}
-                          >
-                            <ServiceIcon name={connection} size={11} />
-                            <span className="text-[9px] text-[#888] font-mono max-w-[220px] truncate">
-                              {tools.length === 1 ? `${connection}.${tools[0].name}` : connection}
-                            </span>
-                            {tools.length > 1 && (
-                              <span className="rounded-full bg-[#222327] px-1 py-[1px] text-[8px] text-[#666]">
-                                {tools.length}
-                              </span>
-                            )}
-                          </button>
-                          <span className="pointer-events-none absolute left-0 top-full z-20 mt-1 hidden min-w-[180px] flex-col gap-1 rounded-md border border-[#2a2a2e] bg-[#151517] px-2 py-2 shadow-lg group-hover/tool:flex">
-                            {tools.map((tool) => (
-                              <span key={`${tool.connection}:${tool.name}`} className="flex items-center gap-2">
-                                <span className="text-[9px] font-mono text-[#ccc]">{tool.name}</span>
-                                <span className={`rounded-full px-1 py-[1px] text-[8px] ${
-                                  tool.readOnly
-                                    ? "bg-emerald-500/10 text-emerald-300"
-                                    : "bg-amber-500/10 text-amber-300"
-                                }`}>
-                                  {tool.readOnly ? "read" : "write"}
-                                </span>
-                              </span>
-                            ))}
+                      {groupedTools.map(([service, tools]) => (
+                        <button
+                          key={service}
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onConnectionClick?.(tools[0].connection);
+                          }}
+                          className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-[#2a2a2e] bg-[#1a1a1d] py-0.5 pl-1.5 pr-2 transition-colors hover:border-[#3a3a3e] hover:bg-[#202024]"
+                          title={tools.map((tool) => `${tool.connection}.${tool.name} (${tool.readOnly ? "read" : "write"})`).join("\n")}
+                        >
+                          <ServiceIcon name={service} size={11} />
+                          <span className="max-w-[260px] truncate text-[10px]">
+                            <span className="text-[#b4b4ba]">{serviceName(service)}</span>
+                            <span className="text-[#4a4a50]"> · </span>
+                            <span className="text-[#85858c]">{tools.map((tool) => describeTool(tool).action).join(", ")}</span>
                           </span>
-                        </span>
+                          {tools.some((tool) => !tool.readOnly) && (
+                            <span className="h-1.5 w-1.5 rounded-full bg-amber-400/80" title="Writes" />
+                          )}
+                        </button>
                       ))}
                     </div>
                   ) : step.tools && step.tools.length > 0 ? (
@@ -293,9 +344,12 @@ export function RunSteps({
                             }}
                             disabled={pending}
                             className="relative z-10 inline-flex cursor-pointer items-center gap-1 text-left transition-colors hover:text-[#ededed] disabled:cursor-default"
+                            title={`${tool.connection}.${tool.name}`}
                           >
-                            <ServiceIcon name={tool.connection} size={11} />
-                            <span className={`text-[9px] font-mono ${pending ? "text-[#dbeafe]" : reviewed ? "text-[#e7f8ef]" : "text-[#d0d0d4]"}`}>{tool.name}</span>
+                            <ServiceIcon name={describeTool(tool).service} size={11} />
+                            <span className={`text-[10px] ${pending ? "text-[#dbeafe]" : reviewed ? "text-[#e7f8ef]" : "text-[#d0d0d4]"}`}>
+                              {serviceName(describeTool(tool).service)} · {describeTool(tool).action}
+                            </span>
                           </button>
                           <span className={`relative z-10 rounded-full px-1.5 py-[1px] text-[8px] ${
                             tool.readOnly
@@ -390,6 +444,12 @@ export function RunSteps({
                     </div>
                   )}
                 </div>
+                {skipped && <span className="shrink-0 mt-0.5 text-[10px] text-[#55555c]">skipped</span>}
+                {isBranch && step.exits && !skipped && (
+                  <span className="shrink-0 mt-0.5 inline-flex items-center gap-1 rounded-full border border-[#2a2a2e] px-1.5 py-0.5 text-[9px] text-[#77777e]">
+                    <StopIcon /> ends run
+                  </span>
+                )}
                 {step.time && !(stepRunning && isRunning) && <span className={`text-[10px] font-mono shrink-0 mt-0.5 ${stepRunning ? "text-blue-400/60" : "text-[#444]"}`}>{step.time}</span>}
                 {stepRunning && isRunning && (
                   <span className="text-[10px] font-mono text-blue-400/60 shrink-0 mt-0.5">{formatElapsed(mode.elapsed)}</span>
@@ -448,10 +508,28 @@ export function RunSteps({
                   </div>
                 </div>
               )}
+              {step.stopIf?.map((cond) => (
+                <div key={cond} className="flex items-center gap-2 border-t border-dashed border-[#1a1a1d] py-1.5 pl-[22px] pr-4 text-[10px] text-[#6a6a72]">
+                  <span className="flex h-2.5 w-2.5 items-center justify-center text-rose-300/50"><StopIcon /></span>
+                  <ConditionText prefix="Stops here if" cond={cond} />
+                </div>
+              ))}
             </RotatingFrame>
           );
-        })}
+        }); })()}
       </div>
+      {peek && steps[peek.index]?.line && source && (
+        <StepCodePeek
+          anchor={peek.anchor}
+          name={steps[peek.index].name}
+          source={source}
+          line={steps[peek.index].line!}
+          endLine={steps[peek.index].endLine!}
+          tools={steps[peek.index].tools ?? []}
+          onPointerEnter={holdPeek}
+          onPointerLeave={() => schedulePeek(null, PEEK_CLOSE_MS)}
+        />
+      )}
 
     </div>
   );

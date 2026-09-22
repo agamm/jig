@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test"
+import { InvalidGrantError } from "@modelcontextprotocol/sdk/server/auth/errors.js"
 import { isAuthDeniedError } from "../src/mcp/client.js"
 import { authoringDiscoveryConnectError } from "../src/jig-gen.js"
 
@@ -9,6 +10,10 @@ describe("isAuthDeniedError", () => {
 
   it("detects expired refresh token wording", () => {
     expect(isAuthDeniedError(new Error("refresh token expired"))).toBe(true)
+  })
+
+  it("detects the SDK's refresh-token rejection, which carries its code on .errorCode and often no message", () => {
+    expect(isAuthDeniedError(new InvalidGrantError(""))).toBe(true)
   })
 
   it("does not treat unrelated errors as auth", () => {

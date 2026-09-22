@@ -916,8 +916,8 @@ export async function invokeWithMcpReconnect<T>(
  *   2. HTTP status: `.status`, `.statusCode`, `.response.status`, or
  *      `.code` when it's a number (MCP's `StreamableHTTPError` stores the
  *      HTTP status in `.code`).
- *   3. OAuth2 error field (`.error`, or `.code` when it's a string) with
- *      one of the RFC 6749 error codes.
+ *   3. OAuth2 error field (`.error`, `.errorCode`, or `.code` when it's a
+ *      string) with one of the RFC 6749 error codes.
  *
  * The inspection walks `cause`, `response`, `data`, `body` so wrapped
  * errors surface the same signals as unwrapped ones. One intentional
@@ -933,6 +933,8 @@ export function isAuthDeniedError(error: unknown): boolean {
     // (invalid_grant, invalid_token, …) in `.code` or `.error`.
     if (isAuthDeniedStatus(c.code)) return true
     if (isOAuthDenyCode(c.error ?? c.code)) return true
+    // The SDK's OAuthError subclasses (InvalidGrantError on a rejected refresh) carry the code here, often with an empty message.
+    if (isOAuthDenyCode(c.errorCode)) return true
     // Some providers (notably Apify) surface a plain Error("Invalid refresh
     // token") with no HTTP status / OAuth error code on the object. Treat
     // that as auth-denied so recoverOAuth can clear tokens + ask reconnect.

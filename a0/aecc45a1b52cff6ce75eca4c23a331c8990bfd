@@ -1,0 +1,28 @@
+test/scheduler.test.ts
+  s_064b3fc3877ae5::t_97783483bfd5da 108
+  s_064b3fc3877ae5::t_56977a8fb8c2e1 24
+  s_064b3fc3877ae5::t_8298cf69dbc4e2 93-107,109-118
+  s_064b3fc3877ae5::t_a7aff227fd41c8 92
+src/scheduler/sync.ts
+  s_064b3fc3877ae5::t_361393b2e86925 80-87,90-91
+package.json
+  s_064b3fc3877ae5::t_204051415e1b04 3
+dashboard/package.json
+  s_064b3fc3877ae5::t_204051415e1b04 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a0aecc45a1b52cff6ce75eca4c23a331c8990bfd",
+  "prompts": {},
+  "sessions": {
+    "s_064b3fc3877ae5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "19b8c104-1a51-4d54-ae3a-a8732940a26e",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "agamm <1269911+agamm@users.noreply.github.com>"
+    }
+  }
+}

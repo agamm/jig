@@ -1,0 +1,24 @@
+src/scheduler/cron-utils.ts
+  s_064b3fc3877ae5::t_ecc00f82d39005 9-11,13-14
+  s_064b3fc3877ae5::t_d1187a3ab518da 12
+dashboard/package.json
+  s_064b3fc3877ae5::t_774e86ba12512c 3
+package.json
+  s_064b3fc3877ae5::t_774e86ba12512c 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cc8b70064653ff19333de70e6894722019a779bd",
+  "prompts": {},
+  "sessions": {
+    "s_064b3fc3877ae5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "19b8c104-1a51-4d54-ae3a-a8732940a26e",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "agamm <1269911+agamm@users.noreply.github.com>"
+    }
+  }
+}

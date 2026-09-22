@@ -1,0 +1,26 @@
+src/mcp/client.ts
+  s_6e14bf86b23c75::t_2575a95dc08783 919-920,936-937
+test/authoring-auth-errors.test.ts
+  s_6e14bf86b23c75::t_97d541ba754f85 2,15-16
+  s_6e14bf86b23c75::t_9ce226bb534d8f 17-18
+dashboard/package.json
+  s_6e14bf86b23c75::t_6484434c6c5efd 3
+package.json
+  s_6e14bf86b23c75::t_d3c58936403e32 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4c0973aaee81736a78c6ed517989020c2e7ec903",
+  "prompts": {},
+  "sessions": {
+    "s_6e14bf86b23c75": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f1c842be-1ef4-4770-ad28-a1ce332a746d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "agamm <1269911+agamm@users.noreply.github.com>"
+    }
+  }
+}

@@ -57,6 +57,7 @@ import {
   handleResetLocalState,
   parseModelId,
   parseSlot,
+  requireJsonMode,
 } from "./server/handlers/admin.js"
 import {
   handleCreateCustomConnection,
@@ -243,6 +244,8 @@ export function createApiServer(port: number) {
                 if (typeof v !== "string") throw new ApiError(400, `${k} must be a string`)
                 patch[k] = v
               }
+              const current = getModelCatalog()
+              await requireJsonMode(MODEL_SLOTS.flatMap((k) => (patch[k] && patch[k] !== current[k].id ? [patch[k]] : [])))
               return apiJson("models", setModelOverrides(patch))
             }
             return apiJson("models", getModelCatalog())
@@ -269,10 +272,10 @@ export function createApiServer(port: number) {
           case "applyModelUpgrade": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
             const body = (await req.json().catch(() => ({}))) as Record<string, unknown>
-            return apiJson(
-              "applyModelUpgrade",
-              applyModelUpgradeImpl(parseSlot(body.slot), parseModelId(body.modelId)),
-            )
+            const slot = parseSlot(body.slot)
+            const modelId = parseModelId(body.modelId)
+            await requireJsonMode([modelId])
+            return apiJson("applyModelUpgrade", applyModelUpgradeImpl(slot, modelId))
           }
           case "dismissModelUpgrade": {
             if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)

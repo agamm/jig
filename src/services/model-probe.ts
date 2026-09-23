@@ -79,3 +79,65 @@ function text(value: unknown): string | null {
 function firstUrl(text: string): string | undefined {
   return text.match(/https?:\/\/[^\s)"']+/)?.[0]?.replace(/[.,;]+$/, "")
 }
+
+// Reasoning models think before answering, so a tiny budget reads as "no JSON" when it is only "no room".
+const JSON_PROBE_MAX_TOKENS = 4_000
+const JSON_PROBE_SCHEMA = {
+  type: "object",
+  properties: { answer: { type: "number" }, unit: { type: "string" } },
+  required: ["answer", "unit"],
+  additionalProperties: false,
+}
+
+/**
+ * One strict json_schema request routed the way llm() routes it, so a model
+ * that cannot return parseable JSON is refused before it becomes the default
+ * rather than after every structured step starts failing.
+ */
+export async function probeJsonMode(model: string, options: { retryDelayMs?: number } = {}): Promise<ModelProbe> {
+  const apiKey = getOpenRouterApiKey()
+  if (!apiKey) return { ok: false, model, error: "No OpenRouter key on this instance." }
+  let result = await jsonAttempt(model, apiKey)
+  if (!result.ok && result.transient) {
+    await Bun.sleep(options.retryDelayMs ?? 1_500)
+    result = await jsonAttempt(model, apiKey)
+  }
+  return result
+}
+
+async function jsonAttempt(model: string, apiKey: string): Promise<ModelProbe> {
+  let res: Response
+  try {
+    res = await fetch(ENDPOINT, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        max_tokens: JSON_PROBE_MAX_TOKENS,
+        provider: { require_parameters: true },
+        messages: [{ role: "user", content: "How many centimetres are in a metre? Reply as JSON." }],
+        response_format: { type: "json_schema", json_schema: { name: "response", strict: true, schema: JSON_PROBE_SCHEMA } },
+      }),
+      signal: AbortSignal.timeout(90_000),
+    })
+  } catch (error: any) {
+    return { ok: false, model, error: `Could not reach OpenRouter: ${error?.message ?? error}`, transient: true }
+  }
+
+  const body = (await res.json().catch(() => null)) as (ErrorBody & { choices?: { message?: { content?: unknown }; finish_reason?: unknown }[] }) | null
+  const message = describeError(body)
+  if (!res.ok || message) {
+    const error = `${model} failed a JSON-mode request: ${message ?? `HTTP ${res.status}`}`
+    return { ok: false, model, error, ...(res.status >= 500 || res.ok ? { transient: true } : {}) }
+  }
+  const choice = body?.choices?.[0]
+  const content = text(choice?.message?.content)
+  if (!content) {
+    return { ok: false, model, error: `${model} returned no JSON-mode answer (finish_reason=${String(choice?.finish_reason ?? "none")}).` }
+  }
+  try {
+    const parsed = JSON.parse(content.replace(/^```(?:json)?\s*|\s*```$/g, ""))
+    if (typeof parsed?.answer === "number") return { ok: true, model }
+  } catch {}
+  return { ok: false, model, error: `${model} ignored JSON mode and replied: ${content.slice(0, 120)}` }
+}

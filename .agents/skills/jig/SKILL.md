@@ -131,6 +131,9 @@ reach the old instance; re-running the step (or Re-check on the Setup page) move
 Models live under Settings > Models in three slots: main (what jigs run `llm()` and `agent()`
 on), fast (classifiers), and writer (the agent that edits a jig when the user replies to a
 failure email). The writer defaults to a strong coding model; leave it unless the user asks.
+Switching a slot (by hand or by approving an upgrade) first sends the new model one strict
+JSON-mode request and refuses the switch if the reply does not parse, since every structured
+step depends on it.
 
 **Restart-proof unlock.** A hosted instance needs a `JIG_DATA_KEY` service variable, or every
 redeploy and restart pauses its jigs until the owner types the password. `jig deploy` and the
@@ -383,3 +386,16 @@ procedure:
   the user asks why a jig did or did not do something.
 - `"SSE error: Non-200 (405)"` means an outbound MCP connection failed to authorize
   (usually expired auth), not a dashboard problem.
+- **A blank error is still evidence.** `(no error message)` in the log means something threw an
+  empty message, not that nothing happened. Read the run's `mcp.tool` or `sdk.llm` event payload
+  in `bun run jig debug tail` for the error's `name` before blaming the jig (a rejected OAuth
+  refresh arrived this way).
+- **`LLM returned empty response (finish_reason=length ...)`**: a reasoning model spent the budget
+  thinking. Raise `maxTokens` on that call, or pick a model that thinks less.
+- **A JSON parse error on prose** ("Unexpected identifier") means a host answered without JSON
+  mode. Structured calls route only to hosts that support it; if it recurs, run the model
+  through the JSON check by re-selecting it under Settings > Models.
+- **Every tool marked as a write after a reconnect** means the labelling call failed at connect
+  time (the log says "annotation LLM failed"). Reconnect once the model works again.
+- **A `composio-spill` on something that cannot be paged** (a whole meeting transcript) needs the
+  service's own connection, e.g. `granola`, imported in place of the `composio` tool.

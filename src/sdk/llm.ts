@@ -85,6 +85,21 @@ export function getClient(): OpenAI {
 // OpenRouter returns the call's cost in `usage.cost` when asked for usage
 // accounting. The OpenAI SDK's types do not know the field, hence the spread.
 const USAGE_ACCOUNTING = { usage: { include: true } } as unknown as Record<string, never>
+// Some OpenRouter hosts ignore response_format and answer in prose; only route JSON-mode calls to hosts that honour it.
+const JSON_ROUTING = { provider: { require_parameters: true } } as unknown as Record<string, never>
+// Reasoning models spend the budget thinking before they answer; too small a cap returns an empty reply.
+const DEFAULT_MAX_TOKENS = 16_000
+
+/** Why a reply had no content, so the run log says "out of budget" rather than a bare "empty". */
+function emptyResponseError(response: OpenAI.ChatCompletion, maxTokens: number, prefix = "LLM returned empty response"): Error {
+  const finish = response.choices[0]?.finish_reason ?? "none"
+  const usage = response.usage as (OpenAI.CompletionUsage & { completion_tokens_details?: { reasoning_tokens?: number } }) | undefined
+  const reasoning = usage?.completion_tokens_details?.reasoning_tokens
+  logSessionEvent({ source: "sdk.llm", event: "empty-response", model: response.model, finishReason: finish, usage, maxTokens })
+  const spent = reasoning ? `, ${reasoning} of ${usage?.completion_tokens ?? "?"} tokens on reasoning` : ""
+  const hint = finish === "length" ? `: the ${maxTokens}-token budget ran out before the answer; raise maxTokens` : ""
+  return new Error(`${prefix} (finish_reason=${finish}${spent})${hint}`)
+}
 
 /** Book one response's cost on the current run, if there is one. */
 function recordCost(usage: unknown): void {
@@ -107,7 +122,7 @@ export async function llm<T = string>(
   ctx?.addTool("llm", `llm(${model})`, true)
   const signal = options?.signal ?? ctx?.signal
 
-  const maxTokens = options?.maxTokens ?? 4096
+  const maxTokens = options?.maxTokens ?? DEFAULT_MAX_TOKENS
   const userContent = `${prompt}\n\nData:\n${JSON.stringify(data, null, 2)}`
   logSessionEvent({
     source: "sdk.llm",
@@ -126,6 +141,7 @@ export async function llm<T = string>(
 
     const response = await getClient().chat.completions.create({
     ...USAGE_ACCOUNTING,
+    ...JSON_ROUTING,
       model,
       max_tokens: maxTokens,
       messages: [{ role: "user", content: userContent }],
@@ -141,7 +157,7 @@ export async function llm<T = string>(
     recordCost(response.usage)
 
     const raw = response.choices[0]?.message?.content
-    if (!raw) throw new Error("LLM returned empty response")
+    if (!raw) throw emptyResponseError(response, maxTokens)
     // Strip backtick fences — many models wrap JSON in ```json ... ```
     const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/)
     const text = fenced ? fenced[1].trim() : raw.trim()
@@ -168,7 +184,7 @@ export async function llm<T = string>(
   recordCost(response.usage)
 
   const text = response.choices[0]?.message?.content
-  if (!text) throw new Error("LLM returned empty response")
+  if (!text) throw emptyResponseError(response, maxTokens)
   logSessionEvent({
     source: "sdk.llm",
     event: "response",
@@ -222,7 +238,7 @@ async function runAgent<T>(
   options?: { schema?: JigSchema; model?: string; maxTokens?: number }
 ): Promise<T> {
   const model = options?.model ?? runContext.getStore()?.currentModel ?? getMainModel()
-  const maxTokens = options?.maxTokens ?? 4096
+  const maxTokens = options?.maxTokens ?? DEFAULT_MAX_TOKENS
   logSessionEvent({
     source: "sdk.agent",
     event: "start",
@@ -383,12 +399,13 @@ async function structureResponse<T>(
   messages: OpenAI.ChatCompletionMessageParam[],
   schema: JigSchema,
   model: string,
-  maxTokens: number = 4096
+  maxTokens: number = DEFAULT_MAX_TOKENS
 ): Promise<T> {
   const schemaBody = buildJsonSchema(schema)
 
   const response = await getClient().chat.completions.create({
     ...USAGE_ACCOUNTING,
+    ...JSON_ROUTING,
     model,
     max_tokens: maxTokens,
     messages: [
@@ -410,7 +427,7 @@ async function structureResponse<T>(
   recordCost(response.usage)
 
   const raw = response.choices[0]?.message?.content
-  if (!raw) throw new Error("Structured response was empty")
+  if (!raw) throw emptyResponseError(response, maxTokens, "Structured response was empty")
   // Strip backtick fences — many models wrap JSON in ```json ... ```
   const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/)
   const text = fenced ? fenced[1].trim() : raw.trim()

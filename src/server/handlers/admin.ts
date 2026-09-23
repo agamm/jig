@@ -11,6 +11,7 @@ import { isServiceMode } from "../../config/runtime.js"
 import { announceSetupCode, clearSetupCode } from "../../auth/setup-code.js"
 import { closeAllConnections } from "../../mcp/client.js"
 import { listJigs as storeListJigs } from "../../services/jig-store.js"
+import { probeJsonMode } from "../../services/model-probe.js"
 
 export function parseSlot(value: unknown): ModelSlot {
   if (typeof value === "string" && (MODEL_SLOTS as readonly string[]).includes(value)) {
@@ -24,6 +25,14 @@ export function parseModelId(value: unknown): string {
     throw new ApiError(400, "modelId is required")
   }
   return value.trim()
+}
+
+/** Refuses a model switch unless each new model returns parseable JSON; every structured step depends on it. */
+export async function requireJsonMode(models: string[]): Promise<void> {
+  for (const model of new Set(models.map((m) => m.trim()).filter(Boolean))) {
+    const probe = await probeJsonMode(model)
+    if (!probe.ok) throw new ApiError(400, `Not switching to ${model}: ${probe.error}`)
+  }
 }
 
 /** Wipes every trace of this instance: jigs, history, credentials, and the

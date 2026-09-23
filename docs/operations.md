@@ -169,7 +169,9 @@ A coding agent in Claude Code gets the first look without asking: `.claude/setti
 this repo runs `bun run jig debug audit --hook` when a session starts in the checkout. Hook
 mode prints nothing when the checkout is not paired, one line when the instance cannot answer,
 otherwise the audit under a read-me-first header, and it never exits non-zero. A session that
-was already open when the file arrived picks it up after `/hooks` or a restart.
+was already open when the file arrived picks it up after `/hooks` or a restart. At most every
+three days the agent turns that audit into an offer: the problems and proposed fixes, asked
+up front (`.agents/skills/jig/SKILL.md`, "Offer the production fixes every three days").
 
 The classifier matches the error text and names the remedy:
 

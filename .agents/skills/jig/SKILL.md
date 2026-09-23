@@ -33,6 +33,13 @@ Reach for that one when you are producing TypeScript, this one for everything el
   when a session starts, so the paired instance's audit is already in your context. When it
   says every jig is healthy, the failure log can wait; when it lists problems, start there.
   Codex has no such hook in this repo, so there you run the command yourself.
+- **Offer the production fixes every three days.** When the audit lists failing jigs or unhealthy
+  connections, read `.jig/last-fix-offer` (one ISO date; missing means due). If three or more
+  days have passed, open your first reply with the problems, one line each: the jig, the cause,
+  and the fix you would make, whether that is a reconnect, a jig edit, or a bug in Jig itself
+  (a wrong classification, a missing error message). Ask which to do, then write today's date to
+  the file whether or not the user takes any. Inside the window, raise them only when the task
+  touches them. A healthy audit never triggers the offer.
 - **Probe before you state.** Never report what is connected, what tools exist, or what a tool
   returns from inference, from a file on disk, or from what was true earlier in the session. Run
   the command that answers it, then say what came back. "Connected" in particular is layered:

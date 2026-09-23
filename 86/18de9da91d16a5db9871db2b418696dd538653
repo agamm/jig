@@ -1,0 +1,21 @@
+.agents/skills/jig/SKILL.md
+  s_6e14bf86b23c75::t_9dbbca61cdf983 36-42
+docs/operations.md
+  s_6e14bf86b23c75::t_ef6f1090a0e0af 172-174
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8618de9da91d16a5db9871db2b418696dd538653",
+  "prompts": {},
+  "sessions": {
+    "s_6e14bf86b23c75": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f1c842be-1ef4-4770-ad28-a1ce332a746d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "agamm <1269911+agamm@users.noreply.github.com>"
+    }
+  }
+}

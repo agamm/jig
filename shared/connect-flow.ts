@@ -17,6 +17,26 @@ export interface ConnectIO {
 export interface ConnectBackend {
   listConnections(): Promise<Connection[]>
   connect(name: string, credentials?: Record<string, string>): Promise<ConnectConnectionResponse>
+  /** Pause between polls of a connect still running on the server; tests pass a no-op. */
+  wait?(ms: number): Promise<void>
+}
+
+const IN_PROGRESS_POLL_MS = 2_000
+
+/** Poll until the server-side connect finishes, then report what it left behind. */
+async function awaitBackgroundConnect(serverName: string, backend: ConnectBackend): Promise<ConnectConnectionResponse> {
+  const wait = backend.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
+  for (;;) {
+    const conn = (await backend.listConnections()).find((c) => c.name === serverName)
+    if (conn && !conn.connectInProgress) {
+      if (conn.connectError) throw new Error(`Connect to ${serverName} failed: ${conn.connectError}`)
+      if (conn.connected && conn.status?.state !== "auth-required" && conn.status?.state !== "unreachable") {
+        return { ok: true, server: serverName, toolCount: conn.toolCount, tools: [] }
+      }
+      throw new Error(`Connect to ${serverName} did not finish: ${conn.status?.detail ?? "no tools were saved; see the server logs"}`)
+    }
+    await wait(IN_PROGRESS_POLL_MS)
+  }
 }
 
 export async function runConnectFlow(
@@ -40,6 +60,7 @@ export async function runConnectFlow(
 
   io.emit({ type: "connecting", server: serverName })
   let result = await backend.connect(serverName)
+  if (!result.ok && "inProgress" in result) result = await awaitBackgroundConnect(serverName, backend)
   if (!result.ok) {
     if ("awaitingOAuth" in result && result.awaitingOAuth) {
       io.emit({ type: "awaiting-oauth", server: serverName, authorizationUrl: result.authorizationUrl, browserOpened: result.browserOpened })
@@ -63,6 +84,7 @@ export async function runConnectFlow(
     }
 
     result = await backend.connect(serverName, credentials)
+    if (!result.ok && "inProgress" in result) result = await awaitBackgroundConnect(serverName, backend)
     if (!result.ok) {
       if ("awaitingOAuth" in result && result.awaitingOAuth) {
         io.emit({ type: "awaiting-oauth", server: serverName, authorizationUrl: result.authorizationUrl, browserOpened: result.browserOpened })

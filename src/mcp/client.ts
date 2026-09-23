@@ -388,7 +388,7 @@ async function handleOAuthRedirect(
 }
 
 /**
- * Discover all tools from a connected MCP server. Caches schemas to .jig/schemas/.
+ * List every tool a connected MCP server exposes. Saves nothing; a finished connect calls saveToolSchemas.
  */
 export async function discoverTools(connection: McpConnection, options: { signal?: AbortSignal } = {}): Promise<Tool[]> {
   throwIfAborted(options.signal)
@@ -406,14 +406,14 @@ export async function discoverTools(connection: McpConnection, options: { signal
   } while (cursor)
 
   throwIfAborted(options.signal)
-  await mkdir(SCHEMAS_DIR, { recursive: true })
-  await Bun.write(
-    join(SCHEMAS_DIR, `${connection.serverName}.json`),
-    JSON.stringify(allTools, null, 2)
-  )
-  cacheToolSchemas(connection.serverName, allTools)
-
   return allTools
+}
+
+/** Persist a finished connect's tool list and refresh the in-memory copy runs read. */
+export async function saveToolSchemas(serverName: string, tools: Tool[]): Promise<void> {
+  await mkdir(SCHEMAS_DIR, { recursive: true })
+  await Bun.write(join(SCHEMAS_DIR, `${serverName}.json`), JSON.stringify(tools, null, 2))
+  cacheToolSchemas(serverName, tools)
 }
 
 /**

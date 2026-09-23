@@ -36,8 +36,10 @@ export async function proxy(request: NextRequest) {
     : undefined
 
   const fwd = forwardHeaders(request.headers)
+  // A POST can fail after the API already acted (a run started, a connect began); repeating it duplicates the effect.
+  const attempts = body === undefined ? MAX_RETRIES : 1
 
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
     try {
       const res = await fetch(url, { method: request.method, headers: fwd, body })
 
@@ -49,7 +51,7 @@ export async function proxy(request: NextRequest) {
         headers: res.headers,
       })
     } catch {
-      if (attempt < MAX_RETRIES - 1) {
+      if (attempt < attempts - 1) {
         await new Promise((r) => setTimeout(r, RETRY_DELAY * (attempt + 1)))
         continue
       }

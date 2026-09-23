@@ -428,3 +428,20 @@ describe("ensureAnnotations schema", () => {
     })
   })
 })
+
+describe("discoverTools persistence", () => {
+  it("lists tools without saving them, so a probe or a half-finished connect cannot replace the saved, annotated schema", async () => {
+    const { existsSync } = await import("node:fs")
+    const { join } = await import("node:path")
+    const { SCHEMAS_DIR } = await import("../src/config/paths.js")
+    const serverName = "test-discovery-no-write"
+    const tools = await discoverTools({
+      client: { listTools: async () => ({ tools: [{ name: "meta_tool", inputSchema: { type: "object", properties: {} } }] }) },
+      transport: {} as any,
+      serverName,
+      config: {} as any,
+    } as any)
+    expect(tools.map((t) => t.name)).toEqual(["meta_tool"])
+    expect(existsSync(join(SCHEMAS_DIR, `${serverName}.json`))).toBe(false)
+  })
+})

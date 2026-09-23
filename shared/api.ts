@@ -189,8 +189,10 @@ export interface Connection {
   proxyDashboardUrl?: string
   /** Runtime health (token expired, unreachable). null/absent = no signal recorded. */
   status?: ConnectionStatusInfo | null
-  /** A detached connect (OAuth in flight) is still running server-side. */
+  /** A detached connect (OAuth in flight, or a slow discovery) is still running server-side. */
   connectInProgress?: boolean
+  /** Why the last background connect failed, until the next one starts. */
+  connectError?: string
 }
 
 export interface ConnectionTool {
@@ -238,6 +240,13 @@ export type ConnectConnectionResponse =
       authorizationUrl: string
       /** Local mode auto-opens the browser server-side — dashboard shouldn't re-open. */
       browserOpened?: boolean
+    }
+  | {
+      // Still running past the request's idle window (discovery plus tool labelling can take minutes);
+      // poll the connection until `connectInProgress` clears.
+      ok: false
+      inProgress: true
+      server: string
     }
 
 export interface DisconnectConnectionResponse {
@@ -601,6 +610,7 @@ export type FailureCause =
   | "rate-limit"
   | "provider"
   | "timeout"
+  | "token-budget"
   | "code"
 
 export interface AuditLastFailure {

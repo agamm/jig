@@ -98,6 +98,31 @@
     "url": "https://mcp.wix.com/mcp",
     "description": "Wix sites, apps, CMS, commerce, bookings, payments, and business workflows"
   },
+  "attio": {
+    "type": "remote",
+    "url": "https://mcp.attio.com/mcp",
+    "description": "Attio CRM records, lists, notes, and tasks"
+  },
+  "dropbox": {
+    "type": "remote",
+    "url": "https://mcp.dropbox.com/mcp",
+    "description": "Dropbox files and folders: search, read, and organize"
+  },
+  "stripe": {
+    "type": "remote",
+    "url": "https://mcp.stripe.com",
+    "description": "Stripe customers, payments, invoices, subscriptions, and products"
+  },
+  "vercel": {
+    "type": "remote",
+    "url": "https://mcp.vercel.com",
+    "description": "Vercel projects, deployments, build logs, and domains"
+  },
+  "cloudflare": {
+    "type": "remote",
+    "url": "https://mcp.cloudflare.com/mcp",
+    "description": "The whole Cloudflare API (Workers, DNS, zones, R2) through search and execute tools"
+  },
   "apify": {
     "type": "remote",
     "url": "https://mcp.apify.com",

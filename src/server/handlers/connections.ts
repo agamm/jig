@@ -9,7 +9,7 @@ import { SCHEMAS_DIR, TYPES_DIR } from "../../config/paths.js"
 import { ApiError, apiJson, json } from "../http.js"
 import { createCustomRemoteServer, loadCustomServerConfigs, loadServerConfigs } from "../../mcp/config.js"
 import { getConnectionStatus } from "../../services/connection-status.js"
-import { connectConfiguredServer, isConnectInProgress } from "../../services/connect-server.js"
+import { connectConfiguredServer, getLastConnectError, isConnectInProgress } from "../../services/connect-server.js"
 import { publicUrlFromRequest } from "../../config/runtime.js"
 import { getActiveCode as getJigActiveCode } from "../../services/jig-store.js"
 import { discoverAllJigs } from "../../services/jig-api.js"
@@ -43,6 +43,7 @@ export async function handleGetConnections(): Promise<Response> {
         // chokepoints recorded.
         status: connected ? getConnectionStatus(name) : null,
         connectInProgress: isConnectInProgress(name),
+        connectError: getLastConnectError(name),
       }
     })
   )
@@ -105,6 +106,7 @@ export async function handleGetConnection(name: string): Promise<Response> {
     proxyDashboardUrl: config.proxy?.dashboardUrl,
     status: connected ? getConnectionStatus(name) : null,
     connectInProgress: isConnectInProgress(name),
+    connectError: getLastConnectError(name),
     tools,
     usedBy,
   })

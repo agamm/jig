@@ -254,7 +254,7 @@ export function DashboardShell({
         <span className="text-[13px] font-medium text-[#ededed]">Connections</span>
       </div>
       <div className="flex-1 overflow-y-auto px-6 py-6">
-        <div className="max-w-2xl mx-auto space-y-3">
+        <div className="max-w-5xl mx-auto space-y-3">
           <div className="rounded-lg border border-[#1f1f23] bg-[#111113] p-4">
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -354,53 +354,59 @@ export function DashboardShell({
               description={<><span>Run </span><code className="rounded bg-[var(--surface-muted)] px-1 py-0.5 font-mono text-[10px] text-[var(--text-secondary)]">jig connect &lt;server&gt;</code><span> to add one.</span></>}
             />
           )}
-          {displayedConnections.map((c) => (
-            <button
-              key={c.name}
-              onClick={() => setSelectedConnection(c.name)}
-              className={`relative flex w-full items-center gap-3 rounded-lg border px-4 py-3 transition-colors duration-150 ${selectedConnection === c.name ? "border-emerald-400/30 bg-[#15171a]" : "border-[#1f1f23] bg-[#111113] hover:border-[#2a2a2e] hover:bg-[#141416]"}`}
-            >
-              {selectedConnection === c.name && (
-                <span className="absolute left-0 top-2 bottom-2 w-[2px] rounded-r bg-emerald-400/60" />
-              )}
-              <ServiceIcon name={c.name} size={18} />
-              <span className="text-[13px] text-[#ededed] capitalize">{c.name}</span>
-              {c.custom && (
-                <span className="rounded-full border border-blue-500/20 bg-blue-500/[0.08] px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-blue-300">
-                  custom
-                </span>
-              )}
-              {isRecommendedConnection(c.name) && (
-                <span className="rounded-full border border-emerald-500/20 bg-emerald-500/[0.08] px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-emerald-300">
-                  recommended
-                </span>
-              )}
-              {c.proxyVia && (
-                <span className="rounded-full border border-[#2a2a2e] bg-[#1a1a1d] px-1.5 py-0.5 text-[9px] font-medium text-[#888]" title={`Tools proxied via ${c.proxyVia}`}>
-                  proxy
-                </span>
-              )}
-              <span className="text-[11px] text-[#555]">{c.toolCount} tools</span>
-              {(() => {
+          {displayedConnections.length > 0 && (
+            <div className="grid gap-3 grid-cols-[repeat(auto-fill,minmax(220px,1fr))]">
+              {displayedConnections.map((c) => {
                 const st = connectionStatusDisplay(c);
+                const selected = selectedConnection === c.name;
                 return (
-                  <>
-                    <span className={`ml-auto h-2 w-2 rounded-full ${st.dot}`} />
-                    <span className={`text-[11px] ${st.labelClass}`}>{st.label}</span>
-                  </>
+                  <button
+                    key={c.name}
+                    onClick={() => setSelectedConnection(c.name)}
+                    className={`flex min-h-[112px] flex-col gap-2 rounded-lg border p-3.5 text-left transition-colors duration-150 ${selected ? "border-emerald-400/30 bg-[#15171a]" : "border-[#1f1f23] bg-[#111113] hover:border-[#2a2a2e] hover:bg-[#141416]"}`}
+                  >
+                    <div className="flex w-full items-center gap-2.5">
+                      <ServiceIcon name={c.name} size={20} />
+                      <span className="min-w-0 flex-1 truncate text-[13px] text-[#ededed] capitalize">{c.name}</span>
+                      <span className={`h-2 w-2 shrink-0 rounded-full ${st.dot}`} title={st.label} />
+                    </div>
+                    {c.description && (
+                      <p className="line-clamp-2 text-[11px] leading-relaxed text-[#666]">{c.description}</p>
+                    )}
+                    <div className="mt-auto flex w-full flex-wrap items-center gap-1.5">
+                      {c.custom && (
+                        <span className="rounded-full border border-blue-500/20 bg-blue-500/[0.08] px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-blue-300">
+                          custom
+                        </span>
+                      )}
+                      {isRecommendedConnection(c.name) && !c.connected && (
+                        <span className="rounded-full border border-emerald-500/20 bg-emerald-500/[0.08] px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-emerald-300">
+                          recommended
+                        </span>
+                      )}
+                      {c.proxyVia && (
+                        <span className="rounded-full border border-[#2a2a2e] bg-[#1a1a1d] px-1.5 py-0.5 text-[9px] font-medium text-[#888]" title={`Tools proxied via ${c.proxyVia}`}>
+                          proxy
+                        </span>
+                      )}
+                      <span className={`ml-auto text-[11px] ${st.labelClass}`}>
+                        {c.connected ? `${c.toolCount} tools · ${st.label}` : st.label}
+                      </span>
+                    </div>
+                  </button>
                 );
-              })()}
-            </button>
-          ))}
-          {firstDisconnectedConnection ? (
-            <button
-              onClick={() => setSelectedConnection(firstDisconnectedConnection.name)}
-              className="flex w-full items-center gap-2 rounded-lg border border-dashed border-[#2a2a2e] px-4 py-3 text-[12px] text-[#555] transition-colors duration-150 hover:text-emerald-400 hover:border-emerald-400/30"
-            >
-              <span className="flex h-5 w-5 items-center justify-center rounded-full border border-dashed border-[#2a2a2e] text-[11px]">+</span>
-              Connect a service
-            </button>
-          ) : null}
+              })}
+              {firstDisconnectedConnection ? (
+                <button
+                  onClick={() => setSelectedConnection(firstDisconnectedConnection.name)}
+                  className="flex min-h-[112px] flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-[#2a2a2e] p-3.5 text-[12px] text-[#555] transition-colors duration-150 hover:text-emerald-400 hover:border-emerald-400/30"
+                >
+                  <span className="flex h-6 w-6 items-center justify-center rounded-full border border-dashed border-[#2a2a2e] text-[12px]">+</span>
+                  Connect a service
+                </button>
+              ) : null}
+            </div>
+          )}
         </div>
       </div>
     </main>

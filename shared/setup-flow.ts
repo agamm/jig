@@ -126,6 +126,7 @@ export interface SetupBackend {
   connect(name: string): Promise<
     | { ok: true; server: string; toolCount: number; tools: string[] }
     | { ok: false; server: string; awaitingOAuth: true; authorizationUrl: string; browserOpened?: boolean }
+    | { ok: false; server: string; inProgress: true }
     | { ok: false; server: string; missingCredentials: string[]; setup?: string }
   >
   verify(name: string): Promise<VerifyConnectionResponse>
@@ -508,6 +509,8 @@ async function runComposioStep(io: SetupIO, backend: SetupBackend, options: Setu
     if (!result.ok && "awaitingOAuth" in result) {
       const opened = await io.openUrl(result.authorizationUrl)
       io.emit({ type: "open-url", url: result.authorizationUrl, purpose: "authorize Composio", opened })
+      await waitForConnected(io, backend, "composio", options)
+    } else if (!result.ok && "inProgress" in result) {
       await waitForConnected(io, backend, "composio", options)
     } else if (!result.ok) {
       throw new Error(`Composio needs credentials this wizard cannot supply: ${result.missingCredentials.join(", ")}`)

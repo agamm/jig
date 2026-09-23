@@ -25,6 +25,7 @@ describe("classifyFailure", () => {
     ["SSE error: Non-200 status code (503)", "provider"],
     ["fetch failed: ECONNRESET", "provider"],
     ["Run timed out after 10 minutes", "timeout"],
+    ["LLM returned empty response (finish_reason=length, 8000 of 8000 tokens on reasoning): the 8000-token budget ran out before the answer; raise maxTokens", "token-budget"],
     ["Cannot read properties of undefined (reading 'items')", "code"],
     ["Jig validation failed: Jig has no ctx.step() calls.", "code"],
   ]

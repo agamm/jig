@@ -42,6 +42,21 @@ function formatConnectError(error: unknown): string {
   return message || "Failed to connect"
 }
 
+// Composio toolkit slugs run words together ("googlecalendar"); CSS capitalize cannot split them.
+const INTEGRATION_LABELS: Record<string, string> = {
+  googlecalendar: "Google Calendar",
+  googlesheets: "Google Sheets",
+  googledrive: "Google Drive",
+  googledocs: "Google Docs",
+  github: "GitHub",
+  hubspot: "HubSpot",
+  linkedin: "LinkedIn",
+}
+
+function integrationLabel(slug: string): string {
+  return INTEGRATION_LABELS[slug] ?? slug.charAt(0).toUpperCase() + slug.slice(1)
+}
+
 function credentialKeyFromQuestion(question: string): string {
   const match = question.match(/^Enter (.+):$/)
   return match?.[1] ?? question
@@ -91,15 +106,12 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
   // Credentials rejected on a connected server — the primary action becomes
   // "Reconnect" (matches the "reconnect below" banner) instead of Refresh Tools.
   const needsReauth = Boolean(conn?.connected && conn.status?.state === "auth-required")
+  // The server keeps a slow connect (discovery, tool labelling) running after the request returns.
+  const busy = connecting || Boolean(conn?.connectInProgress)
 
   useEffect(() => {
     credentialValuesRef.current = credentialValues
   }, [credentialValues])
-
-  useEffect(() => {
-    if (!connecting || !conn?.connected) return
-    setConnecting(false)
-  }, [connecting, conn?.connected])
 
   useEffect(() => {
     return () => {
@@ -417,19 +429,21 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
             )}
 
             <RotatingFrame
-              active={connecting}
+              active={busy}
               roundedClassName="rounded-lg"
               innerRoundedClassName="rounded-[7px]"
               surfaceClassName="bg-[#111113]"
             >
-              <div className={`${connecting ? "" : "ui-card"} px-4 py-3 space-y-3`}>
+              <div className={`${busy ? "" : "ui-card"} px-4 py-3 space-y-3`}>
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <p className="text-[12px] text-[var(--text-primary)]">
-                      {needsReauth ? "Reconnect this service" : conn.connected ? "Connection ready" : "Connect this service"}
+                      {busy && conn.connected ? "Refreshing tools…" : needsReauth ? "Reconnect this service" : conn.connected ? "Connection ready" : "Connect this service"}
                     </p>
                     <p className="mt-1 text-[11px] text-[var(--text-dim)]">
-                      {needsReauth
+                      {busy && conn.connected
+                        ? "Discovering tools and labelling what each one reads or writes. Large connections take a few minutes."
+                        : needsReauth
                         ? "Re-authorize to restore the jigs that depend on this connection."
                         : conn.connected ? "Refresh tool discovery if the provider added new capabilities." : "Starts the same backend connect flow used by the CLI."}
                     </p>
@@ -440,7 +454,7 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
                         Cancel
                       </Button>
                     )}
-                    {conn.connected && !connecting && (
+                    {conn.connected && !busy && (
                       <Button
                         onClick={() => setConfirmDisconnectOpen(true)}
                         variant="subtle"
@@ -454,9 +468,9 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
                       onClick={handleConnect}
                       variant={conn.connected && !needsReauth ? "subtle" : "success"}
                       size="sm"
-                      disabled={awaitingCredentialKey ? !credentialValues[awaitingCredentialKey]?.trim() : connecting}
+                      disabled={awaitingCredentialKey ? !credentialValues[awaitingCredentialKey]?.trim() : busy}
                     >
-                      {awaitingCredentialKey ? "Continue" : connecting ? "Connecting…" : needsReauth ? "Reconnect" : conn.connected ? "Refresh Tools" : "Connect"}
+                      {awaitingCredentialKey ? "Continue" : busy ? "Connecting…" : needsReauth ? "Reconnect" : conn.connected ? "Refresh Tools" : "Connect"}
                     </Button>
                   </div>
                 </div>
@@ -496,20 +510,15 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
                   </Notice>
                 ) : null}
                 {connectStatus ? (() => {
-                  // Busy = local request in flight OR the server-side detached
-                  // connect still running (connectInProgress) OR awaiting OAuth.
-                  // Without connectInProgress the status reverts to plain text
-                  // while discovery is still happening server-side (no spinner).
-                  // The text check backstops flag lag (e.g. connectInProgress
-                  // only arrives with the next 2s poll): an in-progress label
-                  // must never render without its spinner + shimmer.
-                  const busy = connecting || !!oauthUrl || !!conn.connectInProgress
+                  // The text check backstops flag lag (connectInProgress only arrives with the next 2s poll):
+                  // an in-progress label must never render without its spinner + shimmer.
+                  const statusBusy = busy || !!oauthUrl
                     || /^(connecting|opening|discovering|authoriz)/i.test(connectStatus.trim())
                   return (
                     <Notice tone={connectStatus.toLowerCase().startsWith("connected") ? "success" : connectStatus.toLowerCase().includes("failed") || connectStatus.toLowerCase().includes("error") ? "danger" : "neutral"}>
                       <div className="flex items-start gap-2">
-                        {busy && <Spinner size={12} className="mt-0.5" />}
-                        <div className={`whitespace-pre-wrap ${busy ? "text-shimmer" : ""}`.trim()}>{connectStatus}</div>
+                        {statusBusy && <Spinner size={12} className="mt-0.5" />}
+                        <div className={`whitespace-pre-wrap ${statusBusy ? "text-shimmer" : ""}`.trim()}>{connectStatus}</div>
                       </div>
                     </Notice>
                   )
@@ -543,10 +552,10 @@ export function ConnectionPane({ name, onClose, onJigClick, standalone = false }
                     <span
                       key={name}
                       title={`${count} tool${count === 1 ? "" : "s"} via ${conn.proxyVia}`}
-                      className="inline-flex items-center gap-1.5 rounded-full border border-[#232327] bg-[#111113] px-2 py-1 text-[11px] text-[#ccc] capitalize"
+                      className="inline-flex items-center gap-1.5 rounded-full border border-[#232327] bg-[#111113] px-2 py-1 text-[11px] text-[#ccc]"
                     >
                       <ServiceIcon name={name} size={12} />
-                      {name}
+                      {integrationLabel(name)}
                       <span className="text-[9px] text-[#555]">{count}</span>
                     </span>
                   ))}

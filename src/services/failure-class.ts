@@ -38,6 +38,7 @@ const RULES: { cause: FailureCause; test: RegExp }[] = [
     test: /\b50[0-9]\b|bad gateway|service unavailable|gateway time.?out|ECONNRESET|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|fetch failed|socket hang up|SSE error|unreachable after|upstream mcp server error|MCP error -32000\b/i,
   },
   { cause: "timeout", test: /timed out|timeout/i },
+  { cause: "token-budget", test: /finish_reason=length/ },
 ]
 
 /** The cause in plain words, for the failure email. */
@@ -51,6 +52,7 @@ export function describeCause(cause: FailureCause): string {
     case "rate-limit": return "rate limited"
     case "provider": return "upstream service failure"
     case "timeout": return "timed out"
+    case "token-budget": return "the model used its whole token budget thinking"
     case "code": return "the jig's code (nothing external recognised)"
   }
 }
@@ -82,6 +84,8 @@ function remedyFor(cause: FailureCause, text: string, ctx: FailureContext): stri
       return `The upstream service failed (5xx or network). Rerun later; if it persists: bun run jig debug connections ${ctx.connections?.[0] ?? ""}`.trimEnd()
     case "timeout":
       return "Ran past its timeout. Raise runTimeoutMs or toolTimeoutMs in the jig options, or do less per run."
+    case "token-budget":
+      return "The model thought until the budget ran out and never answered. Pick a main model that thinks less (Settings > Models), or raise maxTokens on that llm() call."
     case "code":
       return `bun run jig edit ${id} --out=${id}.ts   (fix, then --file=, then run --dry-run)`
   }

@@ -3,7 +3,7 @@ import { rm } from "node:fs/promises"
 import { loadServerConfigs, checkMissingCredentials, getServerConfig } from "../mcp/config.js"
 import { setCredential, deleteCredentials } from "../db.js"
 import { CONNECTIONS_DIR, PROJECT_ROOT, SCHEMAS_DIR, TYPES_DIR } from "../config/paths.js"
-import { closeConnection, connectServer, discoverTools, ensureAnnotations } from "../mcp/client.js"
+import { closeConnection, connectServer, discoverTools, ensureAnnotations, saveToolSchemas } from "../mcp/client.js"
 import { generateConnectionArtifacts } from "../mcp/typegen.js"
 import { isServiceMode } from "../config/runtime.js"
 import { waitForPendingAuthUrl } from "../mcp/auth.js"
@@ -31,7 +31,16 @@ export type ConnectServerAwaitingOAuth = {
   browserOpened?: boolean
 }
 
-export type ConnectServerResult = ConnectServerSuccess | ConnectServerNeedsCredentials | ConnectServerAwaitingOAuth
+export type ConnectServerInProgress = {
+  ok: false
+  inProgress: true
+  server: string
+}
+
+export type ConnectServerResult = ConnectServerSuccess | ConnectServerNeedsCredentials | ConnectServerAwaitingOAuth | ConnectServerInProgress
+
+// Under Bun's 30s idleTimeout: a connect still running at this point is reported in progress, not held open.
+const CONNECT_RESPONSE_WINDOW_MS = 20_000
 
 /**
  * Detached connects still running after their HTTP request returned
@@ -43,6 +52,13 @@ const inFlightConnects = new Map<string, Promise<ConnectServerSuccess | null>>()
 
 export function isConnectInProgress(serverName: string): boolean {
   return inFlightConnects.has(serverName)
+}
+
+/** Why the last background connect failed; cleared when the next one starts. A failed refresh keeps the old schema, so "connected" alone cannot tell. */
+const lastConnectErrors = new Map<string, string>()
+
+export function getLastConnectError(serverName: string): string | undefined {
+  return lastConnectErrors.get(serverName)
 }
 
 export async function connectConfiguredServer(
@@ -98,9 +114,11 @@ export async function connectConfiguredServer(
   if (!detached) {
     const oauthController = new AbortController()
     const oauthTimeout = setTimeout(() => oauthController.abort(), 10 * 60_000)
+    lastConnectErrors.delete(serverName)
     detached = runConnectToCompletion(serverName, rawConfig, config, oauthController.signal, input.requestOrigin)
       .catch((err) => {
         lastConnectError = err?.message ?? String(err)
+        lastConnectErrors.set(serverName, lastConnectError ?? "unknown error")
         console.error(`[connection] ${serverName} failed:`, lastConnectError)
         return null
       })
@@ -113,7 +131,7 @@ export async function connectConfiguredServer(
 
   const outcome = await Promise.race([
     detached.then((res) => ({ kind: "done" as const, res })),
-    waitForPendingAuthUrl(serverName, 30_000).then((url) => ({ kind: "oauth" as const, url })),
+    waitForPendingAuthUrl(serverName, CONNECT_RESPONSE_WINDOW_MS).then((url) => ({ kind: "oauth" as const, url })),
   ])
   if (outcome.kind === "oauth" && outcome.url) {
     return {
@@ -126,9 +144,8 @@ export async function connectConfiguredServer(
       browserOpened: !isServiceMode(),
     }
   }
-  // `done` won (non-OAuth server, or it finished fast), or OAuth never staged a
-  // URL within the window. Await the detached result either way.
-  const finalRes = await detached
+  if (outcome.kind === "oauth") return { ok: false, inProgress: true, server: serverName }
+  const finalRes = outcome.res
   if (!finalRes) {
     throw new Error(lastConnectError
       ? `Connect to ${serverName} failed: ${lastConnectError}`
@@ -212,7 +229,7 @@ async function runConnectToCompletion(
     }
 
     await ensureAnnotations(tools, { signal })
-    await Bun.write(join(SCHEMAS_DIR, `${serverName}.json`), JSON.stringify(tools, null, 2))
+    await saveToolSchemas(serverName, tools)
     await generateConnectionArtifacts()
     // Connect succeeded — clear any stale auth-required/unreachable status so
     // the pane stops showing "Reconnect needed" next to "Connection ready".

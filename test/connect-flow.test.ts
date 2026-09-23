@@ -109,3 +109,39 @@ describe("runConnectFlow", () => {
     ])
   })
 })
+
+describe("runConnectFlow with a connect still running on the server", () => {
+  it("waits for the background connect and reports its real tool count", async () => {
+    const events: ConnectEvent[] = []
+    const snapshots: Connection[][] = [
+      [{ name: "composio", connected: true, toolCount: 11, description: "", connectInProgress: true }],
+      [{ name: "composio", connected: true, toolCount: 47, description: "", connectInProgress: false, status: { state: "ok", at: "t" } }],
+    ]
+    await runConnectFlow("composio", { ask: async () => "", emit: (e) => events.push(e) }, {
+      listConnections: async () => snapshots.shift() ?? [],
+      connect: async () => ({ ok: false, inProgress: true, server: "composio" }),
+      wait: async () => {},
+    })
+    expect(events).toContainEqual({ type: "tools-discovered", server: "composio", count: 47, tools: [] })
+    expect(events.at(-1)).toEqual({ type: "server-ready", server: "composio" })
+  })
+
+  it("throws when the background connect ends without a working connection", async () => {
+    const events: ConnectEvent[] = []
+    const run = runConnectFlow("composio", { ask: async () => "", emit: (e) => events.push(e) }, {
+      listConnections: async () => [{ name: "composio", connected: true, toolCount: 11, description: "", connectInProgress: false, status: { state: "auth-required", at: "t", detail: "Unauthorized" } }],
+      connect: async () => ({ ok: false, inProgress: true, server: "composio" }),
+      wait: async () => {},
+    })
+    await expect(run).rejects.toThrow("Unauthorized")
+  })
+
+  it("reports a failed background refresh even though the old schema still reads as connected", async () => {
+    const run = runConnectFlow("composio", { ask: async () => "", emit: () => {} }, {
+      listConnections: async () => [{ name: "composio", connected: true, toolCount: 47, description: "", connectInProgress: false, connectError: "annotation timed out" }],
+      connect: async () => ({ ok: false, inProgress: true, server: "composio" }),
+      wait: async () => {},
+    })
+    await expect(run).rejects.toThrow("annotation timed out")
+  })
+})

@@ -1,0 +1,38 @@
+SKILL.md
+  s_6e14bf86b23c75::t_9440d7b3b1d17e 90-91
+src/services/model-probe.ts
+  s_6e14bf86b23c75::t_1fad6aa495f98d 82-143
+src/server/handlers/admin.ts
+  s_6e14bf86b23c75::t_1159191abf7afa 14,30-35
+  s_6e14bf86b23c75::t_643a61034e274b 36-37
+.agents/skills/jig/SKILL.md
+  s_6e14bf86b23c75::t_9440d7b3b1d17e 134-136,389-401
+src/server.ts
+  s_6e14bf86b23c75::t_1159191abf7afa 60,247-248,275-278
+test/llm-request.test.ts
+  s_6e14bf86b23c75::t_523fa2337836dd 1-52
+src/sdk/llm.ts
+  s_6e14bf86b23c75::t_c9c0278b97e7de 88-102,125,144,160,187,241,402,408,430
+test/model-json-probe.test.ts
+  s_6e14bf86b23c75::t_eb42d4046b178c 1-57
+dashboard/package.json
+  s_6e14bf86b23c75::t_b70b05e5759a39 3
+package.json
+  s_6e14bf86b23c75::t_d3bd3cc28d5b5c 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "928cfc280ab0634eafa3e4edc3419d661d3b178b",
+  "prompts": {},
+  "sessions": {
+    "s_6e14bf86b23c75": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f1c842be-1ef4-4770-ad28-a1ce332a746d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "agamm <1269911+agamm@users.noreply.github.com>"
+    }
+  }
+}

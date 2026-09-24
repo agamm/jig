@@ -1,0 +1,31 @@
+shared/api.ts
+  s_6e14bf86b23c75::t_749dc82ac9ae32 298-299
+dashboard/src/components/model-upgrade-modal.tsx
+  s_6e14bf86b23c75::t_749dc82ac9ae32 35-38,201
+test/model-upgrade.test.ts
+  s_6e14bf86b23c75::t_8decfe4e14a460 25-45
+src/services/model-upgrade.ts
+  s_6e14bf86b23c75::t_749dc82ac9ae32 157-163,168-170,179-181
+src/services/openrouter-catalog.ts
+  s_6e14bf86b23c75::t_749dc82ac9ae32 37-38,79,110-111
+dashboard/package.json
+  s_6e14bf86b23c75::t_42b9da9716b02c 3
+package.json
+  s_6e14bf86b23c75::t_5a790834444262 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "06713421330a2c6d10e12ac733e3c39923c06265",
+  "prompts": {},
+  "sessions": {
+    "s_6e14bf86b23c75": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f1c842be-1ef4-4770-ad28-a1ce332a746d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "agamm <1269911+agamm@users.noreply.github.com>"
+    }
+  }
+}

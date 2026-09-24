@@ -57,6 +57,7 @@ export async function calendarTick(jigIds: string[], deps: CalendarTickDeps): Pr
           starts_at: new Date(event.startsAt).toISOString(),
           attendees: event.attendees ?? [],
           minutes_until_start: Math.round((event.startsAt - now) / 60_000),
+          recurring: event.recurring ?? false,
         })
         fired++
       }

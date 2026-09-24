@@ -22,6 +22,7 @@ interface RawCalendarEvent {
   summary?: unknown
   start?: { dateTime?: unknown; date?: unknown } | null
   attendees?: Array<{ email?: unknown }> | null
+  recurringEventId?: unknown
 }
 
 export function mapCalendarEvents(raw: unknown): CalendarEvent[] {
@@ -54,6 +55,7 @@ export function mapCalendarEvents(raw: unknown): CalendarEvent[] {
       attendees: (item.attendees ?? [])
         .map((a) => a?.email)
         .filter((e): e is string => typeof e === "string"),
+      recurring: typeof item.recurringEventId === "string" && item.recurringEventId !== "",
     })
   }
   return events

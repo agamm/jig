@@ -38,6 +38,11 @@ describe("mapCalendarEvents", () => {
     expect(mapCalendarEvents({ items: [event({ summary: undefined })] })[0].title).toBe("(untitled event)")
   })
 
+  it("marks an occurrence of a repeating series as recurring, and a one-off as not", () => {
+    expect(mapCalendarEvents({ items: [event({ recurringEventId: "series-1" })] })[0].recurring).toBe(true)
+    expect(mapCalendarEvents({ items: [event()] })[0].recurring).toBe(false)
+  })
+
   it("tolerates an event with no attendees", () => {
     expect(mapCalendarEvents({ items: [event({ attendees: undefined })] })[0].attendees).toEqual([])
   })

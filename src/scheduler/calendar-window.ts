@@ -18,6 +18,8 @@ export interface CalendarEvent {
   /** Event start, epoch ms. */
   startsAt: number
   attendees?: string[]
+  /** One occurrence of a repeating series (Google's recurringEventId is set). */
+  recurring?: boolean
 }
 
 export interface DueCalendarOptions {

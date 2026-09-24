@@ -435,7 +435,8 @@ Two things to keep in mind:
 **Calendar trigger.** `trigger: { type: "calendar", minutesBefore: 45 }` runs the
 jig once per upcoming meeting, that many minutes before it starts. The scheduler
 watches the calendar, so the jig does not poll: the event arrives in `ctx.params`
-as `event_id`, `title`, `starts_at`, `attendees`, `minutes_until_start`. Dedup is
+as `event_id`, `title`, `starts_at`, `attendees`, `minutes_until_start` and
+`recurring` (true for one occurrence of a repeating series). Dedup is
 per event, so a meeting fires exactly once. It requires the `composio`
 connection, which is enforced whether or not the jig imports it. Prefer this over
 a frequent cron that asks "is anything coming up?" and throws away 97% of its runs.

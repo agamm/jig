@@ -28,7 +28,13 @@ describe("calendarTick", () => {
     await calendarTick(["brief"], d)
     expect(started).toHaveLength(1)
     expect(started[0].jigId).toBe("brief")
-    expect(started[0].params).toMatchObject({ event_id: "evt-1", title: "Sync", attendees: ["a@b.c"] })
+    expect(started[0].params).toMatchObject({ event_id: "evt-1", title: "Sync", attendees: ["a@b.c"], recurring: false })
+  })
+
+  it("tells the jig when the meeting is one occurrence of a repeating series", async () => {
+    const { d, started } = deps({ fetchEvents: async () => [{ id: "evt-2", title: "Weekly", startsAt: NOW + 30 * MIN, recurring: true }] })
+    await calendarTick(["brief"], d)
+    expect(started[0].params.recurring).toBe(true)
   })
 
   // Recorded BEFORE the run starts: if the process dies mid-tick, the cost of

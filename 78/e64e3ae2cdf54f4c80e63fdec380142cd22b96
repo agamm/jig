@@ -1,0 +1,33 @@
+src/scheduler/calendar-window.ts
+  s_6e14bf86b23c75::t_0b4b623f0abccd 21-22
+test/calendar-source.test.ts
+  s_6e14bf86b23c75::t_0b4b623f0abccd 41-45
+src/scheduler/calendar-tick.ts
+  s_6e14bf86b23c75::t_0b4b623f0abccd 60
+src/scheduler/calendar-source.ts
+  s_6e14bf86b23c75::t_0b4b623f0abccd 25,58
+test/calendar-tick.test.ts
+  s_6e14bf86b23c75::t_0b4b623f0abccd 31-37
+SKILL.md
+  s_6e14bf86b23c75::t_0b4b623f0abccd 438-439
+dashboard/package.json
+  s_6e14bf86b23c75::t_ecb98d3f9804fa 3
+package.json
+  s_6e14bf86b23c75::t_bf4d9330715e04 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "78e64e3ae2cdf54f4c80e63fdec380142cd22b96",
+  "prompts": {},
+  "sessions": {
+    "s_6e14bf86b23c75": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f1c842be-1ef4-4770-ad28-a1ce332a746d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "agamm <1269911+agamm@users.noreply.github.com>"
+    }
+  }
+}

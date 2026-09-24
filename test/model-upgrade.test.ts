@@ -22,6 +22,27 @@ const model = (over: Partial<OpenRouterModelInfo> & { id: string }): OpenRouterM
 const current = model({ id: "openai/gpt-5.6-luna-pro", blendedPriceUsdPerM: 1, createdAt: JAN })
 
 describe("pickBest", () => {
+  describe("with a benchmark score on the current model", () => {
+    const scored = model({ id: "x-ai/grok-4.7", blendedPriceUsdPerM: 4, createdAt: JAN, intelligenceIndex: 46 })
+
+    // A newer, cheaper model with no score was suggested over a well-ranked one.
+    it("never suggests an unscored model, however new or cheap", () => {
+      const unscored = model({ id: "cohere/command-a-plus", blendedPriceUsdPerM: 1.2, createdAt: LATER })
+      expect(pickBest("main", scored, [scored, unscored], [])).toBeNull()
+    })
+
+    it("never suggests a model that scores lower", () => {
+      const lower = model({ id: "deepseek/deepseek-v5-flash", blendedPriceUsdPerM: 1, createdAt: LATER, intelligenceIndex: 40 })
+      expect(pickBest("main", scored, [scored, lower], [])).toBeNull()
+    })
+
+    it("picks the highest score, even over a newer model", () => {
+      const best = model({ id: "google/gemini-4-pro", blendedPriceUsdPerM: 4, createdAt: JAN + 10, intelligenceIndex: 52 })
+      const newer = model({ id: "openai/gpt-7-mini", blendedPriceUsdPerM: 2, createdAt: LATER, intelligenceIndex: 48 })
+      expect(pickBest("main", scored, [scored, newer, best], [])?.id).toBe("google/gemini-4-pro")
+    })
+  })
+
   // A :batch model is cheaper and ships beside its parent, so it looked like a
   // pure win and got suggested. It is an async queue endpoint, not a drop-in
   // for a synchronous call: a jig awaiting one would hang past its run timeout.

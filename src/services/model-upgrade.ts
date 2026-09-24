@@ -154,13 +154,20 @@ export function pickBest(
     // far pricier model (haiku-4.5 $4/M to fable-5 $40/M, +900%) is a tradeoff,
     // not an upgrade.
     if (m.blendedPriceUsdPerM > current.blendedPriceUsdPerM * MAX_PRICE_INCREASE) return false
-    // "Better" = genuinely newer, by the model's own release timestamp rather
-    // than its position in OpenRouter's listing. Cross-provider is allowed
-    // within the allowlist above.
+    // A benchmarked current model sets the bar: a candidate must outscore it,
+    // and an unscored one cannot (newer is not better when it ranks lower).
+    if (current.intelligenceIndex !== undefined) {
+      return m.intelligenceIndex !== undefined && m.intelligenceIndex > current.intelligenceIndex
+    }
+    // No score to compare against: "better" falls back to genuinely newer, by
+    // the model's own release timestamp rather than its listing position.
     return m.createdAt > current.createdAt
   })
   if (candidates.length === 0) return null
   candidates.sort((a, b) => {
+    const scoreA = a.intelligenceIndex ?? -Infinity
+    const scoreB = b.intelligenceIndex ?? -Infinity
+    if (scoreA !== scoreB) return scoreB - scoreA
     if (a.createdAt !== b.createdAt) return b.createdAt - a.createdAt
     return a.blendedPriceUsdPerM - b.blendedPriceUsdPerM
   })
@@ -169,7 +176,9 @@ export function pickBest(
 
 function reasonString(current: OpenRouterModelInfo, suggested: OpenRouterModelInfo): string {
   const parts: string[] = []
-  if (suggested.createdAt > current.createdAt) parts.push("newer")
+  if (current.intelligenceIndex !== undefined && suggested.intelligenceIndex !== undefined) {
+    parts.push(`scores ${suggested.intelligenceIndex} vs ${current.intelligenceIndex}`)
+  } else if (suggested.createdAt > current.createdAt) parts.push("newer")
   if (current.blendedPriceUsdPerM > 0 && suggested.blendedPriceUsdPerM < current.blendedPriceUsdPerM) {
     const pct = Math.round((1 - suggested.blendedPriceUsdPerM / current.blendedPriceUsdPerM) * 100)
     if (pct > 0) parts.push(`${pct}% cheaper`)

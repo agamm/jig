@@ -295,6 +295,8 @@ export interface OpenRouterModelInfo {
   createdAt: number
   /** Index in OpenRouter's listing (newest-first). Not popularity. */
   catalogOrder: number
+  /** Artificial Analysis Intelligence Index from OpenRouter's `benchmarks`; most models have none. */
+  intelligenceIndex?: number
   /** p50 time-to-first-token (ms) from the fastest live endpoint. Only populated for upgrade suggestions. */
   latencyMs?: number
   /** p50 output throughput (tokens/sec). Only populated for upgrade suggestions. */

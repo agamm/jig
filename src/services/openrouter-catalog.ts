@@ -34,6 +34,8 @@ export interface OpenRouterModelInfo {
    * models from unknown vendors.
    */
   catalogOrder: number
+  /** Artificial Analysis Intelligence Index from OpenRouter's `benchmarks`; most models have none. */
+  intelligenceIndex?: number
 }
 
 type CatalogCache = { at: number; data: OpenRouterModelInfo[] }
@@ -74,6 +76,7 @@ export async function fetchOpenRouterModels(): Promise<{ models: OpenRouterModel
         pricing?: { prompt?: string; completion?: string }
         supported_parameters?: string[]
         architecture?: { modality?: string; input_modalities?: string[] }
+        benchmarks?: { artificial_analysis?: { intelligence_index?: unknown } }
       }
       if (!e.id || !e.pricing) return null
       // Meta-routing and BYOK entries report sentinel pricing (often negative).
@@ -104,6 +107,8 @@ export async function fetchOpenRouterModels(): Promise<{ models: OpenRouterModel
         createdAt: typeof e.created === "number" ? e.created : 0,
         catalogOrder: idx,
       }
+      const score = e.benchmarks?.artificial_analysis?.intelligence_index
+      if (typeof score === "number" && Number.isFinite(score)) info.intelligenceIndex = score
       return info
     })
     .filter((x): x is OpenRouterModelInfo => x !== null)

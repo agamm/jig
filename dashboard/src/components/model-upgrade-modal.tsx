@@ -32,6 +32,10 @@ function ModelStats({ model, priceTone }: { model: OpenRouterModelInfo; priceTon
         {priceTone === "up" ? " ↑" : priceTone === "down" ? " ↓" : ""}
       </span>
       <span className="opacity-40">·</span>
+      <span title="Artificial Analysis Intelligence Index, via OpenRouter">
+        {typeof model.intelligenceIndex === "number" ? `score ${model.intelligenceIndex}` : "no score"}
+      </span>
+      <span className="opacity-40">·</span>
       <span>{fmtContext(model.contextLength)}</span>
       {typeof model.latencyMs === "number" && (
         <>
@@ -194,7 +198,7 @@ export function ModelUpgradeModal({
           <div>
             <h3 className="text-[14px] font-semibold text-[#ededed]">Model upgrades available</h3>
             <p className="mt-1 text-[12px] leading-relaxed text-[#666]">
-              Higher-ranked models at a similar or lower price — any provider. Check the stats before upgrading.
+              Higher-scoring models at a similar or lower price, from any provider. When the current model has no benchmark score, newer counts instead. Check the stats before upgrading.
             </p>
             {onBrowseModels && (
               <button

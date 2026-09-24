@@ -567,7 +567,7 @@ await ctx.step("Email the digest", [], async () => {
 ```
 
 - Signature: `ctx.email({ subject: string; text?: string; html?: string; blocks?: EmailBlock[] }): Promise<{ threadId, messageId }>`. Pass `blocks`, `html`, `text`, or `text` plus one of the others (text is the plain-text alternative).
-- **The design is built in.** Every send goes out in the Jig email shell: dark canvas, centered panel with the jig's name, typography, footer. Do not write page chrome. `text` may be markdown (headings, bullets, `**bold**`) and is converted. An `html` fragment gets the shell's typography. A complete document (`<!doctype`/`<html>`) is sent untouched.
+- **The design is built in.** Every send goes out in the Jig email shell: dark canvas, centered panel with the jig's name, typography, footer. Do not write page chrome. `text` may be markdown (headings, bullets, `**bold**`, `[label](https://...)` links) and is converted. An `html` fragment gets the shell's typography. A complete document (`<!doctype`/`<html>`) is sent untouched.
 - **Blocks** (`import type { EmailBlock, EmailCard } from "@jig/sdk"`): `heading` (`eyebrow`, `title`, `lede`), `text` (`markdown`), `cards` (`title`, `items`) and `kv` (`title`, `rows: [{ label, value, href? }]`). A card has `title`, `detail`, `tag` (a pill: project, person, source), `href` (title becomes the link) and `priority`.
 - **Importance at a glance.** `priority: "high"` puts a fire mark on the right of the card and an amber accent; `"medium"` a blue accent; unset means plain. Reserve high for what blocks someone or is due within a day, so the mark keeps its meaning.
 - Always sends to the configured user (the AgentMail owner) — there is no `to`

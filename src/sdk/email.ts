@@ -5,7 +5,7 @@
  * mail client keeps); the <style> block only adds typography for fragments an
  * author wrote by hand. A full document (<html>/<!doctype>) is sent untouched.
  */
-import { escapeHtml, looksHtml, markdownishToHtml } from "../text.js"
+import { escapeHtml, looksHtml, markdownLinksToText, markdownishToHtml } from "../text.js"
 
 export type EmailPriority = "high" | "medium" | "low"
 
@@ -130,7 +130,7 @@ export function blocksToText(blocks: EmailBlock[]): string {
         if (block.lede) out.push(block.lede)
         break
       case "text":
-        out.push(block.markdown.trim())
+        out.push(markdownLinksToText(block.markdown.trim()))
         break
       case "cards":
         if (block.title) out.push(block.title.toUpperCase())

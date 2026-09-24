@@ -374,7 +374,7 @@ procedure:
 
 - `bun run jig debug failures [handle]` for every failed run in the last seven days, each with
   its cause (`auth`, `composio-spill`, `rate-limit`, `provider`, `timeout`, `credits`,
-  `missing-connection`, `locked`, `token-budget`, or `code`) and the command that fixes it. The failure email
+  `missing-connection`, `locked`, `token-budget`, `composio-controls`, or `code`) and the command that fixes it. The failure email
   the owner received quotes the same verdict. `bun run jig debug audit` is the per-jig view:
   streaks, pending versions, unhealthy connections.
 - A tool call that hit a gateway error was already retried before the run failed: reads up to
@@ -391,8 +391,12 @@ procedure:
   in `bun run jig debug tail` for the error's `name` before blaming the jig (a rejected OAuth
   refresh arrived this way).
 - **`token-budget`** (`finish_reason=length`, empty reply): a reasoning model spent the budget
-  thinking. Some models ignore OpenRouter's `reasoning` cap and think without limit, so a bigger
-  budget only moves the failure; prefer a main model that thinks less.
+  thinking, and `llm()` already retried once with 3x the budget. Some models ignore OpenRouter's
+  `reasoning` cap and think without limit, so a bigger budget only moves the failure; prefer a
+  main model that thinks less.
+- **`composio-controls`** ("Enhanced Controls is not supported"): Composio wants a person to
+  approve each write, which an unattended run cannot do. Not a code bug: the owner turns the
+  setting off, or the jig stops writing through Composio and sends the result with `ctx.email`.
 - **A JSON parse error on prose** ("Unexpected identifier") means a host answered without JSON
   mode. Structured calls route only to hosts that support it; if it recurs, run the model
   through the JSON check by re-selecting it under Settings > Models.

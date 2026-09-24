@@ -88,7 +88,7 @@ bun run jig debug audit [handle]     # what is failing, since when, and the next
 
 The heal loop: `jig debug failures` names the failing step, the error, the cause and the remedy. When the
 cause is external (`auth`, `composio-spill`, `rate-limit`, `provider`, `credits`, `missing-connection`,
-`locked`, `token-budget`) run the remedy it prints, not an edit. When it is `code`: `jig edit <jig-id> --out=<jig-id>.ts`
+`locked`, `token-budget`, `composio-controls`) run the remedy it prints, not an edit. When it is `code`: `jig edit <jig-id> --out=<jig-id>.ts`
 pulls the code, fix it, `jig edit <jig-id> --file=<jig-id>.ts` pushes it (live when the check is clean, `--pending`
 holds it), `jig run <jig-id> --dry-run` proves it.
 

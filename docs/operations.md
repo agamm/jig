@@ -185,6 +185,7 @@ The classifier matches the error text and names the remedy:
 | `provider` | 5xx, network errors, SSE failures | wait; `jig debug connections` if it persists |
 | `timeout` | the run or a tool ran past its timeout | raise the timeout in the jig options or do less per run |
 | `token-budget` | an empty reply with `finish_reason=length`: the model thought through the whole budget | a main model that thinks less, or a higher `maxTokens` on that call |
+| `composio-controls` | Composio's Enhanced Controls refused a write (it needs a person to approve it) | turn Enhanced Controls off in Composio, or send the result with `ctx.email` |
 | `locked` | credentials unreadable because the instance was locked | `jig unlock`; `JIG_DATA_KEY` keeps it from recurring |
 | `code` | nothing external recognised | `jig edit --out`, fix, `--file`, dry run |
 

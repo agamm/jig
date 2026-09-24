@@ -12,13 +12,13 @@ export function firstLineSummary(text?: string | null): string {
 // paths need the same treatment: MCP gmail_send (mcp/client.ts) and ctx.email
 // (sdk/context.ts). Shared here so the two can't drift.
 //
-// Deliberately not a full markdown parser — headings, bullets, bold, italic.
+// Deliberately not a full markdown parser — headings, bullets, bold, italic, links.
 // Anything else degrades to a paragraph, which renders fine.
 // ---------------------------------------------------------------------------
 
 /** True when a body carries markdown syntax a mail client would show raw. */
 export function looksMarkdownish(text: string): boolean {
-  return /\*\*[^*\n]{1,120}\*\*|^\s{0,3}#{1,6}\s+|^\s{0,3}[-*]\s+/m.test(text)
+  return /\*\*[^*\n]{1,120}\*\*|^\s{0,3}#{1,6}\s+|^\s{0,3}[-*]\s+|\[[^\]\n]{1,200}\]\((?:https?:\/\/|mailto:)/m.test(text)
 }
 
 /** True when a body is already HTML and should not be re-converted. */
@@ -74,8 +74,18 @@ export function cleanupMarkdownInHtml(html: string): string {
     .replace(/(^|[\n>])\s{0,3}>\s+/g, "$1")
 }
 
+// Only web and mail links, so a javascript: URL in model output never becomes clickable.
+const MARKDOWN_LINK = /\[([^\]\n]{1,200})\]\(((?:https?:\/\/|mailto:)[^\s)]+)\)/g
+
+/** `[label](url)` as `label (url)`, for the plain-text part of an email. */
+export function markdownLinksToText(value: string): string {
+  return value.replace(MARKDOWN_LINK, "$1 ($2)")
+}
+
 function inlineMarkdownToHtml(value: string): string {
+  // Escaped first, so the href keeps its &amp; entities and cannot break out of the attribute.
   return escapeHtml(value)
+    .replace(MARKDOWN_LINK, '<a href="$2">$1</a>')
     .replace(/\*\*([^*]{1,120})\*\*/g, "<strong>$1</strong>")
     .replace(/\*([^*]{1,120})\*/g, "<em>$1</em>")
 }

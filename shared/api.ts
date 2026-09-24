@@ -613,6 +613,7 @@ export type FailureCause =
   | "provider"
   | "timeout"
   | "token-budget"
+  | "composio-controls"
   | "code"
 
 export interface AuditLastFailure {

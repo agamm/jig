@@ -26,6 +26,7 @@ describe("classifyFailure", () => {
     ["fetch failed: ECONNRESET", "provider"],
     ["Run timed out after 10 minutes", "timeout"],
     ["LLM returned empty response (finish_reason=length, 8000 of 8000 tokens on reasoning): the 8000-token budget ran out before the answer; raise maxTokens", "token-budget"],
+    ["Tool \"composio.COMPOSIO_MULTI_EXECUTE_TOOL\" failed: 1 out of 1 tools failed - Enhanced Controls is not supported for this session because your client (e.g. Claude Web, ChatGPT) does not support elicitation.", "composio-controls"],
     ["Cannot read properties of undefined (reading 'items')", "code"],
     ["Jig validation failed: Jig has no ctx.step() calls.", "code"],
   ]

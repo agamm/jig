@@ -34,12 +34,25 @@ describe("markdownishToHtml", () => {
     expect(markdownishToHtml("a < b & **c**")).toBe("<p>a &lt; b &amp; <strong>c</strong></p>")
   })
 
+  it("turns a markdown link into a real link instead of showing the brackets", () => {
+    expect(markdownishToHtml("Read [the post](https://example.com/a?x=1&y=2) today"))
+      .toBe('<p>Read <a href="https://example.com/a?x=1&amp;y=2">the post</a> today</p>')
+  })
+
+  it("never links a javascript: URL", () => {
+    expect(markdownishToHtml("[click](javascript:alert(1))")).not.toContain("<a ")
+  })
+
   it("converts headings", () => {
     expect(markdownishToHtml("## Today")).toBe("<h2>Today</h2>")
   })
 })
 
 describe("looksMarkdownish", () => {
+  it("detects a body whose only markdown is a link", () => {
+    expect(looksMarkdownish("See [the doc](https://example.com/doc).")).toBe(true)
+  })
+
   it("detects the bodies that need conversion", () => {
     expect(looksMarkdownish(LLM_BODY)).toBe(true)
     expect(looksMarkdownish("# Heading")).toBe(true)

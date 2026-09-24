@@ -24,6 +24,7 @@ export interface FailureContext {
 }
 
 const RULES: { cause: FailureCause; test: RegExp }[] = [
+  { cause: "composio-controls", test: /Enhanced Controls is not supported|does not support elicitation/i },
   { cause: "composio-spill", test: /spilled to \/mnt\/files|too large to return inline|ComposioSpillError/i },
   { cause: "locked", test: /jig is locked|LockedError/i },
   { cause: "missing-connection", test: /Connection required: [\w-]+/ },
@@ -53,6 +54,7 @@ export function describeCause(cause: FailureCause): string {
     case "provider": return "upstream service failure"
     case "timeout": return "timed out"
     case "token-budget": return "the model used its whole token budget thinking"
+    case "composio-controls": return "Composio's Enhanced Controls blocked a write"
     case "code": return "the jig's code (nothing external recognised)"
   }
 }
@@ -86,6 +88,8 @@ function remedyFor(cause: FailureCause, text: string, ctx: FailureContext): stri
       return "Ran past its timeout. Raise runTimeoutMs or toolTimeoutMs in the jig options, or do less per run."
     case "token-budget":
       return "The model thought until the budget ran out and never answered. Pick a main model that thinks less (Settings > Models), or raise maxTokens on that llm() call."
+    case "composio-controls":
+      return "Composio's Enhanced Controls asks a person to approve each write, and a scheduled run cannot. Turn it off at https://dashboard.composio.dev/~/org/connect/settings, or have the jig email you the result with ctx.email instead of writing through Composio."
     case "code":
       return `bun run jig edit ${id} --out=${id}.ts   (fix, then --file=, then run --dry-run)`
   }

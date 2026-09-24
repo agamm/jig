@@ -90,6 +90,20 @@ describe("renderEmailBlocks", () => {
   })
 })
 
+describe("links in a text block", () => {
+  const blocks: EmailBlock[] = [{ type: "text", markdown: "**Dana:** a note. [Write in Gmail](https://mail.google.com/mail/?view=cm&to=a%40b.c)" }]
+
+  it("renders a styled link, not the raw brackets", () => {
+    const html = renderEmailBlocks(blocks)
+    expect(html).toMatch(/<a href="https:\/\/mail\.google\.com\/mail\/\?view=cm&amp;to=a%40b\.c" style="[^"]+">Write in Gmail<\/a>/)
+    expect(html).not.toContain("](")
+  })
+
+  it("keeps the URL readable in the plain-text twin", () => {
+    expect(blocksToText(blocks)).toContain("Write in Gmail (https://mail.google.com/mail/?view=cm&to=a%40b.c)")
+  })
+})
+
 describe("buildEmailParts", () => {
   it("wraps a fragment, keeps the token footer inside the panel", () => {
     const parts = buildEmailParts({ html: "<h2>Digest</h2><p>x</p>", jigName: "digest", token: { html: "<p>ref #abc</p>", text: "\nref #abc" } })

@@ -598,17 +598,20 @@ function RecRow({
         {model.supportsTools ? <Tag color="blue">tools</Tag> : null}
         {model.supportsReasoning ? <Tag color="purple">reasoning</Tag> : null}
       </div>
-      <span className="ml-auto shrink-0 font-mono text-[10px] text-[var(--text-dim)]">
-        <span className={selected ? "text-emerald-200" : "text-[#ededed]"}>
-          {fmtPrice(model.promptPriceUsdPerM)}
+      {/* Fixed-width mono columns so prices line up from row to row. */}
+      <span className="ml-auto flex shrink-0 items-center gap-1.5 whitespace-pre font-mono text-[10px] leading-none tabular-nums">
+        <span className="w-[17ch] text-right">
+          <span className={selected ? "text-emerald-200" : "text-[#ededed]"}>
+            {fmtPrice(model.promptPriceUsdPerM)}
+          </span>
+          <span className="text-[var(--text-faint)]"> / </span>
+          <span className={selected ? "text-emerald-200" : "text-[#ededed]"}>
+            {fmtPrice(model.completionPriceUsdPerM)}
+          </span>
         </span>
-        <span className="text-[var(--text-faint)]"> / </span>
-        <span className={selected ? "text-emerald-200" : "text-[#ededed]"}>
-          {fmtPrice(model.completionPriceUsdPerM)}
-        </span>
-        <span className="ml-1.5 text-[var(--text-faint)]">· {fmtContext(model.contextLength)}</span>
+        <span className="w-[6ch] text-right text-[var(--text-faint)]">{fmtContext(model.contextLength)}</span>
       </span>
-      <span className="w-14 shrink-0 text-right">
+      <span className="flex w-14 shrink-0 items-center justify-end leading-none">
         {selected ? (
           <span className="text-[10px] font-medium text-emerald-300">✓ picked</span>
         ) : currentlySaved ? (

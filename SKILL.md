@@ -87,8 +87,9 @@ There is no `"any"`: providers run these in strict mode and reject it with a 400
 Describe the real shape instead.
 
 Other options: `model` (OpenRouter id for this one call; wins over the step and
-jig models, see rule 12b) and `maxTokens` (default 16000; reasoning models spend it
-thinking before they answer, and an exhausted budget returns an empty reply).
+jig models, see rule 12b) and `maxTokens` (default 64000; reasoning models spend it
+thinking before they answer. A reply left empty by an exhausted budget is retried
+once with 3x the budget before the step fails).
 
 ### `agent(prompt, tools, options?)`
 

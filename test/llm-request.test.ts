@@ -50,3 +50,37 @@ describe("llm structured requests", () => {
     expect((error as Error).message).toContain("maxTokens")
   })
 })
+
+describe("llm budget retry", () => {
+  function stubSequence(choices: unknown[]) {
+    let i = 0
+    globalThis.fetch = (async (_input: any, init?: any) => {
+      bodies.push(JSON.parse(String(init?.body ?? "{}")))
+      const choice = choices[Math.min(i++, choices.length - 1)]
+      return new Response(JSON.stringify({ id: "x", object: "chat.completion", choices: [choice], usage: {} }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    }) as typeof fetch
+  }
+  const cutOff = { index: 0, finish_reason: "length", message: { role: "assistant", content: "" } }
+
+  it("retries once with 3x the budget when the model thought through the whole budget", async () => {
+    stubSequence([cutOff, { index: 0, finish_reason: "stop", message: { role: "assistant", content: "answer" } }])
+    expect(await llm<string>("p", {}, { maxTokens: 8000 })).toBe("answer")
+    expect(bodies.map((b) => b.max_tokens)).toEqual([8000, 24000])
+  })
+
+  it("stops after one retry and names the larger budget", async () => {
+    stubSequence([cutOff])
+    const error = await llm("p", {}, { schema: { n: "number" }, maxTokens: 8000 }).catch((e: Error) => e)
+    expect(bodies).toHaveLength(2)
+    expect((error as Error).message).toContain("24000-token budget")
+  })
+
+  it("does not retry an empty reply that was not cut off by the budget", async () => {
+    stubSequence([{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "" } }])
+    await llm("p", {}, { maxTokens: 8000 }).catch(() => {})
+    expect(bodies).toHaveLength(1)
+  })
+})

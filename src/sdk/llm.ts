@@ -88,7 +88,28 @@ const USAGE_ACCOUNTING = { usage: { include: true } } as unknown as Record<strin
 // Some OpenRouter hosts ignore response_format and answer in prose; only route JSON-mode calls to hosts that honour it.
 const JSON_ROUTING = { provider: { require_parameters: true } } as unknown as Record<string, never>
 // Reasoning models spend the budget thinking before they answer; too small a cap returns an empty reply.
-const DEFAULT_MAX_TOKENS = 16_000
+const DEFAULT_MAX_TOKENS = 64_000
+// Some models ignore reasoning caps, so an empty reply cut off by the budget gets one retry with more room.
+const LENGTH_RETRY_FACTOR = 3
+
+type CompletionParams = OpenAI.ChatCompletionCreateParamsNonStreaming
+
+/** One completion, retried once with LENGTH_RETRY_FACTOR x the budget when it ran out before any answer. */
+async function completeWithBudgetRetry(
+  params: Omit<CompletionParams, "max_tokens">,
+  maxTokens: number,
+  requestOptions?: { signal?: AbortSignal },
+): Promise<{ response: OpenAI.ChatCompletion; maxTokens: number }> {
+  const response = await getClient().chat.completions.create({ ...params, max_tokens: maxTokens } as CompletionParams, requestOptions)
+  recordCost(response.usage)
+  const choice = response.choices[0]
+  if (choice?.message?.content || choice?.finish_reason !== "length") return { response, maxTokens }
+  const retryTokens = maxTokens * LENGTH_RETRY_FACTOR
+  logSessionEvent({ source: "sdk.llm", event: "budget-retry", model: params.model, maxTokens, retryTokens, usage: response.usage })
+  const retry = await getClient().chat.completions.create({ ...params, max_tokens: retryTokens } as CompletionParams, requestOptions)
+  recordCost(retry.usage)
+  return { response: retry, maxTokens: retryTokens }
+}
 
 /** Why a reply had no content, so the run log says "out of budget" rather than a bare "empty". */
 function emptyResponseError(response: OpenAI.ChatCompletion, maxTokens: number, prefix = "LLM returned empty response"): Error {
@@ -139,11 +160,10 @@ export async function llm<T = string>(
   if (options?.schema) {
     const schemaBody = buildJsonSchema(options.schema)
 
-    const response = await getClient().chat.completions.create({
-    ...USAGE_ACCOUNTING,
-    ...JSON_ROUTING,
+    const { response, maxTokens: spentBudget } = await completeWithBudgetRetry({
+      ...USAGE_ACCOUNTING,
+      ...JSON_ROUTING,
       model,
-      max_tokens: maxTokens,
       messages: [{ role: "user", content: userContent }],
       response_format: {
         type: "json_schema",
@@ -153,11 +173,10 @@ export async function llm<T = string>(
           schema: schemaBody,
         },
       },
-    }, signal ? { signal } : undefined)
-    recordCost(response.usage)
+    }, maxTokens, signal ? { signal } : undefined)
 
     const raw = response.choices[0]?.message?.content
-    if (!raw) throw emptyResponseError(response, maxTokens)
+    if (!raw) throw emptyResponseError(response, spentBudget)
     // Strip backtick fences — many models wrap JSON in ```json ... ```
     const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/)
     const text = fenced ? fenced[1].trim() : raw.trim()
@@ -175,16 +194,14 @@ export async function llm<T = string>(
     return parsed
   }
 
-  const response = await getClient().chat.completions.create({
+  const { response, maxTokens: spentBudget } = await completeWithBudgetRetry({
     ...USAGE_ACCOUNTING,
     model,
-    max_tokens: maxTokens,
     messages: [{ role: "user", content: userContent }],
-  }, signal ? { signal } : undefined)
-  recordCost(response.usage)
+  }, maxTokens, signal ? { signal } : undefined)
 
   const text = response.choices[0]?.message?.content
-  if (!text) throw emptyResponseError(response, maxTokens)
+  if (!text) throw emptyResponseError(response, spentBudget)
   logSessionEvent({
     source: "sdk.llm",
     event: "response",
@@ -403,11 +420,10 @@ async function structureResponse<T>(
 ): Promise<T> {
   const schemaBody = buildJsonSchema(schema)
 
-  const response = await getClient().chat.completions.create({
+  const { response, maxTokens: spentBudget } = await completeWithBudgetRetry({
     ...USAGE_ACCOUNTING,
     ...JSON_ROUTING,
     model,
-    max_tokens: maxTokens,
     messages: [
       ...messages,
       {
@@ -423,11 +439,10 @@ async function structureResponse<T>(
         schema: schemaBody,
       },
     },
-  }, { signal: spinner.signal })
-  recordCost(response.usage)
+  }, maxTokens, { signal: spinner.signal })
 
   const raw = response.choices[0]?.message?.content
-  if (!raw) throw emptyResponseError(response, maxTokens, "Structured response was empty")
+  if (!raw) throw emptyResponseError(response, spentBudget, "Structured response was empty")
   // Strip backtick fences — many models wrap JSON in ```json ... ```
   const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/)
   const text = fenced ? fenced[1].trim() : raw.trim()
